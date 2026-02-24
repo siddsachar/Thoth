@@ -77,6 +77,10 @@ Name: "{autodesktop}\{#MyAppName}";               Filename: "{app}\{#MyAppExeNam
 Filename: "{tmp}\OllamaSetup.exe";  Parameters: "/VERYSILENT /NORESTART"; \
     StatusMsg: "Installing Ollama..."; Flags: waituntilterminated
 
+; ── Kill Ollama UI that auto-launches after install ─────────────────────────
+Filename: "taskkill"; Parameters: "/F /IM ollama app.exe"; \
+    StatusMsg: "Closing Ollama UI..."; Flags: waituntilterminated runhidden; Check: not WizardSilent
+
 ; ── Install Python packages ──────────────────────────────────────────────────
 Filename: "{app}\install_deps.bat";  Parameters: """{app}"""; \
     StatusMsg: "Installing Python packages (this may take a few minutes)..."; \
