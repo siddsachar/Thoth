@@ -2,7 +2,11 @@ import os
 import json
 import pathlib
 
-KEYS_PATH = pathlib.Path("api_keys.json")
+# Store data in %APPDATA%/Thoth (writable even when app is in Program Files)
+DATA_DIR = pathlib.Path(os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / ".thoth"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+KEYS_PATH = DATA_DIR / "api_keys.json"
 
 # All API keys the app can use – label shown in UI → env-var name
 API_KEY_DEFINITIONS = {

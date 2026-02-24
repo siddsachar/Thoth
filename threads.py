@@ -1,9 +1,15 @@
 from langgraph.checkpoint.sqlite import SqliteSaver
 import sqlite3
 import uuid
+import os
+import pathlib
 from datetime import datetime
 
-DB_PATH = "threads.db"
+# Store data in %APPDATA%/Thoth (writable even when app is in Program Files)
+DATA_DIR = pathlib.Path(os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / ".thoth"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DB_PATH = str(DATA_DIR / "threads.db")
 
 def _init_thread_db():
     """Create a metadata table to store thread names/timestamps."""

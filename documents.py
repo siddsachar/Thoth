@@ -10,11 +10,16 @@ from langchain_huggingface import HuggingFaceEmbeddings
 import torch
 
 import shutil
-
+import os
 import pathlib
 import json
 
-PROCESSED_FILES_PATH = pathlib.Path("processed_files.json")
+# Store data in %APPDATA%/Thoth (writable even when app is in Program Files)
+DATA_DIR = pathlib.Path(os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / ".thoth"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+PROCESSED_FILES_PATH = DATA_DIR / "processed_files.json"
+VECTOR_STORE_DIR = DATA_DIR / "vector_store"
 
 def load_processed_files():
     """Load the set of already processed file paths."""
@@ -43,10 +48,10 @@ def reset_vector_store():
     """Clear all indexed documents and reinitialize an empty vector store."""
     global vector_store
     clear_processed_files()
-    if pathlib.Path("vector_store").exists():
-        shutil.rmtree("vector_store")
+    if VECTOR_STORE_DIR.exists():
+        shutil.rmtree(VECTOR_STORE_DIR)
     vector_store = FAISS.from_texts([" "], embedding=embedding_model)
-    vector_store.save_local("vector_store")
+    vector_store.save_local(str(VECTOR_STORE_DIR))
 
 class DocumentLoader(object):
     supported_file_types = {
@@ -68,11 +73,11 @@ embedding_model = HuggingFaceEmbeddings(
 
 vector_store = (
     FAISS.load_local(
-        "vector_store",
+        str(VECTOR_STORE_DIR),
         embeddings=embedding_model,
         allow_dangerous_deserialization=True,
     )
-    if pathlib.Path("vector_store").exists()
+    if VECTOR_STORE_DIR.exists()
     else FAISS.from_texts([" "], embedding=embedding_model)
 )
 
@@ -98,7 +103,7 @@ def load_and_vectorize_document(file_path, skip_if_processed=True, display_name=
             return
         chunks = text_splitter.split_documents(documents)
         vector_store.add_documents(chunks)
-        vector_store.save_local("vector_store")        
+        vector_store.save_local(str(VECTOR_STORE_DIR))
         # Mark as processed using the display name
         save_processed_file(record_name)
         return

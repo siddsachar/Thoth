@@ -92,8 +92,6 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; \
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\python"
-Type: filesandordirs; Name: "{app}\app\vector_store"
 Type: filesandordirs; Name: "{app}\app\__pycache__"
-Type: files;          Name: "{app}\app\threads.db"
-Type: files;          Name: "{app}\app\processed_files.json"
-Type: files;          Name: "{app}\app\api_keys.json"
+; User data stored in %USERPROFILE%\.thoth
+Type: filesandordirs; Name: "{%USERPROFILE}\.thoth"
