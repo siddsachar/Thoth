@@ -22,6 +22,9 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 :: ── Launch Streamlit ────────────────────────────────────────────────────────
-echo Starting Thoth...
 cd /d "%APP_DIR%"
+
+:: Open browser after a short delay (Streamlit won't auto-open from a hidden window)
+start "" cmd /c "timeout /t 4 /nobreak >NUL & start http://localhost:8501"
+
 "%PYTHON%" -m streamlit run app.py --server.headless true --browser.gatherUsageStats false
