@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thoth — Your Private Knowledge Agent</title>
+    <meta name="description" content="A local-first, privacy-focused knowledge agent with RAG. Upload documents, ask questions, get cited answers — all powered by a local LLM.">
+    <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #c9a227;
+            --accent-hover: #dbb634;
+            --accent-glow: rgba(201, 162, 39, 0.15);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* ── Navigation ──────────────────────────────────── */
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(13, 17, 23, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+        }
+
+        nav .logo {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        nav .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            margin-left: 2rem;
+            font-size: 0.95rem;
+            transition: color 0.2s;
+        }
+
+        nav .nav-links a:hover { color: var(--text); }
+
+        /* ── Hero ────────────────────────────────────────── */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 8rem 2rem 4rem;
+            position: relative;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .hero-icon {
+            font-size: 5rem;
+            margin-bottom: 1.5rem;
+            filter: drop-shadow(0 0 30px rgba(201, 162, 39, 0.3));
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.5rem;
+        }
+
+        .hero h1 span { color: var(--accent); }
+
+        .hero .tagline {
+            font-size: 1.35rem;
+            color: var(--text-muted);
+            max-width: 600px;
+            margin-bottom: 2.5rem;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.85rem 2rem;
+            border-radius: 8px;
+            font-size: 1.05rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #000;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            box-shadow: 0 0 20px rgba(201, 162, 39, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--surface);
+            border-color: var(--text-muted);
+        }
+
+        .hero-note {
+            margin-top: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* ── Features ────────────────────────────────────── */
+        .features {
+            padding: 6rem 2rem;
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .features h2 {
+            text-align: center;
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 3rem;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .feature-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+
+        .feature-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .feature-card .icon {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .feature-card p {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            line-height: 1.6;
+        }
+
+        /* ── How It Works ────────────────────────────────── */
+        .how-it-works {
+            padding: 6rem 2rem;
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .how-it-works .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .how-it-works h2 {
+            text-align: center;
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 3rem;
+        }
+
+        .steps {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .step {
+            display: flex;
+            gap: 1.5rem;
+            align-items: flex-start;
+        }
+
+        .step-number {
+            flex-shrink: 0;
+            width: 44px;
+            height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: var(--accent);
+            color: #000;
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        .step-content h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.3rem;
+        }
+
+        .step-content p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        /* ── Privacy Banner ──────────────────────────────── */
+        .privacy {
+            padding: 4rem 2rem;
+            text-align: center;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .privacy h2 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .privacy p {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            line-height: 1.7;
+        }
+
+        .privacy-badges {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .privacy-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.95rem;
+            color: var(--text-muted);
+        }
+
+        .privacy-badge .icon { font-size: 1.3rem; }
+
+        /* ── CTA ─────────────────────────────────────────── */
+        .cta {
+            padding: 6rem 2rem;
+            text-align: center;
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+        }
+
+        .cta h2 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+        }
+
+        .cta p {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            margin-bottom: 2rem;
+        }
+
+        /* ── Footer ──────────────────────────────────────── */
+        footer {
+            padding: 2rem;
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border);
+        }
+
+        footer a {
+            color: var(--text-muted);
+            text-decoration: none;
+        }
+
+        footer a:hover { color: var(--text); }
+
+        /* ── Responsive ──────────────────────────────────── */
+        @media (max-width: 640px) {
+            .hero h1 { font-size: 2.4rem; }
+            .hero .tagline { font-size: 1.1rem; }
+            .hero-icon { font-size: 3.5rem; }
+            nav .nav-links a { margin-left: 1rem; font-size: 0.85rem; }
+            .features h2, .how-it-works h2, .cta h2 { font-size: 1.7rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Navigation -->
+    <nav>
+        <a href="#" class="logo">𓁟 Thoth</a>
+        <div class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#how-it-works">How It Works</a>
+            <a href="https://github.com/siddsachar/thoth-v1" target="_blank">GitHub</a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-icon">𓁟</div>
+        <h1>Meet <span>Thoth</span></h1>
+        <p class="tagline">
+            Your private knowledge agent. Upload documents, ask questions, get cited answers — all running locally on your machine.
+        </p>
+        <div class="hero-buttons">
+            <a href="https://github.com/siddsachar/thoth-v1/releases/latest/download/ThothSetup_1.0.0.exe" class="btn btn-primary">
+                ⬇ Download for Windows
+            </a>
+            <a href="https://github.com/siddsachar/thoth-v1" class="btn btn-secondary" target="_blank">
+                ☆ View on GitHub
+            </a>
+        </div>
+        <p class="hero-note">Windows 10/11 · 64-bit · Free &amp; open source (MIT)</p>
+    </section>
+
+    <!-- Features -->
+    <section class="features" id="features">
+        <h2>Everything you need, nothing you don't</h2>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="icon">💬</div>
+                <h3>Multi-Turn Conversations</h3>
+                <p>Persistent chat threads with full message history. Auto-naming, thread switching, and seamless resume across sessions.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">📄</div>
+                <h3>Document Intelligence</h3>
+                <p>Upload PDF, DOCX, and TXT files. Documents are chunked, embedded, and indexed into a local FAISS vector store for instant retrieval.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">🔍</div>
+                <h3>Multi-Source Retrieval</h3>
+                <p>Pulls context from your documents, Wikipedia, Arxiv, and the web. Toggle each source on or off from the settings panel.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">📝</div>
+                <h3>Source Citations</h3>
+                <p>Every piece of information is cited — documents, Wikipedia articles, Arxiv papers, web links, or the model's own knowledge.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">🤖</div>
+                <h3>30+ LLM Models</h3>
+                <p>Switch between Llama, Qwen, Gemma, Mistral, DeepSeek, Phi, and more. Models download automatically on demand via Ollama.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">🔒</div>
+                <h3>Fully Local &amp; Private</h3>
+                <p>All LLM inference runs on your machine. No cloud. No telemetry. Your data never leaves your computer.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="how-it-works" id="how-it-works">
+        <div class="container">
+            <h2>Up and running in 3 minutes</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>Download &amp; install</h3>
+                        <p>Run the installer — it sets up Ollama, Python, and all dependencies automatically. No command line needed.</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>Launch Thoth</h3>
+                        <p>Open from the Start Menu or Desktop shortcut. The app opens in your browser. On first launch, the default LLM model downloads automatically.</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>Ask anything</h3>
+                        <p>Start a conversation, upload your documents, and get answers with full source citations. Configure retrieval sources and API keys from the Settings panel.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Privacy -->
+    <section class="privacy">
+        <h2>🔒 Privacy by design</h2>
+        <p>
+            Thoth runs entirely on your machine. Your documents, conversations, and API keys are stored locally and never sent to any cloud service. External calls are only made to the retrieval sources you explicitly enable.
+        </p>
+        <div class="privacy-badges">
+            <div class="privacy-badge">
+                <span class="icon">🖥️</span> Local LLM inference
+            </div>
+            <div class="privacy-badge">
+                <span class="icon">💾</span> Local data storage
+            </div>
+            <div class="privacy-badge">
+                <span class="icon">🚫</span> No telemetry
+            </div>
+            <div class="privacy-badge">
+                <span class="icon">📜</span> MIT License
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta">
+        <h2>Ready to try Thoth?</h2>
+        <p>Free, open source, and yours to keep.</p>
+        <div class="hero-buttons">
+            <a href="https://github.com/siddsachar/thoth-v1/releases/latest/download/ThothSetup_1.0.0.exe" class="btn btn-primary">
+                ⬇ Download for Windows
+            </a>
+            <a href="https://github.com/siddsachar/thoth-v1" class="btn btn-secondary" target="_blank">
+                ☆ Star on GitHub
+            </a>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <p>
+            𓁟 Thoth · MIT License ·
+            <a href="https://github.com/siddsachar/thoth-v1" target="_blank">GitHub</a> ·
+            Built with Streamlit, LangChain, LangGraph, Ollama &amp; FAISS
+        </p>
+    </footer>
+
+</body>
+</html>
