@@ -51,7 +51,7 @@
 
 ### Option A: Windows Installer (Recommended)
 
-1. **Download** `ThothSetup_1.0.0.exe` from the Assets section below
+1. **Download** `ThothSetup_1.1.0.exe` from the Assets section below
 2. **Run the installer** — it will:
    - Install [Ollama](https://ollama.com/) silently (local LLM engine)
    - Install an embedded Python runtime and all required packages
