@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Thoth — Your Private Knowledge Agent</title>
-    <meta name="description" content="A local-first, privacy-focused knowledge agent with RAG. Upload documents, ask questions, get cited answers — all powered by a local LLM.">
+    <title>Thoth — Your Private AI Assistant</title>
+    <meta name="description" content="A local-first, privacy-focused AI assistant with 16 integrated tools — web search, email, calendar, file management, vision, voice, long-term memory, and more. Powered by a local LLM via Ollama.">
     <style>
         :root {
             --bg: #0d1117;
@@ -101,7 +101,7 @@
         .hero .tagline {
             font-size: 1.35rem;
             color: var(--text-muted);
-            max-width: 600px;
+            max-width: 650px;
             margin-bottom: 2.5rem;
         }
 
@@ -204,12 +204,66 @@
             line-height: 1.6;
         }
 
-        /* ── How It Works ────────────────────────────────── */
-        .how-it-works {
+        /* ── Tools section ───────────────────────────────── */
+        .tools-section {
             padding: 6rem 2rem;
             background: var(--surface);
             border-top: 1px solid var(--border);
             border-bottom: 1px solid var(--border);
+        }
+
+        .tools-section .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .tools-section h2 {
+            text-align: center;
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+        }
+
+        .tools-section .subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            margin-bottom: 3rem;
+        }
+
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1rem;
+        }
+
+        .tool-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.25rem;
+            text-align: center;
+            transition: border-color 0.2s;
+        }
+
+        .tool-card:hover { border-color: var(--accent); }
+
+        .tool-card .tool-icon { font-size: 1.8rem; margin-bottom: 0.5rem; }
+
+        .tool-card .tool-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .tool-card .tool-desc {
+            font-size: 0.82rem;
+            color: var(--text-muted);
+        }
+
+        /* ── How It Works ────────────────────────────────── */
+        .how-it-works {
+            padding: 6rem 2rem;
         }
 
         .how-it-works .container {
@@ -341,7 +395,7 @@
             .hero .tagline { font-size: 1.1rem; }
             .hero-icon { font-size: 3.5rem; }
             nav .nav-links a { margin-left: 1rem; font-size: 0.85rem; }
-            .features h2, .how-it-works h2, .cta h2 { font-size: 1.7rem; }
+            .features h2, .how-it-works h2, .cta h2, .tools-section h2 { font-size: 1.7rem; }
         }
     </style>
 </head>
@@ -352,8 +406,9 @@
         <a href="#" class="logo">𓁟 Thoth</a>
         <div class="nav-links">
             <a href="#features">Features</a>
+            <a href="#tools">Tools</a>
             <a href="#how-it-works">How It Works</a>
-            <a href="https://github.com/siddsachar/thoth-v1" target="_blank">GitHub</a>
+            <a href="https://github.com/siddsachar/Thoth" target="_blank">GitHub</a>
         </div>
     </nav>
 
@@ -362,13 +417,13 @@
         <div class="hero-icon">𓁟</div>
         <h1>Meet <span>Thoth</span></h1>
         <p class="tagline">
-            Your private knowledge agent. Upload documents, ask questions, get cited answers — all running locally on your machine.
+            Your private AI assistant. 16 integrated tools, long-term memory, voice control, vision — all running locally on your machine.
         </p>
         <div class="hero-buttons">
-            <a href="https://github.com/siddsachar/thoth-v1/releases/latest/download/ThothSetup_1.1.0.exe" class="btn btn-primary">
+            <a href="https://github.com/siddsachar/Thoth/releases/latest" class="btn btn-primary">
                 ⬇ Download for Windows
             </a>
-            <a href="https://github.com/siddsachar/thoth-v1" class="btn btn-secondary" target="_blank">
+            <a href="https://github.com/siddsachar/Thoth" class="btn btn-secondary" target="_blank">
                 ☆ View on GitHub
             </a>
         </div>
@@ -380,24 +435,29 @@
         <h2>Everything you need, nothing you don't</h2>
         <div class="features-grid">
             <div class="feature-card">
+                <div class="icon">🤖</div>
+                <h3>Autonomous ReAct Agent</h3>
+                <p>The agent reasons about your question, decides which tools to use, chains multiple lookups, and assembles a complete answer — all on its own.</p>
+            </div>
+            <div class="feature-card">
                 <div class="icon">💬</div>
-                <h3>Multi-Turn Conversations</h3>
-                <p>Persistent chat threads with full message history. Auto-naming, thread switching, and seamless resume across sessions.</p>
+                <h3>Persistent Conversations</h3>
+                <p>Chat threads with full history, auto-naming, seamless resume, and export to Markdown, text, or PDF. Attach images, PDFs, and files directly.</p>
             </div>
             <div class="feature-card">
-                <div class="icon">📄</div>
-                <h3>Document Intelligence</h3>
-                <p>Upload PDF, DOCX, and TXT files. Documents are chunked, embedded, and indexed into a local FAISS vector store for instant retrieval.</p>
+                <div class="icon">🧠</div>
+                <h3>Long-Term Memory</h3>
+                <p>Thoth remembers what you tell it — names, birthdays, preferences, projects. Memories persist across conversations and are stored locally.</p>
             </div>
             <div class="feature-card">
-                <div class="icon">🔍</div>
-                <h3>Multi-Source Retrieval</h3>
-                <p>Pulls context from your documents, Wikipedia, Arxiv, and the web. Toggle each source on or off from the settings panel.</p>
+                <div class="icon">👁️</div>
+                <h3>Vision &amp; Screen Capture</h3>
+                <p>Capture images from your webcam or take screenshots and ask questions about them. Uses a local vision model for analysis.</p>
             </div>
             <div class="feature-card">
-                <div class="icon">📝</div>
-                <h3>Source Citations</h3>
-                <p>Every piece of information is cited — documents, Wikipedia articles, Arxiv papers, web links, or the model's own knowledge.</p>
+                <div class="icon">🎤</div>
+                <h3>Voice Input &amp; TTS</h3>
+                <p>Wake word detection, local speech-to-text via Whisper, and neural text-to-speech via Piper. Fully hands-free mode — no cloud APIs.</p>
             </div>
             <div class="feature-card">
                 <div class="icon">🤖</div>
@@ -405,29 +465,109 @@
                 <p>Switch between Llama, Qwen, Gemma, Mistral, DeepSeek, Phi, and more. Models download automatically on demand via Ollama.</p>
             </div>
             <div class="feature-card">
+                <div class="icon">📧</div>
+                <h3>Gmail &amp; Calendar</h3>
+                <p>Search emails, read threads, draft and send messages. View, create, and manage calendar events — all through natural language.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">📁</div>
+                <h3>File Management</h3>
+                <p>Read, write, copy, move, and search files within a sandboxed workspace. Reads PDFs natively. Destructive actions require confirmation.</p>
+            </div>
+            <div class="feature-card">
                 <div class="icon">🔒</div>
                 <h3>Fully Local &amp; Private</h3>
-                <p>All LLM inference runs on your machine. No cloud. No telemetry. Your data never leaves your computer.</p>
+                <p>All LLM inference runs on your machine. No cloud. No telemetry. External APIs are opt-in and individually toggleable.</p>
             </div>
-            <div class="feature-card">
-                <div class="icon">🧠</div>
-                <h3>Contextual Compression</h3>
-                <p>Retrieved documents are compressed and filtered to extract only the content relevant to your query, improving answer quality and reducing noise.</p>
-            </div>
-            <div class="feature-card">
-                <div class="icon">🔄</div>
-                <h3>Smart Query Rewriting</h3>
-                <p>Follow-up questions with pronouns or references are automatically rewritten into standalone queries using conversation history for more accurate retrieval.</p>
-            </div>
-            <div class="feature-card">
-                <div class="icon">⚡</div>
-                <h3>Parallel Retrieval</h3>
-                <p>All enabled retrieval sources are queried simultaneously, reducing total retrieval time to the speed of the slowest source instead of the sum of all sources.</p>
-            </div>
-            <div class="feature-card">
-                <div class="icon">🧹</div>
-                <h3>Context Deduplication</h3>
-                <p>Embedding-based similarity deduplication removes near-duplicate results both within a single query and across conversation turns.</p>
+        </div>
+    </section>
+
+    <!-- Tools -->
+    <section class="tools-section" id="tools">
+        <div class="container">
+            <h2>16 Tools · 38 Operations</h2>
+            <p class="subtitle">The agent autonomously decides which tools to use based on your question</p>
+            <div class="tools-grid">
+                <div class="tool-card">
+                    <div class="tool-icon">🔍</div>
+                    <div class="tool-name">Web Search</div>
+                    <div class="tool-desc">Tavily-powered live search</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">🦆</div>
+                    <div class="tool-name">DuckDuckGo</div>
+                    <div class="tool-desc">Free search, no API key</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">🌐</div>
+                    <div class="tool-name">Wikipedia</div>
+                    <div class="tool-desc">Encyclopedic knowledge</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">📚</div>
+                    <div class="tool-name">Arxiv</div>
+                    <div class="tool-desc">Academic paper search</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">▶️</div>
+                    <div class="tool-name">YouTube</div>
+                    <div class="tool-desc">Search + transcripts</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">🔗</div>
+                    <div class="tool-name">URL Reader</div>
+                    <div class="tool-desc">Extract text from URLs</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">📄</div>
+                    <div class="tool-name">Documents</div>
+                    <div class="tool-desc">FAISS vector search</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">📧</div>
+                    <div class="tool-name">Gmail</div>
+                    <div class="tool-desc">Search, read, draft, send</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">📅</div>
+                    <div class="tool-name">Calendar</div>
+                    <div class="tool-desc">Events, reminders, scheduling</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">📁</div>
+                    <div class="tool-name">Filesystem</div>
+                    <div class="tool-desc">Sandboxed file operations</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">⏰</div>
+                    <div class="tool-name">Timer</div>
+                    <div class="tool-desc">Desktop notifications</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">🧮</div>
+                    <div class="tool-name">Calculator</div>
+                    <div class="tool-desc">Safe math evaluation</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">🔢</div>
+                    <div class="tool-name">Wolfram Alpha</div>
+                    <div class="tool-desc">Advanced computation</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">🌤️</div>
+                    <div class="tool-name">Weather</div>
+                    <div class="tool-desc">Forecasts via Open-Meteo</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">👁️</div>
+                    <div class="tool-name">Vision</div>
+                    <div class="tool-desc">Camera &amp; screen analysis</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">🧠</div>
+                    <div class="tool-name">Memory</div>
+                    <div class="tool-desc">Persistent personal knowledge</div>
+                </div>
             </div>
         </div>
     </section>
@@ -435,27 +575,27 @@
     <!-- How It Works -->
     <section class="how-it-works" id="how-it-works">
         <div class="container">
-            <h2>Up and running in 3 minutes</h2>
+            <h2>Up and running in minutes</h2>
             <div class="steps">
                 <div class="step">
                     <div class="step-number">1</div>
                     <div class="step-content">
                         <h3>Download &amp; install</h3>
-                        <p>Run the installer — it sets up Ollama, Python, and all dependencies automatically. No command line needed.</p>
+                        <p>Run the installer — it sets up Ollama, Python, and all dependencies automatically. Or clone the repo and run from source.</p>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-number">2</div>
                     <div class="step-content">
                         <h3>Launch Thoth</h3>
-                        <p>Open from the Start Menu or Desktop shortcut. The app opens in your browser. On first launch, the default LLM model downloads automatically.</p>
+                        <p>Open from the Start Menu, Desktop, or system tray. The app opens in your browser. The default brain model downloads automatically on first launch.</p>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-number">3</div>
                     <div class="step-content">
                         <h3>Ask anything</h3>
-                        <p>Start a conversation, upload your documents, and get answers with full source citations. Configure retrieval sources and API keys from the Settings panel.</p>
+                        <p>The agent will figure out which tools to use. Search the web, check your email, analyze your screen, set a timer — just ask in natural language.</p>
                     </div>
                 </div>
             </div>
@@ -466,7 +606,7 @@
     <section class="privacy">
         <h2>🔒 Privacy by design</h2>
         <p>
-            Thoth runs entirely on your machine. Your documents, conversations, and API keys are stored locally and never sent to any cloud service. External calls are only made to the retrieval sources you explicitly enable.
+            Thoth runs entirely on your machine. Your documents, conversations, memories, and API keys are stored locally and never sent to any cloud service. External calls are only made to the services you explicitly enable.
         </p>
         <div class="privacy-badges">
             <div class="privacy-badge">
@@ -489,10 +629,10 @@
         <h2>Ready to try Thoth?</h2>
         <p>Free, open source, and yours to keep.</p>
         <div class="hero-buttons">
-            <a href="https://github.com/siddsachar/thoth-v1/releases/latest/download/ThothSetup_1.1.0.exe" class="btn btn-primary">
+            <a href="https://github.com/siddsachar/Thoth/releases/latest" class="btn btn-primary">
                 ⬇ Download for Windows
             </a>
-            <a href="https://github.com/siddsachar/thoth-v1" class="btn btn-secondary" target="_blank">
+            <a href="https://github.com/siddsachar/Thoth" class="btn btn-secondary" target="_blank">
                 ☆ Star on GitHub
             </a>
         </div>
@@ -502,8 +642,8 @@
     <footer>
         <p>
             𓁟 Thoth · MIT License ·
-            <a href="https://github.com/siddsachar/thoth-v1" target="_blank">GitHub</a> ·
-            Built with Streamlit, LangChain, LangGraph, Ollama &amp; FAISS
+            <a href="https://github.com/siddsachar/Thoth" target="_blank">GitHub</a> ·
+            Built with Streamlit, LangGraph, LangChain, Ollama, FAISS &amp; Piper TTS
         </p>
     </footer>
 

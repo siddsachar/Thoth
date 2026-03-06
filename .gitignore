@@ -11,5 +11,8 @@ api_keys.json
 installer/build/
 dist/
 
+# Vector store (user data)
+vector_store/
+
 # Backups
 *.bak*    

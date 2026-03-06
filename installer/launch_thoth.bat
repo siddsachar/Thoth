@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================================
-:: Thoth Launcher – starts Ollama (if needed) and the Streamlit app
+:: Thoth Launcher – starts Ollama (if needed) and the system tray app
 :: ============================================================================
 title Thoth - Starting...
 
@@ -21,10 +21,6 @@ if %ERRORLEVEL% NEQ 0 (
     echo Ollama is already running.
 )
 
-:: ── Launch Streamlit ────────────────────────────────────────────────────────
+:: ── Launch Thoth via system tray launcher ───────────────────────────────────
 cd /d "%APP_DIR%"
-
-:: Open browser after a short delay (Streamlit won't auto-open from a hidden window)
-start "" cmd /c "timeout /t 4 /nobreak >NUL & start http://localhost:8501"
-
-"%PYTHON%" -m streamlit run app.py --server.headless true --browser.gatherUsageStats false
+"%PYTHON%" launcher.py

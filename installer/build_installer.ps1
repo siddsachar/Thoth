@@ -1,6 +1,9 @@
 # =============================================================================
 # build_installer.ps1
-# Downloads dependencies and compiles the Inno Setup installer for Thoth.
+# Downloads embedded Python + get-pip.py, then compiles the Inno Setup installer.
+#
+# This is the LIGHT build — Ollama and pip packages are downloaded at install
+# time by install_deps.bat, keeping the .exe under ~20 MB.
 #
 # Usage:  .\installer\build_installer.ps1
 # =============================================================================
@@ -14,7 +17,7 @@ $ErrorActionPreference = "Stop"
 $BuildDir = Join-Path $PSScriptRoot "build"
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host " Thoth Installer Builder"                      -ForegroundColor Cyan
+Write-Host " Thoth v2.0.0 Installer Builder (Light)"     -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -31,11 +34,11 @@ if (!$SkipDownloads) {
     $PythonDir = Join-Path $BuildDir "python"
 
     if (!(Test-Path $PythonZipPath)) {
-        Write-Host "[1/3] Downloading Python $PythonVersion embeddable package..." -ForegroundColor Yellow
+        Write-Host "[1/2] Downloading Python $PythonVersion embeddable package..." -ForegroundColor Yellow
         Invoke-WebRequest -Uri $PythonUrl -OutFile $PythonZipPath -UseBasicParsing
         Write-Host "      Downloaded: $PythonZip" -ForegroundColor Green
     } else {
-        Write-Host "[1/3] Python zip already exists, skipping download." -ForegroundColor DarkGray
+        Write-Host "[1/2] Python zip already exists, skipping download." -ForegroundColor DarkGray
     }
 
     # Extract Python
@@ -49,35 +52,23 @@ if (!$SkipDownloads) {
     # ── 2. Download get-pip.py ───────────────────────────────────────────────
     $GetPipPath = Join-Path $BuildDir "get-pip.py"
     if (!(Test-Path $GetPipPath)) {
-        Write-Host "[2/3] Downloading get-pip.py..." -ForegroundColor Yellow
+        Write-Host "[2/2] Downloading get-pip.py..." -ForegroundColor Yellow
         Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $GetPipPath -UseBasicParsing
         Write-Host "      Downloaded: get-pip.py" -ForegroundColor Green
     } else {
-        Write-Host "[2/3] get-pip.py already exists, skipping download." -ForegroundColor DarkGray
-    }
-
-    # ── 3. Download Ollama Installer ─────────────────────────────────────────
-    $OllamaPath = Join-Path $BuildDir "OllamaSetup.exe"
-    if (!(Test-Path $OllamaPath)) {
-        Write-Host "[3/3] Downloading Ollama installer..." -ForegroundColor Yellow
-        # Ollama GitHub releases – get the latest Windows installer
-        $OllamaUrl = "https://ollama.com/download/OllamaSetup.exe"
-        Invoke-WebRequest -Uri $OllamaUrl -OutFile $OllamaPath -UseBasicParsing
-        Write-Host "      Downloaded: OllamaSetup.exe" -ForegroundColor Green
-    } else {
-        Write-Host "[3/3] OllamaSetup.exe already exists, skipping download." -ForegroundColor DarkGray
+        Write-Host "[2/2] get-pip.py already exists, skipping download." -ForegroundColor DarkGray
     }
 } else {
     Write-Host "Skipping downloads (using existing build/ contents)." -ForegroundColor DarkGray
 }
 
-# ── 4. Create dist directory ────────────────────────────────────────────────
+# ── 3. Create dist directory ────────────────────────────────────────────────
 $DistDir = Join-Path (Join-Path $PSScriptRoot "..") "dist"
 if (!(Test-Path $DistDir)) {
     New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
 }
 
-# ── 5. Compile with Inno Setup ──────────────────────────────────────────────
+# ── 4. Compile with Inno Setup ──────────────────────────────────────────────
 Write-Host ""
 Write-Host "Compiling installer with Inno Setup..." -ForegroundColor Yellow
 
@@ -110,7 +101,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host ""
     Write-Host "============================================" -ForegroundColor Green
     Write-Host " Installer built successfully!"               -ForegroundColor Green
-    Write-Host " Output: dist\ThothSetup_1.1.0.exe"           -ForegroundColor Green
+    Write-Host " Output: dist\ThothSetup_2.0.0.exe"           -ForegroundColor Green
     Write-Host "============================================" -ForegroundColor Green
 } else {
     Write-Host ""

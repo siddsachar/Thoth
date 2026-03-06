@@ -102,6 +102,10 @@ def load_and_vectorize_document(file_path, skip_if_processed=True, display_name=
             print(f"No valid text content found in: {file_path}")
             return
         chunks = text_splitter.split_documents(documents)
+        # Replace temp file paths with the actual display name in metadata
+        if display_name:
+            for chunk in chunks:
+                chunk.metadata["source"] = display_name
         vector_store.add_documents(chunks)
         vector_store.save_local(str(VECTOR_STORE_DIR))
         # Mark as processed using the display name

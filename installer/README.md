@@ -1,38 +1,28 @@
 # Building the Thoth Windows Installer
 
-This guide explains how to build a distributable Windows installer for Thoth.
+This guide explains how to build a distributable Windows installer for Thoth v2.0.
 
 ## Architecture
 
-The installer bundles:
+The installer is **lightweight** (~20 MB) — it bundles only the embedded Python runtime and app source code. Ollama and all Python packages are downloaded at install time.
 
-| Component | Purpose |
-|-----------|---------|
-| **Python 3.13 (embeddable)** | Self-contained Python runtime (no system Python needed) |
-| **Ollama** | Local LLM inference engine (installed silently) |
-| **Thoth source + dependencies** | The Streamlit app and all pip packages |
-
-At install time, the installer:
-1. Extracts the embedded Python and app files
-2. Installs Ollama silently
-3. Runs `get-pip.py` and `pip install -r requirements.txt` to set up packages
-4. Creates Start Menu and (optionally) Desktop shortcuts
-
-The launcher script starts Ollama (if not already running) and launches the Streamlit app.
+| Bundled in .exe | Downloaded at install time |
+|----------------|---------------------------|
+| Python 3.13 embeddable (~15 MB) | Ollama (~120 MB) |
+| App source code + tools (~200 KB) | Python packages via pip (~2 GB) |
+| Wake word ONNX models (~5 MB) | |
+| get-pip.py (~2.5 MB) | |
 
 ## Prerequisites
 
-1. **Inno Setup 6** – free installer compiler  
+1. **Inno Setup 6** — free installer compiler  
    Download: https://jrsoftware.org/isdl.php  
-   Make sure `ISCC.exe` is installed (default: `C:\Program Files (x86)\Inno Setup 6\`)
+   Ensure `ISCC.exe` is installed (default: `C:\Program Files (x86)\Inno Setup 6\`)
 
-2. **Internet connection** – the build script downloads:
-   - Python embeddable package (~25 MB)
-   - `get-pip.py` (~2.5 MB)
-   - Ollama installer (~100 MB)
+2. **Internet connection** — the build script downloads Python embeddable + get-pip.py
 
-3. **(Optional)** An icon file at `thoth.ico` in the project root.  
-   If you don't have one, remove or comment out the `SetupIconFile` and `IconFilename` lines in `thoth_setup.iss`.
+3. **Icon file** — `thoth.ico` in the project root  
+   If you don't have one, remove the `SetupIconFile` and `IconFilename` lines in `thoth_setup.iss`.
 
 ## Build Steps
 
@@ -42,12 +32,9 @@ The launcher script starts Ollama (if not already running) and launches the Stre
 ```
 
 This will:
-1. Download Python 3.13 embeddable package
-2. Download `get-pip.py`
-3. Download the Ollama installer
-4. Compile everything into a single installer EXE
-
-The output is placed in `dist\ThothSetup_1.1.0.exe`.
+1. Download Python 3.13 embeddable package (~15 MB)
+2. Download `get-pip.py` (~2.5 MB)
+3. Compile everything into `dist\ThothSetup_2.0.0.exe`
 
 ### Options
 
@@ -59,52 +46,88 @@ The output is placed in `dist\ThothSetup_1.1.0.exe`.
 .\installer\build_installer.ps1 -SkipDownloads
 ```
 
-## What the Installer Installs
+## What Gets Installed
 
 On the end user's machine:
 
 ```
-C:\Program Files\Thoth\            # Installation directory (read-only)
-├── launch_thoth.bat                # Main launcher
+C:\Program Files\Thoth\            # Installation directory
+├── launch_thoth.bat                # Main launcher (starts Ollama + Thoth)
 ├── launch_thoth.vbs                # Hidden-console wrapper (shortcuts point here)
-├── get-pip.py                      # Deleted after install
-├── install_deps.bat                # Deleted after install
 ├── python\                         # Embedded Python runtime
 │   ├── python.exe
 │   ├── python313.dll
 │   ├── Lib\site-packages\          # All pip packages installed here
 │   └── ...
 └── app\                            # Application source code
-    ├── app.py
-    ├── models.py
-    ├── rag.py
-    ├── documents.py
-    ├── threads.py
-    ├── api_keys.py
-    └── requirements.txt
+    ├── app.py                      # Streamlit frontend
+    ├── agent.py                    # ReAct agent
+    ├── memory.py                   # Long-term memory DB
+    ├── models.py                   # Ollama model management
+    ├── documents.py                # Document ingestion
+    ├── threads.py                  # Thread/conversation persistence
+    ├── api_keys.py                 # API key management
+    ├── voice.py                    # Speech-to-text pipeline
+    ├── tts.py                      # Text-to-speech (Piper TTS)
+    ├── vision.py                   # Camera/screen capture
+    ├── launcher.py                 # System tray launcher
+    ├── requirements.txt
+    ├── thoth.ico
+    ├── tools/                      # 16 tool modules
+    │   ├── __init__.py
+    │   ├── base.py
+    │   ├── registry.py
+    │   ├── web_search_tool.py
+    │   ├── ...
+    │   └── youtube_tool.py
+    └── wake_models/                # Wake word ONNX models
+        ├── hey_jarvis_v0.1.onnx
+        ├── hey_mycroft_v0.1.onnx
+        └── ...
 
 %USERPROFILE%\.thoth\               # User data directory (auto-created at runtime)
-├── api_keys.json                   # API keys (configured via Settings UI)
-├── processed_files.json            # Tracks indexed documents
-├── threads.db                      # Conversation thread metadata
-└── vector_store\                   # FAISS index files
+├── threads.db                      # Conversation history & checkpoints
+├── memory.db                       # Long-term memories
+├── api_keys.json                   # API keys
+├── tools_config.json               # Tool enable/disable state
+├── model_settings.json             # Selected model & context size
+├── processed_files.json            # Tracked indexed documents
+├── status.json                     # Voice state for system tray
+├── timers.sqlite                   # Timer jobs
+├── gmail/                          # Gmail OAuth tokens
+├── calendar/                       # Calendar OAuth tokens
+└── piper/                          # Piper TTS engine & voices
 ```
 
 Ollama is installed system-wide via its official installer.
 
-> **Note:** User data is stored outside `Program Files` to avoid write-permission issues. The location can be overridden by setting the `THOTH_DATA_DIR` environment variable.
+> **Note:** User data is stored outside `Program Files` in `~/.thoth/` to avoid write-permission issues. Override the location by setting the `THOTH_DATA_DIR` environment variable.
+
+## Install Flow
+
+The Inno Setup installer runs these steps:
+
+1. **Extract files** — embedded Python, app source, wake models, scripts
+2. **Run `install_deps.bat`** which:
+   - Patches the Python `._pth` file to enable pip and site-packages
+   - Installs pip via `get-pip.py`
+   - Installs setuptools + wheel
+   - Downloads and silently installs Ollama (skipped if already installed)
+   - Runs `pip install -r requirements.txt`
+3. **Create shortcuts** — Start Menu and optionally Desktop
+4. **Optionally launch Thoth**
 
 ## End-User Experience
 
-1. Run `ThothSetup_1.1.0.exe`
-2. Follow the wizard (installs Ollama + Python packages automatically)
+1. Run `ThothSetup_2.0.0.exe`
+2. Follow the wizard — dependencies download and install automatically (5-15 min)
 3. Launch Thoth from Start Menu or Desktop shortcut
-4. The app opens in the default browser at `http://localhost:8501`
+4. The system tray icon appears; the app opens at `http://localhost:8501`
+5. First launch downloads the default brain model (`qwen3:14b`, ~9 GB one-time)
 
 ## Notes
 
-- **CPU-only PyTorch**: The `requirements.txt` uses CPU-only torch to keep the installer smaller. Users with NVIDIA GPUs can manually upgrade to CUDA torch after installation.
-- **First launch**: The first run may take longer as the default LLM model (`qwen3:8b`) is downloaded by Ollama (~5 GB).
-- **API Keys**: Users configure API keys (e.g. Tavily) from the in-app **⚙️ Settings** panel. Keys are saved to `%USERPROFILE%\.thoth\api_keys.json`. No keys are hardcoded or bundled in the installer.
-- **User data**: All runtime data (threads, vector store, API keys, processed files list) is stored in `%USERPROFILE%\.thoth\`, keeping the installation directory read-only.
-- **Uninstall**: The installer registers with Windows Add/Remove Programs for clean uninstallation. The uninstaller removes the `.thoth` data directory as well.
+- **CPU-only PyTorch**: `requirements.txt` uses CPU-only torch. Users with NVIDIA GPUs can upgrade to CUDA torch after install.
+- **Ollama detection**: `install_deps.bat` checks if Ollama is already on PATH and skips the download if so.
+- **Launcher**: Uses `launcher.py` (system tray icon) instead of running Streamlit directly. The tray icon shows voice state and provides graceful shutdown.
+- **Uninstall**: Registered with Windows Add/Remove Programs. The uninstaller removes the installation directory but does **not** delete user data in `~/.thoth/` — users can remove it manually if desired.

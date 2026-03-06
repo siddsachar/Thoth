@@ -29,6 +29,33 @@ torchvision
 tavily-python
 wikipedia
 arxiv>=2.4.0
+duckduckgo-search
+ddgs
+
+# ── Gmail ────────────────────────────────────────────────────────────────────
+langchain-google-community[gmail]
 
 # ── Document Loaders ────────────────────────────────────────────────────────
 pypdf>=6.7.0
+
+# ── Export ───────────────────────────────────────────────────────────────────
+fpdf2
+
+# ── Calculator ───────────────────────────────────────────────────────────────
+simpleeval
+
+# ── Wolfram Alpha ───────────────────────────────────────────────────────────
+wolframalpha
+
+# ── Vision (Camera + Screenshot) ─────────────────────────────────────────────────
+opencv-python
+mss
+
+# ── Voice Input (STT) ───────────────────────────────────────────────────────
+sounddevice
+faster-whisper
+openwakeword
+
+# ── System Tray / Launcher ──────────────────────────────────────────────────
+pystray
+Pillow

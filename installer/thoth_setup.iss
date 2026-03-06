@@ -1,20 +1,19 @@
 ; =============================================================================
-; Thoth – Inno Setup Script
-; Creates a Windows installer that bundles embedded Python, installs Ollama,
-; installs Python dependencies, and creates launcher shortcuts.
+; Thoth v2.0.0 – Inno Setup Script
+; Lightweight installer: bundles embedded Python + app source code.
+; Downloads Ollama and Python packages at install time.
 ; =============================================================================
 ;
 ; Prerequisites (placed in installer\build\ by build_installer.ps1):
 ;   build\python\          – Extracted Python embeddable package
 ;   build\get-pip.py       – pip bootstrap script
-;   build\OllamaSetup.exe  – Ollama Windows installer
 ;
 ; Compile with:  iscc installer\thoth_setup.iss
 
 #define MyAppName      "Thoth"
-#define MyAppVersion   "1.1.0"
+#define MyAppVersion   "2.0.0"
 #define MyAppPublisher "Thoth"
-#define MyAppURL       "https://github.com/your-repo/thoth"
+#define MyAppURL       "https://github.com/siddsachar/Thoth"
 #define MyAppExeName   "launch_thoth.vbs"
 
 [Setup]
@@ -39,29 +38,53 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 ; ── App source code ──────────────────────────────────────────────────────────
 Source: "..\app.py";                   DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\agent.py";                 DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\memory.py";                DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\models.py";                DestDir: "{app}\app"; Flags: ignoreversion
-Source: "..\rag.py";                   DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\documents.py";             DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\threads.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\api_keys.py";              DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\voice.py";                 DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\tts.py";                   DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\vision.py";                DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\launcher.py";              DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\requirements.txt";         DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\thoth.ico";                DestDir: "{app}\app"; Flags: ignoreversion
 
-; ── Vector store (if it exists) ──────────────────────────────────────────────
-Source: "..\vector_store\*";           DestDir: "{app}\app\vector_store"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; ── Tools package ────────────────────────────────────────────────────────────
+Source: "..\tools\__init__.py";        DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\base.py";            DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\registry.py";        DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\arxiv_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\calculator_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\calendar_tool.py";   DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\documents_tool.py";  DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\duckduckgo_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\filesystem_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\gmail_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\memory_tool.py";     DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\timer_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\url_reader_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\vision_tool.py";     DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\weather_tool.py";    DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\web_search_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\wikipedia_tool.py";  DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\wolfram_tool.py";    DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\youtube_tool.py";    DestDir: "{app}\app\tools"; Flags: ignoreversion
+
+; ── Wake word models ─────────────────────────────────────────────────────────
+Source: "..\wake_models\*.onnx";       DestDir: "{app}\app\wake_models"; Flags: ignoreversion
 
 ; ── Embedded Python ──────────────────────────────────────────────────────────
 Source: "build\python\*";              DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; ── get-pip.py ───────────────────────────────────────────────────────────────
 Source: "build\get-pip.py";            DestDir: "{app}"; Flags: ignoreversion
-
-; ── Ollama installer ─────────────────────────────────────────────────────────
-Source: "build\OllamaSetup.exe";       DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
 
 ; ── Launcher & helper scripts ────────────────────────────────────────────────
 Source: "launch_thoth.bat";            DestDir: "{app}"; Flags: ignoreversion
@@ -74,17 +97,9 @@ Name: "{group}\Uninstall {#MyAppName}";           Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}";               Filename: "wscript.exe"; Parameters: """{app}\{#MyAppExeName}"""; IconFilename: "{app}\app\thoth.ico"; Tasks: desktopicon
 
 [Run]
-; ── Install Ollama (silent) ──────────────────────────────────────────────────
-Filename: "{tmp}\OllamaSetup.exe";  Parameters: "/VERYSILENT /NORESTART"; \
-    StatusMsg: "Installing Ollama..."; Flags: waituntilterminated
-
-; ── Kill Ollama UI that auto-launches after install ─────────────────────────
-Filename: "taskkill"; Parameters: "/F /IM ollama app.exe"; \
-    StatusMsg: "Closing Ollama UI..."; Flags: waituntilterminated runhidden; Check: not WizardSilent
-
-; ── Install Python packages ──────────────────────────────────────────────────
+; ── Install Python packages + download & install Ollama ──────────────────────
 Filename: "{app}\install_deps.bat";  Parameters: """{app}"""; \
-    StatusMsg: "Installing Python packages (this may take a few minutes)..."; \
+    StatusMsg: "Setting up Thoth (downloading dependencies — this may take several minutes)..."; \
     Flags: waituntilterminated
 
 ; ── Launch app after install (optional) ──────────────────────────────────────
@@ -94,5 +109,4 @@ Filename: "wscript.exe"; Parameters: """{app}\{#MyAppExeName}"""; Description: "
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\app\__pycache__"
-; User data stored in %USERPROFILE%\.thoth
-Type: filesandordirs; Name: "{%USERPROFILE}\.thoth"
+Type: filesandordirs; Name: "{app}\app\tools\__pycache__"

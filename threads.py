@@ -50,6 +50,7 @@ def _delete_thread(thread_id: str):
     conn.commit()
     conn.close()
 
+
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 checkpointer = SqliteSaver(conn)
 
