@@ -11,7 +11,6 @@ Pipeline:
 from __future__ import annotations
 
 import io
-import json as _json
 import logging
 import os
 import struct
@@ -44,6 +43,13 @@ _WAKE_THRESHOLD = 0.5       # prediction score threshold (0–1)
 
 # Whisper
 _DEFAULT_WHISPER_SIZE = "base"
+
+# Follow-up mode (listen without wake word after TTS finishes)
+_FOLLOW_UP_TIMEOUT_S = 8.0  # seconds to wait for speech before returning to sleeping
+_FOLLOW_UP_GRACE_S = 0.6    # seconds to ignore audio after entering follow-up (speaker drain)
+
+# Browser heartbeat — auto-pause mic when browser tab is closed
+_HEARTBEAT_STALE_S = 5.0    # seconds without heartbeat before auto-pausing
 
 # Data directory
 _DATA_DIR = Path.home() / ".thoth"
@@ -100,7 +106,6 @@ def _play_chime() -> None:
             ).start()
     except Exception:
         pass  # never let chime failure break voice
-_STATUS_FILE = _DATA_DIR / "status.json"
 
 # Project-local wake-word models (committed to repo / shipped with installer)
 _WAKE_MODELS_DIR = Path(__file__).resolve().parent / "wake_models"
@@ -140,10 +145,30 @@ def _save_voice_settings(settings: dict) -> None:
 # ── Voice Service ────────────────────────────────────────────────────────────
 
 class VoiceService:
-    """Manages the full voice-input pipeline in a background thread."""
+    """Manages the full voice-input pipeline in a background thread.
+
+    State machine::
+
+        stopped ─► sleeping (wake-word listening)
+                      │
+                      ▼
+                  listening (VAD collecting speech)
+                      │
+                      ▼
+                  transcribing (Whisper)
+                      │
+                      ├─► sleeping  (text-only, no TTS)
+                      └─► muted    (TTS is playing — mic paused)
+                             │
+                             ▼
+                         follow_up  (listen without wake word for 8 s)
+                             │
+                             ├─► listening  (speech detected)
+                             └─► sleeping   (timeout — require wake word)
+    """
 
     # Possible states
-    State = Literal["stopped", "sleeping", "listening", "transcribing"]
+    State = Literal["stopped", "sleeping", "listening", "transcribing", "muted", "follow_up"]
 
     def __init__(self) -> None:
         self._state: VoiceService.State = "stopped"
@@ -163,6 +188,14 @@ class VoiceService:
         self._oww_model = None
         self._whisper_model = None
 
+        # Mic gating — TTS sets these via mute() / enter_follow_up()
+        self._mute_event = threading.Event()      # set = mic should be muted
+        self._follow_up_event = threading.Event()  # set = enter follow-up mode
+
+        # Browser heartbeat
+        self._last_heartbeat: float = time.monotonic()
+        self._heartbeat_paused: bool = False
+
         # Settings
         settings = _load_voice_settings()
         self._whisper_size: str = settings.get("whisper_model", _DEFAULT_WHISPER_SIZE)
@@ -173,23 +206,9 @@ class VoiceService:
 
     # ── Status file (IPC with launcher tray) ────────────────────────
 
-    def _write_status(self) -> None:
-        """Write current state to ~/.thoth/status.json for the tray icon."""
-        try:
-            _DATA_DIR.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "state": self._state,
-                "voice_enabled": self._state != "stopped",
-                "timestamp": time.time(),
-            }
-            _STATUS_FILE.write_text(_json.dumps(payload))
-        except Exception:
-            pass  # best-effort
-
     def _set_state(self, new_state: "VoiceService.State") -> None:
-        """Change state and write the status file."""
+        """Change state atomically."""
         self._state = new_state
-        self._write_status()
 
     @property
     def state(self) -> State:
@@ -198,6 +217,46 @@ class VoiceService:
     @property
     def is_running(self) -> bool:
         return self._state != "stopped"
+
+    # ── Mic gating API (called by TTSService) ────────────────────────
+
+    def mute(self) -> None:
+        """Pause mic processing — called when TTS starts speaking."""
+        self._mute_event.set()
+        self._follow_up_event.clear()
+        logger.debug("Voice muted (TTS speaking)")
+
+    def enter_follow_up(self) -> None:
+        """Resume mic in follow-up mode — called when TTS finishes.
+
+        Do NOT clear ``_mute_event`` here.  The pipeline loop detects
+        ``_follow_up_event`` while still inside the muted block and
+        clears both events atomically during the transition.  Clearing
+        ``_mute_event`` early causes a race where the pipeline exits
+        the muted block before seeing the follow-up signal, leaving the
+        state stuck on ``muted`` with no handler matching.
+        """
+        self._follow_up_event.set()
+        logger.debug("Entering follow-up mode")
+
+    # ── Browser heartbeat ────────────────────────────────────────────
+
+    def update_heartbeat(self) -> None:
+        """Called by the Streamlit poll fragment each tick."""
+        self._last_heartbeat = time.monotonic()
+        if self._heartbeat_paused:
+            self._heartbeat_paused = False
+            logger.info("Browser reconnected — resuming voice")
+            self.status_queue.put("Browser reconnected")
+
+    def _check_heartbeat(self) -> bool:
+        """Return True if the browser heartbeat is fresh (tab is open)."""
+        stale = (time.monotonic() - self._last_heartbeat) > _HEARTBEAT_STALE_S
+        if stale and not self._heartbeat_paused:
+            self._heartbeat_paused = True
+            logger.info("Browser heartbeat stale — pausing voice")
+            self.status_queue.put("Browser tab closed — mic paused")
+        return not stale
 
     @property
     def whisper_size(self) -> str:
@@ -273,7 +332,15 @@ class VoiceService:
     # ── Core pipeline (runs in background thread) ────────────────────────
 
     def _run_pipeline(self) -> None:
-        """Main loop: listen for wake word → collect speech → transcribe."""
+        """Main loop with mic gating and follow-up mode.
+
+        States handled:
+            sleeping     – listen for wake word via openwakeword
+            listening    – VAD collecting speech chunks
+            transcribing – Whisper processing
+            muted        – TTS is playing, mic processing paused
+            follow_up    – listen for speech without wake word (time-limited)
+        """
         import sounddevice as sd
 
         try:
@@ -313,14 +380,81 @@ class VoiceService:
             self._state = "stopped"
             return
 
+        # Variables used across states
+        speech_chunks: list[np.ndarray] = []
+        silence_counter = 0
+        speech_start = 0.0
+        follow_up_start = 0.0
+        follow_up_silence = 0
+
         try:
             while not self._stop_event.is_set():
+
+                # ── Browser heartbeat check ──────────────────────────
+                if not self._check_heartbeat():
+                    # Browser tab is closed — pause processing
+                    time.sleep(0.1)
+                    continue
+
+                # ── Muted state (TTS speaking) ───────────────────────
+                if self._mute_event.is_set():
+                    if self._state != "muted":
+                        self._set_state("muted")
+                        self.status_queue.put("🔇 Speaking…")
+                    # Check if TTS finished and signalled follow-up
+                    if self._follow_up_event.is_set():
+                        self._follow_up_event.clear()
+                        self._mute_event.clear()
+                        self._set_state("follow_up")
+                        follow_up_start = time.monotonic()
+                        follow_up_silence = 0
+                        pre_buffer.clear()
+                        _play_chime()
+                        self.status_queue.put("👂 Listening (no wake word needed)…")
+                        logger.info("Entered follow-up mode")
+                    else:
+                        time.sleep(0.05)  # don't busy-loop while muted
+                    continue
+
                 # Read a chunk from the mic
                 data, overflowed = stream.read(CHUNK_SAMPLES)
                 if overflowed:
                     logger.debug("Audio buffer overflow")
 
                 chunk = data[:, 0].copy()  # shape (1280,) int16
+
+                # ── Follow-up mode (listen without wake word) ────────
+                if self._state == "follow_up":
+                    elapsed_fu = time.monotonic() - follow_up_start
+
+                    # Grace period — discard audio to let speaker buffer drain
+                    if elapsed_fu < _FOLLOW_UP_GRACE_S:
+                        continue
+
+                    energy = np.abs(chunk.astype(np.float32)).mean()
+
+                    if energy >= 300:
+                        # Speech detected — transition to listening
+                        logger.info("Speech detected in follow-up mode")
+                        self.status_queue.put("Listening…")
+                        self._set_state("listening")
+                        speech_chunks = list(pre_buffer) + [chunk]
+                        silence_counter = 0
+                        speech_start = time.monotonic()
+                        continue
+                    else:
+                        follow_up_silence += 1
+
+                    # Timeout — back to wake-word mode
+                    if elapsed_fu >= _FOLLOW_UP_TIMEOUT_S:
+                        logger.info("Follow-up timeout — returning to sleeping")
+                        self.status_queue.put("Say the wake word…")
+                        self._set_state("sleeping")
+                        pre_buffer.clear()
+                    else:
+                        pre_buffer.append(chunk)
+                    continue
+
                 pre_buffer.append(chunk)
 
                 # ── Phase 1: Wake word detection ─────────────────────
@@ -338,7 +472,7 @@ class VoiceService:
                             self._oww_model.reset()
 
                             # Start collecting speech — include pre-buffer
-                            speech_chunks: list[np.ndarray] = list(pre_buffer)
+                            speech_chunks = list(pre_buffer)
                             silence_counter = 0
                             speech_start = time.monotonic()
                             break
@@ -393,7 +527,8 @@ class VoiceService:
                         else:
                             self.status_queue.put("Couldn't understand audio")
 
-                        # Back to sleeping
+                        # Back to sleeping (TTS will transition to
+                        # muted → follow_up if it speaks the response)
                         self.status_queue.put("Say the wake word…")
                         self._set_state("sleeping")
                         pre_buffer.clear()
@@ -416,6 +551,10 @@ class VoiceService:
             if self._thread is not None and self._thread.is_alive():
                 return  # already running
             self._stop_event.clear()
+            self._mute_event.clear()
+            self._follow_up_event.clear()
+            self._last_heartbeat = time.monotonic()
+            self._heartbeat_paused = False
             self._set_state("sleeping")
             self._thread = threading.Thread(
                 target=self._run_pipeline,

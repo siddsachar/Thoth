@@ -1,10 +1,9 @@
 """Thoth Launcher — system-tray process that manages the Streamlit server.
 
 Responsibilities:
-    • System-tray icon with status colors (green / yellow / grey)
+    • System-tray icon (green = running, grey = stopped)
     • Launch  ``streamlit run app.py``  as a managed subprocess
     • Open the browser to http://localhost:8501
-    • Poll ~/.thoth/status.json to update the tray icon / tooltip
     • Detect an already-running instance and just open the browser
     • Graceful shutdown on Quit
 """
@@ -12,7 +11,6 @@ Responsibilities:
 from __future__ import annotations
 
 import atexit
-import json
 import logging
 import os
 import signal
@@ -34,11 +32,8 @@ logger = logging.getLogger(__name__)
 # ── Constants ────────────────────────────────────────────────────────────────
 _PORT = 8501
 _URL = f"http://localhost:{_PORT}"
-_STATUS_FILE = Path.home() / ".thoth" / "status.json"
-_POLL_INTERVAL = 1.5          # seconds between status-file reads
 _STARTUP_GRACE = 6            # seconds to wait for Streamlit before opening browser
 _ICON_SIZE = 64               # px for generated tray icons
-_STALE_THRESHOLD = 10         # seconds before status is considered stale
 
 
 # ── Icon generation (Pillow, no external files) ──────────────────────────────
@@ -62,33 +57,14 @@ _icons: dict[str, _PILImage.Image] = {}
 
 
 def _get_icon(state: str) -> _PILImage.Image:
-    """Return the icon for a voice state string."""
+    """Return the icon for a launcher state string."""
     colour_map = {
-        "listening":    "#22c55e",   # green
-        "sleeping":     "#eab308",   # yellow
-        "transcribing": "#eab308",   # yellow
+        "running":  "#22c55e",   # green
     }
     colour = colour_map.get(state, "#6b7280")  # grey fallback
     if colour not in _icons:
         _icons[colour] = _make_icon(colour)
     return _icons[colour]
-
-
-# ── Status file helpers ──────────────────────────────────────────────────────
-
-def _read_status() -> dict:
-    """Read the status file, return {} on failure."""
-    try:
-        if _STATUS_FILE.exists():
-            data = json.loads(_STATUS_FILE.read_text())
-            # Check staleness
-            ts = data.get("timestamp", 0)
-            if time.time() - ts > _STALE_THRESHOLD:
-                return {}
-            return data
-    except Exception:
-        pass
-    return {}
 
 
 # ── Port check ───────────────────────────────────────────────────────────────
@@ -184,32 +160,23 @@ class ThothTray:
         self._stop_event.set()
         if self._owns_server:
             self._server.stop()
-        # Clean up status file
-        try:
-            _STATUS_FILE.unlink(missing_ok=True)
-        except Exception:
-            pass
         self._icon.stop()
 
     # ── Background poller ────────────────────────────────────────────────
 
     def _poll_loop(self) -> None:
-        """Periodically read status.json and update the tray icon."""
+        """Periodically check if Streamlit is still alive and update icon."""
+        _POLL_INTERVAL = 3.0  # seconds
         while not self._stop_event.is_set():
-            status = _read_status()
-            voice_state = status.get("state", "stopped")
-            voice_enabled = status.get("voice_enabled", False)
-
-            # Update icon
-            self._icon.icon = _get_icon(voice_state)
-
-            # Update tooltip
-            state_label = {
-                "sleeping":     "💤 Waiting for wake word",
-                "listening":    "🎙️ Listening…",
-                "transcribing": "⏳ Transcribing…",
-            }.get(voice_state, "Voice off" if not voice_enabled else "Stopped")
-            self._icon.title = f"Thoth — {state_label}"
+            if self._owns_server and self._server.is_alive:
+                self._icon.icon = _get_icon("running")
+                self._icon.title = "Thoth — running"
+            elif not self._owns_server and _is_port_in_use(_PORT):
+                self._icon.icon = _get_icon("running")
+                self._icon.title = "Thoth — running"
+            else:
+                self._icon.icon = _get_icon("stopped")
+                self._icon.title = "Thoth — stopped"
 
             self._stop_event.wait(_POLL_INTERVAL)
 

@@ -17,6 +17,7 @@ The original Thoth (v1.x) used a custom LangGraph `StateGraph` with three nodes 
 Key changes:
 - **`rag.py` removed** — the custom RAG state machine is gone
 - **`agent.py` added** — new ReAct agent with system prompt, pre-model message trimming, streaming event generator, and interrupt mechanism
+- **Smart context management** — pre-model hook trims history to 80% of context window; oversized tool outputs (e.g. multiple PDFs) are proportionally shrunk so multi-file workflows fit; file reads capped at 80K characters
 - **Tool system** — new `tools/` package with `BaseTool` ABC, auto-registration registry, and 16 self-registering tool modules
 - **38 sub-tools** exposed to the model (up from 4 retrieval sources)
 
@@ -36,7 +37,7 @@ Every tool is a self-registering module in `tools/` with configurable enable/dis
 #### Productivity (4 tools)
 - **📧 Gmail** — search, read, draft, and send emails via Google OAuth; operations tiered into read/compose/send with individual toggles
 - **📅 Google Calendar** — view, search, create, update, move, and delete events via Google OAuth; shares credentials with Gmail
-- **📁 Filesystem** — sandboxed file operations (read, write, copy, move, delete) within a user-configured workspace folder; PDF-aware file reading; operations tiered into safe/write/destructive
+- **📁 Filesystem** — sandboxed file operations (read, write, copy, move, delete) within a user-configured workspace folder; PDF-aware file reading; large reads capped at 80K chars with truncation notice; operations tiered into safe/write/destructive
 - **⏰ Timer** — desktop notification timers with SQLite persistence via APScheduler; supports set, list, and cancel
 
 #### Computation & Analysis (5 tools)
@@ -77,6 +78,8 @@ Fully local, hands-free voice interaction:
 - **Configurable sensitivity** — wake word threshold slider (0.1–0.95)
 - **Audio chime** on wake word detection
 - **Voice bar UI** — shows listening/transcribing status with real-time feedback
+- **Mic gating** — microphone automatically muted during TTS playback to prevent echo and feedback loops
+- **Follow-up mode** — after TTS finishes speaking, the mic re-opens briefly so you can ask follow-up questions without re-triggering the wake word
 
 ### 🔊 Text-to-Speech
 
@@ -87,6 +90,7 @@ Neural speech synthesis, fully offline:
 - **Streaming playback** — responses spoken sentence-by-sentence as tokens stream in
 - **Smart truncation** — long responses are summarized aloud with full text in the app
 - **Code block skipping** — TTS intelligently skips fenced code blocks
+- **Mic gating integration** — coordinates with voice input to mute mic during playback and re-enable after
 
 ### 💬 Chat Improvements
 
@@ -97,8 +101,9 @@ Neural speech synthesis, fully offline:
 - **Syntax-highlighted code blocks** — fenced code blocks render with language-aware highlighting and a built-in copy button via `st.code()`
 - **File attachments** — drag-and-drop images, PDFs, and text files into the chat input; images analyzed via vision model, PDFs text-extracted, text files injected as context
 - **Conversation export** — export threads as Markdown, plain text, or PDF with formatted role headers and timestamps
-- **Stop generation** — circular stop button to cancel streaming at any time
-
+- **Stop generation** — circular stop button to cancel streaming at any time- **Live token counter** — gold-themed progress bar in the sidebar showing real-time context window usage based on trimmed (model-visible) history
+- **Truncation warnings** — inline warnings when file content was truncated to fit context
+- **Error recovery** — agent tool loops (GraphRecursionError) are caught gracefully with a user-friendly message; orphaned tool calls are automatically repaired
 ### 🛡️ Destructive Action Confirmation
 
 The agent now uses LangGraph's `interrupt()` mechanism to pause and ask for user confirmation before performing dangerous operations:

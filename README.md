@@ -14,7 +14,9 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Autonomous tool use** — the agent decides which tools to call, when, and how many times, based on your question
 - **Streaming responses** — tokens stream in real-time with a typing indicator
 - **Thinking indicators** — shows when the model is reasoning before responding
-- **Automatic context trimming** — conversation history is trimmed to ~70% of the context window before each LLM call, keeping the most recent messages
+- **Smart context management** — conversation history is trimmed to 80% of the context window before each LLM call; oversized tool outputs (e.g. large PDF reads) are proportionally shrunk so multi-file workflows fit within context
+- **Live token counter** — gold-themed progress bar in the sidebar shows real-time context window usage based on trimmed (model-visible) history
+- **Graceful error recovery** — agent tool loops are caught automatically with a user-friendly error message; orphaned tool calls are repaired
 - **Date/time awareness** — current date and time is injected into every LLM call so the model always knows "today"
 - **Destructive action confirmation** — dangerous operations (file deletion, sending emails, deleting calendar events, deleting memories) require explicit user approval via an interrupt mechanism
 
@@ -58,6 +60,8 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Neural TTS** — high-quality text-to-speech via Piper TTS, fully offline
 - **8 voice options** — US and British English, male and female variants
 - **Streaming TTS** — responses are spoken sentence-by-sentence as they stream in
+- **Mic gating** — microphone is automatically muted during TTS playback to prevent echo and feedback loops
+- **Follow-up mode** — after TTS finishes, the mic re-opens for a brief window so you can ask follow-up questions without re-triggering the wake word
 - **Hands-free mode** — combine voice input + TTS for a fully conversational experience
 - **System tray launcher** — `launcher.py` runs a system tray icon that reflects voice state (green = listening, yellow = processing, grey = off)
 
@@ -85,7 +89,7 @@ Thoth's agent has access to 16 tools that expose 38 individual operations to the
 |------|-------------|----------|
 | **📧 Gmail** | Search, read, draft, and send emails (Google OAuth) | OAuth credentials |
 | **📅 Google Calendar** | View, create, update, move, and delete events (Google OAuth) | OAuth credentials |
-| **📁 Filesystem** | Sandboxed file operations — read, write, copy, move, delete within a workspace folder | None |
+| **📁 Filesystem** | Sandboxed file operations — read, write, copy, move, delete within a workspace folder; large file reads capped at 80K chars with truncation notice | None |
 | **⏰ Timer** | Desktop notification timers (max 24h), with list and cancel | None |
 
 ### Computation & Analysis
@@ -142,8 +146,8 @@ Thoth's agent has access to 16 tools that expose 38 individual operations to the
 
 | File | Purpose |
 |------|---------|
-| **`app.py`** | Streamlit UI — chat interface, sidebar thread manager, Settings dialog (9 tabs), file attachment handling, streaming event loop, export, voice bar, custom CSS |
-| **`agent.py`** | LangGraph ReAct agent — system prompt, pre-model context trimming, streaming event generator, interrupt handling for destructive actions, contextual compression |
+| **`app.py`** | Streamlit UI — chat interface, sidebar thread manager with live token counter, Settings dialog (9 tabs), file attachment handling, streaming event loop with error recovery, export, voice bar, custom CSS |
+| **`agent.py`** | LangGraph ReAct agent — system prompt, pre-model context trimming with proportional tool-output shrinking, streaming event generator, interrupt handling for destructive actions, live token usage reporting, contextual compression |
 | **`threads.py`** | SQLite-backed thread metadata and `SqliteSaver` checkpointer for persisting LangGraph conversation state |
 | **`memory.py`** | SQLite CRUD layer for long-term memories — save, search, list, update, delete, count across 6 categories |
 | **`models.py`** | Ollama model management — listing, downloading, switching models, context size configuration |

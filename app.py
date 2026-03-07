@@ -17,7 +17,7 @@ st.set_page_config(
 # ── Heavy imports behind a loading indicator ─────────────────────────────────
 with st.spinner("Loading models. Please Wait…"):
     from threads import _list_threads, _save_thread_meta, _delete_thread, checkpointer, DB_PATH
-    from agent import invoke_agent, get_agent_graph, stream_agent, resume_stream_agent, clear_agent_cache, repair_orphaned_tool_calls
+    from agent import invoke_agent, get_agent_graph, stream_agent, resume_stream_agent, clear_agent_cache, repair_orphaned_tool_calls, get_token_usage
     from documents import (
         load_processed_files,
         load_and_vectorize_document,
@@ -287,6 +287,11 @@ def _render_message(content: str, images: list[str] | None = None, tool_results:
                     if len(display) > 5000:
                         display = display[:5000] + "\n\n… (truncated)"
                     st.code(display)
+            if tr.get("content") and "[Truncated" in tr["content"]:
+                import re as _re_mod
+                _trunc_match = _re_mod.search(r'\[Truncated[^\]]*\]', tr["content"])
+                _trunc_msg = _trunc_match.group(0)[1:-1] if _trunc_match else "File was too large to read in full"
+                st.warning(_trunc_msg, icon="⚠️")
 
     # Show captured images
     if images:
@@ -625,6 +630,11 @@ def _stream_events(event_generator, voice_mode: bool = False):
                     # Truncate very long results for display
                     display = tool_content if len(tool_content) <= 5000 else tool_content[:5000] + "\n\n… (truncated)"
                     s.code(display)
+            if tool_content and "[Truncated" in tool_content:
+                import re as _re_mod
+                _trunc_match = _re_mod.search(r'\[Truncated[^\]]*\]', tool_content)
+                _trunc_msg = _trunc_match.group(0)[1:-1] if _trunc_match else "File was too large to read in full"
+                status_container.warning(_trunc_msg, icon="⚠️")
             tool_results.append({"name": tool_name, "content": tool_content})
 
             # Show captured image inline when the vision tool completes
@@ -748,6 +758,10 @@ if "voice_text" not in st.session_state:
 
 if "tts_service" not in st.session_state:
     st.session_state.tts_service = TTSService()
+
+# Wire voice service into TTS for mic gating
+if st.session_state.tts_service.voice_service is None:
+    st.session_state.tts_service.voice_service = st.session_state.voice_service
 
 if "is_generating" not in st.session_state:
     st.session_state.is_generating = False
@@ -1739,6 +1753,29 @@ with st.sidebar:
         """<div style="position: fixed; bottom: 1rem; width: inherit; z-index: 200;">""",
         unsafe_allow_html=True,
     )
+
+    # ── Token usage counter ───────────────────────────────────────────────────
+    _cfg = {"configurable": {"thread_id": st.session_state.thread_id}} if st.session_state.get("thread_id") else None
+    _used, _max = get_token_usage(_cfg)
+    _pct = min(_used / _max, 1.0) if _max else 0.0
+    if _max >= 1_000:
+        _used_label = f"{_used / 1_000:.1f}K"
+        _max_label = f"{_max / 1_000:.0f}K"
+    else:
+        _used_label = str(_used)
+        _max_label = str(_max)
+    st.markdown(
+        f'<p style="margin:0 0 2px 0; font-size:0.78rem; color:#B8A04A;">'
+        f'Context: {_used_label} / {_max_label} tokens ({_pct:.0%})</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="background:#333; border-radius:4px; height:6px; margin-bottom:8px;">'
+        f'<div style="background:#DAA520; width:{_pct:.0%}; height:100%; border-radius:4px;"></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
     if st.button("⚙️ Settings", use_container_width=True):
         settings_dialog()
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1794,6 +1831,10 @@ else:
         _tts = st.session_state.get("tts_service")
         if _tts and _tts.enabled:
             _tts.stop()
+            # User pressed stop → let them speak next (enter follow-up)
+            _vsvc = st.session_state.get("voice_service")
+            if _vsvc and _vsvc.is_running:
+                _vsvc.enter_follow_up()
         if st.session_state.is_generating:
             # Generation was in progress — clear pending input
             st.session_state.pending_agent_input = None
@@ -1870,9 +1911,11 @@ else:
                 st.rerun()
         with vcol_status:
             if st.session_state.voice_enabled:
-                @st.fragment(run_every=0.5)
+                @st.fragment(run_every=0.25)
                 def _voice_poll():
                     svc = st.session_state.voice_service
+                    # Send heartbeat so voice knows the browser tab is open
+                    svc.update_heartbeat()
                     # Drain status queue
                     new_status = svc.get_status()
                     if new_status:
@@ -1885,6 +1928,10 @@ else:
                         st.caption("🔴 Listening — speak now…")
                     elif state == "transcribing":
                         st.caption("⏳ Transcribing…")
+                    elif state == "muted":
+                        st.caption("🔇 Speaking…")
+                    elif state == "follow_up":
+                        st.caption("👂 Listening (no wake word needed)…")
                     elif state == "stopped":
                         st.caption(f"⚫ {st.session_state.voice_status or 'Stopped'}")
                         if st.session_state.voice_enabled:
@@ -1930,17 +1977,36 @@ else:
 
         with st.chat_message("assistant"):
             _scroll_to_bottom()
-            if _pending.get("resume"):
-                answer, interrupt_data, cap_imgs, tool_res = _stream_events(
-                    resume_stream_agent(
-                        enabled_tools, config, _pending["approved"]
+            try:
+                if _pending.get("resume"):
+                    answer, interrupt_data, cap_imgs, tool_res = _stream_events(
+                        resume_stream_agent(
+                            enabled_tools, config, _pending["approved"]
+                        )
                     )
-                )
-            else:
-                answer, interrupt_data, cap_imgs, tool_res = _stream_events(
-                    stream_agent(_pending["input"], enabled_tools, config),
-                    voice_mode=voice_mode,
-                )
+                else:
+                    answer, interrupt_data, cap_imgs, tool_res = _stream_events(
+                        stream_agent(_pending["input"], enabled_tools, config),
+                        voice_mode=voice_mode,
+                    )
+            except Exception as _agent_exc:
+                # Catch GraphRecursionError and any other streaming crashes.
+                # Repair the checkpoint so the thread is not permanently corrupted.
+                _exc_name = type(_agent_exc).__name__
+                if "RecursionError" in _exc_name or "Recursion" in str(_agent_exc):
+                    answer = ("⚠️ I got stuck in a tool loop and had to stop. "
+                              "Please try rephrasing your request or starting a new thread.")
+                else:
+                    answer = f"⚠️ An error occurred: {_agent_exc}"
+                interrupt_data = None
+                cap_imgs = []
+                tool_res = []
+                st.markdown(answer)
+                # Repair orphaned tool calls so the thread stays usable
+                try:
+                    repair_orphaned_tool_calls(enabled_tools, config)
+                except Exception:
+                    pass
 
         st.session_state.is_generating = False
         st.session_state.stop_requested = False

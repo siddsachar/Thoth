@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 import zipfile
 from pathlib import Path
 from queue import Queue, Empty
@@ -89,7 +90,13 @@ _TRUNCATION_SUFFIX = " The full response is shown in the app."
 # ═════════════════════════════════════════════════════════════════════════════
 
 class TTSService:
-    """Text-to-speech using Piper TTS (local, offline)."""
+    """Text-to-speech using Piper TTS (local, offline).
+
+    Mic gating: when a ``voice_service`` is attached, this service will
+    call ``voice_service.mute()`` before speaking and
+    ``voice_service.enter_follow_up()`` when finished, preventing echo
+    feedback loops.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -100,12 +107,35 @@ class TTSService:
         self._stream_queue: Queue[str | None] = Queue()
         self._stream_worker: threading.Thread | None = None
 
+        # Reference to VoiceService for mic gating (set via property)
+        self._voice_service = None
+
         # Persisted settings
         self._voice: str = _DEFAULT_VOICE
         self._speed: float = 1.0
         self._enabled: bool = False
         self._auto_speak: bool = True
         self._load_settings()
+
+    # ── Voice service link (mic gating) ──────────────────────────────────
+
+    @property
+    def voice_service(self):
+        return self._voice_service
+
+    @voice_service.setter
+    def voice_service(self, svc) -> None:
+        self._voice_service = svc
+
+    def _mute_mic(self) -> None:
+        """Tell the voice service to pause mic processing."""
+        if self._voice_service and self._voice_service.is_running:
+            self._voice_service.mute()
+
+    def _unmute_mic(self) -> None:
+        """Tell the voice service to enter follow-up mode."""
+        if self._voice_service and self._voice_service.is_running:
+            self._voice_service.enter_follow_up()
 
     # ── Properties ───────────────────────────────────────────────────────
 
@@ -225,6 +255,9 @@ class TTSService:
         if not clean.strip():
             return
 
+        # Mute mic on first sentence queued
+        self._mute_mic()
+
         # Ensure worker thread is running
         if self._stream_worker is None or not self._stream_worker.is_alive():
             self._stop_event.clear()
@@ -244,9 +277,17 @@ class TTSService:
         self._stream_queue.put(None)
 
     def _stream_worker_loop(self) -> None:
-        """Background worker: pick sentences from the queue and play them."""
+        """Background worker: pick sentences from the queue and play them.
+
+        Only enters follow-up mode (unmutes mic) when the stream ends
+        naturally via the end-of-stream sentinel from ``flush_streaming``.
+        If ``stop()`` kills this worker (sets ``_stop_event``), the mic
+        stays muted so the caller can decide what to do next.
+        """
         import tempfile
         counter = 0
+        natural_end = False
+
         while not self._stop_event.is_set():
             try:
                 sentence = self._stream_queue.get(timeout=1)
@@ -254,6 +295,7 @@ class TTSService:
                 continue
 
             if sentence is None:
+                natural_end = True
                 break  # end-of-stream sentinel
 
             if self._stop_event.is_set():
@@ -321,6 +363,14 @@ class TTSService:
                 except Exception:
                     pass
 
+        # Only unmute on NATURAL end-of-stream (not forced stop).
+        # Double-check _stop_event in case stop() was called during
+        # the sleep window.
+        if natural_end and not self._stop_event.is_set():
+            time.sleep(0.5)
+            if not self._stop_event.is_set():
+                self._unmute_mic()
+
     # ── Download helpers ─────────────────────────────────────────────────
 
     def download_piper(
@@ -364,6 +414,8 @@ class TTSService:
 
         self.stop()
         self._stop_event.clear()
+        # Mute mic before speaking
+        self._mute_mic()
         self._playback_thread = threading.Thread(
             target=self._play, args=(clean,), daemon=True,
         )
@@ -438,6 +490,9 @@ class TTSService:
         except Exception:
             pass
         finally:
+            # Do NOT unmute here — only the streaming worker should
+            # trigger follow-up.  speak_now() is used for short phrases
+            # like "Ok. Working." while the agent is still processing.
             # Clean up temp WAV
             try:
                 wav_p = os.path.join(

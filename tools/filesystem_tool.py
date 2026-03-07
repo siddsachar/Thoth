@@ -110,13 +110,27 @@ class FileSystemTool(BaseTool):
         return "Use the individual file operations instead."
 
 
+_MAX_READ_CHARS = 80_000  # ~24K tokens — main agent trims further via _pre_model_trim
+
+
 def _make_pdf_aware_read_tool(root_dir: str):
     """Create a ``read_file`` StructuredTool that can read both text and PDF
     files.  Paths are resolved relative to *root_dir* and validated to stay
-    within the sandbox."""
+    within the sandbox.  Output is capped at ``_MAX_READ_CHARS`` to prevent
+    a single tool result from blowing up the agent context window."""
     import os
     from pathlib import Path
     from langchain_core.tools import StructuredTool
+
+    def _cap(text: str, label: str = "") -> str:
+        """Truncate *text* to _MAX_READ_CHARS with a notice if trimmed."""
+        if len(text) <= _MAX_READ_CHARS:
+            return text
+        suffix = (
+            f"\n\n[Truncated — showing first {_MAX_READ_CHARS:,} characters"
+            f"{label}. File is {len(text):,} characters total.]"
+        )
+        return text[:_MAX_READ_CHARS] + suffix
 
     def read_file(file_path: str) -> str:
         """Read the contents of a file. For PDF files, extracts all text
@@ -135,6 +149,7 @@ def _make_pdf_aware_read_tool(root_dir: str):
             try:
                 from pypdf import PdfReader
                 reader = PdfReader(str(resolved))
+                total_pages = len(reader.pages)
                 pages = []
                 for i, page in enumerate(reader.pages, 1):
                     text = page.extract_text() or ""
@@ -142,12 +157,14 @@ def _make_pdf_aware_read_tool(root_dir: str):
                         pages.append(f"--- Page {i} ---\n{text}")
                 if not pages:
                     return f"PDF file '{file_path}' contains no extractable text."
-                return "\n\n".join(pages)
+                full = "\n\n".join(pages)
+                return _cap(full, f" of {total_pages} pages")
             except Exception as exc:
                 return f"Error reading PDF '{file_path}': {exc}"
         else:
             try:
-                return resolved.read_text(encoding="utf-8", errors="replace")
+                text = resolved.read_text(encoding="utf-8", errors="replace")
+                return _cap(text)
             except Exception as exc:
                 return f"Error reading '{file_path}': {exc}"
 

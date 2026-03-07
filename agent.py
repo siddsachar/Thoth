@@ -38,15 +38,53 @@ from datetime import datetime as _datetime
 
 
 # ── Pre-model hook: trim messages to fit context window ──────────────────────
+_CHARS_PER_TOKEN = 4  # conservative approximation for budget math
+
+
 def _pre_model_trim(state: dict) -> dict:
     """Trim conversation history to ~70% of the context window before each
     LLM call, and inject the current date/time so it is always accurate.
 
     Uses ``llm_input_messages`` so the full history stays intact in the
     checkpointer — only the LLM sees the trimmed version."""
-    max_tokens = int(get_context_size() * 0.7)
+    max_tokens = int(get_context_size() * 0.8)
+
+    # ── Proportionally shrink oversized ToolMessages ─────────────────
+    # Without this, trim_messages (strategy="last") may drop ALL context
+    # when a single huge ToolMessage — or the sum of several — exceeds
+    # the token budget.  We leave ~35 % for system prompt, human/AI
+    # messages, and generation headroom.
+    messages = list(state["messages"])
+    tool_budget_chars = int(max_tokens * 0.65) * _CHARS_PER_TOKEN
+
+    tool_indices = [
+        i for i, m in enumerate(messages)
+        if m.type == "tool" and len(getattr(m, "content", "") or "") > 0
+    ]
+    if tool_indices:
+        total_tool_chars = sum(
+            len(messages[i].content or "") for i in tool_indices
+        )
+        if total_tool_chars > tool_budget_chars:
+            for i in tool_indices:
+                m = messages[i]
+                content = m.content or ""
+                # Each tool gets a share proportional to its original size
+                share = len(content) / total_tool_chars
+                cap = max(2_000, int(tool_budget_chars * share))
+                if len(content) > cap:
+                    messages[i] = ToolMessage(
+                        content=(
+                            content[:cap]
+                            + f"\n\n[Truncated to fit context – first "
+                              f"{cap:,} of {len(content):,} chars shown]"
+                        ),
+                        name=m.name,
+                        tool_call_id=m.tool_call_id,
+                    )
+
     trimmed = trim_messages(
-        state["messages"],
+        messages,
         max_tokens=max_tokens,
         token_counter="approximate",
         strategy="last",
@@ -203,6 +241,42 @@ def _wrap_with_interrupt_gate(tool) -> None:
 def clear_agent_cache():
     """Clear the cached agent graphs so tools are rebuilt on next call."""
     _agent_cache.clear()
+
+
+def get_token_usage(config: dict | None = None) -> tuple[int, int]:
+    """Return ``(used_tokens, max_tokens)`` for the current thread.
+
+    Runs the same ``trim_messages`` logic as ``_pre_model_trim`` so the
+    counter reflects what the LLM *actually* sees, not the full history.
+    Returns ``(0, max_tokens)`` when there is no active thread.
+    """
+    max_tokens = get_context_size()
+    if config is None:
+        return 0, max_tokens
+    try:
+        agent = get_agent_graph()
+        state = agent.get_state(config)
+        if not state or not state.values:
+            return 0, max_tokens
+        msgs = state.values.get("messages", [])
+        if not msgs:
+            return 0, max_tokens
+        # Mirror _pre_model_trim: trim, then count what remains
+        budget = int(max_tokens * 0.8)
+        trimmed = trim_messages(
+            msgs,
+            max_tokens=budget,
+            token_counter="approximate",
+            strategy="last",
+            start_on="human",
+            include_system=True,
+            allow_partial=False,
+        )
+        total_chars = sum(len(getattr(m, "content", "") or "") for m in trimmed)
+        used = total_chars // _CHARS_PER_TOKEN
+        return used, max_tokens
+    except Exception:
+        return 0, max_tokens
 
 
 def get_agent_graph(enabled_tool_names: list[str] | None = None):
