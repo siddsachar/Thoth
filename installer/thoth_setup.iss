@@ -46,6 +46,7 @@ Source: "..\app.py";                   DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\agent.py";                 DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\memory.py";                DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\models.py";                DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\data_reader.py";            DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\documents.py";             DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\threads.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\api_keys.py";              DestDir: "{app}\app"; Flags: ignoreversion
@@ -63,11 +64,14 @@ Source: "..\tools\registry.py";        DestDir: "{app}\app\tools"; Flags: ignore
 Source: "..\tools\arxiv_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\calculator_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\calendar_tool.py";   DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\chart_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\conversation_search_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\documents_tool.py";  DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\duckduckgo_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\filesystem_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\gmail_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\memory_tool.py";     DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\system_info_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\timer_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\url_reader_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\vision_tool.py";     DestDir: "{app}\app\tools"; Flags: ignoreversion

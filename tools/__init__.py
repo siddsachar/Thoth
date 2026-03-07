@@ -25,3 +25,6 @@ from tools import wolfram_tool     # noqa: F401
 from tools import weather_tool     # noqa: F401
 from tools import vision_tool      # noqa: F401
 from tools import memory_tool      # noqa: F401
+from tools import conversation_search_tool  # noqa: F401
+from tools import system_info_tool  # noqa: F401
+from tools import chart_tool        # noqa: F401

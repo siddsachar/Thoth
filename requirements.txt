@@ -38,6 +38,10 @@ langchain-google-community[gmail]
 # ── Document Loaders ────────────────────────────────────────────────────────
 pypdf>=6.7.0
 
+# ── Structured Data (CSV / Excel / JSON) ────────────────────────────────────
+pandas
+openpyxl
+
 # ── Export ───────────────────────────────────────────────────────────────────
 fpdf2
 
@@ -50,6 +54,12 @@ wolframalpha
 # ── Vision (Camera + Screenshot) ─────────────────────────────────────────────────
 opencv-python
 mss
+
+# ── System Info ──────────────────────────────────────────────────────────────
+psutil
+
+# ── Charts & Visualisation ───────────────────────────────────────────────────
+plotly
 
 # ── Voice Input (STT) ───────────────────────────────────────────────────────
 sounddevice

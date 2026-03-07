@@ -134,7 +134,15 @@ def _make_pdf_aware_read_tool(root_dir: str):
 
     def read_file(file_path: str) -> str:
         """Read the contents of a file. For PDF files, extracts all text
-        from every page. The file_path is relative to the workspace root."""
+        from every page. For CSV/Excel/JSON files, returns schema, stats,
+        and a preview. The file_path is relative to the workspace root.
+        For Excel files, append '::SheetName' to read a specific sheet
+        (e.g. 'data.xlsx::Sheet2')."""
+        # Parse optional sheet specifier for Excel files
+        sheet_name = ""
+        if "::" in file_path:
+            file_path, sheet_name = file_path.rsplit("::", 1)
+
         resolved = Path(root_dir) / file_path
         resolved = resolved.resolve()
 
@@ -144,6 +152,12 @@ def _make_pdf_aware_read_tool(root_dir: str):
 
         if not resolved.exists():
             return f"Error: file not found: {file_path}"
+
+        # ── Structured data files (CSV, Excel, JSON) ────────────────────
+        from data_reader import is_data_file, read_data_file
+        if is_data_file(resolved.name):
+            return read_data_file(resolved, sheet=sheet_name,
+                                  max_chars=_MAX_READ_CHARS)
 
         if resolved.suffix.lower() == ".pdf":
             try:
@@ -172,7 +186,9 @@ def _make_pdf_aware_read_tool(root_dir: str):
         func=read_file,
         name="read_file",
         description=(
-            "Read the contents of a file (including PDF files). "
+            "Read the contents of a file (including PDF, CSV, Excel, and JSON files). "
+            "For CSV/Excel/JSON, returns column schema, statistics, and a preview. "
+            "For Excel, append '::SheetName' to the path to read a specific sheet. "
             "The file_path should be relative to the workspace root."
         ),
     )

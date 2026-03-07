@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Thoth — Your Private AI Assistant</title>
-    <meta name="description" content="A local-first, privacy-focused AI assistant with 16 integrated tools — web search, email, calendar, file management, vision, voice, long-term memory, and more. Powered by a local LLM via Ollama.">
+    <meta name="description" content="A local-first, privacy-focused AI assistant with 19 integrated tools — web search, email, calendar, file management, vision, voice, long-term memory, inline charts, and more. Powered by a local LLM via Ollama.">
     <style>
         :root {
             --bg: #0d1117;
@@ -417,7 +417,7 @@
         <div class="hero-icon">𓁟</div>
         <h1>Meet <span>Thoth</span></h1>
         <p class="tagline">
-            Your private AI assistant. 16 integrated tools, long-term memory, voice control, vision — all running locally on your machine.
+            Your private AI assistant. 19 integrated tools, long-term memory, voice control, vision, inline charts — all running locally on your machine.
         </p>
         <div class="hero-buttons">
             <a href="https://github.com/siddsachar/Thoth/releases/latest" class="btn btn-primary">
@@ -442,7 +442,7 @@
             <div class="feature-card">
                 <div class="icon">💬</div>
                 <h3>Persistent Conversations</h3>
-                <p>Chat threads with full history, auto-naming, seamless resume, and export to Markdown, text, or PDF. Attach images, PDFs, and files directly.</p>
+                <p>Chat threads with full history, auto-naming, seamless resume, and export to Markdown, text, or PDF. Attach images, PDFs, CSV, Excel, JSON, and text files directly. First-run welcome guide helps you get started.</p>
             </div>
             <div class="feature-card">
                 <div class="icon">🧠</div>
@@ -472,7 +472,7 @@
             <div class="feature-card">
                 <div class="icon">📁</div>
                 <h3>File Management</h3>
-                <p>Read, write, copy, move, and search files within a sandboxed workspace. Reads PDFs natively with smart truncation for large files. Destructive actions require confirmation.</p>
+                <p>Read, write, copy, move, and search files within a sandboxed workspace. Reads PDFs, CSV, Excel, and JSON files with schema &amp; stats preview. Interactive Plotly charts rendered inline. Destructive actions require confirmation.</p>
             </div>
             <div class="feature-card">
                 <div class="icon">🔒</div>
@@ -485,7 +485,7 @@
     <!-- Tools -->
     <section class="tools-section" id="tools">
         <div class="container">
-            <h2>16 Tools · 38 Operations</h2>
+            <h2>19 Tools · 42 Operations</h2>
             <p class="subtitle">The agent autonomously decides which tools to use based on your question</p>
             <div class="tools-grid">
                 <div class="tool-card">
@@ -567,6 +567,21 @@
                     <div class="tool-icon">🧠</div>
                     <div class="tool-name">Memory</div>
                     <div class="tool-desc">Persistent personal knowledge</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">🔍</div>
+                    <div class="tool-name">Conversation Search</div>
+                    <div class="tool-desc">Search past chat threads</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">🖥️</div>
+                    <div class="tool-name">System Info</div>
+                    <div class="tool-desc">OS, CPU, RAM, disk, network</div>
+                </div>
+                <div class="tool-card">
+                    <div class="tool-icon">📊</div>
+                    <div class="tool-name">Chart</div>
+                    <div class="tool-desc">Interactive Plotly visualisations</div>
                 </div>
             </div>
         </div>

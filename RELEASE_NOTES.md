@@ -18,10 +18,10 @@ Key changes:
 - **`rag.py` removed** — the custom RAG state machine is gone
 - **`agent.py` added** — new ReAct agent with system prompt, pre-model message trimming, streaming event generator, and interrupt mechanism
 - **Smart context management** — pre-model hook trims history to 80% of context window; oversized tool outputs (e.g. multiple PDFs) are proportionally shrunk so multi-file workflows fit; file reads capped at 80K characters
-- **Tool system** — new `tools/` package with `BaseTool` ABC, auto-registration registry, and 16 self-registering tool modules
-- **38 sub-tools** exposed to the model (up from 4 retrieval sources)
+- **Tool system** — new `tools/` package with `BaseTool` ABC, auto-registration registry, and 19 self-registering tool modules
+- **42 sub-tools** exposed to the model (up from 4 retrieval sources)
 
-### 🔧 16 Integrated Tools
+### 🔧 17 Integrated Tools
 
 Every tool is a self-registering module in `tools/` with configurable enable/disable, API key management, and optional sub-tool selection.
 
@@ -37,15 +37,18 @@ Every tool is a self-registering module in `tools/` with configurable enable/dis
 #### Productivity (4 tools)
 - **📧 Gmail** — search, read, draft, and send emails via Google OAuth; operations tiered into read/compose/send with individual toggles
 - **📅 Google Calendar** — view, search, create, update, move, and delete events via Google OAuth; shares credentials with Gmail
-- **📁 Filesystem** — sandboxed file operations (read, write, copy, move, delete) within a user-configured workspace folder; PDF-aware file reading; large reads capped at 80K chars with truncation notice; operations tiered into safe/write/destructive
+- **📁 Filesystem** — sandboxed file operations (read, write, copy, move, delete) within a user-configured workspace folder; reads PDF, CSV, Excel (.xlsx/.xls), JSON/JSONL, and TSV files; structured data files parsed with pandas (schema + stats + preview); large reads capped at 80K chars; operations tiered into safe/write/destructive
 - **⏰ Timer** — desktop notification timers with SQLite persistence via APScheduler; supports set, list, and cancel
 
-#### Computation & Analysis (5 tools)
+#### Computation & Analysis (6 tools)
 - **🧮 Calculator** — safe math evaluation via simpleeval — arithmetic, trig, logs, factorials, combinatorics, all `math` module functions
 - **🔢 Wolfram Alpha** — advanced computation, symbolic math, unit/currency conversion, scientific data, chemistry, physics
 - **🌤️ Weather** — current conditions and multi-day forecasts via Open-Meteo (free, no API key); includes geocoding, wind direction, and WMO weather code descriptions
 - **👁️ Vision** — camera capture and screen capture with analysis via Ollama vision models; configurable camera and vision model selection
 - **🧠 Memory** — persistent personal knowledge base with save, search, list, update, and delete operations across 6 categories
+- **🔍 Conversation Search** — natural language search across all past conversations; keyword matching over checkpoint history with thread names and dates
+- **🖥️ System Info** — full system snapshot via psutil: OS, CPU, RAM, disk space per drive, local & public IP, battery status, and top 10 processes by CPU usage
+- **📊 Chart** — interactive Plotly charts from data files; structured spec tool supporting bar, horizontal_bar, line, scatter, pie, donut, histogram, box, area, and heatmap; reads from workspace files or cached attachments; auto-picks columns when x/y are omitted; dark theme with interactive zoom/hover/pan
 
 ### 🧠 Long-Term Memory
 
@@ -99,7 +102,11 @@ Neural speech synthesis, fully offline:
 - **Tool call status** — expandable status widgets showing which tools are being called and their results
 - **Inline YouTube embeds** — YouTube URLs in responses render as playable embedded videos
 - **Syntax-highlighted code blocks** — fenced code blocks render with language-aware highlighting and a built-in copy button via `st.code()`
-- **File attachments** — drag-and-drop images, PDFs, and text files into the chat input; images analyzed via vision model, PDFs text-extracted, text files injected as context
+- **File attachments** — drag-and-drop images, PDFs, CSV, Excel, JSON, and text files into the chat input; images analyzed via vision model, PDFs text-extracted, structured data files parsed with pandas (schema + stats + preview), text files injected as context
+- **Inline charts** — interactive Plotly charts rendered inline in chat when the Chart tool is used; charts persist across page reloads; dark theme with zoom/hover/pan
+- **Image captions** — user-attached images display as "📎 Attached image", vision captures display as "📷 Captured image"
+- **Onboarding guide** — first-run welcome message with tool categories, settings guidance, voice tips, and file attachment instructions; 6 clickable example prompts; `?` button in sidebar to re-display; persistence via `~/.thoth/app_config.json`
+- **Startup health check** — verifies Ollama connectivity and model availability on launch with user-friendly error messages
 - **Conversation export** — export threads as Markdown, plain text, or PDF with formatted role headers and timestamps
 - **Stop generation** — circular stop button to cancel streaming at any time- **Live token counter** — gold-themed progress bar in the sidebar showing real-time context window usage based on trimmed (model-visible) history
 - **Truncation warnings** — inline warnings when file content was truncated to fit context

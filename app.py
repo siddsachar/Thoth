@@ -3,6 +3,7 @@ import uuid
 import pathlib
 import tempfile
 import os
+import json as _json_mod
 import base64 as _b64
 from datetime import datetime
 
@@ -45,6 +46,125 @@ with st.spinner("Loading models. Please Wait…"):
     from vision import VisionService, POPULAR_VISION_MODELS, DEFAULT_VISION_MODEL, list_cameras
     from tools.vision_tool import set_vision_service
     apply_keys()
+
+
+# ── Startup health check ────────────────────────────────────────────────────
+def _startup_health_check():
+    """Verify Ollama is reachable and the selected model is available.
+    Blocks the app with a clear error screen if something is wrong."""
+    import ollama as _ollama_check
+
+    # 1. Check Ollama connectivity
+    try:
+        _ollama_check.list()
+    except Exception:
+        st.error(
+            "**Cannot connect to Ollama.**\n\n"
+            "Thoth requires [Ollama](https://ollama.com/) to be running.\n\n"
+            "**To fix this:**\n"
+            "1. Open a terminal and run `ollama serve`\n"
+            "2. Or start the Ollama desktop app\n"
+            "3. Then refresh this page",
+            icon="🚫",
+        )
+        if st.button("🔄 Retry", use_container_width=True, type="primary"):
+            st.rerun()
+        st.stop()
+
+    # 2. Check if the selected model is downloaded
+    current = get_current_model()
+    if not is_model_local(current):
+        st.warning(
+            f"**Model `{current}` is not downloaded.**\n\n"
+            f"Download it now to get started. You can change models later in Settings.",
+            icon="⚠️",
+        )
+        if st.button(f"⬇️ Download {current}", use_container_width=True, type="primary"):
+            progress = st.progress(0, text=f"Downloading {current}…")
+            try:
+                for update in pull_model(current):
+                    if hasattr(update, "completed") and hasattr(update, "total") and update.total:
+                        pct = update.completed / update.total
+                        progress.progress(pct, text=f"Downloading {current}… {pct:.0%}")
+                progress.progress(1.0, text="Download complete!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Download failed: {e}")
+        st.stop()
+
+_startup_health_check()
+
+
+# ── App config persistence (first-run flag, etc.) ──────────────────────────
+_APP_CONFIG_DIR = pathlib.Path(os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / ".thoth"))
+_APP_CONFIG_PATH = _APP_CONFIG_DIR / "app_config.json"
+
+
+def _load_app_config() -> dict:
+    if _APP_CONFIG_PATH.exists():
+        try:
+            return _json_mod.loads(_APP_CONFIG_PATH.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_app_config(cfg: dict) -> None:
+    _APP_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _APP_CONFIG_PATH.write_text(_json_mod.dumps(cfg, indent=2))
+
+
+def _is_first_run() -> bool:
+    return not _load_app_config().get("onboarding_seen", False)
+
+
+def _mark_onboarding_seen() -> None:
+    cfg = _load_app_config()
+    cfg["onboarding_seen"] = True
+    _save_app_config(cfg)
+
+
+# ── Onboarding / welcome message ──────────────────────────────────────────
+_WELCOME_MESSAGE = """\
+👋 **Welcome to Thoth — your personal AI assistant!**
+
+Here's what I can do:
+
+---
+
+🔍 **Search & Knowledge**
+Web search, Wikipedia, Arxiv papers, YouTube videos & transcripts, URL reading, and your uploaded documents.
+
+📧 **Productivity**
+Read & send Gmail, manage Google Calendar events, read & write files on your computer, and set desktop notification timers.
+
+🧮 **Computation & Analysis**
+Math calculations, Wolfram Alpha queries, weather forecasts, CSV/Excel/JSON analysis, and camera or screen capture via vision.
+
+🧠 **Memory & History**
+I remember important things you tell me across conversations. I can also search your past conversations by keyword.
+
+---
+
+⚙️ **Getting started:**
+- Head to **⚙️ Settings** (bottom of the sidebar) to configure tools like Gmail, Calendar, and your filesystem workspace folder.
+- **Attach files** by clicking the 📎 icon in the chat input — I can read PDFs, spreadsheets, JSON, images, and more.
+- **Voice mode**: Click the 🎙️ mic button above the chat input or say the wake word to talk to me.
+- **Stop generation** anytime with the ⏹ button.
+
+---
+
+💡 **Try asking me something:**
+"""
+
+_EXAMPLE_PROMPTS = [
+    "What's the weather in New York?",
+    "Summarize the latest AI news",
+    "Set a timer for 10 minutes",
+    "What do you remember about me?",
+    "Read the file report.pdf in my workspace",
+    "What's the derivative of x³ + 2x?",
+]
 
 
 # ── DRY helpers: tkinter browse, model download, ops checkboxes ────────────────
@@ -275,9 +395,9 @@ def _render_text_segment(text: str) -> None:
         st.markdown(after)
 
 
-def _render_message(content: str, images: list[str] | None = None, tool_results: list[dict] | None = None):
+def _render_message(content: str, images: list[str] | None = None, tool_results: list[dict] | None = None, role: str = "assistant", charts: list[str] | None = None):
     """Render a chat message with syntax-highlighted code blocks (with copy
-    button), inline YouTube embeds, captured images, and tool results."""
+    button), inline YouTube embeds, captured images, charts, and tool results."""
     # Show tool results as expandable sections
     if tool_results:
         for tr in tool_results:
@@ -293,11 +413,22 @@ def _render_message(content: str, images: list[str] | None = None, tool_results:
                 _trunc_msg = _trunc_match.group(0)[1:-1] if _trunc_match else "File was too large to read in full"
                 st.warning(_trunc_msg, icon="⚠️")
 
-    # Show captured images
+    # Show captured images / attached images
     if images:
+        caption = "📎 Attached image" if role == "user" else "📷 Captured image"
         for b64_img in images:
             img_bytes = _b64.b64decode(b64_img)
-            st.image(img_bytes, caption="📷 Captured from camera", width=320)
+            st.image(img_bytes, caption=caption, width=320)
+
+    # Show inline charts (Plotly)
+    if charts:
+        try:
+            import plotly.io as _pio
+            for fig_json in charts:
+                fig = _pio.from_json(fig_json)
+                st.plotly_chart(fig, use_container_width=True)
+        except Exception:
+            pass
 
     # Split content at each YouTube URL and insert an embed after each one
     seen = set()
@@ -489,7 +620,8 @@ def load_thread_messages(thread_id: str) -> list[dict]:
 
 # ── Helper: process attached files from chat input ──────────────────────────
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
-_TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".py", ".js", ".ts", ".html",
+_DATA_EXTENSIONS = {".csv", ".tsv", ".xlsx", ".xls", ".json", ".jsonl"}
+_TEXT_EXTENSIONS = {".txt", ".md", ".py", ".js", ".ts", ".html",
                     ".css", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg",
                     ".log", ".sh", ".bat", ".ps1", ".sql", ".r", ".java", ".c",
                     ".cpp", ".h", ".cs", ".go", ".rs", ".rb", ".php", ".swift",
@@ -502,6 +634,7 @@ def _process_attached_files(files) -> tuple[str, list[str]]:
 
     * Images → analysed via vision model, base64 stored for inline display
     * PDFs → text extracted via pypdf
+    * CSV/Excel/JSON → parsed with pandas into schema + stats + preview
     * Text files → content read directly
     """
     context_parts: list[str] = []
@@ -544,6 +677,20 @@ def _process_attached_files(files) -> tuple[str, list[str]]:
             except Exception as exc:
                 context_parts.append(f"[Attached PDF: {name} — failed to extract text: {exc}]")
 
+        elif suffix in _DATA_EXTENSIONS:
+            try:
+                import io as _io
+                from data_reader import read_data_file
+                buf = _io.BytesIO(data)
+                summary = read_data_file(buf, name=name, max_chars=_MAX_TEXT_CHARS)
+                context_parts.append(f"[Attached data file: {name}]\n{summary}")
+                # Cache raw bytes so the chart tool can re-read the file
+                if "_attached_data_cache" not in st.session_state:
+                    st.session_state["_attached_data_cache"] = {}
+                st.session_state["_attached_data_cache"][name] = data
+            except Exception as exc:
+                context_parts.append(f"[Attached data file: {name} — failed to parse: {exc}]")
+
         elif suffix in _TEXT_EXTENSIONS:
             try:
                 text = data.decode("utf-8", errors="replace")
@@ -565,10 +712,10 @@ _SENTENCE_SPLIT = _re_mod.compile(r'(?<=[.!?])\s+')
 
 def _stream_events(event_generator, voice_mode: bool = False):
     """Run the streaming event loop inside a ``st.chat_message("assistant")``
-    context.  Returns ``(answer_text, interrupt_data_or_None, captured_images, tool_results)``.
+    context.  Returns ``(answer_text, interrupt_data_or_None, captured_images, tool_results, chart_data)``.
     If an interrupt is returned the graph is paused awaiting user confirmation.
     ``captured_images`` is a list of base64-encoded JPEG strings from the vision
-    tool (if any)."""
+    tool (if any).  ``chart_data`` is a list of Plotly figure JSON strings."""
     status_container = st.container()
     answer_placeholder = st.empty()
     answer_tokens: list[str] = []
@@ -577,6 +724,7 @@ def _stream_events(event_generator, voice_mode: bool = False):
     thinking_placeholder = None
     captured_images: list[str] = []
     tool_results: list[dict] = []
+    chart_data: list[str] = []  # Plotly figure JSON strings
 
     # Streaming TTS: accumulate text, emit complete sentences
     _tts_buffer = ""
@@ -602,7 +750,7 @@ def _stream_events(event_generator, voice_mode: bool = False):
             partial = "".join(answer_tokens) or final_answer
             if partial:
                 answer_placeholder.markdown(partial)
-            return (partial or "", None, captured_images, tool_results)
+            return (partial or "", None, captured_images, tool_results, chart_data)
 
         # Clear typing indicator on first meaningful event
         if not first_event_received:
@@ -624,17 +772,44 @@ def _stream_events(event_generator, voice_mode: bool = False):
             tool_name = payload["name"] if isinstance(payload, dict) else payload
             tool_content = payload.get("content", "") if isinstance(payload, dict) else ""
             s = active_statuses.get(tool_name)
-            if s:
-                s.update(label=f"✅ {tool_name}", state="complete")
-                if tool_content:
-                    # Truncate very long results for display
-                    display = tool_content if len(tool_content) <= 5000 else tool_content[:5000] + "\n\n… (truncated)"
-                    s.code(display)
-            if tool_content and "[Truncated" in tool_content:
-                import re as _re_mod
-                _trunc_match = _re_mod.search(r'\[Truncated[^\]]*\]', tool_content)
-                _trunc_msg = _trunc_match.group(0)[1:-1] if _trunc_match else "File was too large to read in full"
-                status_container.warning(_trunc_msg, icon="⚠️")
+
+            # Detect chart marker in tool output and render inline
+            _chart_marker_prefix = "__CHART__:"
+            if tool_content and tool_content.startswith(_chart_marker_prefix):
+                # Extract Plotly JSON — marker format: __CHART__:{json}\n\nChart created: ...
+                marker_end = tool_content.find("\n\n", len(_chart_marker_prefix))
+                if marker_end == -1:
+                    fig_json = tool_content[len(_chart_marker_prefix):]
+                    display_text = "Chart created"
+                else:
+                    fig_json = tool_content[len(_chart_marker_prefix):marker_end]
+                    display_text = tool_content[marker_end + 2:]
+                chart_data.append(fig_json)
+                # Render the chart live during streaming
+                try:
+                    import plotly.io as _pio
+                    fig = _pio.from_json(fig_json)
+                    status_container.plotly_chart(fig, use_container_width=True)
+                except Exception:
+                    pass
+                # Store clean text (without JSON blob) in tool_results
+                tool_content = display_text
+                if s:
+                    s.update(label=f"✅ {tool_name}", state="complete")
+                    s.markdown(f"📊 {display_text}")
+            else:
+                if s:
+                    s.update(label=f"✅ {tool_name}", state="complete")
+                    if tool_content:
+                        # Truncate very long results for display
+                        display = tool_content if len(tool_content) <= 5000 else tool_content[:5000] + "\n\n… (truncated)"
+                        s.code(display)
+                if tool_content and "[Truncated" in tool_content:
+                    import re as _re_mod
+                    _trunc_match = _re_mod.search(r'\[Truncated[^\]]*\]', tool_content)
+                    _trunc_msg = _trunc_match.group(0)[1:-1] if _trunc_match else "File was too large to read in full"
+                    status_container.warning(_trunc_msg, icon="⚠️")
+
             tool_results.append({"name": tool_name, "content": tool_content})
 
             # Show captured image inline when the vision tool completes
@@ -694,7 +869,7 @@ def _stream_events(event_generator, voice_mode: bool = False):
                 )
             if _tts_active:
                 st.session_state.tts_service.flush_streaming(_tts_buffer)
-            return ("".join(answer_tokens), payload, captured_images, tool_results)
+            return ("".join(answer_tokens), payload, captured_images, tool_results, chart_data)
 
         elif event_type == "done":
             final_answer = payload
@@ -721,7 +896,7 @@ def _stream_events(event_generator, voice_mode: bool = False):
             seen_ids.add(vid_id)
             st.markdown(_yt_embed_html(vid_id), unsafe_allow_html=True)
 
-    return (answer, None, captured_images, tool_results)
+    return (answer, None, captured_images, tool_results, chart_data)
 
 
 # ── Session state defaults ──────────────────────────────────────────────────
@@ -771,6 +946,9 @@ if "stop_requested" not in st.session_state:
 
 if "pending_agent_input" not in st.session_state:
     st.session_state.pending_agent_input = None
+
+if "show_onboarding" not in st.session_state:
+    st.session_state.show_onboarding = _is_first_run()
 
 if "vision_service_obj" not in st.session_state:
     st.session_state.vision_service_obj = VisionService()
@@ -1106,8 +1284,13 @@ def settings_dialog():
     with tab_fs:
         st.info(
             "Give Thoth access to read, write, and manage files on your computer. "
-            "Operations include listing directories, reading files (including PDFs), "
-            "writing, copying, moving, and deleting files.\n\n"
+            "Operations include listing directories, reading files (PDF, CSV, Excel, "
+            "JSON, JSONL, TSV, and plain text), writing, copying, moving, and deleting "
+            "files.\n\n"
+            "**📊 Structured data:** CSV, Excel (.xlsx/.xls), JSON, JSONL, and TSV "
+            "files are parsed with pandas — Thoth sees column schema, statistics, "
+            "and a preview of the data. For Excel files with multiple sheets, Thoth "
+            "can target a specific sheet.\n\n"
             "**🔒 Safety first:** Destructive actions (move, delete) require explicit "
             "confirmation — Thoth will always ask before proceeding. "
             "These operations are disabled by default; enable them in the "
@@ -1776,8 +1959,13 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    if st.button("⚙️ Settings", use_container_width=True):
-        settings_dialog()
+    _btn_col_settings, _btn_col_help = st.columns([5, 1])
+    with _btn_col_settings:
+        if st.button("⚙️ Settings", use_container_width=True):
+            settings_dialog()
+    with _btn_col_help:
+        if st.button("?", key="help_btn", help="Show what Thoth can do"):
+            st.session_state.show_onboarding = True
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1786,17 +1974,46 @@ with st.sidebar:
 # ═════════════════════════════════════════════════════════════════════════════
 
 if st.session_state.thread_id is None:
-    st.markdown(
-        """
-        <div style='text-align:center; padding-top: 8rem;'>
-            <h1 style="color: #FFD700;">𓁟 Thoth</h1>
-            <p style='font-size:1.15rem; color: #888;'>
-                Select a conversation from the sidebar or start a new one.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # ── Empty state: show onboarding or simple prompt ────────────────────
+    if st.session_state.show_onboarding:
+        st.markdown(
+            '<div style="text-align:center; padding-top:2rem;">'
+            '<h1 style="color: #FFD700;">𓁟 Thoth</h1></div>',
+            unsafe_allow_html=True,
+        )
+        with st.chat_message("assistant"):
+            st.markdown(_WELCOME_MESSAGE)
+            cols = st.columns(3)
+            for i, prompt in enumerate(_EXAMPLE_PROMPTS):
+                with cols[i % 3]:
+                    if st.button(prompt, key=f"onb_try_{i}", use_container_width=True):
+                        # Create a new thread and send this prompt
+                        _onb_tid = uuid.uuid4().hex[:12]
+                        _onb_name = prompt[:50]
+                        _save_thread_meta(_onb_tid, _onb_name)
+                        st.session_state.thread_id = _onb_tid
+                        st.session_state.thread_name = _onb_name
+                        st.session_state.messages = [{"role": "user", "content": prompt}]
+                        st.session_state.pending_agent_input = {"input": prompt, "voice_mode": False}
+                        st.session_state.is_generating = True
+                        st.session_state.show_onboarding = False
+                        _mark_onboarding_seen()
+                        st.rerun()
+        # Mark as seen after first display
+        if _is_first_run():
+            _mark_onboarding_seen()
+    else:
+        st.markdown(
+            """
+            <div style='text-align:center; padding-top: 8rem;'>
+                <h1 style="color: #FFD700;">𓁟 Thoth</h1>
+                <p style='font-size:1.15rem; color: #888;'>
+                    Select a conversation from the sidebar or start a new one.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 else:
     _hdr_col, _export_col = st.columns([10, 1])
     with _hdr_col:
@@ -1849,7 +2066,27 @@ else:
     # Render existing messages
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
-            _render_message(msg["content"], images=msg.get("images"), tool_results=msg.get("tool_results"))
+            _render_message(msg["content"], images=msg.get("images"), tool_results=msg.get("tool_results"), role=msg["role"], charts=msg.get("charts"))
+
+    # ── In-thread onboarding (triggered by ? button) ────────────────────
+    if st.session_state.show_onboarding:
+        with st.chat_message("assistant"):
+            st.markdown(_WELCOME_MESSAGE)
+            _onb_cols = st.columns(3)
+            for _oi, _op in enumerate(_EXAMPLE_PROMPTS):
+                with _onb_cols[_oi % 3]:
+                    if st.button(_op, key=f"onb_inline_{_oi}", use_container_width=True):
+                        st.session_state.messages.append({"role": "user", "content": _op})
+                        st.session_state.pending_agent_input = {"input": _op, "voice_mode": False}
+                        st.session_state.is_generating = True
+                        st.session_state.show_onboarding = False
+                        if st.session_state.thread_name and st.session_state.thread_name.startswith("Thread "):
+                            _save_thread_meta(st.session_state.thread_id, _op[:50])
+                            st.session_state.thread_name = _op[:50]
+                        st.rerun()
+            if st.button("✕ Dismiss", key="dismiss_onboarding"):
+                st.session_state.show_onboarding = False
+                st.rerun()
 
     # Auto-scroll chat to bottom after messages render
     _scroll_to_bottom()
@@ -1946,7 +2183,7 @@ else:
 
     # ── Normal chat input ────────────────────────────────────────────────
     _FILE_TYPES = sorted(
-        [ext.lstrip(".") for ext in _IMAGE_EXTENSIONS | _TEXT_EXTENSIONS | {".pdf"}]
+        [ext.lstrip(".") for ext in _IMAGE_EXTENSIONS | _TEXT_EXTENSIONS | _DATA_EXTENSIONS | {".pdf"}]
     )
     # ── Stop button (always visible, greyed out when idle) ────────────
     def _on_stop_click():
@@ -1979,13 +2216,13 @@ else:
             _scroll_to_bottom()
             try:
                 if _pending.get("resume"):
-                    answer, interrupt_data, cap_imgs, tool_res = _stream_events(
+                    answer, interrupt_data, cap_imgs, tool_res, charts = _stream_events(
                         resume_stream_agent(
                             enabled_tools, config, _pending["approved"]
                         )
                     )
                 else:
-                    answer, interrupt_data, cap_imgs, tool_res = _stream_events(
+                    answer, interrupt_data, cap_imgs, tool_res, charts = _stream_events(
                         stream_agent(_pending["input"], enabled_tools, config),
                         voice_mode=voice_mode,
                     )
@@ -2001,6 +2238,7 @@ else:
                 interrupt_data = None
                 cap_imgs = []
                 tool_res = []
+                charts = []
                 st.markdown(answer)
                 # Repair orphaned tool calls so the thread stays usable
                 try:
@@ -2019,12 +2257,14 @@ else:
             msg["images"] = cap_imgs
         if tool_res:
             msg["tool_results"] = tool_res
+        if charts:
+            msg["charts"] = charts
         st.session_state.messages.append(msg)
 
         st.rerun()
 
     if chat_value := st.chat_input(
-        "Ask a question…",
+        "Ask anything or attach files…",
         accept_file="multiple",
         file_type=_FILE_TYPES,
     ):

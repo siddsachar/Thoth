@@ -1,6 +1,6 @@
 # 𓁟 Thoth — Private AI Assistant
 
-Thoth is a **local-first, privacy-focused AI assistant** that runs entirely on your machine. It combines a powerful ReAct agent with 16 integrated tools — web search, email, calendar, file management, vision, long-term memory, and more — all powered by a locally-running LLM via [Ollama](https://ollama.com/). No data leaves your machine unless you explicitly use an online tool.
+Thoth is a **local-first, privacy-focused AI assistant** that runs entirely on your machine. It combines a powerful ReAct agent with 18 integrated tools — web search, email, calendar, file management, vision, long-term memory, and more — all powered by a locally-running LLM via [Ollama](https://ollama.com/). No data leaves your machine unless you explicitly use an online tool.
 
 ### Why "Thoth"?
 
@@ -27,9 +27,12 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Thread switching** — resume any previous conversation seamlessly
 - **Thread deletion** — remove individual conversations or delete all at once with confirmation
 - **Conversation export** — export any thread as Markdown (.md), plain text (.txt), or PDF (.pdf)
-- **File attachments** — attach images (analyzed via vision model), PDFs (text extracted), and text files directly in chat
+- **File attachments** — attach images (analyzed via vision model), PDFs (text extracted), CSV, Excel, JSON, and text files directly in chat; structured data files return schema + stats + preview via pandas
+- **Inline charts** — interactive Plotly charts rendered inline when the agent visualises data (zoom, hover, pan)
 - **Inline YouTube embeds** — YouTube links in responses are rendered as playable embedded videos
 - **Syntax-highlighted code blocks** — fenced code blocks render with language-aware highlighting and a built-in copy button
+- **Onboarding guide** — first-run welcome message with tool overview and clickable example prompts; `?` button in sidebar to re-show anytime
+- **Startup health check** — verifies Ollama connectivity and model availability on launch
 
 ### 🧠 Long-Term Memory
 - **Persistent personal knowledge** — the agent remembers names, birthdays, preferences, projects, and more across conversations
@@ -67,9 +70,9 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 
 ---
 
-## 🔧 Tools (16 Tools / 38 Sub-tools)
+## 🔧 Tools (19 Tools / 42 Sub-tools)
 
-Thoth's agent has access to 16 tools that expose 38 individual operations to the model. Tools can be enabled/disabled from the Settings panel.
+Thoth's agent has access to 19 tools that expose 42 individual operations to the model. Tools can be enabled/disabled from the Settings panel.
 
 ### Search & Knowledge
 
@@ -89,7 +92,7 @@ Thoth's agent has access to 16 tools that expose 38 individual operations to the
 |------|-------------|----------|
 | **📧 Gmail** | Search, read, draft, and send emails (Google OAuth) | OAuth credentials |
 | **📅 Google Calendar** | View, create, update, move, and delete events (Google OAuth) | OAuth credentials |
-| **📁 Filesystem** | Sandboxed file operations — read, write, copy, move, delete within a workspace folder; large file reads capped at 80K chars with truncation notice | None |
+| **📁 Filesystem** | Sandboxed file operations — read, write, copy, move, delete within a workspace folder; reads PDF, CSV, Excel (.xlsx/.xls), JSON/JSONL, and TSV files; structured data files return schema + stats + preview via pandas | None |
 | **⏰ Timer** | Desktop notification timers (max 24h), with list and cancel | None |
 
 ### Computation & Analysis
@@ -101,6 +104,9 @@ Thoth's agent has access to 16 tools that expose 38 individual operations to the
 | **🌤️ Weather** | Current conditions and multi-day forecasts via Open-Meteo | None |
 | **👁️ Vision** | Camera/screen capture and analysis via vision model | None |
 | **🧠 Memory** | Save, search, update, and delete long-term personal memories | None |
+| **🔍 Conversation Search** | Search past conversations by keyword or list all saved threads | None |
+| **🖥️ System Info** | OS, CPU, RAM, disk space, IP addresses, battery, and top processes | None |
+| **📊 Chart** | Interactive Plotly charts — bar, line, scatter, pie, histogram, box, area, heatmap from data files | None |
 
 ### Safety & Permissions
 
@@ -131,7 +137,7 @@ Thoth's agent has access to 16 tools that expose 38 individual operations to the
 │   System prompt with TOOL USE, MEMORY, and CITATION guidelines      │
 │   Interrupt mechanism for destructive action confirmation            │
 │                                                                      │
-│   38 LangChain sub-tools from 16 registered tool modules            │
+│   42 LangChain sub-tools from 19 registered tool modules            │
 └───────┬──────────┬──────────┬──────────┬──────────┬─────────────────┘
         │          │          │          │          │
         ▼          ▼          ▼          ▼          ▼
@@ -155,9 +161,10 @@ Thoth's agent has access to 16 tools that expose 38 individual operations to the
 | **`voice.py`** | Local STT pipeline — OpenWakeWord detection → VAD silence detection → faster-whisper transcription |
 | **`tts.py`** | Piper TTS integration — auto-downloads engine + voices, streaming sentence-by-sentence playback |
 | **`vision.py`** | Camera/screen capture via OpenCV/MSS, image analysis via Ollama vision models |
+| **`data_reader.py`** | Shared pandas-based reader for CSV, TSV, Excel, JSON, JSONL — returns schema + stats + preview rows |
 | **`launcher.py`** | System tray launcher via pystray — manages Streamlit subprocess, reflects voice state |
 | **`api_keys.py`** | API key management — load/save/apply from `~/.thoth/api_keys.json` |
-| **`tools/`** | 16 self-registering tool modules + base class + registry |
+| **`tools/`** | 19 self-registering tool modules + base class + registry |
 
 ### Data Storage
 
@@ -264,6 +271,7 @@ For **Gmail** and **Google Calendar**, you'll need a Google Cloud OAuth `credent
    - *"Read the file report.pdf in my workspace"* → uses Filesystem
    - *"What's on my screen right now?"* → uses Vision (screen capture)
    - *"Set a timer for 10 minutes"* → uses Timer with desktop notification
+   - *"What did I ask about taxes last week?"* → uses Conversation Search
 4. **Open ⚙️ Settings** to configure models, enable/disable tools, and set up integrations
 
 ---
