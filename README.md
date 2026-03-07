@@ -57,7 +57,7 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Inline image display** — captured images are shown inline in the chat
 
 ### 🎤 Voice Input & 🔊 Text-to-Speech
-- **Wake word detection** — hands-free activation with "Hey Jarvis", "Hey Mycroft", "Alexa", or "Hey Thought" via OpenWakeWord (ONNX models)
+- **Wake word detection** — hands-free activation with "Hey Jarvis" or "Hey Mycroft" via OpenWakeWord (ONNX models)
 - **Local speech-to-text** — transcription via faster-whisper (tiny/base/small models), no cloud APIs
 - **Configurable sensitivity** — adjustable wake word threshold slider
 - **Neural TTS** — high-quality text-to-speech via Piper TTS, fully offline

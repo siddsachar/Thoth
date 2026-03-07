@@ -76,7 +76,7 @@ New camera and screen capture integration:
 
 Fully local, hands-free voice interaction:
 
-- **Wake word detection** — 4 built-in wake words (Hey Jarvis, Hey Mycroft, Alexa, Hey Thought) via OpenWakeWord ONNX models
+- **Wake word detection** — 2 built-in wake words (Hey Jarvis, Hey Mycroft) via OpenWakeWord ONNX models
 - **Speech-to-text** — faster-whisper with selectable model size (tiny/base/small)
 - **Configurable sensitivity** — wake word threshold slider (0.1–0.95)
 - **Audio chime** on wake word detection

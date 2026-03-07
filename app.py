@@ -1157,7 +1157,7 @@ def settings_dialog():
             icon="🔍",
         )
         for tool in tool_registry.get_all_tools():
-            if tool.name in ("filesystem", "gmail", "documents", "calendar", "timer", "url_reader", "calculator", "weather", "vision"):
+            if tool.name in ("filesystem", "gmail", "documents", "calendar", "timer", "url_reader", "calculator", "weather", "vision", "chart", "system_info", "conversation_search"):
                 continue
 
             enabled = st.toggle(
@@ -1265,7 +1265,7 @@ def settings_dialog():
             "reading web pages, and other everyday tasks. ",
             icon="🔧",
         )
-        _utility_tools = ["timer", "url_reader", "calculator", "weather"]
+        _utility_tools = ["timer", "url_reader", "calculator", "weather", "chart", "system_info", "conversation_search"]
         for _uname in _utility_tools:
             _utool = tool_registry.get_tool(_uname)
             if _utool is None:
