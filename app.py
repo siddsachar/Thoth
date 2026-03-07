@@ -731,8 +731,6 @@ def _stream_events(event_generator, voice_mode: bool = False):
     _tts_in_code_block = False
     _tts_sentences_spoken = 0
     _tts_active = voice_mode and hasattr(st.session_state, 'tts_service') and st.session_state.tts_service.enabled
-    if _tts_active:
-        st.session_state.tts_service.stop()  # clear any previous playback
 
     # Show typing indicator until first meaningful event
     typing_indicator = answer_placeholder.markdown(
@@ -761,12 +759,13 @@ def _stream_events(event_generator, voice_mode: bool = False):
             s = status_container.status(f"Searching {payload}…", expanded=False)
             active_statuses[payload] = s
 
-            # Announce tool usage aloud in voice mode
+            # Announce tool usage aloud in voice mode (queued through
+            # the streaming pipeline so it serialises with the response)
             if voice_mode:
                 tts = st.session_state.tts_service
                 if tts.enabled:
                     phrase = payload.replace("_", " ")
-                    tts.speak_now(f"Ok, let me use the {phrase} tool.")
+                    tts.speak_streaming(f"Ok, let me use the {phrase} tool.")
 
         elif event_type == "tool_done":
             tool_name = payload["name"] if isinstance(payload, dict) else payload
@@ -2029,7 +2028,6 @@ else:
         # Stop any in-progress TTS so the assistant doesn't talk over the user
         if hasattr(st.session_state, 'tts_service') and st.session_state.tts_service.enabled:
             st.session_state.tts_service.stop()
-            st.session_state.tts_service.speak_now("Ok. Working.")
         _voice_pending = st.session_state.voice_text
         st.session_state.voice_text = None  # consume it
 
