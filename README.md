@@ -68,7 +68,7 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Streaming TTS** — responses are spoken sentence-by-sentence as they stream in
 - **Mic gating** — microphone is automatically muted during TTS playback to prevent echo and feedback loops
 - **Hands-free mode** — combine voice input + TTS for a fully conversational experience
-- **System tray launcher** — `launcher.py` runs a system tray icon that reflects voice state (green = listening, yellow = processing, grey = off)
+- **System tray launcher** — `launcher.py` runs a system tray icon that shows app status (green = running, grey = stopped)
 
 ---
 
@@ -164,7 +164,7 @@ Thoth's agent has access to 19 tools that expose 42 individual operations to the
 | **`tts.py`** | Piper TTS integration — auto-downloads engine + voices, streaming sentence-by-sentence playback |
 | **`vision.py`** | Camera/screen capture via OpenCV/MSS, image analysis via Ollama vision models |
 | **`data_reader.py`** | Shared pandas-based reader for CSV, TSV, Excel, JSON, JSONL — returns schema + stats + preview rows |
-| **`launcher.py`** | System tray launcher via pystray — manages Streamlit subprocess, reflects voice state |
+| **`launcher.py`** | System tray launcher via pystray — manages Streamlit subprocess, shows app status |
 | **`api_keys.py`** | API key management — load/save/apply from `~/.thoth/api_keys.json` |
 | **`memory_extraction.py`** | Background memory extraction — scans past conversations via LLM, extracts personal facts, deduplicates against existing memories (cosine > 0.85), runs on startup + every 6 hours |
 | **`tools/`** | 19 self-registering tool modules + base class + registry |
