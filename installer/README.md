@@ -4,13 +4,15 @@ This guide explains how to build a distributable Windows installer for Thoth v2.
 
 ## Architecture
 
-The installer is **lightweight** (~20 MB) — it bundles only the embedded Python runtime and app source code. Ollama and all Python packages are downloaded at install time.
+The installer (~90 MB) bundles the embedded Python runtime, app source code, and the Piper TTS engine with a default voice so text-to-speech works offline out of the box. Ollama and Python packages are downloaded at install time.
 
 | Bundled in .exe | Downloaded at install time |
 |----------------|---------------------------|
 | Python 3.13 embeddable (~15 MB) | Ollama (~120 MB) |
 | App source code + tools (~200 KB) | Python packages via pip (~2 GB) |
 | get-pip.py (~2.5 MB) | |
+| Piper TTS engine (~37 MB) | Additional TTS voices (~60 MB each, on demand) |
+| Default voice: Lessac (~60 MB) | |
 
 ## Prerequisites
 
@@ -18,7 +20,7 @@ The installer is **lightweight** (~20 MB) — it bundles only the embedded Pytho
    Download: https://jrsoftware.org/isdl.php  
    Ensure `ISCC.exe` is installed (default: `C:\Program Files (x86)\Inno Setup 6\`)
 
-2. **Internet connection** — the build script downloads Python embeddable + get-pip.py
+2. **Internet connection** — the build script downloads Python embeddable, get-pip.py, Piper TTS engine, and the default voice
 
 3. **Icon file** — `thoth.ico` in the project root  
    If you don't have one, remove the `SetupIconFile` and `IconFilename` lines in `thoth_setup.iss`.
@@ -33,7 +35,9 @@ The installer is **lightweight** (~20 MB) — it bundles only the embedded Pytho
 This will:
 1. Download Python 3.13 embeddable package (~15 MB)
 2. Download `get-pip.py` (~2.5 MB)
-3. Compile everything into `dist\ThothSetup_2.2.0.exe`
+3. Download Piper TTS engine (~37 MB)
+4. Download default voice — Lessac, US English (~60 MB)
+5. Compile everything into `dist\ThothSetup_2.2.0.exe`
 
 ### Options
 
@@ -94,12 +98,16 @@ C:\Program Files\Thoth\            # Installation directory
 ├── memory_vectors/                 # FAISS index for semantic memory search
 ├── memory_extraction_state.json    # Tracks last extraction run
 ├── api_keys.json                   # API keys
+├── app_config.json                 # Onboarding / first-run state
 ├── tools_config.json               # Tool enable/disable state
 ├── model_settings.json             # Selected model & context size
+├── tts_settings.json               # Selected TTS voice
+├── vision_settings.json            # Vision model & camera selection
+├── voice_settings.json             # Whisper model size preference
 ├── processed_files.json            # Tracked indexed documents
-├── status.json                     # Voice state for system tray
 ├── workflows.db                    # Workflow definitions, schedules & run history
 ├── timers.sqlite                   # Timer jobs
+├── vector_store/                   # FAISS index for uploaded documents
 ├── gmail/                          # Gmail OAuth tokens
 ├── calendar/                       # Calendar OAuth tokens
 └── piper/                          # Piper TTS engine & voices
@@ -113,7 +121,7 @@ Ollama is installed system-wide via its official installer.
 
 The Inno Setup installer runs these steps:
 
-1. **Extract files** — embedded Python, app source, scripts
+1. **Extract files** — embedded Python, app source, scripts, Piper TTS + default voice (to `~/.thoth/piper/`)
 2. **Run `install_deps.bat`** which:
    - Patches the Python `._pth` file to enable pip and site-packages
    - Installs pip via `get-pip.py`

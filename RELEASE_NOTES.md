@@ -255,7 +255,7 @@ Fully local, hands-free voice interaction:
 
 Neural speech synthesis, fully offline:
 
-- **Piper TTS engine** — auto-downloaded from HuggingFace on first use (~50 MB)
+- **Piper TTS engine** — bundled with installer (engine + default voice); additional voices downloaded from HuggingFace on demand
 - **8 voices** — US and British English, male and female variants
 - **Streaming playback** — responses spoken sentence-by-sentence as tokens stream in
 - **Smart truncation** — long responses are summarized aloud with full text in the app

@@ -178,7 +178,7 @@ Thoth's agent has access to 19 tools that expose 42 individual operations to the
 | **`models.py`** | Ollama model management — listing, downloading, switching models, context size configuration |
 | **`documents.py`** | Document ingestion — PDF/DOCX/TXT loading, chunking, FAISS embedding and storage |
 | **`voice.py`** | Local STT pipeline — toggle-based 4-state machine (stopped/listening/transcribing/muted) with faster-whisper CPU-only int8 transcription |
-| **`tts.py`** | Piper TTS integration — auto-downloads engine + voices, streaming sentence-by-sentence playback |
+| **`tts.py`** | Piper TTS integration — engine + default voice bundled with installer, additional voices downloaded on demand, streaming sentence-by-sentence playback |
 | **`vision.py`** | Camera/screen capture via OpenCV/MSS, image analysis via Ollama vision models |
 | **`data_reader.py`** | Shared pandas-based reader for CSV, TSV, Excel, JSON, JSONL — returns schema + stats + preview rows |
 | **`launcher.py`** | System tray launcher via pystray — manages Streamlit subprocess, shows app status |
@@ -199,12 +199,16 @@ All user data is stored in `~/.thoth/` (`%USERPROFILE%\.thoth\` on Windows):
 ├── memory_vectors/         # FAISS vector index for semantic memory search
 ├── memory_extraction_state.json  # Tracks last extraction run timestamp
 ├── api_keys.json           # API keys (Tavily, Wolfram, etc.)
+├── app_config.json         # Onboarding / first-run state
 ├── tools_config.json       # Tool enable/disable state & config
 ├── model_settings.json     # Selected model & context size
+├── tts_settings.json       # Selected TTS voice
+├── vision_settings.json    # Vision model & camera selection
+├── voice_settings.json     # Whisper model size preference
 ├── processed_files.json    # Tracks indexed documents
-├── status.json             # Voice state for system tray
 ├── workflows.db            # Workflow definitions, schedules & run history
 ├── timers.sqlite           # Scheduled timer jobs
+├── vector_store/           # FAISS index for uploaded documents
 ├── gmail/                  # Gmail OAuth tokens
 ├── calendar/               # Calendar OAuth tokens
 └── piper/                  # Piper TTS engine & voice models
