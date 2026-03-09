@@ -70,6 +70,23 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Hands-free mode** — combine voice input + TTS for a fully conversational experience
 - **System tray launcher** — `launcher.py` runs a system tray icon that shows app status (green = running, grey = stopped)
 
+### ⚡ Workflows
+- **Reusable prompt sequences** — create named, multi-step workflows that run sequentially in a fresh thread
+- **Template variables** — use `{{date}}`, `{{day}}`, `{{time}}`, `{{month}}`, `{{year}}` in prompts — replaced at runtime
+- **Manual + scheduled execution** — run workflows on demand from the home screen, or schedule them daily/weekly
+- **Prompt chaining** — each step sees the output of the previous step, enabling research → summarise → action pipelines
+- **Always-background execution** — workflows always run in the background so you can keep chatting; the sidebar shows a ⏳ indicator while running
+- **Safety** — destructive tools (send email, delete files, etc.) are automatically excluded from background workflow runs; the LLM adapts by using safe alternatives
+- **Pre-built templates** — ships with 4 starter workflows (Daily Briefing, Research Summary, Email Digest, Weekly Review)
+- **Full editor** — create, edit, duplicate, and delete workflows from the Settings → Workflows tab
+- **Run history** — track past workflow executions with timestamps and step counts
+
+### 🔔 Notifications
+- **Desktop notifications** — workflow completions and timer expirations trigger a Windows desktop notification with timestamp
+- **Sound effects** — distinct audio chimes for workflow completion (two-tone C5→E5) and timer alerts (5-beep A5), played asynchronously
+- **In-app toasts** — transient toast messages appear in the Streamlit UI on the next page load with contextual emoji icons
+- **Unified system** — all notification channels (desktop, sound, toast) fire from a single `notify()` call, keeping notification logic consistent across features
+
 ---
 
 ## 🔧 Tools (19 Tools / 42 Sub-tools)
@@ -126,7 +143,7 @@ Thoth's agent has access to 19 tools that expose 42 individual operations to the
 │                    Streamlit Frontend (app.py)                       │
 │  ┌────────────┐  ┌──────────────────────┐  ┌───────────────────┐   │
 │  │  Sidebar   │  │   Chat Interface     │  │   Settings Dialog │   │
-│  │  Threads   │  │   Streaming Tokens   │  │   9 Tabs          │   │
+│  │  Threads   │  │   Streaming Tokens   │  │   10 Tabs         │   │
 │  │  Controls  │  │   Tool Status        │  │   Tool Config     │   │
 │  └────────────┘  └──────────────────────┘  └───────────────────┘   │
 └──────────────────────────┬───────────────────────────────────────────┘
@@ -154,7 +171,7 @@ Thoth's agent has access to 19 tools that expose 42 individual operations to the
 
 | File | Purpose |
 |------|---------|
-| **`app.py`** | Streamlit UI — chat interface, sidebar thread manager with live token counter, Settings dialog (9 tabs), file attachment handling, streaming event loop with error recovery, export, voice bar, custom CSS |
+| **`app.py`** | Streamlit UI — chat interface, sidebar thread manager with live token counter, Settings dialog (10 tabs), file attachment handling, streaming event loop with error recovery, export, voice bar, custom CSS |
 | **`agent.py`** | LangGraph ReAct agent — system prompt, pre-model context trimming with proportional tool-output shrinking, streaming event generator, interrupt handling for destructive actions, live token usage reporting, contextual compression |
 | **`threads.py`** | SQLite-backed thread metadata and `SqliteSaver` checkpointer for persisting LangGraph conversation state |
 | **`memory.py`** | Long-term memory with SQLite CRUD and FAISS semantic vector search — save, search, list, update, delete, count across 6 categories; auto-rebuilds vector index on mutations |
@@ -167,6 +184,8 @@ Thoth's agent has access to 19 tools that expose 42 individual operations to the
 | **`launcher.py`** | System tray launcher via pystray — manages Streamlit subprocess, shows app status |
 | **`api_keys.py`** | API key management — load/save/apply from `~/.thoth/api_keys.json` |
 | **`memory_extraction.py`** | Background memory extraction — scans past conversations via LLM, extracts personal facts, deduplicates against existing memories (cosine > 0.85), runs on startup + every 6 hours |
+| **`workflows.py`** | Workflow engine — SQLite CRUD, template variable expansion, sequential prompt execution, background runner with threading, scheduled execution (daily/weekly), desktop notifications, 4 default templates |
+| **`notifications.py`** | Unified notification system — desktop notifications (plyer), sound effects (winsound), and in-app toast queue for Streamlit; coordinates workflow completion chimes and timer alerts |
 | **`tools/`** | 19 self-registering tool modules + base class + registry |
 
 ### Data Storage
@@ -184,6 +203,7 @@ All user data is stored in `~/.thoth/` (`%USERPROFILE%\.thoth\` on Windows):
 ├── model_settings.json     # Selected model & context size
 ├── processed_files.json    # Tracks indexed documents
 ├── status.json             # Voice state for system tray
+├── workflows.db            # Workflow definitions, schedules & run history
 ├── timers.sqlite           # Scheduled timer jobs
 ├── gmail/                  # Gmail OAuth tokens
 ├── calendar/               # Calendar OAuth tokens

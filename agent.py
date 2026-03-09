@@ -246,6 +246,10 @@ AGENT_SYSTEM_PROMPT = (
 # Cache compiled agent graphs keyed by frozenset of enabled tool names
 _agent_cache: dict[frozenset[str], object] = {}
 
+# Thread-local flag — background workflows skip destructive tools
+import threading as _threading
+_tlocal = _threading.local()
+
 # Human-readable labels for destructive tool operations
 _DESTRUCTIVE_LABELS: dict[str, str] = {
     "file_delete": "Delete file",
@@ -275,6 +279,11 @@ def _wrap_with_interrupt_gate(tool) -> None:
                 args_str = repr(args[0]) if len(args) == 1 else repr(args)
                 if kwargs:
                     args_str += ", " + ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+            if getattr(_tlocal, 'background_workflow', False):
+                return (f"⚠️ BLOCKED: '{_label}' requires user confirmation "
+                        "and cannot run in a background workflow. "
+                        "Do NOT retry this tool. Inform the user that this "
+                        "action was skipped and move on.")
             approval = interrupt({
                 "tool": _tname,
                 "label": _label,
@@ -291,6 +300,11 @@ def _wrap_with_interrupt_gate(tool) -> None:
 
         def _gated_run(*args, _fn=_orig, _label=label, _tname=tool.name, **kwargs):
             args_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+            if getattr(_tlocal, 'background_workflow', False):
+                return (f"⚠️ BLOCKED: '{_label}' requires user confirmation "
+                        "and cannot run in a background workflow. "
+                        "Do NOT retry this tool. Inform the user that this "
+                        "action was skipped and move on.")
             approval = interrupt({
                 "tool": _tname,
                 "label": _label,
@@ -351,7 +365,8 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None):
     if enabled_tool_names is None:
         enabled_tool_names = [t.name for t in tool_registry.get_enabled_tools()]
 
-    cache_key = frozenset(enabled_tool_names) | frozenset({f"ctx:{get_context_size()}", f"model:{get_current_model()}"})
+    is_background = getattr(_tlocal, 'background_workflow', False)
+    cache_key = frozenset(enabled_tool_names) | frozenset({f"ctx:{get_context_size()}", f"model:{get_current_model()}", f"bg:{is_background}"})
 
     if cache_key not in _agent_cache:
         # Collect LangChain tool wrappers for enabled tools
@@ -363,12 +378,17 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None):
                 lc_tools.extend(tool_obj.as_langchain_tools())
                 destructive_names.update(tool_obj.destructive_tool_names)
 
-        # Gate destructive tools with interrupt() — the graph will pause,
-        # yield an "interrupt" event, and wait for user approval before
-        # actually executing the tool.
-        for t in lc_tools:
-            if t.name in destructive_names:
-                _wrap_with_interrupt_gate(t)
+        if is_background:
+            # Background workflows: remove destructive tools entirely so the
+            # LLM can't call them (prevents infinite retry loops).
+            lc_tools = [t for t in lc_tools if t.name not in destructive_names]
+        else:
+            # Interactive sessions: gate destructive tools with interrupt() —
+            # the graph will pause, yield an "interrupt" event, and wait for
+            # user approval before actually executing the tool.
+            for t in lc_tools:
+                if t.name in destructive_names:
+                    _wrap_with_interrupt_gate(t)
 
         # Wrap every tool so exceptions are returned to the LLM as error
         # messages instead of crashing the stream.  LangChain's built-in

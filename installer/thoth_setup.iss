@@ -46,6 +46,7 @@ Source: "..\app.py";                   DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\agent.py";                 DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\memory.py";                DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\memory_extraction.py";     DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\workflows.py";             DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\models.py";                DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\data_reader.py";            DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\documents.py";             DestDir: "{app}\app"; Flags: ignoreversion

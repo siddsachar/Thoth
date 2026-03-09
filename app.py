@@ -23,8 +23,8 @@ if _first_run:
     with _startup_placeholder.status("Starting Thoth…", expanded=True) as _startup_status:
         _startup_status.write("⚙️ Loading core modules…")
 
-        from threads import _list_threads, _save_thread_meta, _delete_thread, checkpointer, DB_PATH
-        from agent import invoke_agent, get_agent_graph, stream_agent, resume_stream_agent, clear_agent_cache, repair_orphaned_tool_calls, get_token_usage
+        from threads import _list_threads, _save_thread_meta, _delete_thread
+        from agent import get_agent_graph, stream_agent, resume_stream_agent, clear_agent_cache, repair_orphaned_tool_calls, get_token_usage
 
         _startup_status.write("📄 Loading document engine…")
         from documents import (
@@ -56,11 +56,11 @@ if _first_run:
         apply_keys()
 
         _startup_status.write("🎤 Loading voice & TTS services…")
-        from voice import VoiceService, get_voice_service, get_available_whisper_sizes
-        from tts import TTSService, get_voice_catalog, VOICE_CATALOG
+        from voice import get_voice_service, get_available_whisper_sizes
+        from tts import TTSService, VOICE_CATALOG
 
         _startup_status.write("👁️ Loading vision service…")
-        from vision import VisionService, POPULAR_VISION_MODELS, DEFAULT_VISION_MODEL, list_cameras
+        from vision import VisionService, POPULAR_VISION_MODELS, list_cameras
         from tools.vision_tool import set_vision_service
 
         _startup_status.write("🧠 Loading memory system…")
@@ -70,27 +70,43 @@ if _first_run:
         if "memory_extraction_done" not in st.session_state:
             def _extraction_status(msg):
                 _startup_status.write(f"🧠 {msg}")
-            _extraction_count = run_extraction(on_status=_extraction_status)
+            run_extraction(on_status=_extraction_status)
             start_periodic_extraction()
             st.session_state.memory_extraction_done = True
+
+        _startup_status.write("⚡ Loading workflows…")
+        from workflows import (
+            list_workflows, create_workflow, update_workflow,
+            delete_workflow, duplicate_workflow,
+            run_workflow_background, get_running_workflows, get_run_history,
+            seed_default_workflows, start_workflow_scheduler,
+        )
+        seed_default_workflows()
+        start_workflow_scheduler()
 
     _startup_placeholder.empty()
     st.session_state.modules_loaded = True
 else:
     # Reruns: imports are cached by Python, no UI needed
-    from threads import _list_threads, _save_thread_meta, _delete_thread, checkpointer, DB_PATH
-    from agent import invoke_agent, get_agent_graph, stream_agent, resume_stream_agent, clear_agent_cache, repair_orphaned_tool_calls, get_token_usage
+    from threads import _list_threads, _save_thread_meta, _delete_thread
+    from agent import get_agent_graph, stream_agent, resume_stream_agent, clear_agent_cache, repair_orphaned_tool_calls, get_token_usage
     from documents import load_processed_files, load_and_vectorize_document, reset_vector_store, DocumentLoader
     from models import (get_current_model, set_model, list_all_models, list_local_models,
                         is_model_local, pull_model, get_context_size, set_context_size,
                         DEFAULT_MODEL, DEFAULT_CONTEXT_SIZE, CONTEXT_SIZE_OPTIONS, CONTEXT_SIZE_LABELS)
     from api_keys import get_key, set_key, apply_keys
     from tools import registry as tool_registry
-    from voice import VoiceService, get_voice_service, get_available_whisper_sizes
-    from tts import TTSService, get_voice_catalog, VOICE_CATALOG
-    from vision import VisionService, POPULAR_VISION_MODELS, DEFAULT_VISION_MODEL, list_cameras
+    from voice import get_voice_service, get_available_whisper_sizes
+    from tts import TTSService, VOICE_CATALOG
+    from vision import VisionService, POPULAR_VISION_MODELS, list_cameras
     from tools.vision_tool import set_vision_service
     from memory_extraction import run_extraction, start_periodic_extraction
+    from workflows import (
+        list_workflows, create_workflow, update_workflow,
+        delete_workflow, duplicate_workflow,
+        run_workflow_background, get_running_workflows, get_run_history,
+        seed_default_workflows, start_workflow_scheduler,
+    )
 
 # ── Startup health check ────────────────────────────────────────────────────
 def _startup_health_check():
@@ -193,7 +209,7 @@ I remember important things you tell me across conversations. I can also search 
 ⚙️ **Getting started:**
 - Head to **⚙️ Settings** (bottom of the sidebar) to configure tools like Gmail, Calendar, and your filesystem workspace folder.
 - **Attach files** by clicking the 📎 icon in the chat input — I can read PDFs, spreadsheets, JSON, images, and more.
-- **Voice mode**: Click the � Voice toggle above the chat input to talk to me.
+- **Voice mode**: Click the 🎤 Voice toggle above the chat input to talk to me.
 - **Stop generation** anytime with the ⏹ button.
 
 ---
@@ -289,9 +305,6 @@ if not is_model_local(DEFAULT_MODEL):
 st.markdown(
     """
     <style>
-    /* Hide Streamlit's built-in header (deploy button / hamburger menu) */
-    header[data-testid="stHeader"] { display: none !important; }
-
     /* Tighten top padding */
     .block-container { padding-top: 1.5rem; padding-bottom: 7rem; }
 
@@ -1002,8 +1015,8 @@ if get_context_size() != st.session_state.context_size:
 # ═════════════════════════════════════════════════════════════════════════════
 @st.dialog("⚙️ Settings", width="large")
 def settings_dialog():
-    tab_models, tab_tools, tab_docs, tab_fs, tab_gmail, tab_cal, tab_utils, tab_memory, tab_prefs = st.tabs(
-        ["🤖 Models", "🔍 Search", "📄 Local Documents", "📁 Filesystem", "📧 Gmail", "📅 Calendar", "🔧 Utilities", "🧠 Memory", "🎛️ Preferences"]
+    tab_models, tab_tools, tab_docs, tab_fs, tab_gmail, tab_cal, tab_utils, tab_memory, tab_workflows, tab_prefs = st.tabs(
+        ["🤖 Models", "🔍 Search", "📄 Local Documents", "📁 Filesystem", "📧 Gmail", "📅 Calendar", "🔧 Utilities", "🧠 Memory", "⚡ Workflows", "🎤 Voice"]
     )
 
     # ── Documents tab ────────────────────────────────────────────────────────────
@@ -1708,6 +1721,223 @@ credentials.json works for Calendar.
                     st.rerun()
 
     # ── Preferences tab ─────────────────────────────────────────────────────
+    # ── Workflows tab ──────────────────────────────────────────────────────────
+    with tab_workflows:
+        st.info(
+            "Create reusable prompt workflows — multi-step sequences that run in a fresh "
+            "conversation thread. Each step sees the output of the previous one, so you can "
+            "chain research → summarise → action.\n\n"
+            "Workflows always run in the background — results appear as a conversation "
+            "in the sidebar and trigger a desktop notification when complete.\n\n"
+            "**🔒 Safety:** Destructive operations (file delete, send email, etc.) are "
+            "automatically excluded from background workflow runs.\n\n"
+            "**Template variables:** Use ``{{date}}``, ``{{day}}``, ``{{time}}``, "
+            "``{{month}}``, ``{{year}}`` in prompts — they're replaced at runtime.\n\n"
+            "**Scheduling:** Set a workflow to run automatically on a daily or weekly "
+            "schedule.",
+            icon="⚡",
+        )
+
+        _wf_list = list_workflows()
+
+        # Create button at top
+        if st.button("＋ New Workflow", key="wf_create_new", use_container_width=True):
+            create_workflow(
+                name="New Workflow",
+                prompts=[""],
+                description="",
+                icon="⚡",
+            )
+            st.rerun(scope="fragment")
+
+        if not _wf_list:
+            st.caption("No workflows yet — click the button above to create one.")
+
+        for _wf in _wf_list:
+            with st.expander(f"{_wf['icon']} {_wf['name']}", expanded=False):
+                # Name
+                _wf_new_name = st.text_input(
+                    "Name", value=_wf["name"], key=f"wf_name_{_wf['id']}"
+                )
+
+                # Icon
+                _ICON_OPTIONS = ["⚡", "📊", "📧", "📝", "🔍", "🗂️", "📰", "🧹", "💡", "🔔",
+                                 "📅", "🌐", "🤖", "📋", "🛠️", "🎯", "📈", "🔄", "💬", "🧪"]
+                _cur_icon = _wf["icon"]
+                _icon_idx = _ICON_OPTIONS.index(_cur_icon) if _cur_icon in _ICON_OPTIONS else 0
+                _wf_new_icon = st.selectbox(
+                    "Icon", options=_ICON_OPTIONS, index=_icon_idx,
+                    key=f"wf_icon_{_wf['id']}",
+                )
+
+                # Description
+                _wf_new_desc = st.text_input(
+                    "Description", value=_wf["description"] or "",
+                    key=f"wf_desc_{_wf['id']}",
+                )
+
+                # Prompts
+                st.markdown("**Prompts** (executed in order)")
+                _wf_prompts = list(_wf["prompts"])
+                _wf_prompts_changed = False
+                _wf_to_delete_idx = None
+                for _pi, _pp in enumerate(_wf_prompts):
+                    _pc1, _pc2 = st.columns([10, 1])
+                    with _pc1:
+                        _new_p = st.text_area(
+                            f"Step {_pi + 1}",
+                            value=_pp,
+                            key=f"wf_prompt_{_wf['id']}_{_pi}",
+                            height=80,
+                            label_visibility="collapsed",
+                        )
+                        if _new_p != _pp:
+                            _wf_prompts[_pi] = _new_p
+                            _wf_prompts_changed = True
+                    with _pc2:
+                        if len(_wf_prompts) > 1:
+                            if st.button("✕", key=f"wf_delprompt_{_wf['id']}_{_pi}",
+                                         help="Remove this step"):
+                                _wf_to_delete_idx = _pi
+
+                if _wf_to_delete_idx is not None:
+                    _wf_prompts.pop(_wf_to_delete_idx)
+                    update_workflow(_wf["id"], prompts=_wf_prompts)
+                    st.rerun(scope="fragment")
+
+                if st.button("＋ Add step", key=f"wf_addprompt_{_wf['id']}"):
+                    _wf_prompts.append("")
+                    update_workflow(_wf["id"], prompts=_wf_prompts)
+                    st.rerun(scope="fragment")
+
+                # Schedule
+                _sched_options = [
+                    "Manual only",
+                    "Daily",
+                    "Weekly",
+                ]
+                _current_sched = _wf.get("schedule") or ""
+                if _current_sched.startswith("daily"):
+                    _sched_idx = 1
+                elif _current_sched.startswith("weekly"):
+                    _sched_idx = 2
+                else:
+                    _sched_idx = 0
+
+                _sel_sched = st.selectbox(
+                    "Schedule",
+                    options=_sched_options,
+                    index=_sched_idx,
+                    key=f"wf_sched_{_wf['id']}",
+                )
+
+                _final_schedule = None
+                if _sel_sched == "Daily":
+                    _daily_default = "08:00"
+                    if _current_sched.startswith("daily"):
+                        try:
+                            _ps = _current_sched.split(":")
+                            _daily_default = f"{_ps[1]}:{_ps[2]}"
+                        except (IndexError, ValueError):
+                            pass
+                    _daily_time = st.time_input(
+                        "Run at",
+                        value=datetime.strptime(_daily_default, "%H:%M").time(),
+                        key=f"wf_daily_time_{_wf['id']}",
+                    )
+                    _final_schedule = f"daily:{_daily_time.hour:02d}:{_daily_time.minute:02d}"
+                elif _sel_sched == "Weekly":
+                    _day_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                    _day_short = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+                    _cur_day_idx = 0
+                    if _current_sched.startswith("weekly"):
+                        _parts = _current_sched.split(":")
+                        if len(_parts) >= 2:
+                            _cur_day_idx = next(
+                                (i for i, d in enumerate(_day_short) if d == _parts[1]),
+                                0,
+                            )
+                    _sel_day = st.selectbox(
+                        "Day",
+                        options=_day_options,
+                        index=_cur_day_idx,
+                        key=f"wf_weekly_day_{_wf['id']}",
+                    )
+                    _weekly_default = "08:00"
+                    if _current_sched.startswith("weekly"):
+                        try:
+                            _ps = _current_sched.split(":")
+                            if len(_ps) >= 4:
+                                _weekly_default = f"{_ps[2]}:{_ps[3]}"
+                        except (IndexError, ValueError):
+                            pass
+                    _weekly_time = st.time_input(
+                        "Run at",
+                        value=datetime.strptime(_weekly_default, "%H:%M").time(),
+                        key=f"wf_weekly_time_{_wf['id']}",
+                    )
+                    _final_schedule = f"weekly:{_day_short[_day_options.index(_sel_day)]}:{_weekly_time.hour:02d}:{_weekly_time.minute:02d}"
+
+                # Enable/disable (only for scheduled)
+                _wf_enabled = _wf.get("enabled", True)
+                if _final_schedule:
+                    _wf_enabled = st.toggle(
+                        "Schedule enabled",
+                        value=bool(_wf_enabled),
+                        key=f"wf_enabled_{_wf['id']}",
+                    )
+
+                # Last run info
+                if _wf.get("last_run"):
+                    try:
+                        _lr = datetime.fromisoformat(_wf["last_run"])
+                        st.caption(f"Last run: {_lr.strftime('%b %d, %Y at %I:%M %p')}")
+                    except (ValueError, TypeError):
+                        pass
+
+                # Action buttons
+                _ac1, _ac2, _ac3 = st.columns(3)
+                with _ac1:
+                    if st.button("💾 Save", key=f"wf_save_{_wf['id']}", use_container_width=True):
+                        _updates = {}
+                        if _wf_new_name != _wf["name"]:
+                            _updates["name"] = _wf_new_name
+                        if _wf_new_icon != _wf["icon"]:
+                            _updates["icon"] = _wf_new_icon
+                        if _wf_new_desc != (_wf["description"] or ""):
+                            _updates["description"] = _wf_new_desc
+                        if _wf_prompts_changed or _wf_to_delete_idx is not None:
+                            _updates["prompts"] = [p for p in _wf_prompts if p.strip()]
+                        if _final_schedule != _wf.get("schedule"):
+                            _updates["schedule"] = _final_schedule
+                        if _wf_enabled != _wf.get("enabled", True):
+                            _updates["enabled"] = int(_wf_enabled)
+                        if _updates:
+                            update_workflow(_wf["id"], **_updates)
+                            st.rerun()
+                        else:
+                            st.toast("No changes to save.")
+                with _ac2:
+                    if st.button("📋 Duplicate", key=f"wf_dup_{_wf['id']}", use_container_width=True):
+                        duplicate_workflow(_wf["id"])
+                        st.rerun()
+                with _ac3:
+                    if st.button("🗑️ Delete", key=f"wf_del_{_wf['id']}", use_container_width=True):
+                        delete_workflow(_wf["id"])
+                        st.rerun()
+
+                # Run history
+                _runs = get_run_history(_wf["id"], limit=3)
+                if _runs:
+                    with st.expander("📜 Recent runs", expanded=False):
+                        for _run in _runs:
+                            _status_icon = "✅" if _run["status"] == "completed" else ("🔄" if _run["status"] == "running" else "❌")
+                            _started = datetime.fromisoformat(_run["started_at"]).strftime("%b %d, %I:%M %p")
+                            st.caption(
+                                f"{_status_icon} {_started} — "
+                                f"{_run['steps_done']}/{_run['steps_total']} steps"
+                            )
+
     with tab_prefs:
         st.subheader("🎤 Voice Input")
         st.info(
@@ -1870,8 +2100,16 @@ with st.sidebar:
     st.caption("God of Wisdom, Writing, and Knowledge\nYour Knowledgeable Personal Agent")
     st.divider()
 
-    # New thread button
-    if st.button("＋  New conversation", use_container_width=True, type="primary"):
+    # Home + New conversation buttons
+    _home_col, _new_col = st.columns(2)
+    with _home_col:
+        if st.button("🏠 Home", use_container_width=True, disabled=st.session_state.thread_id is None):
+            st.session_state.thread_id = None
+            st.session_state.messages = []
+            st.rerun()
+    with _new_col:
+        _new_conv_clicked = st.button("＋ New", use_container_width=True, type="primary")
+    if _new_conv_clicked:
         tid = uuid.uuid4().hex[:12]
         name = f"Thread {datetime.now().strftime('%b %d, %H:%M')}"
         _save_thread_meta(tid, name)
@@ -1886,12 +2124,17 @@ with st.sidebar:
     if not threads:
         st.info("No conversations yet.")
 
+
+    _running_tids = get_running_workflows()
+
     def _render_thread_row(tid: str, name: str, key_prefix: str) -> None:
         """Render a single thread row with select + delete buttons."""
         is_active = tid == st.session_state.thread_id
         col_t, col_d = st.columns([5, 1])
         with col_t:
-            label = f"{'\u25b8 ' if is_active else ''}{name}"
+            _running_info = _running_tids.get(tid)
+            _suffix = " ⏳" if _running_info else ""
+            label = f"{'▸ ' if is_active else ''}{name}{_suffix}"
             if st.button(
                 label,
                 key=f"{key_prefix}_{tid}",
@@ -1981,6 +2224,11 @@ with st.sidebar:
 # MAIN AREA – Chat
 # ═════════════════════════════════════════════════════════════════════════════
 
+# ── Drain pending notifications (from background workflows / timers) ─────
+from notifications import drain_toasts
+for _nt in drain_toasts():
+    st.toast(_nt["message"], icon=_nt["icon"])
+
 if st.session_state.thread_id is None:
     # ── Empty state: show onboarding or simple prompt ────────────────────
     if st.session_state.show_onboarding:
@@ -2013,7 +2261,7 @@ if st.session_state.thread_id is None:
     else:
         st.markdown(
             """
-            <div style='text-align:center; padding-top: 8rem;'>
+            <div style='text-align:center; padding-top: 2rem;'>
                 <h1 style="color: #FFD700;">𓁟 Thoth</h1>
                 <p style='font-size:1.15rem; color: #888;'>
                     Select a conversation from the sidebar or start a new one.
@@ -2022,10 +2270,69 @@ if st.session_state.thread_id is None:
             """,
             unsafe_allow_html=True,
         )
+
+        # ── Workflow Tiles ───────────────────────────────────────────────
+        _home_workflows = list_workflows()
+        if _home_workflows:
+            st.markdown("#### ⚡ Workflows")
+            st.caption("Create and manage workflows in ⚙️ Settings → ⚡ Workflows")
+            # Render tiles in rows of 5
+            _wf_cols = st.columns(5)
+            for _wi, _wf in enumerate(_home_workflows):
+                with _wf_cols[_wi % 5]:
+                    with st.container(border=True):
+                        st.markdown(f"### {_wf['icon']}")
+                        st.markdown(f"**{_wf['name']}**")
+                        if _wf.get("description"):
+                            st.caption(_wf["description"])
+                        # Step count + last run
+                        _step_label = f"{len(_wf['prompts'])} step{'s' if len(_wf['prompts']) != 1 else ''}"
+                        if _wf.get("last_run"):
+                            try:
+                                _lr = datetime.fromisoformat(_wf["last_run"])
+                                _step_label += f" · Last: {_lr.strftime('%b %d')}"
+                            except (ValueError, TypeError):
+                                pass
+                        if _wf.get("schedule"):
+                            _sched_parts = _wf["schedule"].split(":")
+                            if _sched_parts[0] == "daily":
+                                _step_label += " · 📅 Daily"
+                            elif _sched_parts[0] == "weekly":
+                                _step_label += f" · 📅 Weekly"
+                        st.caption(_step_label)
+                        if st.button(
+                            "▶ Run",
+                            key=f"wf_run_{_wf['id']}",
+                            use_container_width=True,
+                            type="primary",
+                        ):
+                            # Launch workflow entirely in background
+                            _wf_tid = uuid.uuid4().hex[:12]
+                            _wf_thread_name = f"⚡ {_wf['name']} — {datetime.now().strftime('%b %d, %I:%M %p')}"
+                            _save_thread_meta(_wf_tid, _wf_thread_name)
+                            _bg_tools = [t.name for t in tool_registry.get_enabled_tools()]
+                            run_workflow_background(
+                                _wf["id"], _wf_tid, _bg_tools,
+                                start_step=0, notification=True,
+                            )
+                            st.toast(f"⚡ {_wf['name']} started — you'll be notified when it's done.")
+                            st.rerun()
 else:
     _hdr_col, _export_col = st.columns([10, 1])
     with _hdr_col:
-        st.markdown(f"### 💬 {st.session_state.thread_name}")
+        # Check if a background workflow is running on this thread
+        _bg_wfs = get_running_workflows()
+        _bg_this = _bg_wfs.get(st.session_state.thread_id)
+        if _bg_this:
+            _bg_s = _bg_this["step"] + 1
+            _bg_t = _bg_this["total"]
+            st.markdown(
+                f"### ⚡ {_bg_this['name']}  "
+                f"<span style='font-size:0.8rem; color:#DAA520;'>Running — Step {_bg_s}/{_bg_t}</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(f"### 💬 {st.session_state.thread_name}")
     with _export_col:
         if st.session_state.messages:
             if st.button("📤", key="export_btn", help="Export conversation"):

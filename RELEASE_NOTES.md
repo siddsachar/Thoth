@@ -2,6 +2,85 @@
 
 ---
 
+## v2.2.0 — Workflows
+
+A new workflow engine for reusable, multi-step prompt sequences with scheduling support.
+
+---
+
+### ⚡ Workflow Engine
+
+Create named workflows — ordered sequences of prompts that run in a fresh conversation thread. Each step sees the output of the previous one, enabling chained research → summarisation → action pipelines.
+
+#### Core Features
+- **Multi-step prompt sequences** — define 1+ prompts that execute sequentially in a single thread
+- **Template variables** — `{{date}}`, `{{day}}`, `{{time}}`, `{{month}}`, `{{year}}` are replaced at runtime
+- **Live streaming** — workflows stream in real-time with a step progress indicator in the chat header
+- **Background completion** — navigate away mid-workflow and it continues silently; the sidebar shows a running indicator
+- **Desktop notifications** — scheduled and background runs trigger a Windows notification on completion
+
+#### Scheduling
+- **Daily schedule** — run a workflow automatically at a specific time every day
+- **Weekly schedule** — run on a specific day and time each week
+- **Scheduler engine** — background thread checks for due workflows every 60 seconds
+- **Enable/disable** — toggle scheduled workflows on or off without deleting the schedule
+
+#### UI
+- **Home screen tiles** — workflows appear as clickable cards on the home screen (no thread selected) with Run buttons
+- **Inline quick-create** — create new workflows directly from the home screen
+- **Settings → Workflows tab** — full management view with name, icon, description, prompt editor (add/remove/reorder steps), schedule config, run history
+- **Duplicate & Delete** — one-click workflow cloning and deletion
+- **Run history** — past executions shown per workflow with timestamps, step counts, and status
+
+#### Pre-built Templates
+Ships with 4 starter workflows that can be customised or deleted:
+- **📰 Daily Briefing** — top news + weather + today's calendar (3 steps)
+- **🔬 Research Summary** — search latest AI developments + summarise with citations (2 steps)
+- **📧 Email Digest** — check Gmail inbox + summarise by priority (2 steps)
+- **📋 Weekly Review** — past week's calendar events + review and recommendations (2 steps)
+
+#### Safety
+- **Destructive tool exclusion** — background workflow runs automatically exclude destructive tools (send email, delete files, etc.) so they can never execute unattended; the LLM adapts by using safe alternatives (e.g. creating a draft instead of sending)
+- **Scheduler double-fire prevention** — `last_run` is set immediately when a scheduled workflow triggers, before execution begins, preventing duplicate runs within the cooldown window
+
+### 🔔 Unified Notification System
+
+A new `notifications.py` module replaces scattered notification calls with a single `notify()` function that fires across three channels simultaneously:
+
+- **Desktop notifications** — via plyer, with timestamped messages showing when the task actually completed
+- **Sound effects** — via winsound (lazy-imported for cross-platform safety), played asynchronously in a background thread
+- **In-app toasts** — queued for the next Streamlit rerun via `drain_toasts()`, with emoji icons
+
+#### Sound Files
+- `sounds/workflow.wav` — two-tone chime (C5→E5) on workflow completion
+- `sounds/timer.wav` — 5-beep alert (A5) for timer expiration
+
+Both generated as clean sine-wave tones via Python's `wave` module.
+
+### 🎨 UI Polish
+
+- **Sidebar running indicator** — simplified from step count (`⏳ 2/4`) to just `⏳` since the sidebar doesn't auto-refresh
+- **Settings tab renamed** — "🎛️ Preferences" → "🎤 Voice" to better describe the tab's contents
+- **Workflow emoji picker** — replaced free-text icon input with a selectbox of 20 curated emojis
+- **Streamlit sidebar toggle** — added `.streamlit/config.toml` with `toolbarMode = "minimal"` and `hideTopBar = true`
+
+### 📦 Dependency & Compatibility
+
+- **`streamlit>=1.45`** pinned in `requirements.txt` for `st.tabs` stability
+- **`winsound` lazy import** — non-Windows platforms gracefully skip sound playback instead of crashing
+
+#### Technical Details
+- **New modules** — `workflows.py` (workflow engine + scheduler), `notifications.py` (unified notify + toast queue)
+- **New assets** — `sounds/workflow.wav`, `sounds/timer.wav`
+- **New config** — `.streamlit/config.toml` (sidebar/toolbar settings)
+- **Prompt chaining** — first step streams live, subsequent steps continue via `stream_agent` or fall back to `invoke_agent` in background
+- **Thread naming** — workflow threads are prefixed with ⚡ and include the workflow name and timestamp
+- **Settings tab count** — Settings dialog now has 10 tabs (added Workflows, renamed Preferences → Voice)
+- **Background flag** — `threading.local()` (`_tlocal`) flags background workflows; agent graph cache key includes `bg:{True/False}` for separate tool sets
+- **Timer tool updated** — replaced inline `_notify()` with `notifications.notify()` for consistent sound + desktop + toast
+
+---
+
 ## v2.1.0 — Semantic Memory & Voice Simplification
 
 A major upgrade to the memory system and a complete simplification of the voice pipeline.

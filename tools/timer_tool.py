@@ -39,24 +39,15 @@ def _get_scheduler():
     return _scheduler
 
 
-def _notify(title: str, message: str):
-    """Show a desktop notification."""
-    try:
-        from plyer import notification
-        notification.notify(
-            title=title,
-            message=message,
-            app_name="Thoth",
-            timeout=30,
-        )
-    except Exception:
-        # Fallback: print to console if notifications fail
-        print(f"\n🔔 TIMER: {title} — {message}\n")
-
-
 def _timer_callback(label: str):
     """Called when a timer fires."""
-    _notify("⏰ Thoth Reminder", label)
+    from notifications import notify
+    notify(
+        title="⏰ Thoth Reminder",
+        message=label,
+        sound="timer",
+        icon="⏰",
+    )
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────

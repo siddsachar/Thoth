@@ -1,6 +1,6 @@
 # Building the Thoth Windows Installer
 
-This guide explains how to build a distributable Windows installer for Thoth v2.1.
+This guide explains how to build a distributable Windows installer for Thoth v2.2.
 
 ## Architecture
 
@@ -33,7 +33,7 @@ The installer is **lightweight** (~20 MB) — it bundles only the embedded Pytho
 This will:
 1. Download Python 3.13 embeddable package (~15 MB)
 2. Download `get-pip.py` (~2.5 MB)
-3. Compile everything into `dist\ThothSetup_2.1.0.exe`
+3. Compile everything into `dist\ThothSetup_2.2.0.exe`
 
 ### Options
 
@@ -70,7 +70,14 @@ C:\Program Files\Thoth\            # Installation directory
     ├── voice.py                    # Speech-to-text (toggle-based, CPU Whisper)
     ├── tts.py                      # Text-to-speech (Piper TTS)
     ├── vision.py                   # Camera/screen capture
+    ├── workflows.py                # Workflow engine + scheduler
+    ├── notifications.py             # Unified notification system
     ├── launcher.py                 # System tray launcher
+    ├── sounds/                     # Notification sound effects
+    │   ├── workflow.wav
+    │   └── timer.wav
+    ├── .streamlit/                 # Streamlit config
+    │   └── config.toml
     ├── requirements.txt
     ├── thoth.ico
     ├── tools/                      # 19 tool modules
@@ -91,6 +98,7 @@ C:\Program Files\Thoth\            # Installation directory
 ├── model_settings.json             # Selected model & context size
 ├── processed_files.json            # Tracked indexed documents
 ├── status.json                     # Voice state for system tray
+├── workflows.db                    # Workflow definitions, schedules & run history
 ├── timers.sqlite                   # Timer jobs
 ├── gmail/                          # Gmail OAuth tokens
 ├── calendar/                       # Calendar OAuth tokens
@@ -117,7 +125,7 @@ The Inno Setup installer runs these steps:
 
 ## End-User Experience
 
-1. Run `ThothSetup_2.1.0.exe`
+1. Run `ThothSetup_2.2.0.exe`
 2. Follow the wizard — dependencies download and install automatically (5-15 min)
 3. Launch Thoth from Start Menu or Desktop shortcut
 4. The system tray icon appears; the app opens at `http://localhost:8501`
