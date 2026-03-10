@@ -39,10 +39,10 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 ### 🧠 Long-Term Memory
 - **Persistent personal knowledge** — the agent remembers names, birthdays, preferences, projects, and more across conversations
 - **6 categories** — `person`, `preference`, `fact`, `event`, `place`, `project`
-- **Agent-driven + user-controlled** — the agent autonomously extracts and saves memories from conversation, but you can also explicitly ask it to remember, update, search, or delete specific memories
+- **Memory tool** — a dedicated tool lets the agent save, search, update, and delete memories; you can ask it directly — *"Remember that my mom's birthday is March 15"*, *"What do you know about me?"*, *"Delete the memory about my old address"*
+- **Automatic memory extraction** — in addition to the tool, a background process scans past conversations on startup and every 6 hours, extracting personal facts and saving them as memories with semantic deduplication — so the agent learns even from things you mentioned in passing
 - **Semantic search** — FAISS vector index with Qwen3-Embedding-0.6B for similarity-based memory retrieval (replaces keyword search)
 - **Auto-recall** — relevant memories are automatically retrieved and injected into context before every LLM call based on semantic similarity to the current message
-- **Background extraction** — on startup and every 6 hours, past conversations are scanned by the LLM to extract personal facts and save them as memories with semantic deduplication
 - **Local SQLite + FAISS storage** — memories stored in `~/.thoth/memory.db` with vector index in `~/.thoth/memory_vectors/`, never sent to the cloud
 - **Settings UI** — browse, search, and bulk-delete memories from the Memory tab in Settings
 
