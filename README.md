@@ -31,7 +31,7 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Streaming responses** — tokens stream in real-time with a typing indicator
 - **Thinking indicators** — shows when the model is reasoning before responding
 - **Smart context management** — conversation history is trimmed to 80% of the context window before each LLM call; oversized tool outputs (e.g. large PDF reads) are proportionally shrunk so multi-file workflows fit within context
-- **Live token counter** — gold-themed progress bar in the sidebar shows real-time context window usage based on trimmed (model-visible) history
+- **Live token counter** — progress bar in the sidebar shows real-time context window usage based on trimmed (model-visible) history
 - **Graceful error recovery** — agent tool loops are caught automatically with a user-friendly error message; orphaned tool calls are repaired
 - **Date/time awareness** — current date and time is injected into every LLM call so the model always knows "today"
 - **Destructive action confirmation** — dangerous operations (file deletion, sending emails, deleting calendar events, deleting memories) require explicit user approval via an interrupt mechanism
@@ -39,7 +39,7 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 ### 🧠 Long-Term Memory
 - **Persistent personal knowledge** — the agent remembers names, birthdays, preferences, projects, and more across conversations
 - **6 categories** — `person`, `preference`, `fact`, `event`, `place`, `project`
-- **Agent-driven** — the agent autonomously decides when to save, search, update, or delete memories based on conversation context
+- **Agent-driven + user-controlled** — the agent autonomously extracts and saves memories from conversation, but you can also explicitly ask it to remember, update, search, or delete specific memories
 - **Semantic search** — FAISS vector index with Qwen3-Embedding-0.6B for similarity-based memory retrieval (replaces keyword search)
 - **Auto-recall** — relevant memories are automatically retrieved and injected into context before every LLM call based on semantic similarity to the current message
 - **Background extraction** — on startup and every 6 hours, past conversations are scanned by the LLM to extract personal facts and save them as memories with semantic deduplication
@@ -77,7 +77,7 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 
 ### 📬 Messaging Channels
 - **Telegram bot** — connect a Telegram bot via Bot API token; messages are processed by the full ReAct agent with all tools available; each chat gets its own conversation thread
-- **Email channel** — Gmail polling at configurable intervals; responds only to emails from approved senders; each sender gets a dedicated conversation thread
+- **Email channel** — polls Gmail for unread emails with `[Thoth]` in the subject line (from your own address only); each Gmail thread gets its own agent conversation thread; replies inline
 - **Auto-start** — channels can be set to start automatically when Thoth launches
 - **Settings UI** — configure, start/stop, and manage channels from Settings → Channels tab
 
