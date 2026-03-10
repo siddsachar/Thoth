@@ -50,7 +50,7 @@ from documents import (
 from models import (
     get_current_model, set_model, list_all_models, list_local_models,
     is_model_local, is_tool_compatible, check_tool_support, pull_model,
-    get_context_size, set_context_size,
+    get_context_size, get_user_context_size, set_context_size, get_model_max_context,
     DEFAULT_MODEL, DEFAULT_CONTEXT_SIZE, CONTEXT_SIZE_OPTIONS, CONTEXT_SIZE_LABELS,
 )
 from api_keys import get_key, set_key, apply_keys
@@ -193,7 +193,7 @@ class AppState:
         self.thread_name: str | None = None
         self.messages: list[dict] = []
         self.current_model: str = get_current_model()
-        self.context_size: int = get_context_size()
+        self.context_size: int = get_user_context_size()
         self.is_generating: bool = False
         self.stop_requested: bool = False
         self.pending_interrupt: dict | None = None
@@ -1474,29 +1474,70 @@ async def index():
             set_model(sel)
             state.current_model = sel
             clear_agent_cache()
+            # Notify if new model caps the selected context size
+            model_max = await run.io_bound(lambda: get_model_max_context(sel))
+            user_val = get_user_context_size()
+            if model_max is not None and user_val > model_max:
+                max_lbl = CONTEXT_SIZE_LABELS.get(model_max, f"{model_max:,}")
+                usr_lbl = CONTEXT_SIZE_LABELS.get(user_val, f"{user_val:,}")
+                ui.notify(
+                    f"Context capped: {sel} max is {max_lbl} (you selected {usr_lbl}). "
+                    f"Trimming will use {max_lbl}.",
+                    type="warning", close_button=True, timeout=8000,
+                )
+            # Refresh context cap note since model max may differ
+            if _ctx_note_updater[0]:
+                _ctx_note_updater[0]()
 
         model_select.on_value_change(_on_model_change)
+        _ctx_note_updater = [None]  # filled after _update_ctx_note is defined
 
         ui.separator()
 
         # Context window
         ctx_opts = {v: CONTEXT_SIZE_LABELS.get(v, str(v)) for v in CONTEXT_SIZE_OPTIONS}
 
+        ctx_note = ui.label("").classes("text-xs text-warning")
+        ctx_note.visible = False
+
+        def _update_ctx_note():
+            """Show a note if the effective context is capped by the model."""
+            model_max = get_model_max_context()
+            user_val = get_user_context_size()
+            if model_max is not None and user_val > model_max:
+                max_label = CONTEXT_SIZE_LABELS.get(model_max, f"{model_max:,}")
+                ctx_note.text = f"ℹ️ Model max is {max_label} — trimming will use {max_label}"
+                ctx_note.visible = True
+            else:
+                ctx_note.visible = False
+
         def _on_ctx_change(e):
             set_context_size(e.value)
             state.context_size = e.value
             clear_agent_cache()
+            _update_ctx_note()
+            # Notify if selection exceeds model max
+            model_max = get_model_max_context()
+            if model_max is not None and e.value > model_max:
+                max_lbl = CONTEXT_SIZE_LABELS.get(model_max, f"{model_max:,}")
+                usr_lbl = CONTEXT_SIZE_LABELS.get(e.value, f"{e.value:,}")
+                ui.notify(
+                    f"Context capped: model max is {max_lbl} (you selected {usr_lbl}). "
+                    f"Trimming will use {max_lbl}.",
+                    type="warning", close_button=True, timeout=8000,
+                )
 
         ui.select(
             label="Context window size",
             options=ctx_opts,
             value=state.context_size,
             on_change=_on_ctx_change,
-        ).classes("w-full").tooltip("How many tokens the model can process at once. Larger values let the model remember more conversation history but use more VRAM. Default: 32K.")
+        ).classes("w-full").tooltip("How many tokens the model can process at once. If this exceeds the model's native max, trimming will use the model's actual limit. Default: 32K.")
+
+        _update_ctx_note()
+        _ctx_note_updater[0] = _update_ctx_note
 
         ui.separator()
-
-        # Vision model
         ui.label("👁️ Vision Model").classes("text-h6")
         ui.label(
             "The model used for camera and screen capture analysis — reading text, "

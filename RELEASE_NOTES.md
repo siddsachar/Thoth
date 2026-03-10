@@ -6,6 +6,13 @@
 
 Complete frontend rewrite from Streamlit to NiceGUI, plus new messaging channel adapters for Telegram and Email.
 
+### 🎯 Context-Size Capping
+
+- **Automatic model-max enforcement** — if you select a context window larger than the model's native maximum (e.g. 64K on a 40K-max model), trimming and the token counter automatically use the model's actual limit instead of the user-selected value
+- **Model metadata query** — `get_model_max_context()` queries Ollama's `show()` API for the model's `context_length` and caches the result per model
+- **Toast notifications** — a warning toast appears when changing models or context size if the selection exceeds the model's native max, explaining which value will actually be used
+- **Settings info label** — the Models tab shows an inline note below the context selector when capping is active
+
 ---
 
 ### 🖥️ NiceGUI Frontend

@@ -77,6 +77,7 @@ _TOOL_COMPATIBLE_FAMILIES: set[str] = {
 _current_model = _saved.get("model", DEFAULT_MODEL)
 _num_ctx = _saved.get("context_size", DEFAULT_CONTEXT_SIZE)
 _llm_instance = None
+_model_max_ctx_cache: dict[str, int | None] = {}  # model_name → max context
 
 
 def get_llm() -> ChatOllama:
@@ -85,6 +86,26 @@ def get_llm() -> ChatOllama:
     if _llm_instance is None:
         _llm_instance = ChatOllama(model=_current_model, num_ctx=_num_ctx)
     return _llm_instance
+
+
+def get_model_max_context(model_name: str | None = None) -> int | None:
+    """Query Ollama for the model's native max context length.
+
+    Returns the context_length from model metadata, or *None* if it
+    cannot be determined.  Results are cached per model name.
+    """
+    name = model_name or _current_model
+    if name in _model_max_ctx_cache:
+        return _model_max_ctx_cache[name]
+    try:
+        info = ollama.show(name)
+        mi = info.modelinfo or {}
+        arch = mi.get("general.architecture", "")
+        ctx = mi.get(f"{arch}.context_length") if arch else None
+        _model_max_ctx_cache[name] = int(ctx) if ctx is not None else None
+    except Exception:
+        _model_max_ctx_cache[name] = None
+    return _model_max_ctx_cache[name]
 
 
 def set_model(model_name: str):
@@ -103,7 +124,19 @@ def set_model(model_name: str):
 
 
 def get_context_size() -> int:
-    """Return the current context window size in tokens."""
+    """Return the *effective* context size — the minimum of the user's
+    setting and the model's native max context length.
+
+    This is the value that trimming and the token counter should use.
+    """
+    model_max = get_model_max_context()
+    if model_max is not None:
+        return min(_num_ctx, model_max)
+    return _num_ctx
+
+
+def get_user_context_size() -> int:
+    """Return the raw user-selected context size (before model capping)."""
     return _num_ctx
 
 
