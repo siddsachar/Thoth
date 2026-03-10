@@ -103,7 +103,8 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 
 ### 🤖 Brain Model
 - **Dynamic model switching** — choose any Ollama-supported model from the Settings panel
-- **30+ curated models** — Llama, Qwen, Gemma, Mistral, DeepSeek, Phi, and more
+- **39 curated tool-capable models** — Qwen, Llama, Mistral, Nemotron, and more — only models that support tool calling are included
+- **Tool-support validation** — downloaded models not in the curated list are flagged with a ⚠️ warning; selecting one triggers a live tool-call check and auto-reverts if the model can't use tools
 - **Automatic download** — selecting a model you haven't pulled yet triggers an in-app download with live progress
 - **Configurable context window** — 4K to 256K tokens via slider
 - **Local indicators** — models marked ✅ (downloaded) or ⬇️ (needs download)

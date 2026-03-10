@@ -74,32 +74,36 @@ import memory as memory_db
 # ═════════════════════════════════════════════════════════════════════════════
 
 _WELCOME_MESSAGE = """\
-👋 **Welcome to Thoth — your personal AI assistant!**
+👋 **Welcome to Thoth — your private AI assistant.**
 
-Here's what I can do:
-
----
-
-🔍 **Search & Knowledge** — Web search, Wikipedia, Arxiv papers, YouTube, URL reading, and your uploaded documents.
-
-📧 **Productivity** — Read & send Gmail, manage Google Calendar, read & write files, and set notification timers.
-
-🧮 **Computation & Analysis** — Calculations, Wolfram Alpha, weather, data file analysis, and camera/screen vision.
-
-🧠 **Memory & History** — I remember important things you share across conversations.
+Everything runs locally on your machine. Your conversations, memories, and files never leave your computer.
 
 ---
 
-⚙️ Head to **Settings** to configure tools. **Attach files** with the upload area. Use **🎤 Voice** to talk hands-free.
+🤖 **Agent** — I autonomously pick from 19 tools to answer your questions — search the web, read files, send emails, check your calendar, and more.
+
+🧠 **Memory** — I remember things you tell me across conversations and learn from past chats automatically.
+
+🎤 **Voice** — Toggle the mic to talk hands-free. I can speak back too — all processed locally, never sent to the cloud.
+
+👁️ **Vision** — I can see your webcam or screen and answer questions about what's there.
+
+⚡ **Workflows** — Build multi-step automations that run on a schedule — daily briefings, email digests, research summaries.
+
+📬 **Channels** — Connect Telegram or Email so I can respond to messages even when the app window is closed.
+
+---
+
+⚙️ Head to **Settings** to configure tools and explore options. Just type or speak — I'll figure out which tools to use.
 """
 
 _EXAMPLE_PROMPTS = [
     "What's the weather in New York?",
-    "Summarize the latest AI news",
-    "Set a timer for 10 minutes",
+    "Summarize the latest AI research papers",
     "What do you remember about me?",
-    "Read the file report.pdf in my workspace",
-    "What's the derivative of x³ + 2x?",
+    "Read and summarize report.pdf in my workspace",
+    "Send a Telegram message to Mom saying I'll be late",
+    "What am I looking at? (with camera)",
 ]
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
