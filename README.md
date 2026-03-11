@@ -114,7 +114,7 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **7 built-in analyses** — adherence rate, current/longest streaks, numeric stats (mean/min/max/σ), frequency, day-of-week distribution, cycle estimation (for period tracking), and co-occurrence between any two trackers
 - **Trend analysis & charting** — query trends over any time window; results export to CSV automatically, then the agent chains to the Chart tool for interactive Plotly visualisations
 - **Fully local** — all data stored in `~/.thoth/tracker/tracker.db` (SQLite); nothing leaves your machine
-- **Smart memory separation** — tracker data is excluded from the memory system; logging a medication won't pollute your personal knowledge base
+- **Smart memory separation** — tracker data is excluded from the memory system; logging a medication won't pollute the agent's long term memory
 
 ### 🖥️ Desktop App
 - **Native window** — runs in a native OS window via pywebview instead of a browser, a real desktop application
