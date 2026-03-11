@@ -149,7 +149,7 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Dynamic model switching** — choose any Ollama-supported model from the Settings panel
 - **39 curated tool-capable models** — Qwen, Llama, Mistral, Nemotron, and more — only models that support tool calling are included
 - **Tool-support validation** — downloaded models not in the curated list are flagged with a ⚠️ warning; selecting one triggers a live tool-call check and auto-reverts if the model can't use tools
-- **Download buttons** — models not yet downloaded show an explicit Download button with live progress; no automatic downloads on selection
+- **Download buttons** — models not yet downloaded show an explicit Download button with live progress.
 - **Configurable context window** — 4K to 256K tokens via selector; if you choose a value that exceeds the model's native maximum, trimming and the token counter automatically use the model's actual limit and a toast notification explains the cap
 - **Local indicators** — models marked ✅ (downloaded) or ⬇️ (needs download)
 
