@@ -21,6 +21,12 @@ Thoth is a **local-first AI assistant built for personal AI sovereignty** — yo
 
 > **Bottom line:** Cloud AI assistants rent you access to someone else’s system. Thoth gives you **personal AI sovereignty** — your own models, your own data, zero dependency on any provider.
 
+### Why not just use another open-source assistant?
+
+Most open-source AI assistants are **developer tools disguised as products** — CLI-first, config-file-driven, Linux-only, and held together with Docker, YAML, and `.env` files. Getting them running means cloning repos, editing configs, wiring up databases, and debugging dependency conflicts before you can ask a single question.
+
+**Thoth is different.** One-click installer, native desktop GUI, works on Windows out of the box, zero accounts required. Install it, launch it, start talking. No terminal expertise needed, no Docker, no YAML — just a private AI assistant that works.
+
 ### How is Thoth different from OpenClaw?
 
 [OpenClaw](https://github.com/openclaw/openclaw) is a fantastic open-source project — but it solves a different problem. OpenClaw is a **messaging infrastructure platform**: it routes cloud LLM calls (OpenAI, Anthropic, Google) to 25+ chat surfaces like WhatsApp, Slack, and Discord. The LLM runs in the cloud; the gateway runs on your machine.
@@ -315,6 +321,8 @@ All user data is stored in `~/.thoth/` (`%USERPROFILE%\.thoth\` on Windows):
 ---
 
 ## 📦 Installation (From Source)
+
+> **Most open-source assistants require Docker, YAML configs, and terminal expertise.** Thoth installs in one click with the [Windows installer](https://github.com/siddsachar/Thoth/releases) — or five commands from source:
 
 1. **Install [Ollama](https://ollama.com/)** — download and install the Ollama runtime
 
