@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -83,6 +84,7 @@ class _ThothProcess:
 
     def __init__(self) -> None:
         self._proc: subprocess.Popen | None = None
+        self._log_file: Path | None = None
 
     def start(self, *, native: bool = True) -> None:
         """Launch ``python app_nicegui.py`` in the project directory.
@@ -100,13 +102,28 @@ class _ThothProcess:
         if native:
             cmd.append("--native")
 
+        # Log file for diagnosing startup crashes —
+        # lives in  ~/.thoth/thoth_app.log
+        log_dir = Path.home() / ".thoth"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        self._log_file = log_dir / "thoth_app.log"
+        log_fh = open(self._log_file, "w", encoding="utf-8")  # noqa: SIM115
+
+        # Isolate from any system-wide Python site-packages
+        # Force UTF-8 I/O so emoji in print() never crash on cp1252 consoles
+        env = {**os.environ, "PYTHONNOUSERSITE": "1", "PYTHONIOENCODING": "utf-8"}
+
         self._proc = subprocess.Popen(
             cmd,
             cwd=str(app_dir),
+            env=env,
+            stdout=log_fh,
+            stderr=log_fh,
             # On Windows, CREATE_NO_WINDOW prevents a visible console
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        logger.info("Thoth started (PID %s, native=%s)", self._proc.pid, native)
+        logger.info("Thoth started (PID %s, native=%s, log=%s)",
+                     self._proc.pid, native, self._log_file)
 
     def stop(self) -> None:
         """Terminate the NiceGUI process."""
@@ -130,69 +147,107 @@ class _ThothProcess:
         return self._proc.poll() is None
 
 
-# ── Splash screen (tkinter — stdlib, runs as subprocess to avoid Tcl issues) ─
+# ── Splash screen (subprocess to avoid Tcl/pystray conflicts) ────────────────
 
-# Inline script executed via ``python -c``.  Avoids Tcl/thread crashes
-# that occur when tkinter is used in the same process as pystray.
-_SPLASH_SCRIPT = r'''
-import tkinter as tk, socket, time, sys
+# Tkinter GUI splash — tried first.
+_SPLASH_TK = r'''
+import os, sys, socket, time
 
-PORT    = int(sys.argv[1])
-TIMEOUT = float(sys.argv[2])
-W, H    = 500, 300
-BG      = "#1e1e1e"
-GOLD    = "#FFD700"
+py_dir = os.path.dirname(sys.executable)
+os.environ['PATH'] = py_dir + os.pathsep + os.environ.get('PATH', '')
+if hasattr(os, 'add_dll_directory'):
+    os.add_dll_directory(py_dir)
+for d in ('tcl/tcl8.6', 'tcl/tk8.6'):
+    p = os.path.join(py_dir, d)
+    if os.path.isdir(p):
+        os.environ['TCL_LIBRARY' if 'tcl8' in d else 'TK_LIBRARY'] = p
+import ctypes
+for dll in ('tcl86t.dll', 'tk86t.dll'):
+    p = os.path.join(py_dir, dll)
+    if os.path.exists(p):
+        try: ctypes.CDLL(p, winmode=0)
+        except OSError: pass
+import tkinter as tk
 
+PORT, TIMEOUT = int(sys.argv[1]), float(sys.argv[2])
 def port_ready():
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.3)
-        s.connect(("127.0.0.1", PORT))
-        s.close()
-        return True
-    except OSError:
-        return False
+        s = socket.socket(); s.settimeout(0.3)
+        s.connect(("127.0.0.1", PORT)); s.close(); return True
+    except OSError: return False
 
-root = tk.Tk()
-root.overrideredirect(True)
-root.attributes("-topmost", True)
+BG, GOLD = "#1e1e1e", "#FFD700"
+root = tk.Tk(); root.overrideredirect(True); root.attributes("-topmost", True)
 root.configure(bg=BG)
 sx, sy = root.winfo_screenwidth(), root.winfo_screenheight()
-root.geometry(f"{W}x{H}+{(sx-W)//2}+{(sy-H)//2}")
-
+root.geometry(f"500x300+{(sx-500)//2}+{(sy-300)//2}")
 tk.Label(root, text="\U0001305F", font=("Segoe UI Emoji", 64), fg=GOLD, bg=BG).pack(pady=(40,0))
 tk.Label(root, text="Thoth", font=("Segoe UI", 28, "bold"), fg=GOLD, bg=BG).pack(pady=(0,10))
-lbl = tk.Label(root, text="Loading.", font=("Segoe UI", 12), fg="#aaaaaa", bg=BG)
-lbl.pack()
-
-_start = time.monotonic()
-_d = [0]
-
+lbl = tk.Label(root, text="Loading.", font=("Segoe UI", 12), fg="#aaaaaa", bg=BG); lbl.pack()
+_start, _d = time.monotonic(), [0]
 def _check():
-    _d[0] = (_d[0] % 3) + 1
-    lbl.configure(text="Loading" + "." * _d[0])
-    if time.monotonic() - _start > TIMEOUT or port_ready():
-        root.destroy()
-        return
+    _d[0] = (_d[0] % 3) + 1; lbl.configure(text="Loading" + "." * _d[0])
+    if time.monotonic() - _start > TIMEOUT or port_ready(): root.destroy(); return
     root.after(500, _check)
+root.after(500, _check); root.mainloop()
+'''
 
-root.after(500, _check)
-root.mainloop()
+# Console fallback — used when tkinter is unavailable.
+_SPLASH_CONSOLE = r'''
+import sys, socket, time, os
+PORT, TIMEOUT = int(sys.argv[1]), float(sys.argv[2])
+if os.name == 'nt':
+    os.system('title Thoth')
+def port_ready():
+    try:
+        s = socket.socket(); s.settimeout(0.3)
+        s.connect(("127.0.0.1", PORT)); s.close(); return True
+    except OSError: return False
+print("\n  Thoth — Starting...\n")
+_start, _d = time.monotonic(), 0
+while time.monotonic() - _start < TIMEOUT:
+    if port_ready(): break
+    _d = (_d % 3) + 1
+    print(f"\r  Loading{'.' * _d}{'   '}", end="", flush=True)
+    time.sleep(0.5)
+print("\r  Ready!       ")
+time.sleep(0.6)
 '''
 
 
-def _show_splash(port: int = _PORT, timeout: float = 60.0) -> subprocess.Popen:
-    """Launch the splash screen in a child process and return the handle.
+def _show_splash(port: int = _PORT, timeout: float = 60.0) -> subprocess.Popen | None:
+    """Launch a splash screen subprocess.  Tries tkinter first; falls back
+    to a simple console window if tkinter is unavailable."""
+    log_dir = Path.home() / ".thoth"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    splash_log = log_dir / "splash.log"
 
-    The splash monitors *port* and closes itself once the server is
-    listening (or *timeout* seconds elapse).  Because it runs in its own
-    process, tkinter's Tcl layer is fully isolated from the main launcher.
-    """
-    return subprocess.Popen(
-        [sys.executable, "-c", _SPLASH_SCRIPT, str(port), str(timeout)],
-        # CREATE_NO_WINDOW prevents a console flash on Windows
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    try:
+        # --- Attempt 1: tkinter GUI splash ---
+        log_fh = open(splash_log, "w", encoding="utf-8")  # noqa: SIM115
+        proc = subprocess.Popen(
+            [sys.executable, "-c", _SPLASH_TK, str(port), str(timeout)],
+            stdout=log_fh, stderr=log_fh,
+        )
+        time.sleep(0.5)
+        if proc.poll() is None:
+            return proc  # tkinter splash is running
+        log_fh.close()
+        err = splash_log.read_text(encoding="utf-8", errors="replace").strip()
+        logger.info("Tkinter splash unavailable (%s), falling back to console", err or "exited")
+
+        # --- Attempt 2: console fallback ---
+        flags = 0
+        if sys.platform == "win32":
+            flags = subprocess.CREATE_NEW_CONSOLE
+        proc = subprocess.Popen(
+            [sys.executable, "-c", _SPLASH_CONSOLE, str(port), str(timeout)],
+            creationflags=flags,
+        )
+        return proc
+    except Exception as exc:
+        logger.warning("Could not show splash screen: %s", exc)
+        return None
 
 
 # ── Tray application ────────────────────────────────────────────────────────
@@ -243,16 +298,40 @@ class ThothTray:
     def _poll_loop(self) -> None:
         """Periodically check if the app is still alive and update icon."""
         _POLL_INTERVAL = 3.0  # seconds
+        _crash_logged = False
         while not self._stop_event.is_set():
             if self._owns_server and self._server.is_alive:
                 self._icon.icon = _get_icon("running")
                 self._icon.title = "Thoth — running"
+                _crash_logged = False
             elif not self._owns_server and _is_port_in_use(_PORT):
                 self._icon.icon = _get_icon("running")
                 self._icon.title = "Thoth — running"
             else:
                 self._icon.icon = _get_icon("stopped")
                 self._icon.title = "Thoth — stopped"
+                # Log once when the app process dies unexpectedly
+                if self._owns_server and not _crash_logged:
+                    _crash_logged = True
+                    rc = (self._server._proc.returncode
+                          if self._server._proc else "?")
+                    log_path = self._server._log_file or "?"
+                    logger.error(
+                        "Thoth app exited (code %s). "
+                        "Check %s for details.", rc, log_path)
+                    # Show the last few lines of the log for quick diagnosis
+                    if self._server._log_file and self._server._log_file.exists():
+                        try:
+                            tail = self._server._log_file.read_text(
+                                encoding="utf-8", errors="replace"
+                            ).strip().splitlines()[-10:]
+                            if tail:
+                                logger.error("--- last lines of log ---")
+                                for line in tail:
+                                    logger.error("  %s", line)
+                                logger.error("--- end of log ---")
+                        except Exception:
+                            pass
 
             self._stop_event.wait(_POLL_INTERVAL)
 

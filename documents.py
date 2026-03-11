@@ -6,10 +6,13 @@ from langchain_community.document_loaders import (
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+import logging
 import shutil
 import os
 import pathlib
 import json
+
+logger = logging.getLogger(__name__)
 
 # Store data in %APPDATA%/Thoth (writable even when app is in Program Files)
 DATA_DIR = pathlib.Path(os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / ".thoth"))
@@ -74,8 +77,22 @@ def get_embedding_model():
     """Return the shared HuggingFaceEmbeddings instance (created on first call)."""
     global _embedding_model
     if _embedding_model is None:
-        from langchain_huggingface import HuggingFaceEmbeddings
-        _embedding_model = HuggingFaceEmbeddings(model_name="Qwen/Qwen3-Embedding-0.6B")
+        import io as _io
+        import os as _os
+        import sys as _sys
+        # Suppress the noisy tqdm/safetensors "Loading weights" progress bar
+        # that writes ~1200 lines to stderr.
+        _os.environ["TQDM_DISABLE"] = "1"
+        _old_stderr = _sys.stderr
+        _sys.stderr = _io.StringIO()        # swallow progress bar output
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+            logger.info("Loading embedding model Qwen/Qwen3-Embedding-0.6B …")
+            _embedding_model = HuggingFaceEmbeddings(model_name="Qwen/Qwen3-Embedding-0.6B")
+        finally:
+            _sys.stderr = _old_stderr       # restore real stderr
+            _os.environ.pop("TQDM_DISABLE", None)
+        logger.info("Embedding model loaded")
     return _embedding_model
 
 
@@ -101,7 +118,7 @@ def load_and_vectorize_document(file_path, skip_if_processed=True, display_name=
     record_name = display_name or file_path
     # Skip if already processed
     if skip_if_processed and is_file_processed(record_name):
-        print(f"Skipping already processed file: {record_name}")
+        logger.info("Skipping already processed file: %s", record_name)
         return
     
     file_extension = pathlib.Path(file_path).suffix
@@ -115,7 +132,7 @@ def load_and_vectorize_document(file_path, skip_if_processed=True, display_name=
             if isinstance(doc.page_content, str) and doc.page_content.strip()
         ]
         if not documents:
-            print(f"No valid text content found in: {file_path}")
+            logger.warning("No valid text content found in: %s", file_path)
             return
         chunks = text_splitter.split_documents(documents)
         # Replace temp file paths with the actual display name in metadata

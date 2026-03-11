@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 
@@ -12,6 +13,8 @@ from typing import Optional
 
 from tools.base import BaseTool
 from tools import registry
+
+logger = logging.getLogger(__name__)
 
 # Credential / token files live in the Thoth data directory
 _DATA_DIR = pathlib.Path(
@@ -136,6 +139,7 @@ class CalendarTool(BaseTool):
         try:
             api_resource = self._build_api_resource()
         except Exception:
+            logger.warning("Calendar API resource build failed (OAuth issue?)", exc_info=True)
             return []
 
         from langchain_google_community.calendar.toolkit import CalendarToolkit

@@ -15,6 +15,7 @@ import asyncio
 import base64 as _b64
 import io
 import json
+import logging
 import os
 import pathlib
 import queue
@@ -24,6 +25,35 @@ import threading
 import uuid
 from datetime import datetime
 from typing import Optional
+
+# ── Configure root logger so all module loggers emit to stderr ──────────────
+# stderr is captured by launcher.py and written to ~/.thoth/thoth_app.log
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stderr,
+)
+# Silence extremely noisy third-party loggers
+for _noisy in ("httpx", "httpcore", "urllib3", "asyncio", "multipart",
+               "watchfiles", "nicegui", "uvicorn.error", "uvicorn.access",
+               "sentence_transformers", "transformers", "huggingface_hub",
+               "googleapiclient", "googleapiclient.discovery_cache",
+               "primp", "ddgs", "ddgs.ddgs"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+# Suppress noisy OpenCV DSHOW warnings (C-level stderr output)
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+# Prevent "USER_AGENT environment variable not set" warning from langchain
+os.environ.setdefault("USER_AGENT", "Thoth/3.0")
+
+logger = logging.getLogger(__name__)
+
+# Ensure our own directory is on sys.path (needed for embedded Python where
+# the ._pth file may not include the app directory).
+_app_dir = os.path.dirname(os.path.abspath(__file__))
+if _app_dir not in sys.path:
+    sys.path.insert(0, _app_dir)
 
 from nicegui import ui, app, run, events
 
@@ -162,6 +192,7 @@ def _load_app_config() -> dict:
         try:
             return json.loads(_APP_CONFIG_PATH.read_text())
         except Exception:
+            logger.warning("Failed to load app config from %s", _APP_CONFIG_PATH, exc_info=True)
             return {}
     return {}
 
@@ -178,6 +209,17 @@ def _is_first_run() -> bool:
 def _mark_onboarding_seen() -> None:
     cfg = _load_app_config()
     cfg["onboarding_seen"] = True
+    _save_app_config(cfg)
+
+
+def _is_setup_complete() -> bool:
+    """Check whether the first-launch setup wizard has been completed."""
+    return _load_app_config().get("setup_complete", False)
+
+
+def _mark_setup_complete() -> None:
+    cfg = _load_app_config()
+    cfg["setup_complete"] = True
     _save_app_config(cfg)
 
 
@@ -665,8 +707,212 @@ async def index():
         return True, ""
 
     ok, err = await run.io_bound(_run_health_check)
-    if not ok:
+    # Only show the "model not downloaded" notification if setup wizard was already completed
+    if not ok and _is_setup_complete():
         ui.notify(err, type="negative", timeout=0, close_button=True)
+
+    # ── First-launch setup wizard ────────────────────────────────────────
+    if not _is_setup_complete():
+        from models import POPULAR_MODELS, DEFAULT_MODEL
+        from vision import DEFAULT_VISION_MODEL
+
+        setup_dlg = ui.dialog().props("persistent maximized transition-show=fade transition-hide=fade")
+
+        with setup_dlg:
+            with ui.card().classes("w-full max-w-2xl mx-auto q-pa-lg"):
+                # ── Header ───────────────────────────────────────────────
+                ui.html(
+                    '<div style="text-align:center;">'
+                    '<h1 style="color: gold; margin-bottom: 0;">𓁟 Welcome to Thoth</h1>'
+                    '</div>'
+                )
+                ui.label(
+                    "Let's get you set up. This will only take a minute."
+                ).classes("text-center text-grey-6")
+
+                ui.separator()
+
+                # ── Brain Model ──────────────────────────────────────────
+                ui.label("🧠 Brain Model").classes("text-h6")
+                ui.label(
+                    "The main reasoning model that powers conversations and tool use. "
+                    "14B+ recommended for best accuracy."
+                ).classes("text-grey-6 text-sm")
+
+                local_now = await run.io_bound(list_local_models)
+                setup_all_models = list_all_models()
+                brain_default = state.current_model
+
+                setup_brain_opts = {
+                    m: f"{'✅' if m in local_now else '⬇️'}  {m}"
+                    for m in setup_all_models
+                }
+                setup_brain_select = ui.select(
+                    label="Brain model",
+                    options=setup_brain_opts,
+                    value=brain_default,
+                ).classes("w-full")
+
+                brain_status = ui.label("").classes("text-sm")
+                brain_status.visible = False
+                brain_done = {"value": brain_default in local_now}
+
+                setup_brain_dl = ui.button(f"⬇️ Download {brain_default}").props("color=primary")
+                setup_brain_dl.visible = brain_default not in local_now
+                if brain_default in local_now:
+                    brain_status.text = f"✅ {brain_default} is ready"
+                    brain_status.visible = True
+
+                async def _setup_dl_brain():
+                    sel = setup_brain_select.value
+                    if is_model_local(sel):
+                        brain_status.text = f"✅ {sel} is already downloaded"
+                        brain_status.visible = True
+                        brain_done["value"] = True
+                        setup_brain_dl.visible = False
+                        _update_finish()
+                        return
+                    setup_brain_dl.disable()
+                    brain_status.text = f"⏳ Downloading {sel}… this may take a few minutes"
+                    brain_status.visible = True
+                    n = ui.notification(f"Downloading {sel}…", type="ongoing", spinner=True, timeout=None)
+                    await run.io_bound(lambda: list(pull_model(sel)))
+                    n.dismiss()
+                    brain_status.text = f"✅ {sel} downloaded successfully!"
+                    setup_brain_dl.visible = False
+                    setup_brain_dl.enable()
+                    brain_done["value"] = True
+                    set_model(sel)
+                    state.current_model = sel
+                    clear_agent_cache()
+                    _update_finish()
+
+                setup_brain_dl.on_click(_setup_dl_brain)
+
+                def _on_setup_brain_change(e):
+                    sel = e.value
+                    setup_brain_dl.text = f"⬇️ Download {sel}"
+                    already = is_model_local(sel)
+                    setup_brain_dl.visible = not already
+                    brain_done["value"] = already
+                    if already:
+                        brain_status.text = f"✅ {sel} is ready"
+                        brain_status.visible = True
+                        set_model(sel)
+                        state.current_model = sel
+                        clear_agent_cache()
+                    else:
+                        brain_status.visible = False
+                    _update_finish()
+
+                setup_brain_select.on_value_change(_on_setup_brain_change)
+
+                ui.separator()
+
+                # ── Vision Model ─────────────────────────────────────────
+                ui.label("👁️ Vision Model").classes("text-h6")
+                ui.label(
+                    "Used for camera and screen capture analysis. "
+                    "Optional — you can skip this and download it later."
+                ).classes("text-grey-6 text-sm")
+
+                vsvc = state.vision_service
+                setup_vision_opts = {
+                    m: f"{'✅' if m in local_now else '⬇️'}  {m}"
+                    for m in sorted(set(POPULAR_VISION_MODELS + ([vsvc.model] if vsvc.model not in POPULAR_VISION_MODELS else [])))
+                }
+                setup_vision_select = ui.select(
+                    label="Vision model",
+                    options=setup_vision_opts,
+                    value=vsvc.model,
+                ).classes("w-full")
+
+                vision_status = ui.label("").classes("text-sm")
+                vision_status.visible = False
+
+                setup_vision_dl = ui.button(f"⬇️ Download {vsvc.model}").props("color=primary outline")
+                setup_vision_dl.visible = vsvc.model not in local_now
+                if vsvc.model in local_now:
+                    vision_status.text = f"✅ {vsvc.model} is ready"
+                    vision_status.visible = True
+
+                async def _setup_dl_vision():
+                    sel = setup_vision_select.value
+                    if is_model_local(sel):
+                        vision_status.text = f"✅ {sel} is already downloaded"
+                        vision_status.visible = True
+                        setup_vision_dl.visible = False
+                        return
+                    setup_vision_dl.disable()
+                    vision_status.text = f"⏳ Downloading {sel}… this may take a few minutes"
+                    vision_status.visible = True
+                    n = ui.notification(f"Downloading {sel}…", type="ongoing", spinner=True, timeout=None)
+                    await run.io_bound(lambda: list(pull_model(sel)))
+                    n.dismiss()
+                    vision_status.text = f"✅ {sel} downloaded successfully!"
+                    setup_vision_dl.visible = False
+                    setup_vision_dl.enable()
+                    vsvc.model = sel
+
+                setup_vision_dl.on_click(_setup_dl_vision)
+
+                def _on_setup_vision_change(e):
+                    sel = e.value
+                    setup_vision_dl.text = f"⬇️ Download {sel}"
+                    already = is_model_local(sel)
+                    setup_vision_dl.visible = not already
+                    if already:
+                        vision_status.text = f"✅ {sel} is ready"
+                        vision_status.visible = True
+                        vsvc.model = sel
+                    else:
+                        vision_status.visible = False
+
+                setup_vision_select.on_value_change(_on_setup_vision_change)
+
+                ui.separator()
+
+                # ── Recommended Setup ────────────────────────────────────
+                ui.label("📋 Recommended Setup").classes("text-h6")
+                ui.label(
+                    "After completing this wizard, head to Settings to get the most out of Thoth:"
+                ).classes("text-grey-6 text-sm")
+
+                tips = [
+                    ("🔑", "API Keys", "Settings → Tools to add API keys for web search, weather, Wolfram Alpha, and more. DuckDuckGo search works without a key."),
+                    ("📧", "Gmail", "Settings → Tools → Gmail to connect your Google account for reading and sending email."),
+                    ("📅", "Calendar", "Settings → Tools → Calendar to connect Google Calendar for checking events and scheduling."),
+                    ("📄", "Documents", "Drop PDFs, text files, or URLs into the sidebar to give Thoth context about your work."),
+                    ("🎙️", "Voice", "Settings → Voice to enable hands-free voice input and spoken responses."),
+                    ("📡", "Channels", "Settings → Channels to connect Telegram or Email so Thoth can respond to messages when the app is closed."),
+                ]
+                for icon, title, desc in tips:
+                    with ui.row().classes("items-start gap-2 q-py-xs"):
+                        ui.label(icon).classes("text-lg")
+                        with ui.column().classes("gap-0"):
+                            ui.label(title).classes("font-bold text-sm")
+                            ui.label(desc).classes("text-grey-6 text-xs")
+
+                ui.separator()
+
+                # ── Finish ───────────────────────────────────────────────
+                finish_btn = ui.button("Get Started →").props("color=primary size=lg").classes("w-full")
+
+                def _update_finish():
+                    finish_btn.set_enabled(brain_done["value"])
+
+                _update_finish()
+
+                async def _finish_setup():
+                    _mark_setup_complete()
+                    setup_dlg.close()
+                    # If brain model was downloaded, suppress the health-check notification
+                    if brain_done["value"]:
+                        _rebuild_main()
+
+                finish_btn.on_click(_finish_setup)
+
+        setup_dlg.open()
 
     # ══════════════════════════════════════════════════════════════════════
     # RENDER HELPERS
@@ -1433,8 +1679,8 @@ async def index():
             "Thoth uses two models: a Brain model for reasoning, tool use, "
             "and conversation, and a Vision model for camera-based image "
             "analysis. Both are served locally through Ollama. "
-            "Models marked ✅ are already downloaded; ⬇️ models will be "
-            "pulled automatically when selected."
+            "Models marked ✅ are already downloaded; ⬇️ models need to be "
+            "downloaded first using the Download button."
         ).classes("text-grey-6 text-sm")
         ui.separator()
         ui.label("🧠 Brain Model").classes("text-h6")
@@ -1463,17 +1709,45 @@ async def index():
             value=current,
         ).classes("w-full")
 
+        # Download button — visible when selected model is not yet downloaded
+        brain_dl_btn = ui.button(f"⬇️ Download {current}").props("color=primary outline")
+        brain_dl_btn.visible = current not in local
+
+        async def _download_brain(e=None):
+            sel = model_select.value
+            if is_model_local(sel):
+                ui.notify(f"✅ {sel} is already downloaded.", type="info")
+                brain_dl_btn.visible = False
+                return
+            brain_dl_btn.disable()
+            n = ui.notification(f"Downloading {sel}…", type="ongoing", spinner=True, timeout=None)
+            await run.io_bound(lambda: list(pull_model(sel)))
+            n.dismiss()
+            ui.notify(f"✅ {sel} ready!", type="positive")
+            brain_dl_btn.visible = False
+            brain_dl_btn.enable()
+            # Refresh dropdown labels
+            refreshed_local = list_local_models()
+            model_select.options = {m: f"{'✅' if m in refreshed_local else '⬇️'}  {m}" + ('' if is_tool_compatible(m) else '  ⚠️ may not support tools') for m in all_models}
+            model_select.update()
+            # Apply the newly downloaded model
+            set_model(sel)
+            state.current_model = sel
+            clear_agent_cache()
+
+        brain_dl_btn.on_click(_download_brain)
+
         async def _on_model_change(e):
             sel = e.value
             if sel == state.current_model:
                 return
             prev = state.current_model
-            # Download if needed
+            # Update download button
+            brain_dl_btn.text = f"⬇️ Download {sel}"
+            brain_dl_btn.visible = not is_model_local(sel)
+            # If the model isn't downloaded yet, don't switch — wait for the Download button
             if not is_model_local(sel):
-                n = ui.notification(f"Downloading {sel}…", type="ongoing", spinner=True, timeout=None)
-                await run.io_bound(lambda: list(pull_model(sel)))
-                n.dismiss()
-                ui.notify(f"✅ {sel} ready!", type="positive")
+                return
             # Validate tool support for unknown families
             if not is_tool_compatible(sel):
                 ui.notify(f"Checking tool support for {sel}…", type="info")
@@ -1564,18 +1838,46 @@ async def index():
         all_vision = sorted(set(POPULAR_VISION_MODELS + ([vsvc.model] if vsvc.model not in POPULAR_VISION_MODELS else [])))
         vision_opts = {m: f"{'✅' if m in local else '⬇️'}  {m}" for m in all_vision}
 
+        vision_select = ui.select(options=vision_opts, value=vsvc.model).classes("w-full")
+
+        # Download button for vision model
+        vision_dl_btn = ui.button(f"⬇️ Download {vsvc.model}").props("color=primary outline")
+        vision_dl_btn.visible = vsvc.model not in local
+
+        async def _download_vision(e=None):
+            sel = vision_select.value
+            if is_model_local(sel):
+                ui.notify(f"✅ {sel} is already downloaded.", type="info")
+                vision_dl_btn.visible = False
+                return
+            vision_dl_btn.disable()
+            n = ui.notification(f"Downloading {sel}…", type="ongoing", spinner=True, timeout=None)
+            await run.io_bound(lambda: list(pull_model(sel)))
+            n.dismiss()
+            ui.notify(f"✅ {sel} ready!", type="positive")
+            vision_dl_btn.visible = False
+            vision_dl_btn.enable()
+            refreshed_local = list_local_models()
+            vision_select.options = {m: f"{'✅' if m in refreshed_local else '⬇️'}  {m}" for m in all_vision}
+            vision_select.update()
+            # Apply the newly downloaded model
+            vsvc.model = sel
+            clear_agent_cache()
+
+        vision_dl_btn.on_click(_download_vision)
+
         async def _on_vision_change(e):
             sel = e.value
+            vision_dl_btn.text = f"⬇️ Download {sel}"
+            vision_dl_btn.visible = not is_model_local(sel)
             if sel != vsvc.model:
+                # If the model isn't downloaded yet, don't switch — wait for the Download button
                 if not is_model_local(sel):
-                    n = ui.notification(f"Downloading {sel}…", type="ongoing", spinner=True, timeout=None)
-                    await run.io_bound(lambda: list(pull_model(sel)))
-                    n.dismiss()
-                    ui.notify(f"✅ {sel} ready!", type="positive")
+                    return
                 vsvc.model = sel
                 clear_agent_cache()
 
-        ui.select(options=vision_opts, value=vsvc.model, on_change=_on_vision_change).classes("w-full")
+        vision_select.on_value_change(_on_vision_change)
 
         # Camera
         cameras = list_cameras()

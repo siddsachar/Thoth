@@ -1,9 +1,12 @@
 from langgraph.checkpoint.sqlite import SqliteSaver
+import logging
 import sqlite3
 import uuid
 import os
 import pathlib
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # Store data in %APPDATA%/Thoth (writable even when app is in Program Files)
 DATA_DIR = pathlib.Path(os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / ".thoth"))
@@ -13,13 +16,17 @@ DB_PATH = str(DATA_DIR / "threads.db")
 
 def _init_thread_db():
     """Create a metadata table to store thread names/timestamps."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS thread_meta "
-        "(thread_id TEXT PRIMARY KEY, name TEXT, created_at TEXT, updated_at TEXT)"
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS thread_meta "
+            "(thread_id TEXT PRIMARY KEY, name TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        conn.commit()
+        conn.close()
+        logger.debug("Thread database initialised at %s", DB_PATH)
+    except Exception:
+        logger.error("Failed to initialise thread database at %s", DB_PATH, exc_info=True)
 
 def _list_threads():
     conn = sqlite3.connect(DB_PATH)

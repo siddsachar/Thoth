@@ -75,6 +75,7 @@ def _geocode(location: str) -> dict[str, Any] | str:
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
+        logger.debug("Geocoding request failed for '%s': %s", location, exc)
         return f"Geocoding request failed: {exc}"
 
     results = data.get("results")

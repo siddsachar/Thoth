@@ -7,6 +7,7 @@ Exposes two sub-tools:
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 
@@ -15,6 +16,8 @@ from pydantic import BaseModel, Field
 
 from tools.base import BaseTool
 from tools import registry
+
+logger = logging.getLogger(__name__)
 
 
 # ── Pydantic schemas ─────────────────────────────────────────────────────────
@@ -71,6 +74,7 @@ def _get_thread_messages(thread_id: str) -> list[dict]:
                 result.append({"role": "assistant", "content": content})
         return result
     except Exception:
+        logger.debug("Failed to load thread messages for %s", thread_id, exc_info=True)
         return []
 
 

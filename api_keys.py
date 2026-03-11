@@ -1,6 +1,9 @@
+import logging
 import os
 import json
 import pathlib
+
+logger = logging.getLogger(__name__)
 
 # Store data in %APPDATA%/Thoth (writable even when app is in Program Files)
 DATA_DIR = pathlib.Path(os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / ".thoth"))
@@ -28,6 +31,7 @@ def _load_keys() -> dict[str, str]:
             with open(KEYS_PATH, "r") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to load API keys from %s", KEYS_PATH, exc_info=True)
             return {}
     return {}
 

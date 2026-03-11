@@ -374,6 +374,7 @@ def get_token_usage(config: dict | None = None) -> tuple[int, int]:
         used = total_chars // _CHARS_PER_TOKEN
         return used, max_tokens
     except Exception:
+        logger.debug("Token usage estimation failed", exc_info=True)
         return 0, max_tokens
 
 
@@ -426,6 +427,7 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None):
                     except GraphInterrupt:
                         raise  # Must propagate for interrupt/resume flow
                     except Exception as exc:
+                        logger.error("Tool %s raised an error: %s", _fn.__name__ if hasattr(_fn, '__name__') else '?', exc, exc_info=True)
                         return f"Tool error: {exc}"
                 t.func = _safe_func
             else:
@@ -437,6 +439,7 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None):
                     except GraphInterrupt:
                         raise
                     except Exception as exc:
+                        logger.error("Tool _run raised an error: %s", exc, exc_info=True)
                         return f"Tool error: {exc}"
                 t._run = _safe_run
 
@@ -542,7 +545,7 @@ def repair_orphaned_tool_calls(enabled_tool_names: list[str] | None = None, conf
         if patches:
             agent.update_state(config, {"messages": patches})
     except Exception:
-        pass  # best-effort — don’t break the app
+        logger.debug("repair_orphaned_tool_calls failed", exc_info=True)
 
 
 def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: bool):

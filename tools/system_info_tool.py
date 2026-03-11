@@ -7,6 +7,7 @@ is relevant to the user's question.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import socket
@@ -18,6 +19,8 @@ from langchain_core.tools import StructuredTool
 
 from tools.base import BaseTool
 from tools import registry
+
+logger = logging.getLogger(__name__)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -51,6 +54,7 @@ def _get_public_ip() -> str:
         with urllib.request.urlopen("https://api.ipify.org", timeout=3) as r:
             return r.read().decode().strip()
     except Exception:
+        logger.debug("Public IP lookup failed", exc_info=True)
         return "N/A"
 
 

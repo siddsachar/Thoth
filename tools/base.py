@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.tools import StructuredTool
+
+logger = logging.getLogger(__name__)
 
 
 class BaseTool(ABC):
@@ -123,6 +126,7 @@ class BaseTool(ABC):
             try:
                 return tool_instance.execute(query)
             except Exception as exc:
+                logger.error("Tool '%s' execute error: %s", tool_instance.name, exc, exc_info=True)
                 return f"Error in {tool_instance.display_name}: {exc}"
 
         return StructuredTool.from_function(

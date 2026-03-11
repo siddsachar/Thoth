@@ -48,6 +48,20 @@ fpdf2
 # ── Calculator ───────────────────────────────────────────────────────────────
 simpleeval
 
+# ── Timer / Scheduler ───────────────────────────────────────────────────────
+apscheduler
+
+# ── Desktop Notifications ───────────────────────────────────────────────────
+plyer
+
+# ── YouTube Search ──────────────────────────────────────────────────────────
+youtube-search
+
+# ── Common (used directly, also pulled transitively) ────────────────────────
+numpy
+requests
+pydantic
+
 # ── Wolfram Alpha ───────────────────────────────────────────────────────────
 wolframalpha
 

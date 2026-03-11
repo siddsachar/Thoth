@@ -11,6 +11,7 @@ Everything runs locally — no audio is sent to the cloud.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -22,6 +23,8 @@ from queue import Queue, Empty
 from typing import Callable
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 _THOTH_DIR = Path.home() / ".thoth"
@@ -356,6 +359,7 @@ class TTSService:
                     stderr=subprocess.DEVNULL,
                     **kwargs,
                 )
+                logger.debug("Piper stream TTS subprocess started (PID %s)", proc.pid)
                 proc.communicate(input=sentence.encode("utf-8"), timeout=30)
 
                 if self._stop_event.is_set():
@@ -378,10 +382,11 @@ class TTSService:
                     sd.wait()
 
             except subprocess.TimeoutExpired:
+                logger.warning("Piper stream TTS timed out, killing process")
                 if proc:
                     proc.kill()
             except Exception:
-                pass
+                logger.debug("TTS stream playback error", exc_info=True)
             finally:
                 try:
                     if os.path.exists(wav_path):
@@ -405,6 +410,7 @@ class TTSService:
         """Download and extract the Piper TTS binary."""
         _PIPER_DIR.mkdir(parents=True, exist_ok=True)
         zip_path = _PIPER_DIR / "piper_windows_amd64.zip"
+        logger.info("Downloading Piper TTS from %s", _PIPER_DOWNLOAD_URL)
         _download_file(_PIPER_DOWNLOAD_URL, zip_path, progress)
 
         # Extract (creates _PIPER_DIR/piper/ with piper.exe + libs)
@@ -419,6 +425,7 @@ class TTSService:
     ) -> None:
         """Download a voice model from Hugging Face."""
         vid = voice_id or self._voice
+        logger.info("Downloading voice model: %s", vid)
         _VOICES_DIR.mkdir(parents=True, exist_ok=True)
         onnx_url, json_url = _voice_urls(vid)
 
@@ -484,6 +491,7 @@ class TTSService:
                 stderr=subprocess.DEVNULL,
                 **kwargs,
             )
+            logger.debug("Piper TTS subprocess started (PID %s)", proc.pid)
             proc.communicate(input=text.encode("utf-8"), timeout=60)
 
             if self._stop_event.is_set():
@@ -511,10 +519,11 @@ class TTSService:
                 sd.wait()
 
         except subprocess.TimeoutExpired:
+            logger.warning("Piper TTS timed out, killing process")
             if proc:
                 proc.kill()
         except Exception:
-            pass
+            logger.warning("TTS playback error", exc_info=True)
         finally:
             # Do NOT unmute here — only the streaming worker should
             # trigger follow-up.  speak_now() is used for short phrases
@@ -538,7 +547,7 @@ class TTSService:
                 self._enabled = data.get("enabled", False)
                 self._auto_speak = data.get("auto_speak", True)
         except Exception:
-            pass
+            logger.warning("Failed to load TTS settings from %s", _SETTINGS_PATH, exc_info=True)
 
     def _save_settings(self) -> None:
         try:
@@ -551,7 +560,7 @@ class TTSService:
             }
             _SETTINGS_PATH.write_text(json.dumps(data, indent=2))
         except Exception:
-            pass
+            logger.warning("Failed to save TTS settings", exc_info=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

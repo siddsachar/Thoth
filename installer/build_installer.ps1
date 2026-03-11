@@ -106,6 +106,53 @@ if (!$SkipDownloads) {
     Write-Host "Skipping downloads (using existing build/ contents)." -ForegroundColor DarkGray
 }
 
+# ── Bundle tkinter into embedded Python (not included in embeddable zip) ─────
+Write-Host ""
+Write-Host "Bundling tkinter into embedded Python..." -ForegroundColor Yellow
+
+# Locate the system Python that has tkinter
+$SysPyRoot = & python -c "import sys; print(sys.base_prefix)" 2>$null
+if (!$SysPyRoot -or !(Test-Path "$SysPyRoot\Lib\tkinter")) {
+    Write-Host "WARNING: Could not find system Python with tkinter. Splash screen will be unavailable." -ForegroundColor DarkYellow
+} else {
+    $PythonDir = Join-Path $BuildDir "python"
+
+    # Copy _tkinter.pyd and Tcl/Tk DLLs
+    foreach ($dll in @("_tkinter.pyd", "tcl86t.dll", "tk86t.dll")) {
+        $src = Join-Path "$SysPyRoot\DLLs" $dll
+        if (Test-Path $src) {
+            Copy-Item $src -Destination $PythonDir -Force
+            Write-Host "      Copied $dll" -ForegroundColor Green
+        } else {
+            Write-Host "      WARNING: $dll not found at $src" -ForegroundColor DarkYellow
+        }
+    }
+
+    # Copy tkinter Python package
+    $TkPkgSrc = Join-Path "$SysPyRoot\Lib" "tkinter"
+    $TkPkgDst = Join-Path $PythonDir "Lib\tkinter"
+    if (Test-Path $TkPkgSrc) {
+        if (Test-Path $TkPkgDst) { Remove-Item -Recurse -Force $TkPkgDst }
+        Copy-Item $TkPkgSrc -Destination $TkPkgDst -Recurse -Force
+        Write-Host "      Copied Lib\tkinter\" -ForegroundColor Green
+    }
+
+    # Copy Tcl/Tk runtime data (tcl8.6, tk8.6, tcl8)
+    $TclDst = Join-Path $PythonDir "tcl"
+    if (!(Test-Path $TclDst)) { New-Item -ItemType Directory -Path $TclDst -Force | Out-Null }
+    foreach ($subdir in @("tcl8.6", "tk8.6", "tcl8")) {
+        $src = Join-Path "$SysPyRoot\tcl" $subdir
+        $dst = Join-Path $TclDst $subdir
+        if (Test-Path $src) {
+            if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+            Copy-Item $src -Destination $dst -Recurse -Force
+            Write-Host "      Copied tcl\$subdir\" -ForegroundColor Green
+        }
+    }
+
+    Write-Host "      tkinter bundling complete." -ForegroundColor Green
+}
+
 # ── 3. Create dist directory ────────────────────────────────────────────────
 $DistDir = Join-Path (Join-Path $PSScriptRoot "..") "dist"
 if (!(Test-Path $DistDir)) {

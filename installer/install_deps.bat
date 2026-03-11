@@ -17,12 +17,16 @@ set "PYTHON=%PYTHON_DIR%\python.exe"
 set "APP_DIR=%INSTALL_DIR%\app"
 set "LOG=%INSTALL_DIR%\install_log.txt"
 
-echo =========================================
+:: Prevent embedded Python from importing packages from a system-wide Python
+set "PYTHONNOUSERSITE=1"
+
+echo ==========================================
 echo  Thoth v3.0.0 - Installing dependencies
-echo  This may take 5-15 minutes depending
-echo  on your internet connection.
+echo  This may take 5-25 minutes depending
+echo  on your system and internet connection
+echo  and whether Ollama needs to be installed.
 echo  Please do not close this window.
-echo =========================================
+echo ==========================================
 echo.
 
 echo ========================================= >> "%LOG%" 2>&1
@@ -44,6 +48,22 @@ for %%f in ("%PYTHON_DIR%\python*._pth") do (
     findstr /C:"Lib\site-packages" "%%~f" >NUL 2>&1
     if errorlevel 1 (
         echo Lib\site-packages>> "%%~f"
+    )
+)
+
+:: Add app directory so local imports (channels, tools, etc.) resolve
+for %%f in ("%PYTHON_DIR%\python*._pth") do (
+    findstr /C:"..\app" "%%~f" >NUL 2>&1
+    if errorlevel 1 (
+        echo ..\app>> "%%~f"
+    )
+)
+
+:: Add Lib so tkinter (bundled from full Python) is importable
+for %%f in ("%PYTHON_DIR%\python*._pth") do (
+    findstr /X /C:"Lib" "%%~f" >NUL 2>&1
+    if errorlevel 1 (
+        echo Lib>> "%%~f"
     )
 )
 

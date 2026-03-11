@@ -11,12 +11,15 @@ Usage
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from tools.base import BaseTool
+
+logger = logging.getLogger(__name__)
 
 # Persist enabled / disabled state alongside other Thoth data
 DATA_DIR = pathlib.Path(os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / ".thoth"))
@@ -37,6 +40,7 @@ def _load_config() -> dict:
             with open(_CONFIG_PATH, "r") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
+            logger.warning("Failed to load tools config from %s", _CONFIG_PATH, exc_info=True)
             return {}
     return {}
 
@@ -50,6 +54,7 @@ def _save_config():
 # ── Public API ───────────────────────────────────────────────────────────────
 def register(tool: "BaseTool") -> None:
     """Register a tool instance.  Called by each tool module at import time."""
+    logger.debug("Registering tool: %s", tool.name)
     _tools[tool.name] = tool
     # If the user already toggled this tool, honour that; otherwise use default
     saved = _load_config()
@@ -86,6 +91,7 @@ def is_enabled(name: str) -> bool:
 
 
 def set_enabled(name: str, value: bool) -> None:
+    logger.info("Tool '%s' %s", name, "enabled" if value else "disabled")
     _enabled[name] = value
     _save_config()
     _invalidate_agent_cache()

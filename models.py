@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 import pathlib
 
 import ollama
 from langchain_ollama import ChatOllama
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "qwen3:14b"
 DEFAULT_CONTEXT_SIZE = 32768
@@ -23,7 +26,7 @@ def _load_settings() -> dict:
         if _SETTINGS_PATH.exists():
             return json.loads(_SETTINGS_PATH.read_text())
     except Exception:
-        pass
+        logger.warning("Failed to load model settings from %s", _SETTINGS_PATH, exc_info=True)
     return {}
 
 
@@ -84,6 +87,7 @@ def get_llm() -> ChatOllama:
     """Return the current LLM instance, creating one if needed."""
     global _llm_instance
     if _llm_instance is None:
+        logger.info("Creating LLM instance: model=%s, num_ctx=%s", _current_model, _num_ctx)
         _llm_instance = ChatOllama(model=_current_model, num_ctx=_num_ctx)
     return _llm_instance
 
@@ -104,6 +108,7 @@ def get_model_max_context(model_name: str | None = None) -> int | None:
         ctx = mi.get(f"{arch}.context_length") if arch else None
         _model_max_ctx_cache[name] = int(ctx) if ctx is not None else None
     except Exception:
+        logger.debug("Could not query max context for model %s", name, exc_info=True)
         _model_max_ctx_cache[name] = None
     return _model_max_ctx_cache[name]
 
@@ -114,10 +119,11 @@ def set_model(model_name: str):
     global _current_model, _llm_instance
     # Unload the old model from Ollama memory
     if model_name != _current_model:
+        logger.info("Switching model: %s → %s", _current_model, model_name)
         try:
             ollama.generate(model=_current_model, prompt="", keep_alive=0)
         except Exception:
-            pass  # best-effort; old model may already be unloaded
+            logger.debug("Could not unload previous model %s", _current_model, exc_info=True)
     _current_model = model_name
     _llm_instance = ChatOllama(model=model_name, num_ctx=_num_ctx)
     _save_settings({"model": _current_model, "context_size": _num_ctx})
@@ -143,6 +149,7 @@ def get_user_context_size() -> int:
 def set_context_size(size: int):
     """Change the context window size and recreate the LLM instance."""
     global _num_ctx, _llm_instance
+    logger.info("Context size changed: %s → %s", _num_ctx, size)
     _num_ctx = size
     _llm_instance = ChatOllama(model=_current_model, num_ctx=_num_ctx)
     _save_settings({"model": _current_model, "context_size": _num_ctx})
@@ -158,6 +165,7 @@ def list_local_models() -> list[str]:
         response = ollama.list()
         return sorted({m.model for m in response.models})
     except Exception:
+        logger.warning("Could not list local Ollama models", exc_info=True)
         return []
 
 
@@ -206,6 +214,7 @@ def check_tool_support(model_name: str) -> bool:
     except Exception as exc:
         if "does not support tools" in str(exc) or "400" in str(exc):
             return False
+        logger.debug("Tool support check for %s failed: %s", model_name, exc)
         return True  # Network or other error — don't block
 
 
