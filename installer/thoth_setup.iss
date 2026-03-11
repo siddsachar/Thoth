@@ -1,5 +1,5 @@
 ; =============================================================================
-; Thoth v2.2.0 – Inno Setup Script
+; Thoth v3.0.0 – Inno Setup Script
 ; Installer: bundles embedded Python + app source code + Piper TTS engine
 ; + default voice. Downloads Ollama and Python packages at install time.
 ; =============================================================================
@@ -86,6 +86,7 @@ Source: "..\tools\gmail_tool.py";      DestDir: "{app}\app\tools"; Flags: ignore
 Source: "..\tools\memory_tool.py";     DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\system_info_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\timer_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\tracker_tool.py";    DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\url_reader_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\vision_tool.py";     DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\weather_tool.py";    DestDir: "{app}\app\tools"; Flags: ignoreversion

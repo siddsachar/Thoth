@@ -1336,6 +1336,7 @@ async def index():
                             tab_voice = ui.tab("Voice", icon="mic")
                             tab_channels = ui.tab("Channels", icon="forum")
                             tab_wf = ui.tab("Workflows", icon="bolt")
+                            tab_tracker = ui.tab("Tracker", icon="checklist")
                             tab_gmail = ui.tab("Gmail", icon="email")
                             tab_cal = ui.tab("Calendar", icon="event")
                             tab_docs = ui.tab("Documents", icon="description")
@@ -1361,6 +1362,8 @@ async def index():
                                 _build_calendar_tab()
                             with ui.tab_panel(tab_utils).classes("px-6 py-4"):
                                 _build_utilities_tab()
+                            with ui.tab_panel(tab_tracker).classes("px-6 py-4"):
+                                _build_tracker_tab()
                             with ui.tab_panel(tab_mem).classes("px-6 py-4"):
                                 _build_memory_tab()
                             with ui.tab_panel(tab_wf).classes("px-6 py-4"):
@@ -1602,7 +1605,7 @@ async def index():
         skip_tools = {
             "filesystem", "gmail", "documents", "calendar", "timer",
             "url_reader", "calculator", "weather", "vision", "chart",
-            "system_info", "conversation_search", "memory",
+            "system_info", "conversation_search", "memory", "tracker",
         }
         for tool in tool_registry.get_all_tools():
             if tool.name in skip_tools:
@@ -1986,6 +1989,107 @@ async def index():
                 on_change=lambda e, n=uname: tool_registry.set_enabled(n, e.value),
             ).tooltip(utool.description)
             ui.separator()
+
+    def _build_tracker_tab() -> None:
+        from tools.tracker_tool import _get_db, _get_all_trackers, _DB_PATH
+
+        ui.label("\U0001f4cb Habit & Health Tracker").classes("text-h6")
+        ui.label(
+            "Track recurring activities, habits, symptoms, medications, and health events. "
+            "Log entries via chat, view history, compute streaks and adherence, "
+            "and analyse trends over time. All data is stored locally in a "
+            "SQLite database and never sent to any cloud service."
+        ).classes("text-grey-6 text-sm")
+
+        tracker_tool = tool_registry.get_tool("tracker")
+        if not tracker_tool:
+            ui.label("Tracker tool not found.").classes("text-negative")
+            return
+
+        ui.switch(
+            "Enable Habit Tracker",
+            value=tool_registry.is_enabled("tracker"),
+            on_change=lambda e: tool_registry.set_enabled("tracker", e.value),
+        ).tooltip(tracker_tool.description)
+
+        ui.separator()
+
+        # Show active trackers from the database
+        try:
+            conn = _get_db()
+            trackers = _get_all_trackers(conn)
+            total_entries = conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+            conn.close()
+        except Exception:
+            trackers = []
+            total_entries = 0
+
+        ui.label(f"Active trackers: {len(trackers)}  \u00b7  Total entries: {total_entries}").classes("font-bold")
+
+        if trackers:
+            tracker_container = ui.column().classes("w-full")
+
+            def _refresh_trackers():
+                tracker_container.clear()
+                try:
+                    c = _get_db()
+                    tlist = _get_all_trackers(c)
+                    with tracker_container:
+                        if not tlist:
+                            ui.label("No trackers yet. Start tracking by chatting with Thoth!").classes("text-grey-6")
+                        else:
+                            for t in tlist:
+                                entry_count = c.execute(
+                                    "SELECT COUNT(*) FROM entries WHERE tracker_id = ?",
+                                    (t["id"],),
+                                ).fetchone()[0]
+                                last_entry = c.execute(
+                                    "SELECT timestamp FROM entries WHERE tracker_id = ? ORDER BY timestamp DESC LIMIT 1",
+                                    (t["id"],),
+                                ).fetchone()
+                                last_str = last_entry[0][:10] if last_entry else "never"
+                                type_badge = t["type"]
+                                if t.get("unit"):
+                                    type_badge += f" ({t['unit']})"
+                                with ui.row().classes("w-full items-center gap-2"):
+                                    ui.label(f"\u25cf {t['name']}").classes("font-bold")
+                                    ui.badge(type_badge).props("outline")
+                                    ui.label(f"{entry_count} entries \u00b7 last: {last_str}").classes(
+                                        "text-xs text-grey-6"
+                                    )
+                                ui.separator()
+                    c.close()
+                except Exception as exc:
+                    with tracker_container:
+                        ui.label(f"Error loading trackers: {exc}").classes("text-negative")
+
+            _refresh_trackers()
+
+            ui.separator()
+
+            async def _delete_all_tracker_data():
+                confirm = await ui.run_javascript(
+                    "confirm('Delete ALL tracker data? This cannot be undone.')"
+                )
+                if confirm:
+                    try:
+                        import os
+                        c = _get_db()
+                        c.execute("DELETE FROM entries")
+                        c.execute("DELETE FROM trackers")
+                        c.commit()
+                        c.close()
+                        ui.notify("All tracker data deleted.", type="info")
+                        _refresh_trackers()
+                    except Exception as exc:
+                        ui.notify(f"Error: {exc}", type="negative")
+
+            ui.button(
+                "\U0001f5d1\ufe0f Delete All Tracker Data",
+                on_click=_delete_all_tracker_data,
+            ).props("flat dense color=negative")
+        else:
+            ui.label("No trackers yet. Start tracking by chatting with Thoth!").classes("text-grey-6 mt-2")
 
     def _build_memory_tab() -> None:
         ui.label("🧠 Memory").classes("text-h6")

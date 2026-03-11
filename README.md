@@ -1,12 +1,12 @@
-# 𓁟 Thoth — Private AI Assistant
+# 𓁀 Thoth — Personal AI Sovereignty
 
 > 🍎 **macOS support is on the way.** Thoth currently runs on Windows. A native macOS release is in active development — stay tuned.
 
-Thoth is a **local-first, privacy-focused AI assistant** that runs entirely on your machine. It combines a powerful ReAct agent with 20 integrated tools — web search, email, calendar, file management, vision, long-term memory, habit tracking, and more — plus Telegram and Email messaging channels, all powered by a locally-running LLM via [Ollama](https://ollama.com/). No data leaves your machine unless you explicitly use an online tool.
+Thoth is a **local-first AI assistant built for personal AI sovereignty** — your models, your data, your rules. It runs entirely on your machine, combining a powerful ReAct agent with 20 integrated tools — web search, email, calendar, file management, vision, long-term memory, habit tracking, and more — plus Telegram and Email messaging channels, all powered by a locally-running LLM via [Ollama](https://ollama.com/). No data leaves your machine unless you explicitly use an online tool.
+
+> Governments are investing billions to keep AI infrastructure within their borders. Thoth applies the same principle to the individual — your compute, your data, your choice of model, **accountable to no one but you.**
 
 ### Why not just use ChatGPT?
-
-> **Bottom line:** Cloud AI assistants rent you access to someone else's system. Thoth gives you your own.
 
 | | ChatGPT / Claude / Gemini | Thoth |
 |---|---|---|
@@ -18,6 +18,8 @@ Thoth is a **local-first, privacy-focused AI assistant** that runs entirely on y
 | **Customisation** | Pick a model, write a system prompt | Swap models freely, build multi-step workflows, schedule tasks |
 | **Voice** | Cloud-processed speech | Local Whisper STT + Piper TTS — never leaves your mic |
 | **Availability** | Requires internet, subject to outages & rate limits | Works offline (core features), no throttling |
+
+> **Bottom line:** Cloud AI assistants rent you access to someone else’s system. Thoth gives you **personal AI sovereignty** — your own models, your own data, zero dependency on any provider.
 
 ### How is Thoth different from OpenClaw?
 
@@ -389,7 +391,7 @@ For **Gmail** and **Google Calendar**, you'll need a Google Cloud OAuth `credent
 
 ---
 
-## 🔒 Privacy & Security
+## 🔒 Privacy & Security — Personal AI Sovereignty
 
 - **All LLM inference runs locally** via Ollama — no data sent to cloud AI providers
 - **Documents, memories, and conversations are stored locally** in `~/.thoth/`
