@@ -155,18 +155,19 @@ import os, sys, socket, time
 
 py_dir = os.path.dirname(sys.executable)
 os.environ['PATH'] = py_dir + os.pathsep + os.environ.get('PATH', '')
-if hasattr(os, 'add_dll_directory'):
-    os.add_dll_directory(py_dir)
-for d in ('tcl/tcl8.6', 'tcl/tk8.6'):
-    p = os.path.join(py_dir, d)
-    if os.path.isdir(p):
-        os.environ['TCL_LIBRARY' if 'tcl8' in d else 'TK_LIBRARY'] = p
-import ctypes
-for dll in ('tcl86t.dll', 'tk86t.dll'):
-    p = os.path.join(py_dir, dll)
-    if os.path.exists(p):
-        try: ctypes.CDLL(p, winmode=0)
-        except OSError: pass
+if os.name == 'nt':
+    if hasattr(os, 'add_dll_directory'):
+        os.add_dll_directory(py_dir)
+    for d in ('tcl/tcl8.6', 'tcl/tk8.6'):
+        p = os.path.join(py_dir, d)
+        if os.path.isdir(p):
+            os.environ['TCL_LIBRARY' if 'tcl8' in d else 'TK_LIBRARY'] = p
+    import ctypes
+    for dll in ('tcl86t.dll', 'tk86t.dll'):
+        p = os.path.join(py_dir, dll)
+        if os.path.exists(p):
+            try: ctypes.CDLL(p, winmode=0)
+            except OSError: pass
 import tkinter as tk
 
 PORT, TIMEOUT = int(sys.argv[1]), float(sys.argv[2])

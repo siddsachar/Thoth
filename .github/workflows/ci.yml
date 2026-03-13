@@ -1,0 +1,78 @@
+name: CI — Test Suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+
+      # ── Python ────────────────────────────────────────────────────────
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # ── Install Ollama ────────────────────────────────────────────────
+      - name: Install Ollama (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ollama
+          ollama serve &
+          sleep 5
+          ollama pull qwen3:1.7b
+
+      - name: Install Ollama (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          sleep 5
+          ollama pull qwen3:1.7b
+
+      - name: Install Ollama (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://ollama.com/download/OllamaSetup.exe" -OutFile "$env:TEMP\OllamaSetup.exe"
+          Start-Process -FilePath "$env:TEMP\OllamaSetup.exe" -ArgumentList "/VERYSILENT","/NORESTART" -Wait
+          $env:PATH = "C:\Users\runneradmin\AppData\Local\Programs\Ollama;$env:PATH"
+          Start-Process -FilePath "ollama" -ArgumentList "serve" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          & ollama pull qwen3:1.7b
+
+      # ── Linux system deps (pywebview GTK backend) ─────────────────────
+      - name: Install Linux system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gir1.2-webkit2-4.1 \
+            libgirepository1.0-dev \
+            libnotify-bin \
+            libasound2-dev
+
+      # ── Python dependencies ───────────────────────────────────────────
+      - name: Install Python packages
+        run: pip install -r requirements.txt
+
+      # ── Run test suite ────────────────────────────────────────────────
+      - name: Run test suite
+        run: python test_suite.py

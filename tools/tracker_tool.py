@@ -257,13 +257,20 @@ def _streaks(entries: list[dict]) -> dict:
             cur = 1
     streaks_list.append(cur)
     longest = max(streaks_list)
-    # Current streak: count back from today
+    # Current streak: count back from today (or the latest entry date if
+    # it is today or yesterday — so an evening log still counts).
     today = datetime.now().date()
-    current = 0
-    d = today
-    while d in dates:
-        current += 1
-        d -= timedelta(days=1)
+    start = today if today in dates else sorted_dates[-1]
+    # Only treat "latest entry" as current if it is today or yesterday;
+    # older data has no active current streak.
+    if (today - start).days > 1:
+        current = 0
+    else:
+        current = 0
+        d = start
+        while d in dates:
+            current += 1
+            d -= timedelta(days=1)
     return {"current_streak": current, "longest_streak": longest}
 
 

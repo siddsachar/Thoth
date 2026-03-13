@@ -13,8 +13,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import re
+import stat
 import subprocess
+import tarfile
 import threading
 import time
 import zipfile
@@ -30,16 +33,41 @@ logger = logging.getLogger(__name__)
 _THOTH_DIR = Path.home() / ".thoth"
 _PIPER_DIR = _THOTH_DIR / "piper"
 _VOICES_DIR = _PIPER_DIR / "voices"
-# After extracting the release zip, contents are inside a 'piper' subfolder
-_PIPER_EXE = _PIPER_DIR / "piper" / "piper.exe"
 _SETTINGS_PATH = _THOTH_DIR / "tts_settings.json"
 
-# ── Download URLs ────────────────────────────────────────────────────────────
+# ── Platform-aware Piper binary & download URL ──────────────────────────────
 _PIPER_RELEASE = "2023.11.14-2"
-_PIPER_DOWNLOAD_URL = (
-    f"https://github.com/rhasspy/piper/releases/download/"
-    f"{_PIPER_RELEASE}/piper_windows_amd64.zip"
+_PIPER_BASE_URL = (
+    f"https://github.com/rhasspy/piper/releases/download/{_PIPER_RELEASE}"
 )
+
+
+def _piper_platform_info() -> tuple[str, str, str]:
+    """Return ``(archive_filename, binary_name, download_url)`` for this OS."""
+    system = platform.system()                # "Windows", "Darwin", "Linux"
+    machine = platform.machine().lower()      # "x86_64", "amd64", "arm64", …
+
+    if system == "Windows":
+        archive = "piper_windows_amd64.zip"
+    elif system == "Darwin":
+        # Apple Silicon only
+        archive = "piper_macos_aarch64.tar.gz"
+    elif system == "Linux":
+        if machine in ("aarch64", "arm64"):
+            archive = "piper_linux_aarch64.tar.gz"
+        else:
+            archive = "piper_linux_x86_64.tar.gz"
+    else:
+        raise RuntimeError(f"Unsupported platform: {system} ({machine})")
+
+    binary = "piper.exe" if system == "Windows" else "piper"
+    url = f"{_PIPER_BASE_URL}/{archive}"
+    return archive, binary, url
+
+
+_PIPER_ARCHIVE, _PIPER_BINARY, _PIPER_DOWNLOAD_URL = _piper_platform_info()
+# After extracting, contents are inside a 'piper' subfolder
+_PIPER_EXE = _PIPER_DIR / "piper" / _PIPER_BINARY
 _VOICES_BASE_URL = (
     "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 )
@@ -409,14 +437,22 @@ class TTSService:
     ) -> None:
         """Download and extract the Piper TTS binary."""
         _PIPER_DIR.mkdir(parents=True, exist_ok=True)
-        zip_path = _PIPER_DIR / "piper_windows_amd64.zip"
+        archive_path = _PIPER_DIR / _PIPER_ARCHIVE
         logger.info("Downloading Piper TTS from %s", _PIPER_DOWNLOAD_URL)
-        _download_file(_PIPER_DOWNLOAD_URL, zip_path, progress)
+        _download_file(_PIPER_DOWNLOAD_URL, archive_path, progress)
 
-        # Extract (creates _PIPER_DIR/piper/ with piper.exe + libs)
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(_PIPER_DIR)
-        zip_path.unlink(missing_ok=True)
+        # Extract (creates _PIPER_DIR/piper/ with binary + libs)
+        if _PIPER_ARCHIVE.endswith(".tar.gz"):
+            with tarfile.open(archive_path, "r:gz") as tf:
+                tf.extractall(_PIPER_DIR)
+        else:
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(_PIPER_DIR)
+        archive_path.unlink(missing_ok=True)
+
+        # Ensure the binary is executable on Unix-like systems
+        if platform.system() != "Windows" and _PIPER_EXE.exists():
+            _PIPER_EXE.chmod(_PIPER_EXE.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     def download_voice(
         self,

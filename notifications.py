@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import pathlib
 import queue
+import subprocess
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +77,7 @@ def drain_toasts() -> list[dict]:
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 def _desktop_notify(title: str, message: str) -> None:
-    """Show a Windows desktop notification via plyer."""
+    """Show a desktop notification via plyer."""
     try:
         from plyer import notification
         notification.notify(
@@ -91,18 +93,30 @@ def _desktop_notify(title: str, message: str) -> None:
 def _play_sound(sound: str) -> None:
     """Play a notification sound asynchronously."""
     try:
-        import winsound
-    except ImportError:
-        return  # Non-Windows — skip sound
-    try:
         wav_path = _SOUND_MAP.get(sound)
-        if wav_path and wav_path.exists():
-            winsound.PlaySound(
-                str(wav_path),
-                winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
-            )
+
+        if sys.platform == "win32":
+            import winsound
+            if wav_path and wav_path.exists():
+                winsound.PlaySound(
+                    str(wav_path),
+                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
+                )
+            else:
+                # Fallback: Windows system asterisk sound
+                winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
+
+        elif sys.platform == "darwin":
+            if wav_path and wav_path.exists():
+                subprocess.Popen(["afplay", str(wav_path)])
+            else:
+                # Fallback: macOS built-in Glass sound
+                subprocess.Popen(["afplay", "/System/Library/Sounds/Glass.aiff"])
+
         else:
-            # Fallback: Windows system asterisk sound
-            winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
+            # Linux — use aplay (ALSA utils) if available
+            if wav_path and wav_path.exists():
+                subprocess.Popen(["aplay", "-q", str(wav_path)])
+
     except Exception:
         logger.debug("Sound playback failed (non-fatal)")

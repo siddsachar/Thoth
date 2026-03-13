@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import pathlib
+import sys
 import threading
 from typing import Optional
 
@@ -26,6 +27,14 @@ import mss
 import ollama
 
 logger = logging.getLogger(__name__)
+
+# ── Platform-specific camera backend ─────────────────────────────────────────
+if sys.platform == "win32":
+    _CV_BACKEND = cv2.CAP_DSHOW           # DirectShow (Windows)
+elif sys.platform == "darwin":
+    _CV_BACKEND = cv2.CAP_AVFOUNDATION    # AVFoundation (macOS)
+else:
+    _CV_BACKEND = cv2.CAP_V4L2            # Video4Linux (Linux)
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 DEFAULT_VISION_MODEL = "gemma3:4b"
@@ -67,7 +76,7 @@ def list_cameras(max_check: int = 5) -> list[int]:
     """Return indices of available camera devices (checks 0..max_check-1)."""
     available = []
     for idx in range(max_check):
-        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+        cap = cv2.VideoCapture(idx, _CV_BACKEND)
         if cap.isOpened():
             available.append(idx)
             cap.release()
@@ -79,7 +88,7 @@ def capture_frame(camera_index: int = 0) -> Optional[bytes]:
 
     Returns JPEG bytes or ``None`` if the camera is unavailable.
     """
-    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    cap = cv2.VideoCapture(camera_index, _CV_BACKEND)
     if not cap.isOpened():
         logger.warning("Camera %d not available", camera_index)
         return None
