@@ -22,6 +22,3 @@ vector_store/
 # Old Streamlit app (replaced by NiceGUI in v3.0.0)
 app.py
 .streamlit/
-
-# Test suite (dev-only)
-test_suite.py
