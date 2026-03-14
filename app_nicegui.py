@@ -1640,14 +1640,14 @@ async def index():
         In browser mode we use the normal ``ui.download()`` API.
         """
         if "--native" in sys.argv:
-            dl_dir = Path.home() / "Downloads"
+            dl_dir = pathlib.Path.home() / "Downloads"
             dl_dir.mkdir(parents=True, exist_ok=True)
             dest = dl_dir / filename
             # Avoid overwriting — append (1), (2), … if needed
             counter = 1
             while dest.exists():
-                stem = Path(filename).stem
-                suffix = Path(filename).suffix
+                stem = pathlib.Path(filename).stem
+                suffix = pathlib.Path(filename).suffix
                 dest = dl_dir / f"{stem} ({counter}){suffix}"
                 counter += 1
             dest.write_bytes(data)
@@ -1673,7 +1673,7 @@ async def index():
                         p.export_dlg.close()
                         _save_export(data, fname)
                     except Exception as exc:
-                        log.exception("Export markdown failed")
+                        logger.exception("Export markdown failed")
                         ui.notify(f"Export failed: {exc}", type="negative")
 
                 def dl_txt():
@@ -1683,7 +1683,7 @@ async def index():
                         p.export_dlg.close()
                         _save_export(data, fname)
                     except Exception as exc:
-                        log.exception("Export text failed")
+                        logger.exception("Export text failed")
                         ui.notify(f"Export failed: {exc}", type="negative")
 
                 def dl_pdf():
@@ -1695,7 +1695,7 @@ async def index():
                     except ImportError:
                         ui.notify("PDF export requires `fpdf2`. Run: pip install fpdf2", type="negative")
                     except Exception as exc:
-                        log.exception("Export PDF failed")
+                        logger.exception("Export PDF failed")
                         ui.notify(f"PDF export failed: {exc}", type="negative")
 
                 ui.button("📄 Markdown", on_click=dl_md).classes("w-full")
