@@ -14,6 +14,7 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -32,8 +33,75 @@ logger = logging.getLogger(__name__)
 # ── Constants ────────────────────────────────────────────────────────────────
 _PORT = 8080
 _URL = f"http://localhost:{_PORT}"
+_OLLAMA_PORT = 11434          # Ollama default API port
 _STARTUP_GRACE = 15           # seconds to wait for NiceGUI before opening browser
 _ICON_SIZE = 64               # px for generated tray icons
+
+
+# ── Ollama auto-start ────────────────────────────────────────────────────────
+
+def _is_ollama_running() -> bool:
+    """Return True if Ollama's API is reachable on its default port."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        return s.connect_ex(("127.0.0.1", _OLLAMA_PORT)) == 0
+
+
+def _start_ollama() -> None:
+    """Auto-start Ollama if it is installed but not already running."""
+    if _is_ollama_running():
+        logger.info("Ollama already running on port %s", _OLLAMA_PORT)
+        return
+
+    # --- Windows: prefer the GUI app (tray icon) for better UX ---
+    if sys.platform == "win32":
+        app_exe = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama app.exe"
+        if app_exe.exists():
+            logger.info("Starting Ollama (Windows app)...")
+            subprocess.Popen(
+                [str(app_exe)],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            _wait_for_ollama()
+            return
+
+    # --- macOS / Linux (and Windows fallback): use `ollama serve` ---
+    ollama_bin = shutil.which("ollama")
+    if ollama_bin is None:
+        # macOS: Homebrew may not be on PATH in a GUI launch context
+        for candidate in ("/usr/local/bin/ollama", "/opt/homebrew/bin/ollama"):
+            if os.path.isfile(candidate):
+                ollama_bin = candidate
+                break
+
+    if ollama_bin is None:
+        logger.warning(
+            "Ollama not found — install it from https://ollama.com/download  "
+            "Thoth requires Ollama to run local language models."
+        )
+        return
+
+    logger.info("Starting Ollama (%s)...", ollama_bin)
+    subprocess.Popen(
+        [ollama_bin, "serve"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,  # detach from launcher's process group
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    _wait_for_ollama()
+
+
+def _wait_for_ollama(timeout: float = 15.0) -> None:
+    """Block until Ollama's API port is reachable, or until *timeout*."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _is_ollama_running():
+            logger.info("Ollama is ready")
+            return
+        time.sleep(0.5)
+    logger.warning("Ollama did not become reachable within %.0fs", timeout)
 
 
 # ── Icon generation (Pillow, no external files) ──────────────────────────────
@@ -340,6 +408,9 @@ class ThothTray:
 
     def run(self) -> None:
         """Start the tray icon and (if needed) the NiceGUI server."""
+        # Ensure Ollama is running before we start the app
+        _start_ollama()
+
         already_running = _is_port_in_use(_PORT)
 
         if already_running:

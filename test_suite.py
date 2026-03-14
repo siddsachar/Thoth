@@ -943,6 +943,34 @@ except Exception as e:
     record("FAIL", "launcher: cross-platform splash", str(e))
 
 
+# ── 15f. Ollama auto-start helpers ──────────────────────────────────────────
+try:
+    from launcher import _is_ollama_running, _start_ollama, _OLLAMA_PORT
+
+    # _is_ollama_running returns a bool
+    result = _is_ollama_running()
+    assert isinstance(result, bool), f"Expected bool, got {type(result)}"
+    record("PASS", "launcher: _is_ollama_running returns bool")
+
+    # _start_ollama is callable
+    assert callable(_start_ollama)
+    record("PASS", "launcher: _start_ollama is callable")
+
+    # _OLLAMA_PORT is 11434
+    assert _OLLAMA_PORT == 11434, f"Expected 11434, got {_OLLAMA_PORT}"
+    record("PASS", "launcher: _OLLAMA_PORT == 11434")
+
+    # _start_ollama skips if Ollama is already running (mock port check)
+    import unittest.mock as _mock_ollama
+    with _mock_ollama.patch("launcher._is_ollama_running", return_value=True):
+        # Should return immediately without launching anything
+        _start_ollama()
+        record("PASS", "launcher: _start_ollama no-op when already running")
+
+except Exception as e:
+    record("FAIL", "launcher: ollama auto-start helpers", str(e))
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # SUMMARY
 # ═════════════════════════════════════════════════════════════════════════════
