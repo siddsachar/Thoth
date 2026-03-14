@@ -27,7 +27,7 @@ class WebSearchTool(BaseTool):
 
     @property
     def enabled_by_default(self) -> bool:
-        return True
+        return False
 
     @property
     def required_api_keys(self) -> dict[str, str]:

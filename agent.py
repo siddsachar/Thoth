@@ -339,6 +339,7 @@ def _wrap_with_interrupt_gate(tool) -> None:
 def clear_agent_cache():
     """Clear the cached agent graphs so tools are rebuilt on next call."""
     _agent_cache.clear()
+    _TOOL_DISPLAY_NAMES.clear()
 
 
 def get_token_usage(config: dict | None = None) -> tuple[int, int]:
@@ -489,9 +490,12 @@ def _resolve_tool_display_name(func_name: str) -> str:
         for t in tool_registry.get_all_tools():
             _TOOL_DISPLAY_NAMES[t.name] = t.display_name
             # Also map sub-tool names for tools that return multiple
-            for lc_tool in t.as_langchain_tools():
-                if lc_tool.name != t.name:
-                    _TOOL_DISPLAY_NAMES[lc_tool.name] = t.display_name
+            try:
+                for lc_tool in t.as_langchain_tools():
+                    if lc_tool.name != t.name:
+                        _TOOL_DISPLAY_NAMES[lc_tool.name] = t.display_name
+            except Exception:
+                pass  # tool not configured yet — sub-names added on rebuild
     return _TOOL_DISPLAY_NAMES.get(func_name, func_name)
 
 

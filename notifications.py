@@ -77,7 +77,21 @@ def drain_toasts() -> list[dict]:
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 def _desktop_notify(title: str, message: str) -> None:
-    """Show a desktop notification via plyer."""
+    """Show a desktop notification via plyer (Windows) or osascript (macOS)."""
+    if sys.platform == "darwin":
+        # macOS: use native osascript — avoids pyobjus dependency
+        try:
+            import subprocess
+            safe_title = title.replace('"', '\\"')
+            safe_msg   = message.replace('"', '\\"')
+            subprocess.Popen(
+                ["osascript", "-e",
+                 f'display notification "{safe_msg}" with title "{safe_title}"'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return
+        except Exception:
+            pass
     try:
         from plyer import notification
         notification.notify(

@@ -20,6 +20,7 @@ import os
 import pathlib
 import queue
 import re
+import subprocess
 import sys
 import threading
 import uuid
@@ -516,19 +517,118 @@ def _export_as_pdf(thread_name: str, messages: list[dict]) -> bytes:
     return bytes(pdf.output())
 
 
-# ── Tkinter browse helpers (run in executor to avoid blocking event loop) ────
+# ── Cross-platform browse helpers (run in executor to avoid blocking) ────────
 
-async def _browse_folder(title: str = "Select folder", initial_dir: str = "") -> str | None:
-    def _pick():
+def _pick_folder_native(title: str, initial_dir: str) -> str | None:
+    """Platform-native folder picker (no tkinter dependency on macOS/Linux)."""
+    if sys.platform == "darwin":
+        script = f'POSIX path of (choose folder with prompt "{title}"'
+        if initial_dir and os.path.isdir(initial_dir):
+            script += f' default location POSIX file "{initial_dir}"'
+        script += ')'
+        try:
+            r = subprocess.run(["osascript", "-e", script],
+                               capture_output=True, text=True, timeout=120)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip().rstrip("/")
+        except Exception:
+            pass
+        return None
+
+    if sys.platform.startswith("linux"):
+        for cmd in (
+            ["zenity", "--file-selection", "--directory", f"--title={title}"],
+            ["kdialog", "--getexistingdirectory", initial_dir or ".",
+             "--title", title],
+        ):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True,
+                                   timeout=120)
+                if r.returncode == 0 and r.stdout.strip():
+                    return r.stdout.strip()
+            except FileNotFoundError:
+                continue
+            except Exception:
+                pass
+
+    # Windows / fallback: tkinter
+    try:
         import tkinter as tk
         from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        result = filedialog.askdirectory(title=title, initialdir=initial_dir or None)
+        root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
+        result = filedialog.askdirectory(title=title,
+                                         initialdir=initial_dir or None)
         root.destroy()
         return result or None
-    return await asyncio.to_thread(_pick)
+    except ImportError:
+        return None
+
+
+def _pick_file_native(
+    title: str, initial_dir: str, filetypes: list[tuple[str, str]] | None,
+) -> str | None:
+    """Platform-native file picker (no tkinter dependency on macOS/Linux)."""
+    if sys.platform == "darwin":
+        script = f'POSIX path of (choose file with prompt "{title}"'
+        if initial_dir and os.path.isdir(initial_dir):
+            script += f' default location POSIX file "{initial_dir}"'
+        if filetypes:
+            exts = []
+            for _, pattern in filetypes:
+                for part in pattern.split(";"):
+                    ext = part.strip().lstrip("*.").lower()
+                    if ext:
+                        exts.append(f'"{ext}"')
+            if exts:
+                script += f' of type {{{", ".join(exts)}}}'
+        script += ')'
+        try:
+            r = subprocess.run(["osascript", "-e", script],
+                               capture_output=True, text=True, timeout=120)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        except Exception:
+            pass
+        return None
+
+    if sys.platform.startswith("linux"):
+        filt = ""
+        if filetypes:
+            filt = " ".join(p for _, p in filetypes)
+        for cmd in (
+            ["zenity", "--file-selection", f"--title={title}"]
+            + ([f"--file-filter={filt}"] if filt else []),
+            ["kdialog", "--getopenfilename", initial_dir or ".",
+             filt or "*", "--title", title],
+        ):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True,
+                                   timeout=120)
+                if r.returncode == 0 and r.stdout.strip():
+                    return r.stdout.strip()
+            except FileNotFoundError:
+                continue
+            except Exception:
+                pass
+
+    # Windows / fallback: tkinter
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
+        result = filedialog.askopenfilename(
+            title=title, initialdir=initial_dir or None,
+            filetypes=filetypes or [],
+        )
+        root.destroy()
+        return result or None
+    except ImportError:
+        return None
+
+
+async def _browse_folder(title: str = "Select folder",
+                         initial_dir: str = "") -> str | None:
+    return await asyncio.to_thread(_pick_folder_native, title, initial_dir)
 
 
 async def _browse_file(
@@ -536,20 +636,8 @@ async def _browse_file(
     initial_dir: str = "",
     filetypes: list[tuple[str, str]] | None = None,
 ) -> str | None:
-    def _pick():
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        result = filedialog.askopenfilename(
-            title=title,
-            initialdir=initial_dir or None,
-            filetypes=filetypes or [],
-        )
-        root.destroy()
-        return result or None
-    return await asyncio.to_thread(_pick)
+    return await asyncio.to_thread(_pick_file_native, title, initial_dir,
+                                   filetypes)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

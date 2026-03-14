@@ -72,14 +72,41 @@ def _save_settings(settings: dict):
 
 # ── Camera utilities ─────────────────────────────────────────────────────────
 
+def _suppress_stderr():
+    """Context manager that silences C-level stderr (e.g. OpenCV warnings).
+
+    OpenCV prints camera-not-found messages via C++ directly to fd 2;
+    Python-level logging cannot suppress them.  We temporarily redirect
+    the raw file descriptor to ``/dev/null`` (or ``NUL`` on Windows).
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _redirect():
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            old_stderr = os.dup(2)
+            os.dup2(devnull, 2)
+            os.close(devnull)
+            yield
+        except OSError:
+            yield  # if redirect fails, just run normally
+        else:
+            os.dup2(old_stderr, 2)
+            os.close(old_stderr)
+
+    return _redirect()
+
+
 def list_cameras(max_check: int = 5) -> list[int]:
     """Return indices of available camera devices (checks 0..max_check-1)."""
     available = []
-    for idx in range(max_check):
-        cap = cv2.VideoCapture(idx, _CV_BACKEND)
-        if cap.isOpened():
-            available.append(idx)
-            cap.release()
+    with _suppress_stderr():
+        for idx in range(max_check):
+            cap = cv2.VideoCapture(idx, _CV_BACKEND)
+            if cap.isOpened():
+                available.append(idx)
+                cap.release()
     return available
 
 
