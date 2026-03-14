@@ -172,6 +172,16 @@ class VoiceService:
             self._set_state("stopped")
             return
 
+        # Pre-check: is there any input device at all?
+        try:
+            sd.query_devices(kind="input")
+        except sd.PortAudioError:
+            msg = "No microphone detected on this system"
+            self.status_queue.put(msg)
+            logger.warning(msg)
+            self._set_state("stopped")
+            return
+
         try:
             stream = sd.InputStream(
                 samplerate=SAMPLE_RATE, channels=CHANNELS,

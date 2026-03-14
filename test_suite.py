@@ -801,76 +801,88 @@ print("\n" + "=" * 70)
 print("15. CROSS-PLATFORM LOGIC TESTS")
 print("=" * 70)
 
-# --- 15a. tts._piper_platform_info() — current platform values -----------
+# --- 15a. tts.VOICE_CATALOG — curated voices present ---------------------
 try:
-    from tts import _piper_platform_info, _PIPER_ARCHIVE, _PIPER_BINARY, _PIPER_DOWNLOAD_URL
+    from tts import VOICE_CATALOG, _DEFAULT_VOICE, _MODEL_URL, _VOICES_URL
 
-    arch, bname, url = _piper_platform_info()
-    if arch and bname and url:
-        record("PASS", f"tts: _piper_platform_info() → ({arch}, {bname})")
+    if len(VOICE_CATALOG) >= 8:
+        record("PASS", f"tts: VOICE_CATALOG has {len(VOICE_CATALOG)} voices")
     else:
-        record("FAIL", "tts: _piper_platform_info()", "returned empty values")
+        record("FAIL", "tts: VOICE_CATALOG", f"only {len(VOICE_CATALOG)} voices")
 
-    # Module-level constants must match current call
-    if _PIPER_ARCHIVE == arch and _PIPER_BINARY == bname and _PIPER_DOWNLOAD_URL == url:
-        record("PASS", "tts: module constants match _piper_platform_info()")
+    # Default voice must be in catalog
+    if _DEFAULT_VOICE in VOICE_CATALOG:
+        record("PASS", f"tts: default voice '{_DEFAULT_VOICE}' is in catalog")
     else:
-        record("FAIL", "tts: module constants mismatch",
-               f"archive={_PIPER_ARCHIVE}, binary={_PIPER_BINARY}")
+        record("FAIL", "tts: default voice not in catalog", _DEFAULT_VOICE)
 
-    # URL must start with the expected github base
-    if url.startswith("https://github.com/rhasspy/piper/releases/download/"):
-        record("PASS", "tts: download URL has correct base")
+    # Download URLs must point to GitHub releases
+    if _MODEL_URL.startswith("https://github.com/thewh1teagle/kokoro-onnx/releases/"):
+        record("PASS", "tts: model download URL has correct base")
     else:
-        record("FAIL", "tts: download URL base", url)
+        record("FAIL", "tts: model download URL", _MODEL_URL)
+
+    if _VOICES_URL.startswith("https://github.com/thewh1teagle/kokoro-onnx/releases/"):
+        record("PASS", "tts: voices download URL has correct base")
+    else:
+        record("FAIL", "tts: voices download URL", _VOICES_URL)
 
 except Exception as e:
-    record("FAIL", "tts: _piper_platform_info()", str(e))
+    record("FAIL", "tts: VOICE_CATALOG", str(e))
 
-# --- 15b. tts._piper_platform_info() — mock all platform branches --------
+# --- 15b. tts._voice_lang() — language inference from voice ID -----------
 try:
-    from unittest.mock import patch
-    from tts import _piper_platform_info as _ppinfo
+    from tts import _voice_lang
 
-    EXPECTED = {
-        ("Windows", "amd64"):  ("piper_windows_amd64.zip",     "piper.exe"),
-        ("Darwin",  "arm64"):  ("piper_macos_aarch64.tar.gz",  "piper"),
-        ("Linux",   "x86_64"): ("piper_linux_x86_64.tar.gz",   "piper"),
-        ("Linux",   "aarch64"):("piper_linux_aarch64.tar.gz",  "piper"),
+    LANG_EXPECTED = {
+        "af_heart": "en-us",
+        "am_michael": "en-us",
+        "bf_emma": "en-gb",
+        "bm_george": "en-gb",
+        "jf_alpha": "ja",
+        "zf_xiaobei": "cmn",
     }
 
     all_ok = True
-    for (sys_name, mach), (exp_archive, exp_binary) in EXPECTED.items():
-        with patch("tts.platform") as mock_plat:
-            mock_plat.system.return_value = sys_name
-            mock_plat.machine.return_value = mach
-            a, b, u = _ppinfo()
-            if a != exp_archive or b != exp_binary:
-                record("FAIL", f"tts: piper mock ({sys_name}/{mach})",
-                       f"got ({a}, {b}), expected ({exp_archive}, {exp_binary})")
-                all_ok = False
-            elif not u.endswith(exp_archive):
-                record("FAIL", f"tts: piper mock URL ({sys_name}/{mach})",
-                       f"URL does not end with {exp_archive}")
-                all_ok = False
+    for vid, expected_lang in LANG_EXPECTED.items():
+        got = _voice_lang(vid)
+        if got != expected_lang:
+            record("FAIL", f"tts: _voice_lang('{vid}')",
+                   f"got '{got}', expected '{expected_lang}'")
+            all_ok = False
 
     if all_ok:
-        record("PASS", f"tts: _piper_platform_info() all {len(EXPECTED)} platform branches OK")
+        record("PASS", f"tts: _voice_lang() all {len(LANG_EXPECTED)} mappings OK")
 except Exception as e:
-    record("FAIL", "tts: piper mock tests", str(e))
+    record("FAIL", "tts: _voice_lang tests", str(e))
 
-# --- 15c. tts._piper_platform_info() — unsupported platform raises -------
+# --- 15c. tts._prepare_text() — markdown stripping & truncation ----------
 try:
-    with patch("tts.platform") as mock_plat:
-        mock_plat.system.return_value = "FreeBSD"
-        mock_plat.machine.return_value = "amd64"
-        try:
-            _ppinfo()
-            record("FAIL", "tts: unsupported platform", "expected RuntimeError")
-        except RuntimeError:
-            record("PASS", "tts: unsupported platform raises RuntimeError")
+    from tts import _prepare_text, _FALLBACK_MSG
+
+    # Basic markdown stripping
+    result = _prepare_text("**Hello** world")
+    if "**" not in result and "Hello" in result:
+        record("PASS", "tts: _prepare_text strips bold markdown")
+    else:
+        record("FAIL", "tts: _prepare_text bold", result)
+
+    # Code block removal
+    result = _prepare_text("Before\n```python\nprint('hi')\n```\nAfter")
+    if "print" not in result and "After" in result:
+        record("PASS", "tts: _prepare_text strips code blocks")
+    else:
+        record("FAIL", "tts: _prepare_text code blocks", result)
+
+    # Fallback for mostly-code content
+    result = _prepare_text("```\n" + "x = 1\n" * 20 + "```")
+    if result == _FALLBACK_MSG:
+        record("PASS", "tts: _prepare_text returns fallback for code-heavy text")
+    else:
+        record("FAIL", "tts: _prepare_text code fallback", result)
+
 except Exception as e:
-    record("FAIL", "tts: unsupported platform test", str(e))
+    record("FAIL", "tts: _prepare_text tests", str(e))
 
 # --- 15d. vision._CV_BACKEND is a valid OpenCV constant ------------------
 try:

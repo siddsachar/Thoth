@@ -2856,54 +2856,32 @@ async def index():
             "When paired with voice input, this creates a fully hands-free experience. "
             "Short responses are read in full; longer responses are summarized aloud "
             "with the full text shown in the app. "
-            "Uses Piper TTS — a fast, high-quality neural speech engine. "
+            "Uses Kokoro TTS — a fast, high-quality neural speech engine. "
             "Everything runs locally, no audio is sent to the cloud. "
-            "Click Install Piper TTS below to download the speech engine "
-            "and a default voice (~50 MB total)."
+            "Click Install Kokoro TTS below to download the model "
+            "and voice pack (~200 MB total)."
         ).classes("text-grey-6 text-sm")
 
         tts = state.tts_service
 
-        if not tts.is_piper_installed():
-            async def _install_piper():
-                ui.notify("Downloading Piper TTS engine…", type="ongoing", timeout=0)
-                await run.io_bound(tts.download_piper)
-                ui.notify("Downloading default voice…", type="ongoing", timeout=0)
-                await run.io_bound(tts.download_voice)
-                ui.notify("✅ Piper TTS installed!", type="positive")
+        if not tts.is_installed():
+            async def _install_kokoro():
+                ui.notify("Downloading Kokoro TTS model & voices…", type="ongoing", timeout=0)
+                await run.io_bound(tts.download_model)
+                ui.notify("✅ Kokoro TTS installed!", type="positive")
                 p.settings_dlg.close()
                 _open_settings()
 
-            ui.button("⬇️ Install Piper TTS", on_click=_install_piper).classes("w-full")
+            ui.button("⬇️ Install Kokoro TTS", on_click=_install_kokoro).classes("w-full")
         else:
             ui.switch("Enable text-to-speech", value=tts.enabled,
                       on_change=lambda e: setattr(tts, "enabled", e.value))
 
-            # Voice selector
-            installed = tts.get_installed_voices()
-            if installed:
-                voice_opts = {v: VOICE_CATALOG.get(v, v) for v in installed}
+            # Voice selector — all Kokoro voices are bundled
+            voice_opts = {v: VOICE_CATALOG.get(v, v) for v in tts.get_installed_voices()}
+            if voice_opts:
                 ui.select(label="Voice", options=voice_opts, value=tts.voice,
                           on_change=lambda e: setattr(tts, "voice", e.value)).classes("w-full")
-            else:
-                ui.label("No voices installed.").classes("text-grey-6")
-
-            # Download additional voices
-            not_installed = [v for v in VOICE_CATALOG if v not in installed]
-            if not_installed:
-                with ui.expansion("⬇️ Download additional voices"):
-                    for vid in not_installed:
-                        with ui.row().classes("items-center gap-2"):
-                            ui.label(VOICE_CATALOG[vid]).classes("flex-grow")
-
-                            async def _dl_voice(v=vid):
-                                ui.notify(f"Downloading {VOICE_CATALOG[v]}…", type="info")
-                                await run.io_bound(tts.download_voice, v)
-                                ui.notify("✅ Voice downloaded!", type="positive")
-                                p.settings_dlg.close()
-                                _open_settings()
-
-                            ui.button("Download", on_click=_dl_voice).props("flat dense")
 
             ui.label("Speech speed").classes("text-sm")
             ui.slider(

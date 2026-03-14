@@ -82,6 +82,9 @@ python-telegram-bot
 sounddevice
 faster-whisper
 
+# ── Text-to-Speech (Kokoro TTS) ─────────────────────────────────────────────
+kokoro-onnx
+
 # ── System Tray / Launcher ──────────────────────────────────────────────────
 pystray
 Pillow
