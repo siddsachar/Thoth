@@ -3223,6 +3223,7 @@ async def index():
 
             visible = threads[:_SIDEBAR_MAX_THREADS]
             for tid, name, created, updated in visible:
+                name = name or ""
                 is_active = tid == state.thread_id
                 is_running = tid in running_tids
 
