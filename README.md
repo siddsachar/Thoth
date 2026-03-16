@@ -330,9 +330,31 @@ All user data is stored in `~/.thoth/` (`%USERPROFILE%\.thoth\` on Windows):
 
 ---
 
+## � One-Click Install
+
+### Windows
+
+1. Download **[ThothSetup_3.2.0.exe](https://github.com/siddsachar/Thoth/releases/latest)** from the latest release
+2. Run the installer — it installs Python, Ollama, and all dependencies automatically
+3. Launch **Thoth** from the Start Menu or Desktop shortcut
+
+### macOS
+
+1. Download **[Thoth-3.2.0-macOS.zip](https://github.com/siddsachar/Thoth/releases/latest)** from the latest release
+2. Unzip the file — this creates a `Thoth` folder
+3. Open the `Thoth` folder and double-click **`Start Thoth.command`**
+   - If macOS blocks it: right-click → **Open** → click **Open** in the dialog
+   - First run installs Homebrew (if needed), Python, Ollama, and all dependencies automatically
+   - Subsequent launches skip installation and start in ~3 seconds
+4. *(Optional)* Drag the included **Thoth.app** to `/Applications` for Dock/Launchpad access
+
+> **Works on Apple Silicon (M1/M2/M3/M4) and Intel Macs** (macOS 12+). No terminal, no manual setup — just double-click and go.
+
+---
+
 ## 📦 Installation (From Source)
 
-> **Most open-source assistants require Docker, YAML configs, and terminal expertise.** Thoth installs in one click with the [Windows installer or macOS launcher](https://github.com/siddsachar/Thoth/releases) — or five commands from source:
+> **Prefer a manual install?** Five commands from source:
 
 1. **Install [Ollama](https://ollama.com/)** — download and install the Ollama runtime
 
