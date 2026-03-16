@@ -73,6 +73,7 @@ from threads import _list_threads, _save_thread_meta, _delete_thread
 from agent import (
     get_agent_graph, stream_agent, resume_stream_agent,
     clear_agent_cache, repair_orphaned_tool_calls, get_token_usage,
+    clear_summary_cache,
 )
 from documents import (
     load_processed_files, load_and_vectorize_document,
@@ -90,7 +91,7 @@ from voice import get_voice_service, get_available_whisper_sizes
 from tts import TTSService, VOICE_CATALOG
 from vision import VisionService, POPULAR_VISION_MODELS, list_cameras
 from tools.vision_tool import set_vision_service
-from memory_extraction import run_extraction, start_periodic_extraction
+from memory_extraction import run_extraction, start_periodic_extraction, set_active_thread
 from workflows import (
     list_workflows, create_workflow, update_workflow,
     delete_workflow, duplicate_workflow,
@@ -1355,6 +1356,18 @@ async def index():
                         with tool_col:
                             ui.image(f"data:image/jpeg;base64,{b64_img}").classes("w-80 rounded")
                         vsvc.last_capture = None
+
+            elif event_type == "summarizing":
+                # Replace the thinking spinner with a summarization indicator
+                if thinking_label:
+                    thinking_label.delete()
+                    thinking_label = None
+                with _wrapper:
+                    thinking_label = ui.html(
+                        '<span class="thoth-typing" style="font-size:0.9rem; opacity:0.6;">'
+                        '📝 Summarizing conversation history<span class="dots">'
+                        '<span>.</span><span>.</span><span>.</span></span></span>'
+                    )
 
             elif event_type == "thinking":
                 pass  # spinner already visible
@@ -3138,9 +3151,11 @@ async def index():
         # Home + New buttons
         with ui.row().classes("w-full gap-2"):
             def _go_home():
+                prev = state.thread_id
                 state.thread_id = None
                 state.thread_name = None
                 state.messages = []
+                set_active_thread(None, previous_id=prev)
                 _rebuild_main()
                 _rebuild_thread_list()
 
@@ -3150,9 +3165,11 @@ async def index():
                 tid = uuid.uuid4().hex[:12]
                 name = f"💻 Thread {datetime.now().strftime('%b %d, %H:%M')}"
                 _save_thread_meta(tid, name)
+                prev = state.thread_id
                 state.thread_id = tid
                 state.thread_name = name
                 state.messages = []
+                set_active_thread(tid, previous_id=prev)
                 _rebuild_main()
                 _rebuild_thread_list()
 
@@ -3210,14 +3227,18 @@ async def index():
                 is_running = tid in running_tids
 
                 def _select(t=tid, n=name):
+                    prev = state.thread_id
                     state.thread_id = t
                     state.thread_name = n
                     state.messages = load_thread_messages(t)
+                    set_active_thread(t, previous_id=prev)
                     _rebuild_main()
                     _rebuild_thread_list()
 
                 def _delete(t=tid):
                     _delete_thread(t)
+                    clear_summary_cache(t)
+                    set_active_thread(None, previous_id=t)
                     if state.thread_id == t:
                         state.thread_id = None
                         state.thread_name = None
@@ -3274,6 +3295,7 @@ async def index():
 
                                 def _del(t=tid):
                                     _delete_thread(t)
+                                    clear_summary_cache(t)
                                     if state.thread_id == t:
                                         state.thread_id = None
                                         state.messages = []
@@ -3299,6 +3321,7 @@ async def index():
                             def _delete_all():
                                 for t, *_ in threads:
                                     _delete_thread(t)
+                                clear_summary_cache()  # clear all summaries
                                 state.thread_id = None
                                 state.thread_name = None
                                 state.messages = []

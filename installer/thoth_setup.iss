@@ -1,5 +1,5 @@
 ; =============================================================================
-; Thoth v3.1.0 – Inno Setup Script
+; Thoth v3.2.0 – Inno Setup Script
 ; Installer: bundles embedded Python + app source code.
 ; Downloads Ollama and Python packages (incl. Kokoro TTS) at install time.
 ; =============================================================================
@@ -11,7 +11,7 @@
 ; Compile with:  iscc installer\thoth_setup.iss
 
 #define MyAppName      "Thoth"
-#define MyAppVersion   "3.1.0"
+#define MyAppVersion   "3.2.0"
 #define MyAppPublisher "Thoth"
 #define MyAppURL       "https://github.com/siddsachar/Thoth"
 #define MyAppExeName   "launch_thoth.vbs"

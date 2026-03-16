@@ -1,5 +1,6 @@
 from models import get_llm, get_context_size, get_current_model
 from api_keys import apply_keys
+from prompts import AGENT_SYSTEM_PROMPT, SUMMARIZE_PROMPT
 from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_classic.retrievers.document_compressors import LLMChainExtractor
 from langchain_core.messages import trim_messages, ToolMessage
@@ -50,7 +51,7 @@ def _pre_model_trim(state: dict) -> dict:
 
     Uses ``llm_input_messages`` so the full history stays intact in the
     checkpointer — only the LLM sees the trimmed version."""
-    max_tokens = int(get_context_size() * 0.8)
+    max_tokens = int(get_context_size() * 0.85)
 
     # ── Proportionally shrink oversized ToolMessages ─────────────────
     # Without this, trim_messages (strategy="last") may drop ALL context
@@ -85,6 +86,28 @@ def _pre_model_trim(state: dict) -> dict:
                         name=m.name,
                         tool_call_id=m.tool_call_id,
                     )
+
+    # ── Apply cached context summary (if available) ──────────────────
+    # If a summary was produced by _do_summarize, replace the older
+    # messages with a single SystemMessage so the LLM sees a compact
+    # version.  The full history remains in the checkpoint.
+    _thread_id = getattr(_tlocal, "current_thread_id", None)
+    if _thread_id and _thread_id in _summary_cache:
+        from langchain_core.messages import SystemMessage as _SM
+        cached = _summary_cache[_thread_id]
+        _split = cached["msg_count"]
+        if 0 < _split < len(messages):
+            # Keep the system prompt (position 0) if present
+            _sys = [messages[0]] if messages and messages[0].type == "system" else []
+            _summary_msg = _SM(
+                content=(
+                    "[Conversation Summary — the following condenses earlier "
+                    "messages that are no longer shown in full]\n"
+                    + cached["summary"]
+                    + "\n[End of summary — recent messages follow]"
+                )
+            )
+            messages = _sys + [_summary_msg] + messages[_split:]
 
     trimmed = trim_messages(
         messages,
@@ -138,7 +161,7 @@ def _pre_model_trim(state: dict) -> dict:
                     lines = []
                     for m in memories:
                         lines.append(
-                            f"- [{m['category']}] {m['subject']}: {m['content']}"
+                            f"- [id={m['id']}] [{m['category']}] {m['subject']}: {m['content']}"
                             + (f" (tags: {m['tags']})" if m.get("tags") else "")
                         )
                     recall_msg = SystemMessage(
@@ -149,7 +172,8 @@ def _pre_model_trim(state: dict) -> dict:
                             + "\n\nTreat these as things you already know. "
                             "Use them to answer the user's question directly — "
                             "do NOT say you don't know or search for this info. "
-                            "Do not mention that these were recalled from memory."
+                            "Do not mention that these were recalled from memory. "
+                            "If you need to update or delete one of these, use its ID."
                         )
                     )
                     trimmed.insert(last_human_idx, recall_msg)
@@ -158,114 +182,180 @@ def _pre_model_trim(state: dict) -> dict:
 
     return {"llm_input_messages": trimmed}
 
-AGENT_SYSTEM_PROMPT = (
-    "You are Thoth, a knowledgeable personal assistant with access to tools.\n\n"
-    "TOOL USE GUIDELINES:\n"
-    "- ALWAYS use your tools to look up information before answering factual questions.\n"
-    "- For anything time-sensitive (news, weather, prices, scores, releases, events,\n"
-    "  current status, 'latest', 'recent', 'today', 'this week', etc.) you MUST\n"
-    "  search the web — do NOT rely on your training data for these.\n"
-    "- For facts that can change over time (populations, leaders, rankings, statistics,\n"
-    "  laws, versions, availability) prefer searching over internal knowledge.\n"
-    "- You may call multiple tools or the same tool multiple times with different queries.\n"
-    "- Only use internal knowledge for well-established, timeless facts (math, definitions,\n"
-    "  historical events with fixed dates, etc.).\n"
-    "- When researching a topic, consider using the youtube_search tool to find\n"
-    "  relevant videos. Only include video links that the tool actually returned.\n"
-    "- When the user asks to set a reminder, timer, or alarm, decide which tool to use:\n"
-    "  * For quick timers (minutes to a few hours): use the set_timer tool. It shows\n"
-    "    a desktop notification when the time is up. Say 'remind me in 5 minutes' etc.\n"
-    "  * For day-level reminders or scheduled events: use create_calendar_event.\n"
-    "    Google Calendar handles notifications across devices.\n"
-    "  Use get_current_datetime to determine the current time when needed.\n"
-    "- When the user asks about weather or forecasts, use the weather tools\n"
-    "  (get_current_weather, get_weather_forecast). They provide precise data\n"
-    "  from Open-Meteo and are faster than web search for weather queries.\n"
-    "- You have DIRECT ACCESS to the user's webcam and screen through the\n"
-    "  analyze_image tool. You CAN see — this is not hypothetical. When the user\n"
-    "  says anything like 'what do you see', 'look at this', 'can you see me',\n"
-    "  'what's in front of me', 'describe what you see', or any variation asking\n"
-    "  you to look or see, IMMEDIATELY call analyze_image — do NOT ask for\n"
-    "  clarification, do NOT say you can't see, do NOT ask them to describe it.\n"
-    "  Just call the tool. Use source='camera' by default. Use source='screen'\n"
-    "  when they mention screen, monitor, display, or desktop.\n"
-    "  Pass the user's question as the argument (or 'Describe everything you see'\n"
-    "  if the question is vague like 'what do you see').\n"
-    "- When the user asks a math or calculation question, choose the right tool:\n"
-    "  * For basic arithmetic, powers, roots, trig, logarithms, factorials, and\n"
-    "    combinatorics: use the calculate tool. It is fast, offline, and free.\n"
-    "  * For unit/currency conversion, symbolic math (solving equations, derivatives,\n"
-    "    integrals), scientific data, chemistry, physics constants, nutrition,\n"
-    "    date calculations, or anything beyond basic math: use wolfram_alpha.\n"
-    "  * If you are unsure, try the calculate tool first. If it fails or the query\n"
-    "    requires natural-language understanding, fall back to wolfram_alpha.\n\n"
-    "HABIT / ACTIVITY TRACKING:\n"
-    "- You have a habit tracker for logging recurring activities: medications,\n"
-    "  symptoms, habits, health events (periods, headaches, exercise, mood, etc.).\n"
-    "- When a user mentions something that matches an existing tracker — e.g.\n"
-    "  'I have a headache' when Headache is tracked — ask: 'Want me to log that?'\n"
-    "  before logging.  Never log silently.\n"
-    "- Use tracker_log to record entries, tracker_query for history/stats/trends.\n"
-    "- tracker_query exports CSV files that you can pass to create_chart for\n"
-    "  visualisations (bar charts of frequency, line charts of values over time).\n\n"
-    "DATA VISUALISATION:\n"
-    "- When you analyse tabular data (CSV, Excel, JSON) and the results would be\n"
-    "  clearer as a chart, use the create_chart tool to render an interactive\n"
-    "  Plotly chart inline.  Supported types: bar, horizontal_bar, line, scatter,\n"
-    "  pie, donut, histogram, box, area, heatmap.\n"
-    "- Common triggers: user asks to 'plot', 'chart', 'graph', 'visualise', or\n"
-    "  when comparing categories, showing trends over time, or displaying\n"
-    "  distributions.  You may also proactively suggest a chart when it adds value.\n"
-    "- Pass the data_source (file path or attachment filename), chart_type,\n"
-    "  and column names. The tool auto-picks columns if you omit x/y.\n\n"
-    "MEMORY GUIDELINES:\n"
-    "- You have a long-term memory system. Use it to remember important personal\n"
-    "  information the user shares: names, birthdays, relationships, preferences,\n"
-    "  facts, upcoming events, places, and projects.\n"
-    "- When the user tells you something worth remembering (e.g. 'My mom's name is\n"
-    "  Sarah', 'I prefer dark mode', 'My project deadline is June 1'), save it\n"
-    "  using save_memory with an appropriate category.\n"
-    "- IMPORTANT: If the user casually mentions personal information (moving,\n"
-    "  birthdays, names, preferences, pets, relationships) alongside another\n"
-    "  request, you MUST save that info AND handle their request. Do both.\n"
-    "- Relevant memories are automatically recalled and shown to you before each\n"
-    "  response.  Use them to answer directly — do not say 'I don't know' when\n"
-    "  the information is in your recalled memories.  If you need a deeper or\n"
-    "  more focused search, use search_memory.\n"
-    "- Categories: person (people and relationships), preference (likes/dislikes/\n"
-    "  settings), fact (general knowledge about the user), event (dates/deadlines/\n"
-    "  appointments), place (locations/addresses), project (work/hobby projects).\n"
-    "- Do NOT save trivial or transient information (e.g. 'search for X', 'what\n"
-    "  time is it'). Only save things with long-term personal value.\n"
-    "- Do NOT save information that is being tracked by the tracker tool.\n"
-    "  If you already called tracker_log for something (medications, symptoms,\n"
-    "  exercise, periods, mood, sleep), do NOT also save_memory for it.\n"
-    "- When saving, briefly confirm what you remembered to the user.\n\n"
-    "CONVERSATION HISTORY SEARCH:\n"
-    "- When the user asks about something discussed in a previous conversation\n"
-    "  (e.g. 'What did I ask about taxes?', 'When did we talk about Python?',\n"
-    "  'Find where I mentioned that recipe'), use search_conversations.\n"
-    "- When the user asks to see their saved threads or chat history, use\n"
-    "  list_conversations.\n\n"
-    "SOURCE CITATION RULES:\n"
-    "- Each tool result contains a SOURCE_URL line with the exact link or file path.\n"
-    "- You MUST cite the EXACT SOURCE_URL value from the tool output.\n"
-    "- Format citations as: (Source: <exact SOURCE_URL value>)\n"
-    "- NEVER paraphrase, shorten, or summarize source URLs. Copy them verbatim.\n"
-    "- NEVER invent, fabricate, or guess URLs. Only include URLs that appear\n"
-    "  verbatim in tool results. If a tool did not return a URL, do NOT make one up.\n"
-    "- Do NOT generate arxiv.org, youtube.com, or any other links from memory.\n"
-    "  Only use links that tools explicitly returned to you.\n"
-    "- If you use your internal knowledge, cite as (Source: Internal Knowledge).\n"
-    "- If you don't know the answer, say you don't know."
-)
-
 # Cache compiled agent graphs keyed by frozenset of enabled tool names
 _agent_cache: dict[frozenset[str], object] = {}
 
 # Thread-local flag — background workflows skip destructive tools
 import threading as _threading
 _tlocal = _threading.local()
+
+# ── Context summarization ────────────────────────────────────────────────────
+_SUMMARY_THRESHOLD = 0.80   # trigger summarization at 80 % of context window
+_PROTECTED_TURNS = 5         # keep the last N human messages (+ their replies) intact
+_summary_cache: dict[str, dict] = {}  # thread_id → {"summary": str, "msg_count": int}
+
+def _should_summarize(agent, config: dict, user_input: str) -> bool:
+    """Return True if the *effective* context (accounting for any cached
+    summary) plus the new user input would exceed the summarization
+    threshold and there are enough messages to make summarization
+    worthwhile.
+    """
+    max_tokens = get_context_size()
+    threshold = int(max_tokens * _SUMMARY_THRESHOLD)
+    try:
+        state = agent.get_state(config)
+        if not state or not state.values:
+            return False
+        msgs = state.values.get("messages", [])
+        if not msgs:
+            return False
+
+        # Need at least PROTECTED_TURNS + 1 human messages to have
+        # something to summarize
+        human_count = sum(1 for m in msgs if m.type == "human")
+        if human_count <= _PROTECTED_TURNS:
+            return False
+
+        # Compute *effective* size — if a summary cache exists, use
+        # summary size + messages-after-split instead of the full raw
+        # checkpoint.  This prevents re-triggering every turn after the
+        # first summarization.
+        thread_id = (config.get("configurable") or {}).get("thread_id", "")
+        cached = _summary_cache.get(thread_id) if thread_id else None
+
+        if cached and 0 < cached["msg_count"] < len(msgs):
+            old_split = cached["msg_count"]
+            # Effective = system prompt + summary text + messages after split
+            sys_chars = len(getattr(msgs[0], "content", "") or "") if msgs[0].type == "system" else 0
+            summary_chars = len(cached["summary"]) + 120  # framing overhead
+            recent_chars = sum(
+                len(getattr(m, "content", "") or "") for m in msgs[old_split:]
+            )
+            total_chars = sys_chars + summary_chars + recent_chars
+            total_chars += len(user_input)
+            estimated_tokens = total_chars // _CHARS_PER_TOKEN
+            if estimated_tokens <= threshold:
+                return False
+
+            # Over threshold — but only re-summarize if the gap between
+            # the old split and the new split is substantial enough to
+            # justify another LLM call.  Otherwise the protected window
+            # itself is large (e.g. huge tool results) and re-summarizing
+            # won't materially help.
+            human_indices = [i for i, m in enumerate(msgs) if m.type == "human"]
+            new_split = human_indices[-_PROTECTED_TURNS] if len(human_indices) > _PROTECTED_TURNS else old_split
+            gap_chars = sum(
+                len(getattr(m, "content", "") or "") for m in msgs[old_split:new_split]
+            )
+            _MIN_GAP_CHARS = 2000  # don't waste an LLM call for trivial gaps
+            return gap_chars >= _MIN_GAP_CHARS
+        else:
+            total_chars = sum(len(getattr(m, "content", "") or "") for m in msgs)
+
+        total_chars += len(user_input)
+        estimated_tokens = total_chars // _CHARS_PER_TOKEN
+        return estimated_tokens > threshold
+    except Exception:
+        logger.debug("_should_summarize check failed", exc_info=True)
+        return False
+
+
+def _do_summarize(agent, config: dict) -> None:
+    """Summarize older messages and cache the result for the thread.
+
+    The summary replaces the older portion of messages inside
+    ``_pre_model_trim`` — the checkpoint is NOT modified, so the full
+    conversation is always available in the UI and in the raw state.
+    """
+    thread_id = (config.get("configurable") or {}).get("thread_id", "")
+    try:
+        state = agent.get_state(config)
+        if not state or not state.values:
+            return
+        msgs = state.values.get("messages", [])
+        if not msgs:
+            return
+
+        # Find split point — protect the last N human messages
+        human_indices = [i for i, m in enumerate(msgs) if m.type == "human"]
+        if len(human_indices) <= _PROTECTED_TURNS:
+            return
+        split_idx = human_indices[-_PROTECTED_TURNS]
+
+        # Collect messages to summarize.
+        # On first summarization: all messages from start to split_idx.
+        # On rolling re-summarization: only the GAP (old_split → new split)
+        # since everything before old_split is already in the cached summary.
+        first_content = 1 if msgs and msgs[0].type == "system" else 0
+        existing_summary = _summary_cache.get(thread_id, {}).get("summary", "")
+        old_split = _summary_cache.get(thread_id, {}).get("msg_count", 0)
+
+        if existing_summary and 0 < old_split < split_idx:
+            # Rolling: only feed the gap (already-summarized portion is in
+            # existing_summary, not re-sent as raw messages).
+            old_msgs = msgs[old_split:split_idx]
+        else:
+            # First time: everything from after system prompt to split.
+            old_msgs = msgs[first_content:split_idx]
+
+        if not old_msgs:
+            return
+
+        # Build a text representation for the summarizer
+        parts: list[str] = []
+        if existing_summary:
+            parts.append(f"[Previous summary of even earlier messages]:\n{existing_summary}\n")
+
+        for m in old_msgs:
+            role = m.type.upper()
+            content = getattr(m, "content", "") or ""
+            if not content:
+                continue
+            # Cap individual messages so the summarizer prompt stays manageable
+            if len(content) > 3000:
+                content = content[:3000] + " …[truncated]"
+            # Skip tool messages verbatim — just note the tool name + short excerpt
+            if m.type == "tool":
+                name = getattr(m, "name", "tool")
+                content = f"[Tool result from {name}]: {content[:600]}"
+            parts.append(f"{role}: {content}")
+
+        conversation_text = "\n".join(parts)
+
+        # Call the LLM to produce a summary
+        llm = get_llm()
+        summary_response = llm.invoke([
+            {"role": "system", "content": SUMMARIZE_PROMPT},
+            {"role": "human", "content": conversation_text},
+        ])
+
+        summary_text = (summary_response.content or "").strip()
+        # Strip <think>…</think> blocks from thinking / reasoning models
+        summary_text = _re.sub(r"<think>.*?</think>", "", summary_text, flags=_re.DOTALL)
+        summary_text = _re.sub(r"</?think>", "", summary_text).strip()
+
+        if summary_text:
+            _summary_cache[thread_id] = {
+                "summary": summary_text,
+                "msg_count": split_idx,
+            }
+            logger.info(
+                "Context summarized for thread %s — %d messages condensed "
+                "(%d chars → %d chars)",
+                thread_id, split_idx - first_content,
+                len(conversation_text), len(summary_text),
+            )
+    except Exception:
+        logger.warning("Context summarization failed (non-fatal)", exc_info=True)
+
+
+def clear_summary_cache(thread_id: str | None = None) -> None:
+    """Clear cached summaries — for a specific thread, or all threads."""
+    if thread_id:
+        _summary_cache.pop(thread_id, None)
+    else:
+        _summary_cache.clear()
+
 
 # Human-readable labels for destructive tool operations
 _DESTRUCTIVE_LABELS: dict[str, str] = {
@@ -360,8 +450,27 @@ def get_token_usage(config: dict | None = None) -> tuple[int, int]:
         msgs = state.values.get("messages", [])
         if not msgs:
             return 0, max_tokens
+
+        # Account for cached summary — mirrors _pre_model_trim logic
+        thread_id = (config.get("configurable") or {}).get("thread_id", "")
+        if thread_id and thread_id in _summary_cache:
+            cached = _summary_cache[thread_id]
+            split = cached["msg_count"]
+            if 0 < split < len(msgs):
+                sys_msg = [msgs[0]] if msgs and msgs[0].type == "system" else []
+                summary_chars = len(cached["summary"]) + 120  # overhead
+                recent_chars = sum(
+                    len(getattr(m, "content", "") or "")
+                    for m in msgs[split:]
+                )
+                total_chars = summary_chars + recent_chars
+                if sys_msg:
+                    total_chars += len(getattr(sys_msg[0], "content", "") or "")
+                used = total_chars // _CHARS_PER_TOKEN
+                return used, max_tokens
+
         # Mirror _pre_model_trim: trim, then count what remains
-        budget = int(max_tokens * 0.8)
+        budget = int(max_tokens * 0.85)
         trimmed = trim_messages(
             msgs,
             max_tokens=budget,
@@ -464,6 +573,16 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None):
 def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict) -> str:
     """Invoke the ReAct agent and return the final answer text."""
     agent = get_agent_graph(enabled_tool_names)
+
+    # Set thread-local so _pre_model_trim can find the summary cache
+    _tlocal.current_thread_id = (
+        (config.get("configurable") or {}).get("thread_id", "")
+    )
+
+    # Summarize if context is above threshold
+    if _should_summarize(agent, config, user_input):
+        _do_summarize(agent, config)
+
     result = agent.invoke(
         {"messages": [("human", user_input)]},
         config=config,
@@ -509,9 +628,21 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict):
     * ``"thinking"``    – payload = ``None`` (model is reasoning)
     * ``"token"``       – payload = token text (str)
     * ``"interrupt"``   – payload = interrupt data dict (graph is paused)
+    * ``"summarizing"`` – payload = ``None`` (condensing older context)
     * ``"done"``        – payload = full answer text (str)
     """
     agent = get_agent_graph(enabled_tool_names)
+
+    # Set thread-local so _pre_model_trim can find the summary cache
+    _tlocal.current_thread_id = (
+        (config.get("configurable") or {}).get("thread_id", "")
+    )
+
+    # ── Context summarization (runs before the main agent stream) ────
+    if _should_summarize(agent, config, user_input):
+        yield ("summarizing", None)
+        _do_summarize(agent, config)
+
     yield from _stream_graph(agent, {"messages": [("human", user_input)]}, config)
 
 

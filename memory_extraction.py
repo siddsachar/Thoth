@@ -29,6 +29,25 @@ _STATE_FILE = _DATA_DIR / "memory_extraction_state.json"
 
 _INTERVAL_S = 6 * 3600  # 6 hours
 
+# Thread IDs to exclude from background extraction (e.g. currently active
+# conversations).  Updated by the UI layer via ``set_active_thread``.
+_active_threads: set[str] = set()
+_active_lock = threading.Lock()
+
+
+def set_active_thread(thread_id: str | None, previous_id: str | None = None) -> None:
+    """Tell the extractor which thread is currently active.
+
+    Call this whenever the user switches threads.  *previous_id* (if given)
+    is removed from the exclusion set so it becomes eligible for future
+    extraction runs.
+    """
+    with _active_lock:
+        if previous_id and previous_id in _active_threads:
+            _active_threads.discard(previous_id)
+        if thread_id:
+            _active_threads.add(thread_id)
+
 
 def _load_state() -> dict:
     if _STATE_FILE.exists():
@@ -43,39 +62,7 @@ def _save_state(state: dict) -> None:
     _STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-# ── Extraction prompt ────────────────────────────────────────────────────────
-
-_EXTRACTION_PROMPT = """\
-You are a memory extraction assistant. Read the conversation below between \
-a user and an AI assistant. Extract ONLY personal facts about the user that \
-are worth remembering long-term.
-
-Look for:
-- Names (user's name, family, friends, colleagues, pets)
-- Relationships (spouse, partner, children, parents, boss)
-- Preferences (likes, dislikes, habits, settings)
-- Personal facts (job, location, hobbies, skills)
-- Important dates (birthdays, anniversaries, deadlines)
-- Places (home city, workplace, frequent locations)
-- Projects (work projects, hobbies, goals)
-
-Rules:
-- ONLY extract facts the USER stated or implied about THEMSELVES
-- Do NOT extract facts from tool results, web searches, or AI responses
-- Do NOT extract transient requests ("search for X", "tell me about Y")
-- Do NOT extract information the AI already knows from prior context
-- Do NOT extract activity logs that are handled by the tracker tool. Skip
-  any mentions of taking medication, symptoms (headaches, pain levels),
-  exercise sessions, period tracking, mood logs, sleep logs, or other
-  recurring tracked events. The tracker system stores these separately.
-- Return a JSON array of objects with keys: category, subject, content
-- category must be one of: person, preference, fact, event, place, project
-- If there is NOTHING worth remembering, return an empty array: []
-
-CONVERSATION:
-{conversation}
-
-Respond with ONLY a valid JSON array. No other text."""
+from prompts import EXTRACTION_PROMPT
 
 
 # ── Core extraction logic ────────────────────────────────────────────────────
@@ -120,7 +107,7 @@ def _extract_from_conversation(conversation_text: str) -> list[dict]:
         from models import get_current_model
         import ollama
 
-        prompt = _EXTRACTION_PROMPT.format(conversation=conversation_text)
+        prompt = EXTRACTION_PROMPT.format(conversation=conversation_text)
         response = ollama.chat(
             model=get_current_model(),
             messages=[{"role": "user", "content": prompt}],
@@ -159,11 +146,14 @@ def _extract_from_conversation(conversation_text: str) -> list[dict]:
 def _dedup_and_save(extracted: list[dict]) -> int:
     """Save extracted memories, deduplicating against existing ones.
 
-    If a new memory is very similar (cosine > 0.85) to an existing one,
-    update the existing memory instead of creating a duplicate.
+    Uses ``find_by_subject(category=None, ...)`` — a deterministic SQL
+    lookup by normalised subject across **all** categories.  This avoids
+    duplicates when the extraction LLM classifies a fact into a different
+    category than the live tool did (e.g. ``event/dad`` vs ``person/Dad``).
+
     Returns the number of new/updated memories.
     """
-    from memory import save_memory, semantic_search, update_memory, VALID_CATEGORIES
+    from memory import save_memory, find_by_subject, update_memory, VALID_CATEGORIES
 
     saved_count = 0
     for entry in extracted:
@@ -175,27 +165,27 @@ def _dedup_and_save(extracted: list[dict]) -> int:
         if not subject or not content:
             continue
 
-        # Check for duplicates using semantic similarity
-        search_text = f"{category} {subject} {content}"
-        try:
-            existing = semantic_search(search_text, top_k=3, threshold=0.85)
-        except Exception:
-            existing = []
+        # Check for existing memory with same subject (any category)
+        existing = find_by_subject(None, subject)
 
         if existing:
-            # Very similar memory exists — update if the new content is longer/richer
-            best = existing[0]
-            if len(content) > len(best.get("content", "")):
+            # Memory about this subject already exists — only update if
+            # the extracted content is richer than what we have.
+            if len(content) > len(existing.get("content", "")):
                 try:
-                    update_memory(best["id"], content)
+                    update_memory(existing["id"], content, source="extraction")
                     saved_count += 1
-                    logger.info("Updated memory %s: %s", best["id"], subject)
+                    logger.info(
+                        "Updated memory %s (%s) via extraction",
+                        existing["id"], subject,
+                    )
                 except Exception as exc:
                     logger.debug("Failed to update memory: %s", exc)
+            # else: existing content is already richer, skip
         else:
-            # No close match — save as new
+            # No match — save as new
             try:
-                save_memory(category, subject, content)
+                save_memory(category, subject, content, source="extraction")
                 saved_count += 1
                 logger.info("Auto-saved memory: [%s] %s", category, subject)
             except Exception as exc:
@@ -206,13 +196,16 @@ def _dedup_and_save(extracted: list[dict]) -> int:
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def run_extraction(on_status=None) -> int:
+def run_extraction(on_status=None, exclude_thread_ids: set[str] | None = None) -> int:
     """Scan threads updated since last extraction and extract memories.
 
     Parameters
     ----------
     on_status : callable, optional
         Called with status strings for UI feedback, e.g. ``on_status("Processing 3 threads…")``.
+    exclude_thread_ids : set[str], optional
+        Thread IDs to skip (e.g. the currently active conversation) to
+        avoid racing with live tool calls.
 
     Returns
     -------
@@ -223,6 +216,7 @@ def run_extraction(on_status=None) -> int:
 
     state = _load_state()
     last_run = state.get("last_extraction", "2000-01-01T00:00:00")
+    exclude = exclude_thread_ids or set()
 
     threads = _list_threads()
     if not threads:
@@ -232,9 +226,11 @@ def run_extraction(on_status=None) -> int:
         _save_state(state)
         return 0
 
-    # Find threads updated since last extraction
+    # Find threads updated since last extraction, excluding active ones
     new_threads = []
     for tid, name, created, updated in threads:
+        if tid in exclude:
+            continue
         if updated and updated > last_run:
             new_threads.append((tid, name))
 
@@ -300,7 +296,9 @@ def start_periodic_extraction() -> None:
         while not _timer_stop.wait(timeout=_INTERVAL_S):
             logger.info("Periodic memory extraction starting…")
             try:
-                count = run_extraction()
+                with _active_lock:
+                    exclude = set(_active_threads)
+                count = run_extraction(exclude_thread_ids=exclude)
                 logger.info("Periodic extraction complete: %d memories", count)
             except Exception as exc:
                 logger.warning("Periodic extraction failed: %s", exc)

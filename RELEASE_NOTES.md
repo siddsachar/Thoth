@@ -2,6 +2,74 @@
 
 ---
 
+## v3.2.0 — Smart Context & Memory Overhaul
+
+Automatic conversation summarization for unlimited conversation length, a complete rewrite of the memory deduplication system, and centralized prompt management.
+
+### 🧠 Memory System Overhaul
+
+The memory deduplication pipeline has been completely rewritten to fix a critical bug where background extraction could create duplicates or update the wrong memory.
+
+#### Deterministic Dedup (replaces semantic dedup)
+- **`find_by_subject()` for live saves** — when the agent saves a memory, an exact normalised-subject lookup (SQL) checks if one already exists in the same category; if it does, the richer content is kept silently — no duplicates created
+- **Cross-category dedup for extraction** — background extraction now passes `category=None` to `find_by_subject()`, matching against all categories. This prevents fragmentation when the extraction LLM classifies a fact differently than the live tool (e.g. a birthday saved as `person/Dad` won't be re-created as `event/Dad`)
+- **Why not semantic?** — semantic similarity (cosine) proved unreliable for dedup: short extracted content ("Priya") vs rich live content ("User's sister is named Priya and she lives in Manchester") scored only 0.78 — well below any safe threshold. Semantic search remains the right tool for *recall*; deterministic SQL is the right tool for *dedup*
+
+#### Source Tracking
+- **`source` column** — every memory is tagged `live` (agent during chat) or `extraction` (background scanner) for diagnostics
+- **Migration** — existing databases are automatically migrated via `ALTER TABLE`
+
+#### Active Thread Exclusion
+- **`set_active_thread()` API** — the UI layer tells the extractor which thread is currently active; background extraction skips it to avoid race conditions with the live agent
+
+#### Extended Update
+- **`update_memory()`** — now accepts optional `subject`, `tags`, `category`, and `source` keyword arguments, not just content
+
+#### Consolidation
+- **`consolidate_duplicates(threshold)`** — utility to scan and merge near-duplicate memories that may have accumulated over time
+
+#### Auto-Recall with IDs
+- **Memory IDs in context** — auto-recalled memories now include their IDs (`[id=abc123]`) so the agent can use `update_memory` or `delete_memory` with the exact ID when the user corrects or retracts previously saved information
+
+#### Prompt Guidance
+- **DEDUPLICATION section** — system prompt tells the agent that `save_memory` handles dedup automatically
+- **UPDATING MEMORIES section** — system prompt instructs the agent to use `update_memory` with the recalled ID for corrections, not create a new memory
+
+### 📝 Context Summarization
+
+A new automatic summarization system that compresses older conversation turns, enabling effectively unlimited conversation length within any context window.
+
+- **Automatic trigger** — when token usage exceeds 80% of the context window, a background summarization compresses older conversation turns into a running summary
+- **Protected turns** — the 5 most recent turns are never summarized, preserving immediate conversational context
+- **Hard trim safety net** — a secondary 85% budget drops the oldest non-protected messages if summarization alone isn't enough
+- **Transparent** — the summary is injected as a system message; the user experience is seamless
+
+### 📄 Centralized Prompts
+
+- **New `prompts.py` module** — all LLM prompts extracted from inline strings into a single file: `AGENT_SYSTEM_PROMPT`, `EXTRACTION_PROMPT`, `SUMMARIZATION_PROMPT`
+- **Easier tuning** — modify agent behavior, extraction rules, or summarization instructions in one place
+
+### 🛠️ Other Improvements
+
+- **URL Reader** — `MAX_CHARS` increased from 12,000 → 30,000 for more complete page reads
+- **System prompt polish** — improved URL reader guidance, documents tool instructions, YouTube transcript handling, consolidated honesty directives
+- **Test suite** — 233 → 270 tests (added context summarization tests + 40 memory system integrity tests)
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| **`prompts.py`** | **New** — centralized LLM prompts |
+| **`memory.py`** | `source` column, `find_by_subject()`, `find_duplicate()`, `consolidate_duplicates()`, `_normalize_subject()`, extended `update_memory()` and `save_memory()` |
+| **`memory_extraction.py`** | `_dedup_and_save()` rewritten (deterministic dedup), `set_active_thread()` API, active thread exclusion |
+| **`tools/memory_tool.py`** | `_save_memory()` rewritten with deterministic dedup via `find_by_subject()` |
+| **`agent.py`** | Context summarization (`_maybe_summarize()`, `_pre_model_trim()`), auto-recall with memory IDs, prompts extracted to `prompts.py` |
+| **`app_nicegui.py`** | `set_active_thread()` wired into thread management |
+| **`tools/url_reader_tool.py`** | `MAX_CHARS` 12K → 30K |
+| **`test_suite.py`** | Sections 16 (context summarization) and 17 (memory integrity) added |
+
+---
+
 ## v3.1.0 — macOS Support & Kokoro TTS
 
 Cross-platform macOS support and a complete TTS engine migration from Piper to Kokoro.

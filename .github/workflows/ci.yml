@@ -56,11 +56,11 @@ jobs:
       - name: Build macOS release zip
         run: |
           chmod +x installer/build_mac_release.sh
-          OUTPUT_DIR="${{ github.workspace }}" ./installer/build_mac_release.sh 3.1.0
+          OUTPUT_DIR="${{ github.workspace }}" ./installer/build_mac_release.sh 3.2.0
 
       - name: Upload macOS zip artifact
         uses: actions/upload-artifact@v4
         with:
           name: Thoth-macOS
-          path: ${{ github.workspace }}/Thoth-3.1.0-macOS.zip
+          path: ${{ github.workspace }}/Thoth-3.2.0-macOS.zip
           retention-days: 30

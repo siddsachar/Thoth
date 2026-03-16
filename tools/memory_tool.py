@@ -73,9 +73,29 @@ class _DeleteMemoryInput(BaseModel):
 # ── Tool functions ───────────────────────────────────────────────────────────
 
 def _save_memory(category: str, subject: str, content: str, tags: str = "") -> str:
-    """Save a new memory."""
+    """Save a new memory, or update an existing one if a near-duplicate exists."""
     try:
-        result = memory_db.save_memory(category, subject, content, tags)
+        # Deterministic dedup: exact category + normalised subject match
+        existing = memory_db.find_by_subject(category, subject)
+        if existing:
+            # Same subject already stored — update with richer content
+            new_content = content if len(content) >= len(existing.get("content", "")) else existing["content"]
+            result = memory_db.update_memory(
+                existing["id"],
+                new_content,
+                tags=tags if tags else None,
+                source="live",
+            )
+            if result:
+                return (
+                    f"Memory updated (merged with existing).\n"
+                    f"ID: {result['id']}\n"
+                    f"Category: {result['category']}\n"
+                    f"Subject: {result['subject']}\n"
+                    f"Content: {result['content']}"
+                )
+
+        result = memory_db.save_memory(category, subject, content, tags, source="live")
         return (
             f"Memory saved successfully.\n"
             f"ID: {result['id']}\n"

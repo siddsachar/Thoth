@@ -1,4 +1,4 @@
-"""Thoth v3.1.0 — Comprehensive Test Suite
+"""Thoth v3.2.0 — Comprehensive Test Suite
 
 Validates that all modules import cleanly, key functions exist,
 config round-trips work, DB connectivity works, and the NiceGUI
@@ -75,6 +75,7 @@ print("=" * 70)
 
 CORE_MODULES = [
     "agent",
+    "prompts",
     "threads",
     "models",
     "memory",
@@ -165,6 +166,9 @@ print("5. KEY FUNCTION / CLASS EXISTENCE")
 print("=" * 70)
 
 FUNCTION_CHECKS = [
+    ("prompts", "AGENT_SYSTEM_PROMPT"),
+    ("prompts", "SUMMARIZE_PROMPT"),
+    ("prompts", "EXTRACTION_PROMPT"),
     ("agent", "stream_agent"),
     ("agent", "resume_stream_agent"),
     ("agent", "get_agent_graph"),
@@ -176,8 +180,13 @@ FUNCTION_CHECKS = [
     ("models", "list_local_models"),
     ("memory", "save_memory"),
     ("memory", "semantic_search"),
+    ("memory", "find_duplicate"),
+    ("memory", "find_by_subject"),
+    ("memory", "update_memory"),
+    ("memory", "consolidate_duplicates"),
     ("memory_extraction", "run_extraction"),
     ("memory_extraction", "start_periodic_extraction"),
+    ("memory_extraction", "set_active_thread"),
     ("documents", "load_and_vectorize_document"),
     ("documents", "get_embedding_model"),
     ("documents", "get_vector_store"),
@@ -981,6 +990,268 @@ try:
 
 except Exception as e:
     record("FAIL", "launcher: ollama auto-start helpers", str(e))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 16. PROMPT CONTENT VALIDATION
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 70)
+print("16. PROMPT CONTENT VALIDATION")
+print("=" * 70)
+
+try:
+    from prompts import AGENT_SYSTEM_PROMPT, SUMMARIZE_PROMPT, EXTRACTION_PROMPT
+
+    # --- 16a. AGENT_SYSTEM_PROMPT must contain key sections ---------------
+    _EXPECTED_SECTIONS = [
+        "TOOL USE GUIDELINES",
+        "HABIT / ACTIVITY TRACKING",
+        "DATA VISUALISATION",
+        "MEMORY GUIDELINES",
+        "CONVERSATION HISTORY SEARCH",
+        "HONESTY & CITATIONS",
+    ]
+    for section in _EXPECTED_SECTIONS:
+        if section in AGENT_SYSTEM_PROMPT:
+            record("PASS", f"prompt: section '{section}' present")
+        else:
+            record("FAIL", f"prompt: section '{section}' missing")
+
+    # Must mention key tool names
+    _EXPECTED_TOOLS = [
+        "read_url", "youtube_search", "youtube_transcript", "analyze_image",
+        "calculate", "wolfram_alpha", "save_memory", "search_conversations",
+        "tracker_log", "create_chart",
+    ]
+    for tool_name in _EXPECTED_TOOLS:
+        if tool_name in AGENT_SYSTEM_PROMPT:
+            record("PASS", f"prompt: mentions '{tool_name}'")
+        else:
+            record("FAIL", f"prompt: missing tool mention '{tool_name}'")
+
+    # Anti-fabrication rule must be present
+    if "NEVER fabricate" in AGENT_SYSTEM_PROMPT:
+        record("PASS", "prompt: anti-fabrication rule")
+    else:
+        record("FAIL", "prompt: anti-fabrication rule missing")
+
+    # Identity line
+    if "You are Thoth" in AGENT_SYSTEM_PROMPT:
+        record("PASS", "prompt: identity line")
+    else:
+        record("FAIL", "prompt: identity line missing")
+
+    # --- 16b. SUMMARIZE_PROMPT -------------------------------------------
+    if "Summarize" in SUMMARIZE_PROMPT and "third-person" in SUMMARIZE_PROMPT:
+        record("PASS", "prompt: SUMMARIZE_PROMPT content OK")
+    else:
+        record("FAIL", "prompt: SUMMARIZE_PROMPT content", "missing key phrases")
+
+    # --- 16c. EXTRACTION_PROMPT ------------------------------------------
+    if "{conversation}" in EXTRACTION_PROMPT:
+        record("PASS", "prompt: EXTRACTION_PROMPT has {conversation} placeholder")
+    else:
+        record("FAIL", "prompt: EXTRACTION_PROMPT missing {conversation}")
+
+    if "JSON array" in EXTRACTION_PROMPT:
+        record("PASS", "prompt: EXTRACTION_PROMPT requests JSON output")
+    else:
+        record("FAIL", "prompt: EXTRACTION_PROMPT missing JSON instruction")
+
+    _EXPECTED_CATEGORIES = ["person", "preference", "fact", "event", "place", "project"]
+    for cat in _EXPECTED_CATEGORIES:
+        if cat in EXTRACTION_PROMPT:
+            pass  # all good
+        else:
+            record("FAIL", f"prompt: EXTRACTION_PROMPT missing category '{cat}'")
+            break
+    else:
+        record("PASS", f"prompt: EXTRACTION_PROMPT has all {len(_EXPECTED_CATEGORIES)} categories")
+
+    # --- 16d. agent.py re-exports prompts correctly ----------------------
+    import agent as _agent_mod
+    if getattr(_agent_mod, "AGENT_SYSTEM_PROMPT", None) is AGENT_SYSTEM_PROMPT:
+        record("PASS", "prompt: agent.AGENT_SYSTEM_PROMPT is prompts.AGENT_SYSTEM_PROMPT")
+    else:
+        record("FAIL", "prompt: agent.AGENT_SYSTEM_PROMPT mismatch")
+
+except Exception as e:
+    record("FAIL", "prompt content validation", f"{type(e).__name__}: {e}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SECTION 17 · Memory system integrity
+# ═════════════════════════════════════════════════════════════════════════════
+try:
+    import memory as _mem_mod
+    import memory_extraction as _me_mod
+    from tools import memory_tool as _mt_mod
+
+    # --- 17a. memory.py core functions -----------------------------------
+
+    # update_memory accepts keyword-only args for subject, tags, category, source
+    import inspect as _inspect
+    _um_sig = _inspect.signature(_mem_mod.update_memory)
+    _um_params = set(_um_sig.parameters.keys())
+    for _kw in ("subject", "tags", "category", "source"):
+        if _kw in _um_params:
+            record("PASS", f"memory: update_memory accepts '{_kw}' kwarg")
+        else:
+            record("FAIL", f"memory: update_memory missing '{_kw}' kwarg")
+
+    # save_memory accepts 'source' param
+    _sm_sig = _inspect.signature(_mem_mod.save_memory)
+    if "source" in _sm_sig.parameters:
+        record("PASS", "memory: save_memory accepts 'source' param")
+    else:
+        record("FAIL", "memory: save_memory missing 'source' param")
+
+    # find_duplicate exists and has correct params
+    _fd_sig = _inspect.signature(_mem_mod.find_duplicate)
+    _fd_params = set(_fd_sig.parameters.keys())
+    for _p in ("category", "subject", "content", "threshold"):
+        if _p in _fd_params:
+            record("PASS", f"memory: find_duplicate has '{_p}' param")
+        else:
+            record("FAIL", f"memory: find_duplicate missing '{_p}' param")
+
+    # consolidate_duplicates exists
+    if callable(getattr(_mem_mod, "consolidate_duplicates", None)):
+        record("PASS", "memory: consolidate_duplicates callable")
+    else:
+        record("FAIL", "memory: consolidate_duplicates not callable")
+
+    # _normalize_subject exists and works
+    if hasattr(_mem_mod, "_normalize_subject"):
+        _ns = _mem_mod._normalize_subject
+        if _ns("  Mom  ") == "mom" and _ns("My  Cat") == "my cat":
+            record("PASS", "memory: _normalize_subject works correctly")
+        else:
+            record("FAIL", "memory: _normalize_subject output unexpected")
+    else:
+        record("FAIL", "memory: _normalize_subject missing")
+
+    # VALID_CATEGORIES has expected values
+    _vc = _mem_mod.VALID_CATEGORIES
+    for _c in ("person", "preference", "fact", "event", "place", "project"):
+        if _c in _vc:
+            record("PASS", f"memory: category '{_c}' in VALID_CATEGORIES")
+        else:
+            record("FAIL", f"memory: category '{_c}' missing from VALID_CATEGORIES")
+
+    # --- 17b. Schema: source column present in CREATE TABLE --------------
+    import sqlite3 as _sqlite3
+    _test_conn = _sqlite3.connect(_mem_mod.DB_PATH)
+    _test_conn.row_factory = _sqlite3.Row
+    _cols = [row[1] for row in _test_conn.execute("PRAGMA table_info(memories)").fetchall()]
+    _test_conn.close()
+    if "source" in _cols:
+        record("PASS", "memory: 'source' column exists in memories table")
+    else:
+        record("FAIL", "memory: 'source' column missing from memories table")
+
+    # --- 17c. memory_extraction.py fixes ---------------------------------
+
+    # run_extraction accepts exclude_thread_ids
+    _re_sig = _inspect.signature(_me_mod.run_extraction)
+    if "exclude_thread_ids" in _re_sig.parameters:
+        record("PASS", "extraction: run_extraction accepts 'exclude_thread_ids'")
+    else:
+        record("FAIL", "extraction: run_extraction missing 'exclude_thread_ids'")
+
+    # set_active_thread is callable
+    if callable(getattr(_me_mod, "set_active_thread", None)):
+        record("PASS", "extraction: set_active_thread callable")
+    else:
+        record("FAIL", "extraction: set_active_thread not callable")
+
+    # _active_threads set exists
+    if isinstance(getattr(_me_mod, "_active_threads", None), set):
+        record("PASS", "extraction: _active_threads is a set")
+    else:
+        record("FAIL", "extraction: _active_threads missing or wrong type")
+
+    # set_active_thread works correctly
+    _me_mod.set_active_thread("test_thread_123")
+    if "test_thread_123" in _me_mod._active_threads:
+        record("PASS", "extraction: set_active_thread adds thread")
+    else:
+        record("FAIL", "extraction: set_active_thread did not add thread")
+    _me_mod.set_active_thread("test_thread_456", previous_id="test_thread_123")
+    if "test_thread_456" in _me_mod._active_threads and "test_thread_123" not in _me_mod._active_threads:
+        record("PASS", "extraction: set_active_thread swaps correctly")
+    else:
+        record("FAIL", "extraction: set_active_thread swap failed")
+    # Clean up
+    _me_mod.set_active_thread(None, previous_id="test_thread_456")
+
+    # --- 17d. memory_tool.py live dedup ----------------------------------
+
+    # _save_memory function uses find_by_subject for deterministic dedup
+    import textwrap as _tw
+    _save_src = _inspect.getsource(_mt_mod._save_memory)
+    if "find_by_subject" in _save_src:
+        record("PASS", "memory_tool: _save_memory uses find_by_subject")
+    else:
+        record("FAIL", "memory_tool: _save_memory does NOT use find_by_subject")
+
+    if "merged with existing" in _save_src:
+        record("PASS", "memory_tool: _save_memory returns merge message")
+    else:
+        record("FAIL", "memory_tool: _save_memory missing merge message")
+
+    # find_by_subject exists and has correct params (category is optional)
+    if callable(getattr(_mem_mod, "find_by_subject", None)):
+        _fbs_sig = _inspect.signature(_mem_mod.find_by_subject)
+        _fbs_params = set(_fbs_sig.parameters.keys())
+        if "category" in _fbs_params and "subject" in _fbs_params:
+            record("PASS", "memory: find_by_subject has category+subject params")
+            # category should allow None (for cross-category lookup)
+            _cat_param = _fbs_sig.parameters["category"]
+            if "None" in str(_cat_param.annotation):
+                record("PASS", "memory: find_by_subject category accepts None")
+            else:
+                record("FAIL", "memory: find_by_subject category should accept None")
+        else:
+            record("FAIL", "memory: find_by_subject missing params")
+    else:
+        record("FAIL", "memory: find_by_subject not callable")
+
+    # _dedup_and_save uses find_by_subject (not find_duplicate)
+    import memory_extraction as _mex
+    _dedup_src = _inspect.getsource(_mex._dedup_and_save)
+    if "find_by_subject" in _dedup_src:
+        record("PASS", "extraction: _dedup_and_save uses find_by_subject")
+    else:
+        record("FAIL", "extraction: _dedup_and_save should use find_by_subject")
+    if "find_duplicate" not in _dedup_src:
+        record("PASS", "extraction: _dedup_and_save no longer uses find_duplicate")
+    else:
+        record("FAIL", "extraction: _dedup_and_save still uses find_duplicate")
+
+    # --- 17e. Prompt memory guidance -------------------------------------
+    from prompts import AGENT_SYSTEM_PROMPT as _asp
+    _mem_checks = [
+        ("DEDUPLICATION", "prompt has DEDUPLICATION guidance"),
+        ("UPDATING MEMORIES", "prompt has UPDATING MEMORIES guidance"),
+        ("update_memory", "prompt mentions update_memory"),
+        ("save_memory", "prompt mentions save_memory"),
+    ]
+    for _check, _desc in _mem_checks:
+        if _check in _asp:
+            record("PASS", f"prompt: {_desc}")
+        else:
+            record("FAIL", f"prompt: {_desc}")
+
+    # --- 17f. Auto-recall includes IDs -----------------------------------
+    _agent_src = _inspect.getsource(_inspect.getmodule(_agent_mod._pre_model_trim))
+    if "id=" in _agent_src and "m['id']" in _agent_src:
+        record("PASS", "agent: auto-recall includes memory IDs")
+    else:
+        record("FAIL", "agent: auto-recall missing memory IDs")
+
+except Exception as e:
+    record("FAIL", "memory system integrity", f"{type(e).__name__}: {e}")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

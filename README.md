@@ -66,7 +66,8 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **20 tools / 45 sub-tools** — web search, email, calendar, file management, vision, memory, habit tracking, and more (see [full list below](#-tools-20-tools--45-sub-tools))
 - **Streaming responses** — tokens stream in real-time with a typing indicator
 - **Thinking indicators** — shows when the model is reasoning before responding
-- **Smart context management** — conversation history is trimmed to 80% of the context window before each LLM call; oversized tool outputs (e.g. large PDF reads) are proportionally shrunk so multi-file workflows fit within context
+- **Smart context management** — automatic conversation summarization compresses older turns when token usage exceeds 80% of the context window, preserving the 5 most recent turns and a running summary; a hard trim at 85% drops oldest messages as a safety net; oversized tool outputs (e.g. large PDF reads) are proportionally shrunk so multi-file workflows fit within context
+- **Centralized prompts** — all LLM prompts (system prompt, extraction prompt, summarization prompt) managed in a single `prompts.py` module for easy tuning
 - **Live token counter** — progress bar in the sidebar shows real-time context window usage based on trimmed (model-visible) history
 - **Graceful error recovery** — agent tool loops are caught automatically with a user-friendly error message; orphaned tool calls are repaired
 - **Date/time awareness** — current date and time is injected into every LLM call so the model always knows "today"
@@ -76,9 +77,12 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Persistent personal knowledge** — the agent remembers names, birthdays, preferences, projects, and more across conversations
 - **6 categories** — `person`, `preference`, `fact`, `event`, `place`, `project`
 - **Memory tool** — a dedicated tool lets the agent save, search, update, and delete memories; you can ask it directly — *"Remember that my mom's birthday is March 15"*, *"What do you know about me?"*, *"Delete the memory about my old address"*
-- **Automatic memory extraction** — in addition to the tool, a background process scans past conversations on startup and every 6 hours, extracting personal facts and saving them as memories with semantic deduplication — so the agent learns even from things you mentioned in passing
-- **Semantic search** — FAISS vector index with Qwen3-Embedding-0.6B for similarity-based memory retrieval (replaces keyword search)
-- **Auto-recall** — relevant memories are automatically retrieved and injected into context before every LLM call based on semantic similarity to the current message
+- **Automatic memory extraction** — a background process scans past conversations on startup and every 6 hours, extracting personal facts the agent missed during live conversation; active threads are excluded to avoid race conditions
+- **Deterministic deduplication** — both live saves and background extraction check for existing memories by normalised subject before creating new entries; cross-category matching prevents fragmentation (e.g. a birthday stored as `person` won't be duplicated as `event`); richer content is always kept
+- **Source tracking** — each memory is tagged with its origin (`live` from conversation or `extraction` from background scan) for diagnostics
+- **Semantic recall** — FAISS vector index with Qwen3-Embedding-0.6B for similarity-based memory retrieval; relevant memories are automatically retrieved and injected into context before every LLM call based on semantic similarity to the current message
+- **Memory IDs in context** — auto-recalled memories include their IDs so the agent can update or delete specific entries when the user corrects previously saved information
+- **Consolidation** — a built-in `consolidate_duplicates()` utility merges near-duplicate memories that may have accumulated over time
 - **Local SQLite + FAISS storage** — memories stored in `~/.thoth/memory.db` with vector index in `~/.thoth/memory_vectors/`, never sent to the cloud
 - **Settings UI** — browse, search, and bulk-delete memories from the Memory tab in Settings
 
@@ -247,9 +251,9 @@ Thoth's agent has access to 20 tools that expose 45 individual operations to the
 | File | Purpose |
 |------|---------|
 | **`app_nicegui.py`** | NiceGUI UI — chat interface, sidebar thread manager with live token counter, Settings dialog (11 tabs), file attachment handling, streaming event loop with error recovery, export, voice bar, first-launch setup wizard, centralized logging configuration |
-| **`agent.py`** | LangGraph ReAct agent — system prompt, pre-model context trimming with proportional tool-output shrinking, streaming event generator, interrupt handling for destructive actions, live token usage reporting, contextual compression |
+| **`agent.py`** | LangGraph ReAct agent — system prompt, automatic conversation summarization, pre-model context trimming with proportional tool-output shrinking, streaming event generator, interrupt handling for destructive actions, live token usage reporting, auto-recall with memory IDs |
 | **`threads.py`** | SQLite-backed thread metadata and `SqliteSaver` checkpointer for persisting LangGraph conversation state |
-| **`memory.py`** | Long-term memory with SQLite CRUD and FAISS semantic vector search — save, search, list, update, delete, count across 6 categories; auto-rebuilds vector index on mutations |
+| **`memory.py`** | Long-term memory with SQLite CRUD and FAISS semantic vector search — save, search, list, update, delete, count across 6 categories; deterministic dedup via `find_by_subject()`, source tracking (`live`/`extraction`), consolidation utility; auto-rebuilds vector index on mutations |
 | **`models.py`** | Ollama model management — listing, downloading, switching models, context size configuration with automatic model-max capping |
 | **`documents.py`** | Document ingestion — PDF/DOCX/TXT loading, chunking, FAISS embedding and storage |
 | **`voice.py`** | Local STT pipeline — toggle-based 4-state machine (stopped/listening/transcribing/muted) with faster-whisper CPU-only int8 transcription |
@@ -258,7 +262,8 @@ Thoth's agent has access to 20 tools that expose 45 individual operations to the
 | **`data_reader.py`** | Shared pandas-based reader for CSV, TSV, Excel, JSON, JSONL — returns schema + stats + preview rows |
 | **`launcher.py`** | Desktop launcher — system tray (pystray), native window management (pywebview), two-tier splash screen (tkinter with console fallback), manages NiceGUI server lifecycle; structured logging to `~/.thoth/thoth_app.log` |
 | **`api_keys.py`** | API key management — load/save/apply from `~/.thoth/api_keys.json` |
-| **`memory_extraction.py`** | Background memory extraction — scans past conversations via LLM, extracts personal facts, deduplicates against existing memories (cosine > 0.85), runs on startup + every 6 hours |
+| **`prompts.py`** | Centralized LLM prompts — system prompt, extraction prompt, summarization prompt; memory guidelines with dedup and update instructions |
+| **`memory_extraction.py`** | Background memory extraction — scans past conversations via LLM, extracts personal facts, deduplicates against existing memories via deterministic subject matching, excludes active threads, runs on startup + every 6 hours |
 | **`workflows.py`** | Workflow engine — SQLite CRUD, template variable expansion, sequential prompt execution, background runner with threading, scheduled execution (daily/weekly), desktop notifications, 4 default templates |
 | **`notifications.py`** | Unified notification system — desktop notifications (plyer), sound effects, and in-app toast queue; coordinates workflow completion chimes and timer alerts |
 | **`channels/`** | Messaging channel adapters — Telegram bot (long polling) and Email channel (Gmail polling), with shared config store |

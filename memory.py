@@ -56,6 +56,7 @@ def _init_db() -> None:
             subject    TEXT NOT NULL,
             content    TEXT NOT NULL,
             tags       TEXT NOT NULL DEFAULT '',
+            source     TEXT NOT NULL DEFAULT 'live',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -67,6 +68,12 @@ def _init_db() -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_memories_subject ON memories(subject)"
     )
+    # ── Migration: add source column to pre-existing databases ────────
+    try:
+        conn.execute("ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'live'")
+        logger.info("Migrated memories table: added 'source' column")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     conn.close()
 
@@ -173,11 +180,80 @@ def semantic_search(query: str, top_k: int = 5, threshold: float = 0.5) -> list[
 
     return results
 
+def _normalize_subject(s: str) -> str:
+    """Lower-case, strip, collapse whitespace — for subject comparison."""
+    return " ".join(s.lower().split())
+
+
+def find_by_subject(category: str | None, subject: str) -> dict | None:
+    """Find an existing memory by normalised subject (and optionally category).
+
+    This is a deterministic SQL lookup — no embedding similarity involved.
+
+    Parameters
+    ----------
+    category : str or None
+        If given, restricts the search to that category.
+        If ``None``, searches across all categories.
+    subject : str
+        The subject to match (normalised: lowercase, stripped, collapsed
+        whitespace).
+
+    Returns the most recently updated match, or ``None``.
+    """
+    conn = _get_conn()
+    if category is not None:
+        cat = category.lower().strip()
+        rows = conn.execute(
+            "SELECT * FROM memories WHERE category = ? ORDER BY updated_at DESC",
+            (cat,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM memories ORDER BY updated_at DESC",
+        ).fetchall()
+    conn.close()
+
+    norm = _normalize_subject(subject)
+    for row in rows:
+        if _normalize_subject(row["subject"]) == norm:
+            return dict(row)
+    return None
+
+
+def find_duplicate(
+    category: str,
+    subject: str,
+    content: str,
+    threshold: float = 0.92,
+) -> dict | None:
+    """Find an existing memory that is a near-duplicate.
+
+    Returns the best match **only** if:
+    1. Its semantic similarity score ≥ *threshold*, AND
+    2. Its normalised subject matches the given subject.
+
+    Returns ``None`` when no qualifying duplicate exists.
+    """
+    search_text = f"{category} {subject} {content}"
+    try:
+        results = semantic_search(search_text, top_k=5, threshold=threshold)
+    except Exception:
+        return None
+
+    norm_subj = _normalize_subject(subject)
+    for m in results:
+        if _normalize_subject(m.get("subject", "")) == norm_subj:
+            return m
+    return None
+
+
 def save_memory(
     category: str,
     subject: str,
     content: str,
     tags: str = "",
+    source: str = "live",
 ) -> dict:
     """Create a new memory entry.
 
@@ -191,11 +267,14 @@ def save_memory(
         Free-text detail about the memory.
     tags : str
         Optional comma-separated tags for search.
+    source : str
+        Origin: ``'live'`` (agent during chat) or ``'extraction'``
+        (background extractor).  Stored for diagnostics.
 
     Returns
     -------
     dict  with keys ``id``, ``category``, ``subject``, ``content``,
-    ``tags``, ``created_at``, ``updated_at``.
+    ``tags``, ``source``, ``created_at``, ``updated_at``.
     """
     category = category.lower().strip()
     if category not in VALID_CATEGORIES:
@@ -207,9 +286,10 @@ def save_memory(
     now = datetime.now().isoformat()
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO memories (id, category, subject, content, tags, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (mem_id, category, subject.strip(), content.strip(), tags.strip(), now, now),
+        "INSERT INTO memories (id, category, subject, content, tags, source, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (mem_id, category, subject.strip(), content.strip(), tags.strip(),
+         source.strip(), now, now),
     )
     conn.commit()
     conn.close()
@@ -220,21 +300,52 @@ def save_memory(
         "subject": subject.strip(),
         "content": content.strip(),
         "tags": tags.strip(),
+        "source": source.strip(),
         "created_at": now,
         "updated_at": now,
     }
 
 
-def update_memory(memory_id: str, content: str) -> dict | None:
-    """Update the content of an existing memory.
+def update_memory(
+    memory_id: str,
+    content: str,
+    *,
+    subject: str | None = None,
+    tags: str | None = None,
+    category: str | None = None,
+    source: str | None = None,
+) -> dict | None:
+    """Update an existing memory's fields.
+
+    Only ``content`` is required.  Pass *subject*, *tags*, *category*,
+    or *source* to update those fields as well.
 
     Returns the updated record dict, or ``None`` if not found.
     """
     now = datetime.now().isoformat()
+    fields = ["content = ?", "updated_at = ?"]
+    params: list = [content.strip(), now]
+
+    if subject is not None:
+        fields.append("subject = ?")
+        params.append(subject.strip())
+    if tags is not None:
+        fields.append("tags = ?")
+        params.append(tags.strip())
+    if category is not None:
+        cat = category.lower().strip()
+        if cat in VALID_CATEGORIES:
+            fields.append("category = ?")
+            params.append(cat)
+    if source is not None:
+        fields.append("source = ?")
+        params.append(source.strip())
+
+    params.append(memory_id)
     conn = _get_conn()
     cur = conn.execute(
-        "UPDATE memories SET content = ?, updated_at = ? WHERE id = ?",
-        (content.strip(), now, memory_id),
+        f"UPDATE memories SET {', '.join(fields)} WHERE id = ?",
+        params,
     )
     conn.commit()
     if cur.rowcount == 0:
@@ -344,3 +455,67 @@ def delete_all_memories() -> int:
     if count:
         _rebuild_memory_index()
     return count
+
+
+def consolidate_duplicates(threshold: float = 0.90) -> int:
+    """Scan all memories and merge near-duplicates.
+
+    For each pair sharing the same normalised subject and a semantic
+    similarity score ≥ *threshold*, the shorter/older entry is merged
+    into the longer/newer one and then deleted.
+
+    Returns the number of memories removed.
+    """
+    all_mems = list_memories(limit=100_000)
+    if len(all_mems) < 2:
+        return 0
+
+    # Group by normalised subject
+    from collections import defaultdict
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for m in all_mems:
+        key = _normalize_subject(m["subject"])
+        groups[key].append(m)
+
+    removed = 0
+    for _subj, mems in groups.items():
+        if len(mems) < 2:
+            continue
+        # Within this subject group, compare pairwise using semantic search
+        kept_ids: set[str] = set()
+        deleted_ids: set[str] = set()
+        for i, m1 in enumerate(mems):
+            if m1["id"] in deleted_ids:
+                continue
+            for m2 in mems[i + 1:]:
+                if m2["id"] in deleted_ids:
+                    continue
+                # Quick semantic check
+                text1 = f"{m1['category']} {m1['subject']} {m1['content']}"
+                try:
+                    hits = semantic_search(text1, top_k=5, threshold=threshold)
+                except Exception:
+                    continue
+                hit_ids = {h["id"] for h in hits}
+                if m2["id"] not in hit_ids:
+                    continue
+                # They are near-duplicates — keep the richer one
+                keep, drop = (m1, m2) if len(m1["content"]) >= len(m2["content"]) else (m2, m1)
+                # Merge tags
+                merged_tags = ", ".join(
+                    dict.fromkeys(
+                        t.strip()
+                        for t in (keep.get("tags", "") + "," + drop.get("tags", "")).split(",")
+                        if t.strip()
+                    )
+                )
+                update_memory(keep["id"], keep["content"], tags=merged_tags)
+                delete_memory(drop["id"])
+                deleted_ids.add(drop["id"])
+                removed += 1
+                logger.info(
+                    "Consolidated duplicate: kept %s (%s), removed %s",
+                    keep["id"], keep["subject"], drop["id"],
+                )
+
+    return removed

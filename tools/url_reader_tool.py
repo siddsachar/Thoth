@@ -48,7 +48,7 @@ def _read_url(url: str) -> str:
         return "The page was fetched but no readable text content was found."
 
     # Truncate very long pages to avoid overwhelming the LLM context
-    MAX_CHARS = 12_000
+    MAX_CHARS = 30_000
     if len(text) > MAX_CHARS:
         text = text[:MAX_CHARS] + "\n\n… [content truncated]"
 
