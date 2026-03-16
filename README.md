@@ -330,7 +330,7 @@ All user data is stored in `~/.thoth/` (`%USERPROFILE%\.thoth\` on Windows):
 
 ---
 
-## � One-Click Install
+## 📥 One-Click Install
 
 ### Windows
 
