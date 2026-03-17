@@ -250,7 +250,7 @@ try:
         "url_reader", "documents", "gmail", "calendar", "filesystem",
         "timer", "calculator", "wolfram_alpha", "weather", "vision",
         "memory", "conversation_search", "system_info", "chart",
-        "tracker",
+        "tracker", "shell",
     }
 
     all_tools = get_all_tools()
@@ -1252,6 +1252,116 @@ try:
 
 except Exception as e:
     record("FAIL", "memory system integrity", f"{type(e).__name__}: {e}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 18. SHELL TOOL — safety classification, session, history
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 70)
+print("18. SHELL TOOL")
+print("=" * 70)
+
+try:
+    from tools.shell_tool import (
+        classify_command, ShellSession, ShellSessionManager,
+        get_session_manager, get_shell_history, append_shell_history,
+        clear_shell_history, ShellTool,
+    )
+
+    # 18a. classify_command — safe commands
+    _safe_cmds = ["ls -la", "pwd", "git status", "echo hello", "dir", "cat file.txt",
+                  "pip list", "python --version"]
+    for cmd in _safe_cmds:
+        result = classify_command(cmd)
+        if result == "safe":
+            record("PASS", f"shell: safe classify '{cmd}'")
+        else:
+            record("FAIL", f"shell: safe classify '{cmd}'", f"got '{result}'")
+
+    # 18b. classify_command — blocked commands
+    _blocked_cmds = ["rm -rf /", "mkfs /dev/sda", "format C:", "shutdown -h now",
+                     "dd if=/dev/zero of=/dev/sda"]
+    for cmd in _blocked_cmds:
+        result = classify_command(cmd)
+        if result == "blocked":
+            record("PASS", f"shell: blocked classify '{cmd}'")
+        else:
+            record("FAIL", f"shell: blocked classify '{cmd}'", f"got '{result}'")
+
+    # 18c. classify_command — needs_approval
+    _approval_cmds = ["pip install requests", "npm install", "python script.py",
+                      "git push origin main"]
+    for cmd in _approval_cmds:
+        result = classify_command(cmd)
+        if result == "needs_approval":
+            record("PASS", f"shell: approval classify '{cmd}'")
+        else:
+            record("FAIL", f"shell: approval classify '{cmd}'", f"got '{result}'")
+
+    # 18d. ShellTool class validation
+    _st = ShellTool()
+    assert _st.name == "shell", f"Expected 'shell', got '{_st.name}'"
+    assert _st.enabled_by_default is False
+    assert _st.destructive_tool_names == set()
+    _lc_tools = _st.as_langchain_tools()
+    assert len(_lc_tools) == 1
+    assert _lc_tools[0].name == "run_command"
+    record("PASS", "shell: ShellTool class valid")
+
+    # 18e. ShellTool registered in registry
+    from tools import registry as _sreg
+    _shell_t = _sreg.get_tool("shell")
+    assert _shell_t is not None, "Shell tool not registered"
+    record("PASS", "shell: registered in registry")
+
+    # 18f. ShellSession — run a simple command
+    import tempfile
+    _test_dir = tempfile.mkdtemp()
+    _sess = ShellSession(working_dir=_test_dir)
+    _result = _sess.run_command("echo hello_thoth")
+    assert "hello_thoth" in _result["output"], f"Expected 'hello_thoth' in output, got: {_result['output']}"
+    assert _result["exit_code"] == 0, f"Expected exit_code 0, got {_result['exit_code']}"
+    record("PASS", "shell: session runs commands")
+
+    # 18g. ShellSession — cd persists
+    import platform as _plat
+    if _plat.system() == "Windows":
+        _cd_result = _sess.run_command(f"Set-Location '{_test_dir}'")
+    else:
+        _cd_result = _sess.run_command(f"cd '{_test_dir}'")
+    assert _sess.cwd == _test_dir or os.path.samefile(_sess.cwd, _test_dir), \
+        f"cwd not updated: {_sess.cwd} != {_test_dir}"
+    record("PASS", "shell: cd persists cwd")
+
+    # 18h. ShellSessionManager
+    _mgr = ShellSessionManager()
+    _s1 = _mgr.get_session("test_thread_1", _test_dir)
+    _s2 = _mgr.get_session("test_thread_1", _test_dir)
+    assert _s1 is _s2, "Same thread should return same session"
+    _s3 = _mgr.get_session("test_thread_2", _test_dir)
+    assert _s1 is not _s3, "Different threads should return different sessions"
+    _mgr.kill_session("test_thread_1")
+    _mgr.kill_all()
+    record("PASS", "shell: session manager works")
+
+    # 18i. Shell history persistence
+    _test_tid = "test_history_" + str(int(time.time()))
+    append_shell_history(_test_tid, {"command": "echo test", "output": "test", "exit_code": 0})
+    _hist = get_shell_history(_test_tid)
+    assert len(_hist) == 1, f"Expected 1 entry, got {len(_hist)}"
+    assert _hist[0]["command"] == "echo test"
+    clear_shell_history(_test_tid)
+    _hist2 = get_shell_history(_test_tid)
+    assert len(_hist2) == 0, f"Expected 0 entries after clear, got {len(_hist2)}"
+    record("PASS", "shell: history persistence works")
+
+    # Cleanup
+    import shutil
+    shutil.rmtree(_test_dir, ignore_errors=True)
+
+except Exception as e:
+    record("FAIL", "shell tool tests", f"{type(e).__name__}: {e}")
+    traceback.print_exc()
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -239,7 +239,7 @@ class AppState:
         self.current_model: str = get_current_model()
         self.context_size: int = get_user_context_size()
         self.is_generating: bool = False
-        self.stop_requested: bool = False
+        self.stop_event: threading.Event = threading.Event()
         self.pending_interrupt: dict | None = None
         self.show_onboarding: bool = _is_first_run()
         self.voice_enabled: bool = False
@@ -1024,11 +1024,11 @@ async def index():
         if last_end < len(text):
             parts.append(("text", text[last_end:]))
         if not parts:
-            ui.markdown(text).classes("thoth-msg w-full")
+            ui.markdown(text, extras=['code-friendly', 'fenced-code-blocks', 'tables']).classes("thoth-msg w-full")
         else:
             for kind, value in parts:
                 if kind == "text" and value.strip():
-                    ui.markdown(value).classes("thoth-msg w-full")
+                    ui.markdown(value, extras=['code-friendly', 'fenced-code-blocks', 'tables']).classes("thoth-msg w-full")
                 elif kind == "video":
                     ui.html(
                         f'<iframe width="280" height="158" '
@@ -1116,6 +1116,41 @@ async def index():
                     )
                     _render_message_content(msg)
 
+    # ── Terminal entry renderer ──────────────────────────────────────────
+
+    def _add_terminal_entry(entry: dict) -> None:
+        """Render a single shell command + output in the terminal panel."""
+        if p.terminal_container is None:
+            return
+        cmd = entry.get("command", "")
+        output = entry.get("output", "")
+        exit_code = entry.get("exit_code", 0)
+        duration = entry.get("duration", 0)
+        cwd = entry.get("cwd", "")
+
+        with p.terminal_container:
+            # Prompt line
+            cwd_short = os.path.basename(cwd) if cwd else "~"
+            color = "#4ec9b0" if exit_code == 0 else "#f44747"
+            ui.html(
+                f'<div style="font-family:monospace; font-size:0.8rem; color:#569cd6;">'
+                f'<span style="color:#888;">{cwd_short}</span> '
+                f'<span style="color:#dcdcaa;">$</span> {cmd}</div>'
+            )
+            # Output
+            if output:
+                ui.html(
+                    f'<pre style="font-family:monospace; font-size:0.75rem; '
+                    f'color:#d4d4d4; margin:0; padding:2px 0; white-space:pre-wrap; '
+                    f'word-break:break-all; max-height:200px; overflow-y:auto;">'
+                    f'{output}</pre>'
+                )
+            # Exit code badge
+            ui.html(
+                f'<div style="font-size:0.65rem; color:{color}; margin-bottom:4px;">'
+                f'exit {exit_code} · {duration}s</div>'
+            )
+
     # ══════════════════════════════════════════════════════════════════════
     # STREAMING
     # ══════════════════════════════════════════════════════════════════════
@@ -1138,7 +1173,7 @@ async def index():
             _rebuild_thread_list()
 
         state.is_generating = True
-        state.stop_requested = False
+        state.stop_event = threading.Event()   # fresh event per generation
         if p.stop_btn:
             p.stop_btn.enable()
 
@@ -1203,7 +1238,7 @@ async def index():
                         'Thoth is thinking<span class="dots">'
                         '<span>.</span><span>.</span><span>.</span></span></span>'
                     )
-                    assistant_md = ui.markdown("").classes("thoth-msg w-full")
+                    assistant_md = ui.markdown("", extras=['code-friendly', 'fenced-code-blocks', 'tables']).classes("thoth-msg w-full")
                     assistant_md.set_visibility(False)
 
         if p.chat_scroll:
@@ -1225,15 +1260,25 @@ async def index():
 
         # ── Stream in background thread via queue ────────────────────────
         q: queue.Queue = queue.Queue()
+        stop_event = state.stop_event     # capture ref for this generation
 
         def _sync_stream():
             try:
-                for ev in stream_agent(agent_input, enabled_tools, config):
+                for ev in stream_agent(agent_input, enabled_tools, config,
+                                       stop_event=stop_event):
+                    if stop_event.is_set():
+                        break
                     q.put(ev)
-                q.put(None)
             except Exception as exc:
-                q.put(("error", str(exc)))
-                q.put(None)
+                if not stop_event.is_set():
+                    q.put(("error", str(exc)))
+            finally:
+                if stop_event.is_set():
+                    try:
+                        repair_orphaned_tool_calls(enabled_tools, config)
+                    except Exception:
+                        pass
+                q.put(None)          # always signal consumer we're done
 
         threading.Thread(target=_sync_stream, daemon=True).start()
 
@@ -1249,10 +1294,27 @@ async def index():
         tts_active = voice_mode and state.tts_service.enabled
         first_content = False
 
+        _stopped_shown = False
+        _drain_deadline = 0.0
+
         while True:
-            if state.stop_requested:
+            if state.stop_event.is_set() and not _stopped_shown:
+                # Show visual feedback immediately
+                _stopped_shown = True
+                _drain_deadline = asyncio.get_event_loop().time() + 30
+                if thinking_label:
+                    thinking_label.delete()
+                    thinking_label = None
+                if assistant_md:
+                    assistant_md.set_visibility(True)
+                    accumulated += "\n\n\u23f9\ufe0f *[Stopped]*"
+                    assistant_md.set_content(accumulated)
                 if tts_active:
                     state.tts_service.stop()
+                # Don't break — drain queue until producer sends None
+
+            # Timeout: if draining too long, give up
+            if _stopped_shown and asyncio.get_event_loop().time() > _drain_deadline:
                 break
 
             try:
@@ -1263,6 +1325,10 @@ async def index():
 
             if event is None:
                 break
+
+            # After stop, keep draining but ignore events
+            if _stopped_shown:
+                continue
 
             event_type, payload = event
 
@@ -1346,6 +1412,43 @@ async def index():
                                     ui.code(display).classes("w-full text-xs")
 
                 tool_results.append({"name": tool_name, "content": tool_content})
+
+                # Shell command → render in terminal panel
+                raw_tool_name = payload.get("raw_name", "") if isinstance(payload, dict) else ""
+                if raw_tool_name == "run_command" and p.terminal_container is not None:
+                    # Parse the output to build a history-style entry
+                    _lines = (tool_content or "").split("\n")
+                    _cmd_line = _lines[0][2:] if _lines and _lines[0].startswith("$ ") else ""
+                    _info_line = _lines[-1] if _lines else ""
+                    _e_code = 0
+                    _dur = 0.0
+                    _cwd = ""
+                    import re as _re_term
+                    _info_m = _re_term.search(
+                        r"Exit code:\s*(-?\d+)\s*\|\s*Duration:\s*([\d.]+)s\s*\|\s*cwd:\s*(.*)",
+                        _info_line,
+                    )
+                    if _info_m:
+                        _e_code = int(_info_m.group(1))
+                        _dur = float(_info_m.group(2))
+                        _cwd = _info_m.group(3).strip()
+                    _output_lines = _lines[1:-1] if len(_lines) > 2 else []
+                    _add_terminal_entry({
+                        "command": _cmd_line,
+                        "output": "\n".join(_output_lines),
+                        "exit_code": _e_code,
+                        "duration": _dur,
+                        "cwd": _cwd,
+                    })
+                    # Auto-show terminal panel on first shell result
+                    if not getattr(p, "terminal_visible", False):
+                        p.terminal_visible = True
+                        if p.terminal_panel is not None:
+                            p.terminal_panel.set_visibility(True)
+                        if hasattr(p, "terminal_chevron") and p.terminal_chevron:
+                            p.terminal_chevron.props("icon=expand_less")
+                    if p.terminal_scroll:
+                        p.terminal_scroll.scroll_to(percent=1.0)
 
                 # Vision capture
                 if tool_name in ("👁️ Vision", "analyze_image"):
@@ -1443,8 +1546,8 @@ async def index():
             state.messages.append(a_msg)
         finally:
             state.is_generating = False
-            state.stop_requested = False
             if p.stop_btn:
+                p.stop_btn.props('icon=stop')
                 p.stop_btn.disable()
 
             # Resume mic
@@ -1466,6 +1569,7 @@ async def index():
     async def _resume_after_interrupt(approved: bool) -> None:
         state.pending_interrupt = None
         state.is_generating = True
+        state.stop_event = threading.Event()   # fresh event per generation
         if p.stop_btn:
             p.stop_btn.enable()
 
@@ -1476,15 +1580,25 @@ async def index():
         enabled_tools = [t.name for t in tool_registry.get_enabled_tools()]
 
         q: queue.Queue = queue.Queue()
+        stop_event = state.stop_event     # capture ref for this generation
 
         def _sync():
             try:
-                for ev in resume_stream_agent(enabled_tools, config, approved):
+                for ev in resume_stream_agent(enabled_tools, config, approved,
+                                              stop_event=stop_event):
+                    if stop_event.is_set():
+                        break
                     q.put(ev)
-                q.put(None)
             except Exception as exc:
-                q.put(("error", str(exc)))
-                q.put(None)
+                if not stop_event.is_set():
+                    q.put(("error", str(exc)))
+            finally:
+                if stop_event.is_set():
+                    try:
+                        repair_orphaned_tool_calls(enabled_tools, config)
+                    except Exception:
+                        pass
+                q.put(None)          # always signal consumer we're done
 
         threading.Thread(target=_sync, daemon=True).start()
 
@@ -1502,15 +1616,26 @@ async def index():
                         '</div>'
                     )
                     tool_col = ui.column().classes("w-full gap-1")
-                    assistant_md = ui.markdown("").classes("thoth-msg w-full")
+                    assistant_md = ui.markdown("", extras=['code-friendly', 'fenced-code-blocks', 'tables']).classes("thoth-msg w-full")
 
         accumulated = ""
         tool_results: list[dict] = []
         chart_data: list[str] = []
 
+        _stopped_shown = False
+        _drain_deadline = 0.0
+
         while True:
-            if state.stop_requested:
+            if state.stop_event.is_set() and not _stopped_shown:
+                _stopped_shown = True
+                _drain_deadline = asyncio.get_event_loop().time() + 30
+                if assistant_md:
+                    accumulated += "\n\n\u23f9\ufe0f *[Stopped]*"
+                    assistant_md.set_content(accumulated)
+
+            if _stopped_shown and asyncio.get_event_loop().time() > _drain_deadline:
                 break
+
             try:
                 event = q.get_nowait()
             except queue.Empty:
@@ -1518,6 +1643,10 @@ async def index():
                 continue
             if event is None:
                 break
+
+            if _stopped_shown:
+                continue
+
             et, pl = event
             if et == "token":
                 accumulated += pl
@@ -1550,6 +1679,42 @@ async def index():
                                 display = tc[:5_000] + ("\n\n… (truncated)" if len(tc) > 5_000 else "")
                                 ui.code(display).classes("w-full text-xs")
                 tool_results.append({"name": tn, "content": tc})
+
+                # Shell command → render in terminal panel
+                _raw = pl.get("raw_name", "") if isinstance(pl, dict) else ""
+                if _raw == "run_command" and p.terminal_container is not None:
+                    _lines = (tc or "").split("\n")
+                    _cmd_line = _lines[0][2:] if _lines and _lines[0].startswith("$ ") else ""
+                    _info_line = _lines[-1] if _lines else ""
+                    _e_code = 0
+                    _dur = 0.0
+                    _cwd = ""
+                    import re as _re_term
+                    _info_m = _re_term.search(
+                        r"Exit code:\s*(-?\d+)\s*\|\s*Duration:\s*([\d.]+)s\s*\|\s*cwd:\s*(.*)",
+                        _info_line,
+                    )
+                    if _info_m:
+                        _e_code = int(_info_m.group(1))
+                        _dur = float(_info_m.group(2))
+                        _cwd = _info_m.group(3).strip()
+                    _output_lines = _lines[1:-1] if len(_lines) > 2 else []
+                    _add_terminal_entry({
+                        "command": _cmd_line,
+                        "output": "\n".join(_output_lines),
+                        "exit_code": _e_code,
+                        "duration": _dur,
+                        "cwd": _cwd,
+                    })
+                    if not getattr(p, "terminal_visible", False):
+                        p.terminal_visible = True
+                        if p.terminal_panel is not None:
+                            p.terminal_panel.set_visibility(True)
+                        if hasattr(p, "terminal_chevron") and p.terminal_chevron:
+                            p.terminal_chevron.props("icon=expand_less")
+                    if p.terminal_scroll:
+                        p.terminal_scroll.scroll_to(percent=1.0)
+
             elif et == "done":
                 accumulated = pl
                 if assistant_md:
@@ -1564,22 +1729,25 @@ async def index():
                 break
 
         # Replace plain markdown with YouTube-aware rendering if needed
-        if accumulated and _YT_URL_PATTERN.search(accumulated):
-            if assistant_md:
-                assistant_md.delete()
-                assistant_md = None
-            with _wrapper:
-                _render_text_with_embeds(accumulated)
+        try:
+            if accumulated and _YT_URL_PATTERN.search(accumulated):
+                if assistant_md:
+                    assistant_md.delete()
+                    assistant_md = None
+                with _wrapper:
+                    _render_text_with_embeds(accumulated)
 
-        a_msg: dict = {"role": "assistant", "content": accumulated}
-        if tool_results:
-            a_msg["tool_results"] = tool_results
-        if chart_data:
-            a_msg["charts"] = chart_data
-        state.messages.append(a_msg)
-        state.is_generating = False
-        if p.stop_btn:
-            p.stop_btn.disable()
+            a_msg: dict = {"role": "assistant", "content": accumulated}
+            if tool_results:
+                a_msg["tool_results"] = tool_results
+            if chart_data:
+                a_msg["charts"] = chart_data
+            state.messages.append(a_msg)
+        finally:
+            state.is_generating = False
+            if p.stop_btn:
+                p.stop_btn.props('icon=stop')
+                p.stop_btn.disable()
         if p.chat_scroll:
             p.chat_scroll.scroll_to(percent=1.0)
 
@@ -1616,7 +1784,7 @@ async def index():
                     "font-size: 0.9rem; color: #d0d0e0; line-height: 1.6;"
                     "word-wrap: break-word; white-space: pre-wrap;"
                 ):
-                    ui.markdown(desc)
+                    ui.markdown(desc, extras=['code-friendly', 'fenced-code-blocks', 'tables'])
             # ── Footer ──
             with ui.row().classes("w-full justify-end q-pa-md gap-3").style(
                 "border-top: 1px solid #2a2a4a;"
@@ -1752,14 +1920,14 @@ async def index():
                             tab_models = ui.tab("Models", icon="smart_toy")
                             tab_mem = ui.tab("Memory", icon="psychology")
                             tab_voice = ui.tab("Voice", icon="mic")
-                            tab_channels = ui.tab("Channels", icon="forum")
                             tab_wf = ui.tab("Workflows", icon="bolt")
+                            tab_fs = ui.tab("System", icon="terminal")
                             tab_tracker = ui.tab("Tracker", icon="checklist")
-                            tab_gmail = ui.tab("Gmail", icon="email")
-                            tab_cal = ui.tab("Calendar", icon="event")
                             tab_docs = ui.tab("Documents", icon="description")
                             tab_tools = ui.tab("Search", icon="search")
-                            tab_fs = ui.tab("Filesystem", icon="folder")
+                            tab_gmail = ui.tab("Gmail", icon="email")
+                            tab_cal = ui.tab("Calendar", icon="event")
+                            tab_channels = ui.tab("Channels", icon="forum")
                             tab_utils = ui.tab("Utilities", icon="build")
 
                     with splitter.after:
@@ -1773,7 +1941,7 @@ async def index():
                             with ui.tab_panel(tab_tools).classes("px-6 py-4"):
                                 _build_tools_tab()
                             with ui.tab_panel(tab_fs).classes("px-6 py-4"):
-                                _build_filesystem_tab()
+                                _build_system_access_tab()
                             with ui.tab_panel(tab_gmail).classes("px-6 py-4"):
                                 _build_gmail_tab()
                             with ui.tab_panel(tab_cal).classes("px-6 py-4"):
@@ -2077,7 +2245,7 @@ async def index():
         ui.separator()
 
         skip_tools = {
-            "filesystem", "gmail", "documents", "calendar", "timer",
+            "filesystem", "shell", "gmail", "documents", "calendar", "timer",
             "url_reader", "calculator", "weather", "vision", "chart",
             "system_info", "conversation_search", "memory", "tracker",
         }
@@ -2101,14 +2269,16 @@ async def index():
                 ui.markdown(
                     "1. Go to [app.tavily.com](https://app.tavily.com/) and sign up.\n"
                     "2. Create an API key (Development = 1,000 free searches/month).\n"
-                    "3. Paste the key below."
+                    "3. Paste the key below.",
+                    extras=['code-friendly', 'fenced-code-blocks', 'tables'],
                 )
         elif tool.name == "wolfram_alpha":
             with ui.expansion("📋 Wolfram Alpha Setup Instructions"):
                 ui.markdown(
                     "1. Go to [developer.wolframalpha.com](https://developer.wolframalpha.com/) and sign up.\n"
                     "2. Click **Get an AppID** and create an app.\n"
-                    "3. Paste the AppID below."
+                    "3. Paste the AppID below.",
+                    extras=['code-friendly', 'fenced-code-blocks', 'tables'],
                 )
 
         # API keys
@@ -2166,18 +2336,14 @@ async def index():
                         ui.checkbox(op, value=op in current_ops,
                                     on_change=lambda e, o=op: _toggle(o, e.value))
 
-    def _build_filesystem_tab() -> None:
+    def _build_system_access_tab() -> None:
         from tools.filesystem_tool import _SAFE_OPS, _WRITE_OPS, _DESTRUCTIVE_OPS
 
-        ui.label("📁 Filesystem Access").classes("text-h6")
+        ui.label("🖥️ System Access").classes("text-h6")
         ui.label(
-            "Give Thoth access to read, write, and manage files on your computer. "
-            "Operations include listing directories, reading files (PDF, CSV, Excel, "
-            "JSON, JSONL, TSV, and plain text), writing, copying, moving, and deleting files. "
-            "Structured data (CSV, Excel, JSON, JSONL, TSV) is parsed with pandas — "
-            "Thoth sees column schema, statistics, and a preview. "
-            "Destructive actions (move, delete) require explicit confirmation and are disabled by default. "
-            "Thoth can only access the workspace folder you select below."
+            "Give Thoth access to your local system — shell commands and "
+            "file operations. Destructive actions always require your "
+            "explicit approval before execution."
         ).classes("text-grey-6 text-sm")
 
         fs_tool = tool_registry.get_tool("filesystem")
@@ -2185,14 +2351,15 @@ async def index():
             ui.label("Filesystem tool not found.").classes("text-negative")
             return
 
-        ui.switch(
-            "Enable Filesystem tool",
-            value=tool_registry.is_enabled("filesystem"),
-            on_change=lambda e: tool_registry.set_enabled("filesystem", e.value),
-        ).tooltip(fs_tool.description)
+        # ── Shared workspace folder ──────────────────────────────────────
         ui.separator()
+        ui.label("📂 Workspace Folder").classes("text-subtitle1 font-bold")
+        ui.label(
+            "The Filesystem tool is sandboxed to this folder and cannot access "
+            "anything outside it. The Shell tool uses this as its starting "
+            "directory but can navigate elsewhere."
+        ).classes("text-grey-6 text-xs")
 
-        # Workspace folder
         fs_root_default = fs_tool.config_schema.get("workspace_root", {}).get("default", "")
         current_root = fs_tool.get_config("workspace_root", fs_root_default)
         root_input = ui.input(
@@ -2211,7 +2378,52 @@ async def index():
         if current_root and not os.path.isdir(current_root):
             ui.label(f"⚠️ Folder not found: {current_root}").classes("text-warning text-sm")
 
+        # ── Shell Access ─────────────────────────────────────────────────
         ui.separator()
+        ui.label("🖥️ Shell Access").classes("text-subtitle1 font-bold")
+        ui.label(
+            "Run shell commands directly on your system "
+            "(PowerShell on Windows, bash on macOS/Linux). "
+            "Read-only commands like ls, pwd, and git status run "
+            "automatically. Anything that modifies files, installs "
+            "software, or changes system state requires your "
+            "approval first. Commands time out after 120\u202fs."
+        ).classes("text-grey-6 text-xs")
+
+        shell_tool = tool_registry.get_tool("shell")
+        if shell_tool:
+            ui.switch(
+                "Enable Shell tool",
+                value=tool_registry.is_enabled("shell"),
+                on_change=lambda e: tool_registry.set_enabled("shell", e.value),
+            ).tooltip(shell_tool.description)
+
+            shell_blocked = shell_tool.get_config("blocked_commands", "")
+            ui.input(
+                "Additional blocked patterns (comma-separated)",
+                value=shell_blocked or "",
+                on_change=lambda e: shell_tool.set_config("blocked_commands", e.value),
+            ).classes("w-full").tooltip(
+                "Commands matching these patterns will always be refused. "
+                "Separate multiple patterns with commas."
+            )
+        else:
+            ui.label("Shell tool not found.").classes("text-grey-6 text-sm")
+
+        # ── File Operations ──────────────────────────────────────────────
+        ui.separator()
+        ui.label("📁 File Operations").classes("text-subtitle1 font-bold")
+        ui.label(
+            "Read, write, search, copy, move, and delete files within "
+            "the workspace folder above. "
+            "Structured data (CSV, Excel, JSON) is parsed with pandas."
+        ).classes("text-grey-6 text-xs")
+
+        ui.switch(
+            "Enable Filesystem tool",
+            value=tool_registry.is_enabled("filesystem"),
+            on_change=lambda e: tool_registry.set_enabled("filesystem", e.value),
+        ).tooltip(fs_tool.description)
 
         ops_default = fs_tool.config_schema.get("selected_operations", {}).get("default", [])
         current_ops = fs_tool.get_config("selected_operations", ops_default)
@@ -2250,7 +2462,8 @@ async def index():
                 "3. Create OAuth client ID (Desktop app) in Credentials\n"
                 "4. Add your account as test user if using External OAuth\n"
                 "5. Download credentials.json and point path below to it\n"
-                "6. Click Authenticate — one-time browser login"
+                "6. Click Authenticate — one-time browser login",
+                extras=['code-friendly', 'fenced-code-blocks', 'tables'],
             )
 
         ui.separator()
@@ -2359,7 +2572,8 @@ async def index():
                 "1. Enable **Google Calendar API** in your project\n"
                 "2. Add your account as a test user if using External OAuth\n"
                 "3. Point credentials path below to the same credentials.json\n"
-                "4. Click Authenticate — one-time browser login"
+                "4. Click Authenticate — one-time browser login",
+                extras=['code-friendly', 'fenced-code-blocks', 'tables'],
             )
 
         ui.separator()
@@ -2610,7 +2824,7 @@ async def index():
                     else:
                         for mem in memories:
                             with ui.expansion(f"**{mem['subject']}** — _{mem['category']}_").classes("w-full"):
-                                ui.markdown(mem["content"])
+                                ui.markdown(mem["content"], extras=['code-friendly', 'fenced-code-blocks', 'tables'])
                                 tags = mem.get("tags", "")
                                 if tags:
                                     ui.label(f"Tags: {tags}").classes("text-xs text-grey-6")
@@ -2951,7 +3165,8 @@ async def index():
                 "- `/tools` — List enabled tools\n"
                 "- `/status` — Check bot status\n\n"
                 "**Security:** Only the user ID you enter below can interact with the bot. "
-                "Anyone else who finds your bot will be rejected."
+                "Anyone else who finds your bot will be rejected.",
+                extras=['code-friendly', 'fenced-code-blocks', 'tables'],
             ).classes("text-sm")
 
         ui.separator()
@@ -3041,7 +3256,8 @@ async def index():
                 "- Only processes emails **from your own address** (security filter)\n"
                 "- Each email subject gets its own agent conversation thread\n"
                 "- Tool approval requests are sent as email replies — just reply APPROVE or DENY\n\n"
-                "**Tip:** You can adjust the poll interval below. Lower = faster responses but more API calls."
+                "**Tip:** You can adjust the poll interval below. Lower = faster responses but more API calls.",
+                extras=['code-friendly', 'fenced-code-blocks', 'tables'],
             ).classes("text-sm")
 
         ui.separator()
@@ -3239,6 +3455,10 @@ async def index():
                 def _delete(t=tid):
                     _delete_thread(t)
                     clear_summary_cache(t)
+                    # Clean up shell session + history
+                    from tools.shell_tool import get_session_manager, clear_shell_history
+                    get_session_manager().kill_session(t)
+                    clear_shell_history(t)
                     set_active_thread(None, previous_id=t)
                     if state.thread_id == t:
                         state.thread_id = None
@@ -3297,6 +3517,10 @@ async def index():
                                 def _del(t=tid):
                                     _delete_thread(t)
                                     clear_summary_cache(t)
+                                    # Clean up shell session + history
+                                    from tools.shell_tool import get_session_manager, clear_shell_history
+                                    get_session_manager().kill_session(t)
+                                    clear_shell_history(t)
                                     if state.thread_id == t:
                                         state.thread_id = None
                                         state.messages = []
@@ -3323,6 +3547,11 @@ async def index():
                                 for t, *_ in threads:
                                     _delete_thread(t)
                                 clear_summary_cache()  # clear all summaries
+                                # Clean up all shell sessions + history
+                                from tools.shell_tool import get_session_manager, clear_shell_history
+                                for t, *_ in threads:
+                                    get_session_manager().kill_session(t)
+                                    clear_shell_history(t)
                                 state.thread_id = None
                                 state.thread_name = None
                                 state.messages = []
@@ -3379,7 +3608,7 @@ async def index():
                             _mark_onboarding_seen()
                             _rebuild_main()
                         ui.button(icon="close", on_click=_dismiss_help).props("flat dense round size=sm")
-                    ui.markdown(_WELCOME_MESSAGE)
+                    ui.markdown(_WELCOME_MESSAGE, extras=['code-friendly', 'fenced-code-blocks', 'tables'])
                     ui.separator()
                     ui.label("💡 Try asking me something:").classes("font-bold")
                     with ui.row().classes("w-full flex-wrap gap-2"):
@@ -3492,7 +3721,7 @@ async def index():
                             '<span class="thoth-msg-name">Thoth</span>'
                             '</div>'
                         )
-                        ui.markdown(_WELCOME_MESSAGE)
+                        ui.markdown(_WELCOME_MESSAGE, extras=['code-friendly', 'fenced-code-blocks', 'tables'])
                         with ui.row().classes("flex-wrap gap-2"):
                             for prompt in _EXAMPLE_PROMPTS:
                                 def _try_inline(pr=prompt):
@@ -3516,6 +3745,77 @@ async def index():
         # Scroll to bottom
         if p.chat_scroll:
             p.chat_scroll.scroll_to(percent=1.0)
+
+        # ── Terminal toggle bar + panel ───────────────────────────────
+        p.terminal_visible = False
+        p.terminal_toggle_bar = None
+
+        if tool_registry.is_enabled("shell"):
+            def _toggle_terminal():
+                p.terminal_visible = not getattr(p, "terminal_visible", False)
+                if p.terminal_panel is not None:
+                    p.terminal_panel.set_visibility(p.terminal_visible)
+                    if p.terminal_visible and p.terminal_scroll:
+                        p.terminal_scroll.scroll_to(percent=1.0)
+                # Rotate chevron icon
+                if p.terminal_toggle_bar is not None:
+                    _chevron = "expand_less" if p.terminal_visible else "expand_more"
+                    p.terminal_chevron.props(f"icon={_chevron}")
+
+            p.terminal_toggle_bar = ui.row().classes(
+                "w-full items-center px-3 cursor-pointer"
+            ).style(
+                "height: 28px; background: #1a1a2e; "
+                "border-top: 1px solid #333; gap: 6px;"
+            )
+            p.terminal_toggle_bar.on("click", lambda: _toggle_terminal())
+
+            def _clear_terminal():
+                from tools.shell_tool import clear_shell_history
+                if state.thread_id:
+                    clear_shell_history(state.thread_id)
+                if p.terminal_container:
+                    p.terminal_container.clear()
+
+            with p.terminal_toggle_bar:
+                ui.icon("terminal").classes("text-grey-5").style("font-size: 14px;")
+                ui.label("Terminal").classes("text-xs font-bold text-grey-5 flex-grow")
+                ui.button(icon="delete_sweep", on_click=_clear_terminal).props(
+                    "flat round dense size=xs"
+                ).classes("text-grey-5").tooltip("Clear terminal history")
+                p.terminal_chevron = ui.button(icon="expand_more").props(
+                    "flat round dense size=xs"
+                ).classes("text-grey-5")
+                p.terminal_chevron.on("click.stop", lambda: _toggle_terminal())
+
+        p.terminal_panel = ui.column().classes("w-full shrink-0").style(
+            "max-height: 250px;"
+        )
+        p.terminal_panel.set_visibility(False)
+        p.terminal_scroll = None
+        p.terminal_container = None
+
+        with p.terminal_panel:
+            p.terminal_scroll = ui.scroll_area().classes("w-full flex-grow").style(
+                "max-height: 230px; background: #0d1117;"
+            )
+            with p.terminal_scroll:
+                p.terminal_container = ui.column().classes("w-full gap-0 px-2 py-1")
+
+        # Render existing shell history for this thread
+        if state.thread_id:
+            from tools.shell_tool import get_shell_history
+            _history = get_shell_history(state.thread_id)
+            for entry in _history:
+                _add_terminal_entry(entry)
+            # Auto-show terminal panel if there is history
+            if _history and p.terminal_panel is not None:
+                p.terminal_visible = True
+                p.terminal_panel.set_visibility(True)
+                if hasattr(p, "terminal_chevron") and p.terminal_chevron:
+                    p.terminal_chevron.props("icon=expand_less")
+            if p.terminal_scroll:
+                p.terminal_scroll.scroll_to(percent=1.0)
 
         # ── File chips (shown above input when files attached) ────────────
         p.file_chips_row = ui.row().classes("w-full flex-wrap gap-1")
@@ -3604,21 +3904,16 @@ async def index():
             ui.button(icon="send", on_click=_on_send).props("color=primary round")
 
             def _on_stop():
-                state.stop_requested = True
+                state.stop_event.set()             # signal producer + consumer
                 tts = state.tts_service
                 if tts and tts.enabled:
                     tts.stop()
                     if state.voice_service and state.voice_service.is_running:
                         state.voice_service.unmute()
-                if state.is_generating:
-                    if state.thread_id:
-                        try:
-                            config = {"configurable": {"thread_id": state.thread_id}}
-                            tools = [t.name for t in tool_registry.get_enabled_tools()]
-                            repair_orphaned_tool_calls(tools, config)
-                        except Exception:
-                            pass
-                state.is_generating = False
+                # Don't set is_generating=False here — consumer does it
+                # after producer confirms cleanup is done (sends None)
+                if p.stop_btn:
+                    p.stop_btn.props('icon=hourglass_top')
 
             p.stop_btn = ui.button(icon="stop", on_click=_on_stop).props(
                 "round"

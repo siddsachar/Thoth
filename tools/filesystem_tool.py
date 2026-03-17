@@ -60,7 +60,7 @@ class FileSystemTool(BaseTool):
 
     @property
     def destructive_tool_names(self) -> set[str]:
-        return {"move_file", "file_delete"}
+        return {"workspace_move_file", "workspace_file_delete"}
 
     # ── Build the toolkit tools ──────────────────────────────────────────────
     def _get_workspace_root(self) -> str:
@@ -98,15 +98,14 @@ class FileSystemTool(BaseTool):
         )
         tools = toolkit.get_tools()
 
-        # Wrap each built-in tool to normalise paths the LLM provides.
-        # LLMs frequently pass the workspace folder name as a prefix
-        # (e.g. "ThothWorkspace/file.txt" when root is already
-        # D:\ThothWorkspace), doubling the path.  This wrapper strips it.
+        # Wrap each built-in tool to normalise paths, add sandbox
+        # redirect for out-of-workspace paths, rename to workspace_*,
+        # and enrich descriptions with scope info.
         tools = [_wrap_tool_with_path_fix(t, root) for t in tools]
 
         # Replace the default read_file with our PDF-aware version
         if "read_file" in selected:
-            tools = [t for t in tools if t.name != "read_file"]
+            tools = [t for t in tools if t.name != "workspace_read_file"]
             tools.append(_make_pdf_aware_read_tool(root))
 
         return tools
@@ -154,14 +153,36 @@ def _normalise_path(file_path: str, root_dir: str) -> str:
     return fp
 
 
+def _is_outside_workspace(value: str, root_dir: str) -> bool:
+    """Return True if *value* looks like an absolute path that falls outside
+    the workspace *root_dir*.  Relative paths are assumed to resolve inside."""
+    from pathlib import Path
+
+    v = value.replace("\\", "/").strip()
+    # Only flag absolute paths (Windows drive letter or Unix /)
+    if not (v.startswith("/") or (len(v) >= 2 and v[1] == ":")):
+        return False
+    try:
+        resolved = Path(v).resolve()
+        root_resolved = Path(root_dir).resolve()
+        return not str(resolved).lower().startswith(str(root_resolved).lower())
+    except (OSError, ValueError):
+        return False
+
+
 def _wrap_tool_with_path_fix(tool, root_dir: str):
-    """Return a copy of *tool* whose invoke/run methods normalise any file
-    path arguments before forwarding to the original implementation."""
+    """Return a copy of *tool* that:
+    1. Rejects absolute paths outside the workspace with a redirect hint.
+    2. Normalises paths the LLM provides (strips redundant workspace prefix).
+    3. Renames the tool to ``workspace_<name>`` so the LLM knows the scope.
+    4. Appends workspace-scope notice to the description.
+    """
     from langchain_core.tools import StructuredTool
 
-    original_func = tool.func if hasattr(tool, "func") else None
+    # Resolve the callable — class-based tools use _run, function tools use func
+    original_func = getattr(tool, "func", None) or getattr(tool, "_run", None)
     if original_func is None:
-        return tool  # can't wrap tools without a plain func
+        return tool  # can't wrap tools without a callable
 
     import inspect
     sig = inspect.signature(original_func)
@@ -177,15 +198,39 @@ def _wrap_tool_with_path_fix(tool, root_dir: str):
             _path_params = list(sig.parameters.keys())[:1]
 
     def _wrapped(**kwargs):
+        # ── Sandbox redirect: reject paths outside workspace ─────────
         for key in _path_params:
             if key in kwargs and isinstance(kwargs[key], str):
+                if _is_outside_workspace(kwargs[key], root_dir):
+                    return (
+                        f"Error: the path '{kwargs[key]}' is outside the "
+                        f"workspace folder ({root_dir}). This tool ONLY "
+                        f"operates within the workspace. Use the run_command "
+                        f"tool instead to access paths outside the workspace."
+                    )
                 kwargs[key] = _normalise_path(kwargs[key], root_dir)
         return original_func(**kwargs)
 
+    # Rename to workspace_* and enrich description with scope
+    new_name = f"workspace_{tool.name}"
+    new_desc = (
+        f"{tool.description} "
+        f"(WORKSPACE ONLY — paths are relative to the workspace folder. "
+        f"For files outside the workspace, use run_command instead.)"
+    )
+
+    # Preserve the original input schema so StructuredTool passes kwargs
+    # correctly.  Class-based LangChain tools expose their schema via
+    # get_input_schema(); without this, **kwargs eats everything.
+    original_schema = None
+    if hasattr(tool, "get_input_schema"):
+        original_schema = tool.get_input_schema()
+
     return StructuredTool.from_function(
         func=_wrapped,
-        name=tool.name,
-        description=tool.description,
+        name=new_name,
+        description=new_desc,
+        args_schema=original_schema,
     )
 
 
@@ -225,7 +270,12 @@ def _make_pdf_aware_read_tool(root_dir: str):
 
         # Sandbox check — must stay within root
         if not str(resolved).startswith(str(Path(root_dir).resolve())):
-            return f"Error: path '{file_path}' is outside the workspace."
+            return (
+                f"Error: path '{file_path}' is outside the workspace folder "
+                f"({root_dir}). This tool ONLY operates within the workspace. "
+                f"Use the run_command tool instead to access paths outside "
+                f"the workspace."
+            )
 
         if not resolved.exists():
             return f"Error: file not found: {file_path}"
@@ -261,12 +311,13 @@ def _make_pdf_aware_read_tool(root_dir: str):
 
     return StructuredTool.from_function(
         func=read_file,
-        name="read_file",
+        name="workspace_read_file",
         description=(
             "Read the contents of a file (including PDF, CSV, Excel, and JSON files). "
             "For CSV/Excel/JSON, returns column schema, statistics, and a preview. "
             "For Excel, append '::SheetName' to the path to read a specific sheet. "
-            "The file_path should be relative to the workspace root."
+            "(WORKSPACE ONLY — file_path is relative to the workspace folder. "
+            "For files outside the workspace, use run_command instead.)"
         ),
     )
 

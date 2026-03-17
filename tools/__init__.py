@@ -29,3 +29,4 @@ from tools import conversation_search_tool  # noqa: F401
 from tools import system_info_tool  # noqa: F401
 from tools import chart_tool        # noqa: F401
 from tools import tracker_tool      # noqa: F401
+from tools import shell_tool        # noqa: F401

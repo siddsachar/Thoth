@@ -1,9 +1,11 @@
+import threading
+
 from models import get_llm, get_context_size, get_current_model
 from api_keys import apply_keys
 from prompts import AGENT_SYSTEM_PROMPT, SUMMARIZE_PROMPT
 from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_classic.retrievers.document_compressors import LLMChainExtractor
-from langchain_core.messages import trim_messages, ToolMessage
+from langchain_core.messages import trim_messages, ToolMessage, AIMessage
 from langgraph.types import interrupt, Command
 from threads import pick_or_create_thread, checkpointer
 import logging
@@ -91,7 +93,7 @@ def _pre_model_trim(state: dict) -> dict:
     # If a summary was produced by _do_summarize, replace the older
     # messages with a single SystemMessage so the LLM sees a compact
     # version.  The full history remains in the checkpoint.
-    _thread_id = getattr(_tlocal, "current_thread_id", None)
+    _thread_id = _current_thread_id_var.get() or None
     if _thread_id and _thread_id in _summary_cache:
         from langchain_core.messages import SystemMessage as _SM
         cached = _summary_cache[_thread_id]
@@ -187,7 +189,22 @@ _agent_cache: dict[frozenset[str], object] = {}
 
 # Thread-local flag — background workflows skip destructive tools
 import threading as _threading
+import contextvars as _contextvars
 _tlocal = _threading.local()
+
+# ContextVar for current_thread_id — unlike threading.local, this
+# propagates to sync executor threads used by LangGraph for tools.
+_current_thread_id_var: _contextvars.ContextVar[str] = _contextvars.ContextVar(
+    "current_thread_id", default=""
+)
+
+
+def is_background_workflow() -> bool:
+    """Return True if code is running inside a background workflow.
+
+    Used by self-gating tools (e.g. shell) to block destructive
+    operations without the generic interrupt wrapper."""
+    return getattr(_tlocal, 'background_workflow', False)
 
 # ── Context summarization ────────────────────────────────────────────────────
 _SUMMARY_THRESHOLD = 0.80   # trigger summarization at 80 % of context window
@@ -359,8 +376,8 @@ def clear_summary_cache(thread_id: str | None = None) -> None:
 
 # Human-readable labels for destructive tool operations
 _DESTRUCTIVE_LABELS: dict[str, str] = {
-    "file_delete": "Delete file",
-    "move_file": "Move / rename file",
+    "workspace_file_delete": "Delete file",
+    "workspace_move_file": "Move / rename file",
     "delete_calendar_event": "Delete calendar event",
     "move_calendar_event": "Move calendar event",
     "send_gmail_message": "Send email",
@@ -575,7 +592,7 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict) -
     agent = get_agent_graph(enabled_tool_names)
 
     # Set thread-local so _pre_model_trim can find the summary cache
-    _tlocal.current_thread_id = (
+    _current_thread_id_var.set(
         (config.get("configurable") or {}).get("thread_id", "")
     )
 
@@ -618,7 +635,8 @@ def _resolve_tool_display_name(func_name: str) -> str:
     return _TOOL_DISPLAY_NAMES.get(func_name, func_name)
 
 
-def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict):
+def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
+                  *, stop_event: threading.Event | None = None):
     """Stream the agent response as structured events.
 
     Yields tuples of ``(event_type, payload)`` where *event_type* is one of:
@@ -634,7 +652,7 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict):
     agent = get_agent_graph(enabled_tool_names)
 
     # Set thread-local so _pre_model_trim can find the summary cache
-    _tlocal.current_thread_id = (
+    _current_thread_id_var.set(
         (config.get("configurable") or {}).get("thread_id", "")
     )
 
@@ -643,7 +661,8 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict):
         yield ("summarizing", None)
         _do_summarize(agent, config)
 
-    yield from _stream_graph(agent, {"messages": [("human", user_input)]}, config)
+    yield from _stream_graph(agent, {"messages": [("human", user_input)]}, config,
+                             stop_event=stop_event)
 
 
 def repair_orphaned_tool_calls(enabled_tool_names: list[str] | None = None, config: dict | None = None) -> None:
@@ -679,20 +698,27 @@ def repair_orphaned_tool_calls(enabled_tool_names: list[str] | None = None, conf
 
         if patches:
             agent.update_state(config, {"messages": patches})
+        # Always add a visible stop marker so the conversation reloads correctly
+        agent.update_state(config, {"messages": [
+            AIMessage(content="\u23f9\ufe0f *[Stopped]*")
+        ]})
     except Exception:
         logger.debug("repair_orphaned_tool_calls failed", exc_info=True)
 
 
-def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: bool):
+def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: bool,
+                        *, stop_event: threading.Event | None = None):
     """Resume an interrupted agent graph after user approval/denial.
 
     Yields the same ``(event_type, payload)`` tuples as ``stream_agent``.
     """
     agent = get_agent_graph(enabled_tool_names)
-    yield from _stream_graph(agent, Command(resume=approved), config)
+    yield from _stream_graph(agent, Command(resume=approved), config,
+                             stop_event=stop_event)
 
 
-def _stream_graph(agent, input_data, config: dict):
+def _stream_graph(agent, input_data, config: dict,
+                  *, stop_event: threading.Event | None = None):
     """Shared streaming logic for both initial invocation and resume."""
     full_answer = []
     thinking_signalled = False
@@ -714,6 +740,10 @@ def _stream_graph(agent, input_data, config: dict):
 
     try:
       for event in stream_iter:
+        # ── Stop-button cancellation ─────────────────────────────────────
+        if stop_event and stop_event.is_set():
+            break
+
         mode, data = event
 
         # ── updates: tool call / tool result events ──────────────────────────
@@ -736,6 +766,7 @@ def _stream_graph(agent, input_data, config: dict):
                     if m.type == "tool":
                         yield ("tool_done", {
                             "name": _resolve_tool_display_name(m.name),
+                            "raw_name": m.name,
                             "content": getattr(m, "content", ""),
                         })
 
