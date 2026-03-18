@@ -2,6 +2,63 @@
 
 ---
 
+## v3.4.0 — Browser Automation
+
+Full browser automation via Playwright, giving the agent the ability to navigate websites, click elements, fill forms, and manage tabs in a visible Chromium window — plus browser snapshot compression for long browsing sessions and a fix for the gold color regression.
+
+### 🌐 Browser Tool
+
+A new `browser_tool.py` module gives the agent 7 browser sub-tools for autonomous web browsing in a real, visible browser window.
+
+- **Shared visible browser** — runs with `headless=False` so the user can see what the agent is doing and intervene (e.g. type passwords, solve CAPTCHAs)
+- **Persistent profile** — `launch_persistent_context()` stores cookies, logins, and localStorage in `~/.thoth/browser_profile/` so sites stay logged-in across restarts
+- **Accessibility-tree snapshots** — after every action the tool captures the page's accessibility tree, assigning numbered references (`[1]`, `[2]`, …) to interactive elements so the model can click/type by number
+- **Smart snapshot filtering** — deduplicates links, drops hidden elements, soft-caps at 100 interactive elements, and truncates at 25K chars to stay within context limits
+- **7 sub-tools**:
+  - `browser_navigate` — go to a URL
+  - `browser_click` — click an interactive element by its reference number
+  - `browser_type` — type text into an input element by reference number
+  - `browser_scroll` — scroll the page up or down
+  - `browser_snapshot` — take a fresh accessibility snapshot of the current page
+  - `browser_back` — go back one page in browser history
+  - `browser_tab` — manage tabs (list, switch, new, close)
+- **Browser channel detection** — automatically detects installed Chrome, then Edge (Windows), then falls back to Playwright's bundled Chromium
+- **PID-scoped crash recovery** — detects stale browser processes from previous crashes and cleans up the profile lock before relaunching
+- **Background workflow blocking** — browser actions are blocked when running inside a background workflow
+
+### 🧠 Browser Snapshot Compression
+
+Long browsing sessions (6–10+ actions) can produce 150K+ characters of accessibility snapshots, easily overflowing the context window. A new pre-model trimming pass compresses older browser results.
+
+- **Keep last 2 snapshots in full** — the two most recent browser tool results are sent to the LLM unmodified
+- **Compact stubs for older results** — older snapshots are replaced with a one-line stub containing the URL, page title, and action name (`[Prior browser navigate — URL: …, Title: …. Full snapshot omitted to save context.]`)
+- **Checkpoint preservation** — only the LLM-visible copy is trimmed; full snapshots remain in the conversation checkpoint for the UI
+
+### 🎨 Gold Color Fix
+
+- **Root cause** — NiceGUI 3.8.0's `ui.html()` defaults to `sanitize=True`, which uses the browser's `setHTML()` Sanitizer API; a WebView2 auto-update between March 12–18 enabled the Sanitizer, which strips inline `style` attributes — breaking all gold-colored text
+- **Fix** — added `sanitize=False` to all 18 `ui.html()` calls in `app_nicegui.py` to bypass the Sanitizer API
+
+### 🛠️ Other Improvements
+
+- **Sidebar tagline** — changed from *"Your Knowledgeable Personal Agent"* to *"Personal AI Sovereignty"*
+- **System prompt updates** — `prompts.py` updated with BROWSER AUTOMATION routing rules, guiding the agent to use `browser_*` tools when the user mentions browsing and `read_url` only for raw text extraction
+- **Test suite** — 293 → 322 tests (added browser tool registration, sub-tool count, snapshot filtering, crash recovery, tab management, and channel detection tests)
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| **`tools/browser_tool.py`** | **New** — browser automation tool with `BrowserSession`, `_detect_channel()`, 7 sub-tools, accessibility snapshot with smart filtering, PID-scoped crash recovery, persistent profile |
+| **`agent.py`** | Browser snapshot compression in `_pre_model_trim()` — keeps last 2 full, stubs older snapshots |
+| **`app_nicegui.py`** | `sanitize=False` on all 18 `ui.html()` calls (gold fix); sidebar tagline changed to *"Personal AI Sovereignty"* |
+| **`tools/__init__.py`** | Added `browser_tool` import |
+| **`prompts.py`** | BROWSER AUTOMATION routing rules in system prompt |
+| **`requirements.txt`** | Added `playwright~=1.58` |
+| **`test_suite.py`** | Browser tool tests (293 → 322) |
+
+---
+
 ## v3.3.0 — Shell Access & Stop Button
 
 Full shell access with safety classification, a reliable stop button with clean generation cancellation, and filesystem sandboxing improvements.

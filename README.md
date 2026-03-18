@@ -1,6 +1,6 @@
 # 𓁟 Thoth — Personal AI Sovereignty
 
-Thoth is a **local-first AI assistant built for personal AI sovereignty** — your models, your data, your rules. It runs entirely on your machine, combining a powerful ReAct agent with 21 integrated tools — web search, email, calendar, file management, shell access, vision, long-term memory, habit tracking, and more — plus Telegram and Email messaging channels, all powered by a locally-running LLM via [Ollama](https://ollama.com/). No data leaves your machine unless you explicitly use an online tool.
+Thoth is a **local-first AI assistant built for personal AI sovereignty** — your models, your data, your rules. It runs entirely on your machine, combining a powerful ReAct agent with 22 integrated tools — web search, email, calendar, file management, shell access, browser automation, vision, long-term memory, habit tracking, and more — plus Telegram and Email messaging channels, all powered by a locally-running LLM via [Ollama](https://ollama.com/). No data leaves your machine unless you explicitly use an online tool.
 
 > Governments are investing billions to keep AI infrastructure within their borders. Thoth applies the same principle to the individual — your compute, your data, your choice of model, **accountable to no one but you.**
 
@@ -16,7 +16,7 @@ https://github.com/user-attachments/assets/7967e18d-a417-4ca5-b2d7-0fca45975ed7
 | **Conversations** | Owned by the provider, can be deleted or leaked | Stored locally in SQLite, fully yours |
 | **Cost** | $20+/month per subscription | Free forever — runs on your own hardware |
 | **Memory** | Limited, opaque, provider-controlled | You control what's remembered, searchable, deletable |
-| **Tools** | Sandboxed plugins, limited integrations | Direct access to your Gmail, Calendar, filesystem, shell, webcam |
+| **Tools** | Sandboxed plugins, limited integrations | Direct access to your Gmail, Calendar, filesystem, shell, browser, webcam |
 | **Customisation** | Pick a model, write a system prompt | Swap models freely, build multi-step workflows, schedule tasks |
 | **Voice** | Cloud-processed speech | Local Whisper STT + Kokoro TTS — never leaves your mic |
 | **Availability** | Requires internet, subject to outages & rate limits | Works offline (core features), no throttling |
@@ -46,7 +46,7 @@ Thoth is a **local-compute desktop assistant**: the LLM, voice pipeline, and mem
 | **Offline capability** | Requires internet for every LLM call | Core features work fully offline |
 | **Voice** | ElevenLabs (cloud TTS), wake words on Apple devices | Local Whisper STT + Kokoro TTS — fully offline, 10 voices |
 | **Long-term memory** | Session compaction + pruning | Persistent vector memory — semantic search, auto-extraction, 6 categories |
-| **Tools** | Browser automation, Canvas, Skills platform | 21 tools / 46 sub-ops — Gmail, Calendar, filesystem, shell, vision, habit tracker, charts, Wolfram, and more |
+| **Tools** | Browser automation, Canvas, Skills platform | 22 tools / 54 sub-ops — Gmail, Calendar, filesystem, shell, browser, vision, habit tracker, charts, Wolfram, and more |
 | **Health & Habit Tracking** | ❌ None | Conversational tracker for meds, symptoms, exercise, periods — with streak, adherence, and trend analysis |
 | **Platforms** | macOS (primary), Linux, Windows via WSL2 only | Windows & macOS |
 | **Desktop experience** | macOS menu bar app, WebChat | Native desktop window, system tray, splash screen |
@@ -63,7 +63,7 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 
 ### 🤖 ReAct Agent Architecture
 - **Autonomous tool use** — the agent decides which tools to call, when, and how many times, based on your question
-- **21 tools / 46 sub-tools** — web search, email, calendar, file management, shell access, vision, memory, habit tracking, and more (see [full list below](#-tools-21-tools--46-sub-tools))
+- **22 tools / 54 sub-tools** — web search, email, calendar, file management, shell access, browser automation, vision, memory, habit tracking, and more (see [full list below](#-tools-22-tools--54-sub-tools))
 - **Streaming responses** — tokens stream in real-time with a typing indicator
 - **Thinking indicators** — shows when the model is reasoning before responding
 - **Smart context management** — automatic conversation summarization compresses older turns when token usage exceeds 80% of the context window, preserving the 5 most recent turns and a running summary; a hard trim at 85% drops oldest messages as a safety net; oversized tool outputs (e.g. large PDF reads) are proportionally shrunk so multi-file workflows fit within context
@@ -107,6 +107,17 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 - **Background workflow safe** — commands that require approval are automatically blocked when running inside a background workflow to prevent unattended destructive actions; safe (read-only) commands still execute normally
 - **Inline terminal panel** — command output appears in a collapsible terminal panel in the chat UI with clear and history controls
 - **History persistence** — command history is saved per-thread in `~/.thoth/shell_history.json` and reloaded when you revisit a conversation
+
+### 🌐 Browser Automation
+- **Full browser automation** — the agent can navigate websites, click elements, fill forms, scroll pages, and manage tabs in a real, visible Chromium window through natural conversation
+- **Shared visible browser** — runs with `headless=False` so you can see what the agent is doing and intervene (e.g. type passwords, solve CAPTCHAs)
+- **Persistent profile** — cookies, logins, and localStorage are stored in `~/.thoth/browser_profile/` and survive across restarts
+- **Accessibility-tree snapshots** — after every action the tool captures the page's accessibility tree with numbered references (`[1]`, `[2]`, …) so the model can click/type by number
+- **Smart snapshot filtering** — deduplicates links, drops hidden elements, and soft-caps at 100 interactive elements to stay within context limits
+- **Browser snapshot compression** — older browser snapshots are automatically compressed to one-line stubs (URL + title) while keeping the last 2 in full, preventing context window overflow during long browsing sessions
+- **7 sub-tools** — `browser_navigate`, `browser_click`, `browser_type`, `browser_scroll`, `browser_snapshot`, `browser_back`, `browser_tab`
+- **Automatic browser detection** — detects installed Chrome, then Edge (Windows), then falls back to Playwright's bundled Chromium
+- **Background workflow blocking** — browser actions are blocked when running inside a background workflow
 
 ### 👁️ Vision
 - **Camera analysis** — capture and analyze images from your webcam in real-time
@@ -178,9 +189,9 @@ In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, 
 
 ---
 
-## 🔧 Tools (21 Tools / 46 Sub-tools)
+## 🔧 Tools (22 Tools / 54 Sub-tools)
 
-Thoth's agent has access to 21 tools that expose 46 individual operations to the model. Tools can be enabled/disabled from the Settings panel.
+Thoth's agent has access to 22 tools that expose 54 individual operations to the model. Tools can be enabled/disabled from the Settings panel.
 
 ### Search & Knowledge
 
@@ -202,6 +213,7 @@ Thoth's agent has access to 21 tools that expose 46 individual operations to the
 | **📅 Google Calendar** | View, create, update, move, and delete events (Google OAuth) | OAuth credentials |
 | **📁 Filesystem** | Sandboxed file operations — read, write, copy, move, delete within a workspace folder; reads PDF, CSV, Excel (.xlsx/.xls), JSON/JSONL, and TSV files; structured data files return schema + stats + preview via pandas | None |
 | **🖥️ Shell** | Execute shell commands with 3-tier safety (safe/moderate/blocked); persistent sessions per thread; user approval for destructive commands; inline terminal panel | None |
+| **🌐 Browser** | Autonomous web browsing in a visible Chromium window — navigate, click, type, scroll, snapshot, back, tab management; accessibility-tree snapshots with numbered element references; persistent profile for logins | None |
 | **⏰ Timer** | Desktop notification timers (max 24h), with list and cancel | None |
 | **📋 Tracker** | Habit/health tracker — log meds, symptoms, exercise, periods; streak, adherence, trend analysis; CSV export | None |
 
@@ -223,6 +235,7 @@ Thoth's agent has access to 21 tools that expose 46 individual operations to the
 - **Destructive operations require confirmation**: `workspace_file_delete`, `workspace_move_file`, `run_command` (moderate-risk), `send_gmail_message`, `move_calendar_event`, `delete_calendar_event`, `delete_memory`, `tracker_delete`
 - **Filesystem is sandboxed**: only the configured workspace folder is accessible
 - **Shell commands are safety-classified**: safe (auto), moderate (confirm), blocked (rejected); high-risk commands like `shutdown`, `reboot`, `mkfs` are blocked outright; background workflows cannot run shell commands
+- **Browser actions are blocked in background workflows**: browser automation is disabled during unattended workflow runs
 - **Gmail/Calendar operations are tiered**: read, compose/write, and destructive tiers can be toggled independently
 - **Tools can be individually disabled** from Settings to reduce model decision complexity
 
@@ -248,7 +261,7 @@ Thoth's agent has access to 21 tools that expose 46 individual operations to the
 │   System prompt with TOOL USE, MEMORY, and CITATION guidelines      │
 │   Interrupt mechanism for destructive action confirmation            │
 │                                                                      │
-│   46 LangChain sub-tools from 21 registered tool modules            │
+│   54 LangChain sub-tools from 22 registered tool modules            │
 └───────┬──────────┬──────────┬──────────┬──────────┬─────────────────┘
         │          │          │          │          │
         ▼          ▼          ▼          ▼          ▼
@@ -280,7 +293,7 @@ Thoth's agent has access to 21 tools that expose 46 individual operations to the
 | **`workflows.py`** | Workflow engine — SQLite CRUD, template variable expansion, sequential prompt execution, background runner with threading, scheduled execution (daily/weekly), desktop notifications, 4 default templates |
 | **`notifications.py`** | Unified notification system — desktop notifications (plyer), sound effects, and in-app toast queue; coordinates workflow completion chimes and timer alerts |
 | **`channels/`** | Messaging channel adapters — Telegram bot (long polling) and Email channel (Gmail polling), with shared config store |
-| **`tools/`** | 21 self-registering tool modules + base class + registry |
+| **`tools/`** | 22 self-registering tool modules + base class + registry |
 
 ### Data Storage
 
@@ -312,6 +325,8 @@ All user data is stored in `~/.thoth/` (`%USERPROFILE%\.thoth\` on Windows):
 ├── vector_store/           # FAISS index for uploaded documents
 ├── gmail/                  # Gmail OAuth tokens
 ├── calendar/               # Calendar OAuth tokens
+├── browser_profile/        # Playwright persistent browser profile (cookies, logins, localStorage)
+├── browser_history.json    # Browser browsing history
 └── kokoro/                 # Kokoro TTS model & voice data
 ```
 
@@ -348,13 +363,13 @@ All user data is stored in `~/.thoth/` (`%USERPROFILE%\.thoth\` on Windows):
 
 ### Windows
 
-1. Download **[ThothSetup_3.3.0.exe](https://github.com/siddsachar/Thoth/releases/latest)** from the latest release
+1. Download **[ThothSetup_3.4.0.exe](https://github.com/siddsachar/Thoth/releases/latest)** from the latest release
 2. Run the installer — it installs Python, Ollama, and all dependencies automatically
 3. Launch **Thoth** from the Start Menu or Desktop shortcut
 
 ### macOS
 
-1. Download **[Thoth-3.3.0-macOS.zip](https://github.com/siddsachar/Thoth/releases/latest)** from the latest release
+1. Download **[Thoth-3.4.0-macOS.zip](https://github.com/siddsachar/Thoth/releases/latest)** from the latest release
 2. Unzip the file — this creates a `Thoth` folder
 3. Open the `Thoth` folder and double-click **`Start Thoth.command`**
    - If macOS blocks it: right-click → **Open** → click **Open** in the dialog

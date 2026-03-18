@@ -45,6 +45,7 @@ from datetime import datetime as _datetime
 
 # ── Pre-model hook: trim messages to fit context window ──────────────────────
 _CHARS_PER_TOKEN = 4  # conservative approximation for budget math
+_KEEP_BROWSER_SNAPSHOTS = 2  # keep the N most recent browser results in full
 
 
 def _pre_model_trim(state: dict) -> dict:
@@ -55,12 +56,53 @@ def _pre_model_trim(state: dict) -> dict:
     checkpointer — only the LLM sees the trimmed version."""
     max_tokens = int(get_context_size() * 0.85)
 
+    messages = list(state["messages"])
+
+    # ── Compress stale browser snapshots ─────────────────────────────
+    # Each browser tool result can be ~25 K chars.  A multi-step browsing
+    # session (6–10 actions) easily fills 150 K+ chars, overflowing even
+    # a 64 K-token context window.  We keep the last N snapshots in full
+    # and replace older ones with a compact stub (URL + title + action)
+    # so the model still knows *what it did* but without the full DOM.
+    # The checkpoint is NOT modified — full snapshots remain for the UI.
+    _BROWSER_PREFIX = "browser_"
+    browser_indices = [
+        i for i, m in enumerate(messages)
+        if m.type == "tool"
+        and (getattr(m, "name", "") or "").startswith(_BROWSER_PREFIX)
+    ]
+    if len(browser_indices) > _KEEP_BROWSER_SNAPSHOTS:
+        for i in browser_indices[:-_KEEP_BROWSER_SNAPSHOTS]:
+            m = messages[i]
+            content = m.content or ""
+            # Extract URL and Title from the snapshot header lines
+            url = ""
+            title = ""
+            for line in content.split("\n"):
+                if line.startswith("URL: ") and not url:
+                    url = line[5:].strip()
+                elif line.startswith("Title: ") and not title:
+                    title = line[7:].strip()
+                if url and title:
+                    break
+            action = (m.name or "browser").replace("browser_", "", 1)
+            stub = (
+                f"[Prior browser {action} — "
+                f"URL: {url or '(unknown)'}, "
+                f"Title: {title or '(none)'}. "
+                f"Full snapshot omitted to save context.]"
+            )
+            messages[i] = ToolMessage(
+                content=stub,
+                name=m.name,
+                tool_call_id=m.tool_call_id,
+            )
+
     # ── Proportionally shrink oversized ToolMessages ─────────────────
     # Without this, trim_messages (strategy="last") may drop ALL context
     # when a single huge ToolMessage — or the sum of several — exceeds
     # the token budget.  We leave ~35 % for system prompt, human/AI
     # messages, and generation headroom.
-    messages = list(state["messages"])
     tool_budget_chars = int(max_tokens * 0.65) * _CHARS_PER_TOKEN
 
     tool_indices = [
@@ -722,6 +764,7 @@ def _stream_graph(agent, input_data, config: dict,
     """Shared streaming logic for both initial invocation and resume."""
     full_answer = []
     thinking_signalled = False
+    _in_think = False           # True while inside a <think>…</think> block
     _seen_tool_calls: set[str] = set()
 
     try:
@@ -794,14 +837,56 @@ def _stream_graph(agent, input_data, config: dict,
                     yield ("thinking", None)
                 continue
 
-            # Strip <think>…</think> blocks from thinking models
-            cleaned = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL)
-            cleaned = _re.sub(r"</?think>", "", cleaned)
+            # ── Stateful <think>…</think> separation ─────────────────
+            # Tags may span multiple streaming chunks, so we track
+            # whether we are currently inside a think block.  Think
+            # content is yielded as ("thinking_token", text) so the UI
+            # can display it, then collapse when the real answer starts.
+            if _in_think:
+                close_idx = content.find("</think>")
+                if close_idx == -1:
+                    # Still inside think block — yield as thinking
+                    yield ("thinking_token", content)
+                    continue
+                # Found closing tag — split: before=thinking, after=real
+                _in_think = False
+                think_part = content[:close_idx]
+                if think_part:
+                    yield ("thinking_token", think_part)
+                content = content[close_idx + len("</think>"):]
+                if not content:
+                    continue
 
-            if cleaned:
+            # Handle complete <think>…</think> blocks within a chunk
+            parts = _re.split(r"<think>(.*?)</think>", content, flags=_re.DOTALL)
+            # parts = [before, think_content, after, think_content2, after2, …]
+            real_parts = []
+            for i, part in enumerate(parts):
+                if not part:
+                    continue
+                if i % 2 == 1:
+                    # Odd index = captured think content
+                    yield ("thinking_token", part)
+                else:
+                    real_parts.append(part)
+            content = "".join(real_parts)
+
+            # Check for an unclosed <think> that continues into next chunk
+            open_idx = content.find("<think>")
+            if open_idx != -1:
+                _in_think = True
+                trailing = content[open_idx + len("<think>"):]
+                if trailing:
+                    yield ("thinking_token", trailing)
+                content = content[:open_idx]
+
+            # Safety: remove any orphaned tags
+            content = _re.sub(r"</?think>", "", content)
+
+            if content:
                 thinking_signalled = False
-                full_answer.append(cleaned)
-                yield ("token", cleaned)
+                full_answer.append(content)
+                yield ("token", content)
     except Exception as exc:
         if "does not support tools" in str(exc) or "status code: 400" in str(exc):
             yield ("error", f"{get_current_model()} does not support tool calling. "

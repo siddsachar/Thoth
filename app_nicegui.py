@@ -702,9 +702,9 @@ async def index():
             margin-top: 2px;
         }
         .thoth-avatar-user { background: #1976d2; color: white; }
-        .thoth-avatar-bot { background: #37474f; color: gold; }
+        .thoth-avatar-bot { background: #37474f; color: gold !important; }
         .thoth-msg-header {
-            display: flex;
+            display: flex !important;
             align-items: baseline;
             gap: 0.5rem;
         }
@@ -713,9 +713,14 @@ async def index():
             font-size: 0.9rem;
             color: #e0e0e0;
         }
+        /* Bot name = gold */
+        .thoth-msg-row:not(.thoth-msg-row-user) .thoth-msg-name {
+            color: gold !important;
+        }
         .thoth-msg-stamp {
             font-size: 0.7rem;
             color: #888;
+            margin-left: 0.5rem;
         }
         .thoth-msg-body {
             flex: 1;
@@ -813,7 +818,8 @@ async def index():
                 ui.html(
                     '<div style="text-align:center;">'
                     '<h1 style="color: gold; margin-bottom: 0;">𓁟 Welcome to Thoth</h1>'
-                    '</div>'
+                    '</div>',
+                    sanitize=False,
                 )
                 ui.label(
                     "Let's get you set up. This will only take a minute."
@@ -1106,13 +1112,14 @@ async def index():
         with p.chat_container:
             row_cls = "thoth-msg-row thoth-msg-row-user" if is_user else "thoth-msg-row"
             with ui.element("div").classes(row_cls):
-                ui.html(f'<div class="{avatar_cls}">{avatar_content}</div>')
+                ui.html(f'<div class="{avatar_cls}">{avatar_content}</div>', sanitize=False)
                 with ui.column().classes("thoth-msg-body gap-1"):
                     ui.html(
                         f'<div class="thoth-msg-header">'
                         f'<span class="thoth-msg-name">{name}</span>'
                         f'<span class="thoth-msg-stamp">{stamp}</span>'
-                        f'</div>'
+                        f'</div>',
+                        sanitize=False,
                     )
                     _render_message_content(msg)
 
@@ -1135,7 +1142,8 @@ async def index():
             ui.html(
                 f'<div style="font-family:monospace; font-size:0.8rem; color:#569cd6;">'
                 f'<span style="color:#888;">{cwd_short}</span> '
-                f'<span style="color:#dcdcaa;">$</span> {cmd}</div>'
+                f'<span style="color:#dcdcaa;">$</span> {cmd}</div>',
+                sanitize=False,
             )
             # Output
             if output:
@@ -1143,12 +1151,14 @@ async def index():
                     f'<pre style="font-family:monospace; font-size:0.75rem; '
                     f'color:#d4d4d4; margin:0; padding:2px 0; white-space:pre-wrap; '
                     f'word-break:break-all; max-height:200px; overflow-y:auto;">'
-                    f'{output}</pre>'
+                    f'{output}</pre>',
+                    sanitize=False,
                 )
             # Exit code badge
             ui.html(
                 f'<div style="font-size:0.65rem; color:{color}; margin-bottom:4px;">'
-                f'exit {exit_code} · {duration}s</div>'
+                f'exit {exit_code} · {duration}s</div>',
+                sanitize=False,
             )
 
     # ══════════════════════════════════════════════════════════════════════
@@ -1224,19 +1234,21 @@ async def index():
 
         with p.chat_container:
             with ui.element("div").classes("thoth-msg-row"):
-                ui.html('<div class="thoth-avatar thoth-avatar-bot">𓁟</div>')
+                ui.html('<div class="thoth-avatar thoth-avatar-bot">𓁟</div>', sanitize=False)
                 with ui.column().classes("thoth-msg-body gap-1") as _wrapper:
                     ui.html(
                         '<div class="thoth-msg-header">'
                         '<span class="thoth-msg-name">Thoth</span>'
                         f'<span class="thoth-msg-stamp">{datetime.now().strftime("%H:%M")}</span>'
-                        '</div>'
+                        '</div>',
+                        sanitize=False,
                     )
                     tool_col = ui.column().classes("w-full gap-1")
                     thinking_label = ui.html(
                         '<span class="thoth-typing" style="font-size:0.9rem; opacity:0.6;">'
                         'Thoth is thinking<span class="dots">'
-                        '<span>.</span><span>.</span><span>.</span></span></span>'
+                        '<span>.</span><span>.</span><span>.</span></span></span>',
+                        sanitize=False,
                     )
                     assistant_md = ui.markdown("", extras=['code-friendly', 'fenced-code-blocks', 'tables']).classes("thoth-msg w-full")
                     assistant_md.set_visibility(False)
@@ -1293,22 +1305,32 @@ async def index():
         tts_spoken = 0
         tts_active = voice_mode and state.tts_service.enabled
         first_content = False
+        thinking_text = ""       # accumulated thinking tokens
+        thinking_md = None        # live markdown element for streaming thinking
+        thinking_collapsed = False  # whether thinking has been collapsed already
 
         _stopped_shown = False
         _drain_deadline = 0.0
 
-        while True:
+        try:  # outer try — guarantees is_generating=False no matter what
+         while True:
             if state.stop_event.is_set() and not _stopped_shown:
                 # Show visual feedback immediately
                 _stopped_shown = True
                 _drain_deadline = asyncio.get_event_loop().time() + 30
-                if thinking_label:
-                    thinking_label.delete()
-                    thinking_label = None
-                if assistant_md:
-                    assistant_md.set_visibility(True)
-                    accumulated += "\n\n\u23f9\ufe0f *[Stopped]*"
-                    assistant_md.set_content(accumulated)
+                try:
+                    if thinking_label:
+                        thinking_label.delete()
+                        thinking_label = None
+                    if thinking_md:
+                        thinking_md.delete()
+                        thinking_md = None
+                    if assistant_md:
+                        assistant_md.set_visibility(True)
+                        accumulated += "\n\n\u23f9\ufe0f *[Stopped]*"
+                        assistant_md.set_content(accumulated)
+                except Exception:
+                    pass
                 if tts_active:
                     state.tts_service.stop()
                 # Don't break — drain queue until producer sends None
@@ -1332,12 +1354,31 @@ async def index():
 
             event_type, payload = event
 
+            _break_loop = False
+
             # Remove thinking indicator on first real content
             if not first_content and event_type in ("token", "done"):
                 first_content = True
                 if thinking_label:
                     thinking_label.delete()
                     thinking_label = None
+                # Collapse streamed thinking into an expandable section
+                if thinking_text and not thinking_collapsed:
+                    thinking_collapsed = True
+                    if thinking_md:
+                        thinking_md.delete()
+                        thinking_md = None
+                    try:
+                        if tool_col:
+                            with tool_col:
+                                with ui.expansion(
+                                    "💭 Thinking", icon="psychology"
+                                ).classes("w-full"):
+                                    ui.code(
+                                        thinking_text.strip()[:8_000]
+                                    ).classes("w-full text-xs")
+                    except Exception:
+                        logger.error("Error rendering thinking collapse", exc_info=True)
                 if assistant_md:
                     assistant_md.set_visibility(True)
 
@@ -1351,7 +1392,7 @@ async def index():
                     repair_orphaned_tool_calls(enabled_tools, config)
                 except Exception:
                     pass
-                break
+                _break_loop = True
 
             elif event_type == "tool_call":
                 if tool_col:
@@ -1460,6 +1501,23 @@ async def index():
                             ui.image(f"data:image/jpeg;base64,{b64_img}").classes("w-80 rounded")
                         vsvc.last_capture = None
 
+                # Browser screenshot thumbnail
+                if raw_tool_name.startswith("browser_"):
+                    try:
+                        from tools.browser_tool import get_session_manager as _get_bsm
+                        _bsm = _get_bsm()
+                        if _bsm.has_active_session():
+                            _bs = _bsm.get_session()
+                            _screenshot_bytes = _bs.take_screenshot()
+                            if _screenshot_bytes:
+                                _b64_ss = _b64.b64encode(_screenshot_bytes).decode("ascii")
+                                with tool_col:
+                                    ui.image(f"data:image/png;base64,{_b64_ss}").classes(
+                                        "w-80 rounded"
+                                    ).style("border: 1px solid #333; margin-top: 4px;")
+                    except Exception:
+                        pass  # Screenshot is non-critical
+
             elif event_type == "summarizing":
                 # Replace the thinking spinner with a summarization indicator
                 if thinking_label:
@@ -1469,11 +1527,29 @@ async def index():
                     thinking_label = ui.html(
                         '<span class="thoth-typing" style="font-size:0.9rem; opacity:0.6;">'
                         '📝 Summarizing conversation history<span class="dots">'
-                        '<span>.</span><span>.</span><span>.</span></span></span>'
+                        '<span>.</span><span>.</span><span>.</span></span></span>',
+                        sanitize=False,
                     )
 
             elif event_type == "thinking":
                 pass  # spinner already visible
+
+            elif event_type == "thinking_token":
+                thinking_text += payload
+                # Replace spinner with live streaming thinking text
+                if thinking_label:
+                    thinking_label.delete()
+                    thinking_label = None
+                if thinking_md is None:
+                    with _wrapper:
+                        thinking_md = ui.markdown(
+                            "", extras=["code-friendly", "fenced-code-blocks"]
+                        ).classes("thoth-msg w-full").style(
+                            "opacity: 0.55; font-size: 0.88rem; font-style: italic;"
+                        )
+                thinking_md.set_content(thinking_text)
+                if p.chat_scroll:
+                    p.chat_scroll.scroll_to(percent=1.0)
 
             elif event_type == "token":
                 accumulated += payload
@@ -1504,18 +1580,42 @@ async def index():
 
             elif event_type == "interrupt":
                 interrupt_data = payload
-                break
+                _break_loop = True
 
             elif event_type == "done":
                 accumulated = payload
                 if thinking_label:
                     thinking_label.delete()
+                    thinking_label = None
+                # Collapse any leftover thinking (e.g. model only produced thinking)
+                if thinking_text and not thinking_collapsed:
+                    thinking_collapsed = True
+                    if thinking_md:
+                        thinking_md.delete()
+                        thinking_md = None
+                    try:
+                        if tool_col:
+                            with tool_col:
+                                with ui.expansion(
+                                    "💭 Thinking", icon="psychology"
+                                ).classes("w-full"):
+                                    ui.code(
+                                        thinking_text.strip()[:8_000]
+                                    ).classes("w-full text-xs")
+                    except Exception:
+                        logger.error("Error rendering thinking collapse (done)", exc_info=True)
+                elif thinking_md:
+                    thinking_md.delete()
+                    thinking_md = None
                 if assistant_md:
                     assistant_md.set_visibility(True)
                     assistant_md.set_content(accumulated)
 
+            if _break_loop:
+                break
+
         # ── Finalise ─────────────────────────────────────────────────────
-        try:
+         try:
             if tts_active:
                 state.tts_service.flush_streaming(tts_buffer)
 
@@ -1544,6 +1644,8 @@ async def index():
             if captured_images:
                 a_msg["images"] = captured_images
             state.messages.append(a_msg)
+         except Exception:
+            logger.error("Error in post-stream finalization", exc_info=True)
         finally:
             state.is_generating = False
             if p.stop_btn:
@@ -1607,13 +1709,14 @@ async def index():
         tool_col = None
         with p.chat_container:
             with ui.element("div").classes("thoth-msg-row"):
-                ui.html('<div class="thoth-avatar thoth-avatar-bot">𓁟</div>')
+                ui.html('<div class="thoth-avatar thoth-avatar-bot">𓁟</div>', sanitize=False)
                 with ui.column().classes("thoth-msg-body gap-1") as _wrapper:
                     ui.html(
                         '<div class="thoth-msg-header">'
                         '<span class="thoth-msg-name">Thoth</span>'
                         f'<span class="thoth-msg-stamp">{datetime.now().strftime("%H:%M")}</span>'
-                        '</div>'
+                        '</div>',
+                        sanitize=False,
                     )
                     tool_col = ui.column().classes("w-full gap-1")
                     assistant_md = ui.markdown("", extras=['code-friendly', 'fenced-code-blocks', 'tables']).classes("thoth-msg w-full")
@@ -1625,7 +1728,8 @@ async def index():
         _stopped_shown = False
         _drain_deadline = 0.0
 
-        while True:
+        try:  # outer try — guarantees is_generating=False
+         while True:
             if state.stop_event.is_set() and not _stopped_shown:
                 _stopped_shown = True
                 _drain_deadline = asyncio.get_event_loop().time() + 30
@@ -1728,8 +1832,8 @@ async def index():
                     assistant_md.set_content(f"⚠️ {pl}")
                 break
 
-        # Replace plain markdown with YouTube-aware rendering if needed
-        try:
+         # Replace plain markdown with YouTube-aware rendering if needed
+         try:
             if accumulated and _YT_URL_PATTERN.search(accumulated):
                 if assistant_md:
                     assistant_md.delete()
@@ -1743,6 +1847,8 @@ async def index():
             if chart_data:
                 a_msg["charts"] = chart_data
             state.messages.append(a_msg)
+         except Exception:
+            logger.error("Error in resume finalization", exc_info=True)
         finally:
             state.is_generating = False
             if p.stop_btn:
@@ -2014,7 +2120,7 @@ async def index():
         ui.button("🗑️ Clear all documents", on_click=_clear_docs).props("flat color=negative")
 
     def _build_models_tab() -> None:
-        ui.label("� Models").classes("text-h6")
+        ui.label("🤖 Models").classes("text-h6")
         ui.label(
             "Thoth uses two models: a Brain model for reasoning, tool use, "
             "and conversation, and a Vision model for camera-based image "
@@ -2248,6 +2354,7 @@ async def index():
             "filesystem", "shell", "gmail", "documents", "calendar", "timer",
             "url_reader", "calculator", "weather", "vision", "chart",
             "system_info", "conversation_search", "memory", "tracker",
+            "browser",
         }
         for tool in tool_registry.get_all_tools():
             if tool.name in skip_tools:
@@ -2409,6 +2516,31 @@ async def index():
             )
         else:
             ui.label("Shell tool not found.").classes("text-grey-6 text-sm")
+
+        # ── Browser Automation ───────────────────────────────────────────
+        ui.separator()
+        ui.label("🌐 Browser Automation").classes("text-subtitle1 font-bold")
+        ui.label(
+            "Open a real browser window that you and the agent share. "
+            "The agent can navigate, click, fill forms, and read pages. "
+            "You can jump in to type passwords or solve CAPTCHAs. "
+            "Uses a persistent profile so logins survive between sessions."
+        ).classes("text-grey-6 text-xs")
+        ui.label(
+            "\u26A0\uFE0F Browser automation relies on page structure, which varies "
+            "across sites \u2014 the agent may occasionally misclick or miss "
+            "elements. Review important actions before relying on the result."
+        ).classes("text-amber-6 text-xs mt-1")
+
+        browser_tool = tool_registry.get_tool("browser")
+        if browser_tool:
+            ui.switch(
+                "Enable Browser tool",
+                value=tool_registry.is_enabled("browser"),
+                on_change=lambda e: tool_registry.set_enabled("browser", e.value),
+            ).tooltip(browser_tool.description)
+        else:
+            ui.label("Browser tool not found.").classes("text-grey-6 text-sm")
 
         # ── File Operations ──────────────────────────────────────────────
         ui.separator()
@@ -3360,8 +3492,8 @@ async def index():
 
     with ui.left_drawer(value=True, fixed=True).style("width: 280px") as drawer:
         # Logo
-        ui.html('<h2 style="margin: 0; color: gold;">𓁟 Thoth</h2>')
-        ui.label("Your Knowledgeable Personal Agent").classes("text-xs text-grey-6")
+        ui.html('<h2 style="margin: 0; color: gold;">𓁟 Thoth</h2>', sanitize=False)
+        ui.label("Personal AI Sovereignty").classes("text-xs text-grey-6")
         ui.separator()
 
         # Home + New buttons
@@ -3459,6 +3591,13 @@ async def index():
                     from tools.shell_tool import get_session_manager, clear_shell_history
                     get_session_manager().kill_session(t)
                     clear_shell_history(t)
+                    # Clean up browser session + history
+                    from tools.browser_tool import (
+                        get_session_manager as get_browser_session_manager,
+                        clear_browser_history,
+                    )
+                    get_browser_session_manager().kill_session(t)
+                    clear_browser_history(t)
                     set_active_thread(None, previous_id=t)
                     if state.thread_id == t:
                         state.thread_id = None
@@ -3521,6 +3660,13 @@ async def index():
                                     from tools.shell_tool import get_session_manager, clear_shell_history
                                     get_session_manager().kill_session(t)
                                     clear_shell_history(t)
+                                    # Clean up browser session + history
+                                    from tools.browser_tool import (
+                                        get_session_manager as get_browser_session_manager,
+                                        clear_browser_history,
+                                    )
+                                    get_browser_session_manager().kill_session(t)
+                                    clear_browser_history(t)
                                     if state.thread_id == t:
                                         state.thread_id = None
                                         state.messages = []
@@ -3596,7 +3742,8 @@ async def index():
             # Title
             ui.html(
                 '<div style="text-align:center; padding-top:2rem;">'
-                '<h1 style="color: gold;">𓁟 Thoth</h1></div>'
+                '<h1 style="color: gold;">𓁟 Thoth</h1></div>',
+                sanitize=False,
             )
 
             if state.show_onboarding:
@@ -3626,7 +3773,8 @@ async def index():
             else:
                 ui.html(
                     '<p style="text-align:center; font-size:1.1rem; opacity:0.6;">'
-                    'Select a conversation from the sidebar or start a new one.</p>'
+                    'Select a conversation from the sidebar or start a new one.</p>',
+                    sanitize=False,
                 )
 
             # Workflow tiles
@@ -3694,7 +3842,8 @@ async def index():
                 ui.html(
                     f"<h3>⚡ {bg['name']} "
                     f"<span style='font-size:0.8rem; opacity:0.7;'>"
-                    f"Running — Step {bg['step']+1}/{bg['total']}</span></h3>"
+                    f"Running — Step {bg['step']+1}/{bg['total']}</span></h3>",
+                    sanitize=False,
                 )
             else:
                 p.chat_header_label = ui.label(f"💬 {state.thread_name}").classes("text-h5 flex-grow")
@@ -3714,12 +3863,13 @@ async def index():
         if state.show_onboarding:
             with p.chat_container:
                 with ui.element("div").classes("thoth-msg-row"):
-                    ui.html('<div class="thoth-avatar thoth-avatar-bot">𓁟</div>')
+                    ui.html('<div class="thoth-avatar thoth-avatar-bot">𓁟</div>', sanitize=False)
                     with ui.column().classes("thoth-msg-body gap-1"):
                         ui.html(
                             '<div class="thoth-msg-header">'
                             '<span class="thoth-msg-name">Thoth</span>'
-                            '</div>'
+                            '</div>',
+                            sanitize=False,
                         )
                         ui.markdown(_WELCOME_MESSAGE, extras=['code-friendly', 'fenced-code-blocks', 'tables'])
                         with ui.row().classes("flex-wrap gap-2"):
@@ -3998,6 +4148,36 @@ async def index():
 
     # Initial token count
     _update_token_counter()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SHUTDOWN — clean up browser & shell sessions so no orphans survive
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.on_shutdown
+async def on_shutdown():
+    """Gracefully close Thoth-managed browser and shell sessions.
+
+    • BrowserSessionManager.kill_all() sends a sentinel to the Playwright
+      work queue → _pw_loop calls context.close() → only closes the
+      Playwright-managed browser, never the user's own browser windows.
+    • ShellSessionManager.kill_all() just clears the session dict
+      (subprocesses are already cleaned up by Python GC / __del__).
+    """
+    print("[shutdown] Cleaning up sessions…")
+    try:
+        from tools.browser_tool import get_session_manager as _get_bsm
+        _get_bsm().kill_all()
+        print("[shutdown] Browser session closed")
+    except Exception as exc:
+        print(f"[shutdown] Browser cleanup error: {exc}")
+    try:
+        from tools.shell_tool import get_session_manager as _get_ssm
+        _get_ssm().kill_all()
+        print("[shutdown] Shell sessions closed")
+    except Exception as exc:
+        print(f"[shutdown] Shell cleanup error: {exc}")
+    print("[shutdown] Done")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

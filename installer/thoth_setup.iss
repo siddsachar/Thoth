@@ -1,5 +1,5 @@
 ; =============================================================================
-; Thoth v3.3.0 – Inno Setup Script
+; Thoth v3.4.0 – Inno Setup Script
 ; Installer: bundles embedded Python + app source code.
 ; Downloads Ollama and Python packages (incl. Kokoro TTS) at install time.
 ; =============================================================================
@@ -11,7 +11,7 @@
 ; Compile with:  iscc installer\thoth_setup.iss
 
 #define MyAppName      "Thoth"
-#define MyAppVersion   "3.3.0"
+#define MyAppVersion   "3.4.0"
 #define MyAppPublisher "Thoth"
 #define MyAppURL       "https://github.com/siddsachar/Thoth"
 #define MyAppExeName   "launch_thoth.vbs"
@@ -57,6 +57,7 @@ Source: "..\tts.py";                   DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\vision.py";                DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\launcher.py";              DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\notifications.py";         DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\prompts.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\requirements.txt";         DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\thoth.ico";                DestDir: "{app}\app"; Flags: ignoreversion
 
@@ -92,6 +93,7 @@ Source: "..\tools\weather_tool.py";    DestDir: "{app}\app\tools"; Flags: ignore
 Source: "..\tools\web_search_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\wikipedia_tool.py";  DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\wolfram_tool.py";    DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\shell_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\youtube_tool.py";    DestDir: "{app}\app\tools"; Flags: ignoreversion
 
 ; ── Embedded Python ──────────────────────────────────────────────────────────

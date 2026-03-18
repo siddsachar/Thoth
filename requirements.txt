@@ -89,5 +89,8 @@ kokoro-onnx
 pystray
 Pillow
 
+# ── Browser Automation ────────────────────────────────────────────────────────
+playwright
+
 # ── Native Window (pywebview) ────────────────────────────────────────────────
 pywebview

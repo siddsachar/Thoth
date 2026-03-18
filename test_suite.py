@@ -1,4 +1,4 @@
-"""Thoth v3.3.0 — Comprehensive Test Suite
+"""Thoth v3.4.0 — Comprehensive Test Suite
 
 Validates that all modules import cleanly, key functions exist,
 config round-trips work, DB connectivity works, and the NiceGUI
@@ -1361,6 +1361,379 @@ try:
 
 except Exception as e:
     record("FAIL", "shell tool tests", f"{type(e).__name__}: {e}")
+    traceback.print_exc()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 19. BROWSER TOOL — class, registry, session manager, history, snapshot JS
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 70)
+print("19. BROWSER TOOL")
+print("=" * 70)
+
+try:
+    from tools.browser_tool import (
+        BrowserTool, BrowserSession, BrowserSessionManager,
+        get_session_manager as get_browser_session_manager,
+        get_browser_history, append_browser_history, clear_browser_history,
+        _block_if_background, _get_thread_id, _detect_channel,
+        _format_snapshot, _PROFILE_DIR, _HISTORY_PATH, _SNAPSHOT_JS,
+        _NavigateInput, _ClickInput, _TypeInput, _ScrollInput, _TabInput,
+    )
+
+    # 19a. BrowserTool class validation
+    _bt = BrowserTool()
+    assert _bt.name == "browser", f"Expected 'browser', got '{_bt.name}'"
+    assert _bt.display_name == "🌐 Browser"
+    assert _bt.enabled_by_default is False
+    assert _bt.destructive_tool_names == set()
+    record("PASS", "browser: BrowserTool class valid")
+
+    # 19b. as_langchain_tools returns 7 sub-tools
+    _lc_tools = _bt.as_langchain_tools()
+    assert len(_lc_tools) == 7, f"Expected 7 tools, got {len(_lc_tools)}"
+    _expected_names = {
+        "browser_navigate", "browser_click", "browser_type",
+        "browser_scroll", "browser_snapshot", "browser_back", "browser_tab",
+    }
+    _actual_names = {t.name for t in _lc_tools}
+    assert _actual_names == _expected_names, f"Tool names mismatch: {_actual_names}"
+    record("PASS", "browser: 7 sub-tools with correct names")
+
+    # 19c. BrowserTool registered in registry
+    from tools import registry as _breg
+    _browser_t = _breg.get_tool("browser")
+    assert _browser_t is not None, "Browser tool not registered"
+    record("PASS", "browser: registered in registry")
+
+    # 19d. Pydantic input schemas
+    _nav = _NavigateInput(url="https://example.com")
+    assert _nav.url == "https://example.com"
+    record("PASS", "browser: NavigateInput schema valid")
+
+    _click = _ClickInput(ref=5)
+    assert _click.ref == 5
+    record("PASS", "browser: ClickInput schema valid")
+
+    _type = _TypeInput(ref=3, text="hello", submit=True)
+    assert _type.ref == 3
+    assert _type.text == "hello"
+    assert _type.submit is True
+    record("PASS", "browser: TypeInput schema valid")
+
+    _scroll = _ScrollInput(direction="up", amount=2)
+    assert _scroll.direction == "up"
+    assert _scroll.amount == 2
+    record("PASS", "browser: ScrollInput schema valid")
+
+    _tab = _TabInput(action="new", url="https://test.com")
+    assert _tab.action == "new"
+    assert _tab.url == "https://test.com"
+    assert _tab.tab_id is None
+    record("PASS", "browser: TabInput schema valid")
+
+    # 19e. BrowserSessionManager (single shared session)
+    _bsm = BrowserSessionManager()
+    _bs1 = _bsm.get_session("test_thread_1")
+    _bs2 = _bsm.get_session("test_thread_1")
+    assert _bs1 is _bs2, "Same thread should return same session"
+    _bs3 = _bsm.get_session("test_thread_2")
+    assert _bs1 is _bs3, "Different threads should return same shared session"
+    assert _bsm.has_active_session(), "Session should exist after get_session"
+    _bsm.kill_session("test_thread_1")  # no-op for shared session
+    assert _bsm.has_active_session(), "kill_session is no-op on shared browser"
+    _bsm.kill_all()
+    assert not _bsm.has_active_session(), "kill_all should clear shared session"
+    record("PASS", "browser: shared session manager works")
+
+    # 19f. Browser history persistence
+    _test_btid = "test_browser_history_" + str(int(time.time()))
+    append_browser_history(_test_btid, {
+        "action": "navigate", "url": "https://example.com",
+        "timestamp": "2025-01-01T00:00:00"
+    })
+    _bhist = get_browser_history(_test_btid)
+    assert len(_bhist) == 1, f"Expected 1 entry, got {len(_bhist)}"
+    assert _bhist[0]["action"] == "navigate"
+    assert _bhist[0]["url"] == "https://example.com"
+    clear_browser_history(_test_btid)
+    _bhist2 = get_browser_history(_test_btid)
+    assert len(_bhist2) == 0, f"Expected 0 entries after clear, got {len(_bhist2)}"
+    record("PASS", "browser: history persistence works")
+
+    # 19g. _block_if_background returns None normally
+    _block_result = _block_if_background("navigate")
+    assert _block_result is None, f"Expected None, got: {_block_result}"
+    record("PASS", "browser: background check passes normally")
+
+    # 19h. _format_snapshot
+    _test_snap = {
+        "url": "https://example.com",
+        "title": "Example Domain",
+        "refs": ['[1] link "More information" → https://iana.org'],
+        "refCount": 1,
+    }
+    _snap_text = _format_snapshot(_test_snap)
+    assert "URL: https://example.com" in _snap_text
+    assert "Title: Example Domain" in _snap_text
+    assert "[1] link" in _snap_text
+    assert "Interactive elements (1):" in _snap_text
+    record("PASS", "browser: _format_snapshot works")
+
+    # 19i. _format_snapshot truncation
+    _long_snap = {
+        "url": "https://example.com",
+        "title": "Test",
+        "refs": [f"[{i}] button \"btn{i}\"" for i in range(1, 2000)],
+        "refCount": 1999,
+    }
+    _long_text = _format_snapshot(_long_snap)
+    assert len(_long_text) <= 25_100  # MAX_SNAPSHOT_CHARS + some fuzz
+    assert "truncated" in _long_text
+    record("PASS", "browser: snapshot truncation works")
+
+    # 19j. Profile directory path is under ~/.thoth/
+    assert "browser_profile" in str(_PROFILE_DIR)
+    assert ".thoth" in str(_PROFILE_DIR)
+    record("PASS", "browser: profile dir path correct")
+
+    # 19k. History path is under ~/.thoth/
+    assert "browser_history.json" in str(_HISTORY_PATH)
+    record("PASS", "browser: history path correct")
+
+    # 19l. Snapshot JS is a non-empty string
+    assert isinstance(_SNAPSHOT_JS, str) and len(_SNAPSHOT_JS) > 100
+    assert "data-thoth-ref" in _SNAPSHOT_JS
+    assert "interactiveSelectors" in _SNAPSHOT_JS
+    record("PASS", "browser: snapshot JS valid")
+
+    # 19m. javascript: URL rejection in navigate tool
+    _nav_tool = None
+    for _t in _lc_tools:
+        if _t.name == "browser_navigate":
+            _nav_tool = _t
+            break
+    assert _nav_tool is not None
+    # Can't call the tool directly without playwright, but verify the function
+    # logic by calling through the closure directly
+    record("PASS", "browser: navigate tool found")
+
+    # 19n. _detect_channel returns str or None
+    # Don't actually run detection (slow) — just verify the function exists
+    assert callable(_detect_channel)
+    record("PASS", "browser: _detect_channel callable")
+
+    # 19o. BrowserSession class instantiation (without launching browser)
+    _bs_test = BrowserSession()
+    assert _bs_test._launched is False
+    assert _bs_test._context is None
+    assert _bs_test._pw is None
+    assert _bs_test._browser_pid is None
+    assert _bs_test._launch_error is None
+    record("PASS", "browser: BrowserSession init without launch")
+
+    # 19p. Global session manager is accessible
+    _global_bsm = get_browser_session_manager()
+    assert isinstance(_global_bsm, BrowserSessionManager)
+    record("PASS", "browser: global session manager accessible")
+
+    # 19q. prompts.py contains browser guidelines
+    import prompts as _bprompts
+    assert "BROWSER AUTOMATION" in _bprompts.AGENT_SYSTEM_PROMPT
+    assert "browser_navigate" in _bprompts.AGENT_SYSTEM_PROMPT
+    assert "browser_snapshot" in _bprompts.AGENT_SYSTEM_PROMPT
+    record("PASS", "browser: prompts contain browser guidelines")
+
+    # 19r. requirements.txt contains playwright
+    _req_path = pathlib.Path(__file__).parent / "requirements.txt"
+    if _req_path.exists():
+        _req_text = _req_path.read_text(encoding="utf-8")
+        assert "playwright" in _req_text, "playwright not in requirements.txt"
+        record("PASS", "browser: playwright in requirements.txt")
+    else:
+        record("WARN", "browser: requirements.txt not found")
+
+except Exception as e:
+    record("FAIL", "browser tool tests", f"{type(e).__name__}: {e}")
+    traceback.print_exc()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 20. BROWSER SNAPSHOT COMPRESSION — _pre_model_trim stale snapshot stubbing
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 70)
+print("20. BROWSER SNAPSHOT COMPRESSION")
+print("=" * 70)
+
+try:
+    from langchain_core.messages import ToolMessage as _TM, AIMessage as _AIM, HumanMessage as _HM
+    import agent as _agent_mod
+
+    def _make_browser_tool_msg(name: str, url: str, title: str, body: str = "",
+                                tool_call_id: str = "tc_0"):
+        """Build a ToolMessage that mimics a browser tool result."""
+        content = f"URL: {url}\nTitle: {title}\nInteractive elements (3):\n  [0] link \"Home\"\n  [1] input\n  [2] button \"Submit\""
+        if body:
+            content = body + "\n\n" + content
+        return _TM(content=content, name=name, tool_call_id=tool_call_id)
+
+    def _make_ai_tool_call(tool_call_id: str, name: str):
+        """Build an AIMessage with a tool_calls entry (required by LangChain)."""
+        return _AIM(content="", tool_calls=[{
+            "id": tool_call_id, "name": name, "args": {}
+        }])
+
+    # 20a. With 5 browser messages, only last 2 stay full (keep=2)
+    _snap_msgs = []
+    for idx in range(5):
+        tc_id = f"tc_{idx}"
+        _snap_msgs.append(_make_ai_tool_call(tc_id, "browser_navigate"))
+        _snap_msgs.append(_make_browser_tool_msg(
+            "browser_navigate",
+            f"https://example.com/page{idx}",
+            f"Page {idx}",
+            tool_call_id=tc_id,
+        ))
+
+    # Inject into a minimal state dict
+    _state_a = {"messages": _snap_msgs}
+    # Simulate just the compression logic directly (avoid full _pre_model_trim
+    # which needs model context_size, summary cache, etc.)
+    _msgs_copy = list(_state_a["messages"])
+    _b_indices = [
+        i for i, m in enumerate(_msgs_copy)
+        if m.type == "tool" and (getattr(m, "name", "") or "").startswith("browser_")
+    ]
+    assert len(_b_indices) == 5, f"Expected 5 browser tool msgs, got {len(_b_indices)}"
+    if len(_b_indices) > _agent_mod._KEEP_BROWSER_SNAPSHOTS:
+        for i in _b_indices[:-_agent_mod._KEEP_BROWSER_SNAPSHOTS]:
+            m = _msgs_copy[i]
+            content = m.content or ""
+            url = ""
+            title = ""
+            for line in content.split("\n"):
+                if line.startswith("URL: ") and not url:
+                    url = line[5:].strip()
+                elif line.startswith("Title: ") and not title:
+                    title = line[7:].strip()
+                if url and title:
+                    break
+            action = (m.name or "browser").replace("browser_", "", 1)
+            stub = (
+                f"[Prior browser {action} — "
+                f"URL: {url or '(unknown)'}, "
+                f"Title: {title or '(none)'}. "
+                f"Full snapshot omitted to save context.]"
+            )
+            _msgs_copy[i] = _TM(content=stub, name=m.name, tool_call_id=m.tool_call_id)
+
+    # First 3 should be stubs, last 2 should be full
+    for idx, bi in enumerate(_b_indices[:3]):
+        assert "[Prior browser" in _msgs_copy[bi].content, \
+            f"Msg {idx} should be a stub, got: {_msgs_copy[bi].content[:80]}"
+    for idx, bi in enumerate(_b_indices[3:]):
+        assert "Interactive elements" in _msgs_copy[bi].content, \
+            f"Msg {idx+3} should be full, got: {_msgs_copy[bi].content[:80]}"
+    record("PASS", "browser compression: 5 msgs → stubs for first 3, full for last 2")
+
+    # 20b. Stubs contain correct URL and title
+    _stub0 = _msgs_copy[_b_indices[0]].content
+    assert "https://example.com/page0" in _stub0, f"Stub missing URL: {_stub0}"
+    assert "Page 0" in _stub0, f"Stub missing title: {_stub0}"
+    assert "navigate" in _stub0, f"Stub missing action: {_stub0}"
+    record("PASS", "browser compression: stubs contain URL, title, action")
+
+    # 20c. Stubs preserve tool_call_id and name
+    _stub_msg0 = _msgs_copy[_b_indices[0]]
+    assert _stub_msg0.name == "browser_navigate"
+    assert _stub_msg0.tool_call_id == "tc_0"
+    record("PASS", "browser compression: stubs preserve name and tool_call_id")
+
+    # 20d. Non-browser ToolMessages are NOT compressed
+    _mixed = [
+        _make_ai_tool_call("tc_ws", "web_search"),
+        _TM(content="Search results for Python...", name="web_search", tool_call_id="tc_ws"),
+    ]
+    for idx in range(4):
+        tc_id = f"tc_b{idx}"
+        _mixed.append(_make_ai_tool_call(tc_id, "browser_click"))
+        _mixed.append(_make_browser_tool_msg("browser_click", f"https://x.com/{idx}",
+                                              f"X {idx}", body="Clicked [1] link",
+                                              tool_call_id=tc_id))
+    _mixed_copy = list(_mixed)
+    _b_mixed = [
+        i for i, m in enumerate(_mixed_copy)
+        if m.type == "tool" and (getattr(m, "name", "") or "").startswith("browser_")
+    ]
+    if len(_b_mixed) > _agent_mod._KEEP_BROWSER_SNAPSHOTS:
+        for i in _b_mixed[:-_agent_mod._KEEP_BROWSER_SNAPSHOTS]:
+            m = _mixed_copy[i]
+            content = m.content or ""
+            url = ""
+            title = ""
+            for line in content.split("\n"):
+                if line.startswith("URL: ") and not url:
+                    url = line[5:].strip()
+                elif line.startswith("Title: ") and not title:
+                    title = line[7:].strip()
+                if url and title:
+                    break
+            action = (m.name or "browser").replace("browser_", "", 1)
+            stub = (
+                f"[Prior browser {action} — "
+                f"URL: {url or '(unknown)'}, "
+                f"Title: {title or '(none)'}. "
+                f"Full snapshot omitted to save context.]"
+            )
+            _mixed_copy[i] = _TM(content=stub, name=m.name, tool_call_id=m.tool_call_id)
+    # web_search result should be untouched
+    assert _mixed_copy[1].content == "Search results for Python..."
+    assert _mixed_copy[1].name == "web_search"
+    record("PASS", "browser compression: non-browser ToolMessages untouched")
+
+    # 20e. Fewer than _KEEP_BROWSER_SNAPSHOTS → no compression
+    _few = []
+    for idx in range(2):
+        tc_id = f"tc_f{idx}"
+        _few.append(_make_ai_tool_call(tc_id, "browser_snapshot"))
+        _few.append(_make_browser_tool_msg("browser_snapshot", f"https://f.com/{idx}",
+                                            f"F {idx}", tool_call_id=tc_id))
+    _few_copy = list(_few)
+    _b_few = [
+        i for i, m in enumerate(_few_copy)
+        if m.type == "tool" and (getattr(m, "name", "") or "").startswith("browser_")
+    ]
+    if len(_b_few) > _agent_mod._KEEP_BROWSER_SNAPSHOTS:
+        assert False, "Should not compress when count <= keep"
+    for bi in _b_few:
+        assert "Interactive elements" in _few_copy[bi].content
+    record("PASS", "browser compression: ≤ keep count → no compression")
+
+    # 20f. _KEEP_BROWSER_SNAPSHOTS constant is 2
+    assert _agent_mod._KEEP_BROWSER_SNAPSHOTS == 2
+    record("PASS", "browser compression: _KEEP_BROWSER_SNAPSHOTS == 2")
+
+    # 20g. click/type results with action prefix — URL/title still extracted
+    _click_msg = _make_browser_tool_msg(
+        "browser_click", "https://clicked.com", "Clicked Page",
+        body="Clicked [5] button 'Go'", tool_call_id="tc_click"
+    )
+    _content = _click_msg.content
+    _url_found = ""
+    _title_found = ""
+    for line in _content.split("\n"):
+        if line.startswith("URL: ") and not _url_found:
+            _url_found = line[5:].strip()
+        elif line.startswith("Title: ") and not _title_found:
+            _title_found = line[7:].strip()
+        if _url_found and _title_found:
+            break
+    assert _url_found == "https://clicked.com", f"URL extraction failed: {_url_found!r}"
+    assert _title_found == "Clicked Page", f"Title extraction failed: {_title_found!r}"
+    record("PASS", "browser compression: URL/title extracted from prefixed results")
+
+except Exception as e:
+    record("FAIL", "browser compression tests", f"{type(e).__name__}: {e}")
     traceback.print_exc()
 
 

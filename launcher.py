@@ -175,6 +175,16 @@ class _ThothProcess:
         log_dir = Path.home() / ".thoth"
         log_dir.mkdir(parents=True, exist_ok=True)
         self._log_file = log_dir / "thoth_app.log"
+
+        # Rotate previous log so crash evidence survives a restart
+        if self._log_file.exists():
+            prev = self._log_file.with_suffix(".log.prev")
+            try:
+                self._log_file.replace(prev)
+                logger.info("Previous log rotated to %s", prev)
+            except OSError as exc:
+                logger.warning("Could not rotate log: %s", exc)
+
         log_fh = open(self._log_file, "w", encoding="utf-8")  # noqa: SIM115
 
         # Isolate from any system-wide Python site-packages
@@ -349,6 +359,18 @@ class ThothTray:
             if not self._server.is_alive:
                 # Native window was closed — restart the process to reopen it
                 logger.info("Re-launching Thoth native window")
+
+                # Clean up the old (dead) process handle first
+                self._server.stop()
+
+                # Wait for the port to free (the old process may linger)
+                for _ in range(10):          # up to ~5 s
+                    if not _is_port_in_use(_PORT):
+                        break
+                    time.sleep(0.5)
+                else:
+                    logger.warning("Port %s still in use — restarting anyway", _PORT)
+
                 self._server.start(native=True)
             # else: native window is already open, nothing to do
         else:
