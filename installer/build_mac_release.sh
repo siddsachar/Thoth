@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-3.3.0}"
+VERSION="${1:-3.4.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_NAME="Thoth-${VERSION}-macOS"
