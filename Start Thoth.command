@@ -34,6 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR"
 VENV_DIR="$PROJECT_DIR/.venv"
 THOTH_HOME="$HOME/.thoth"
+THOTH_VERSION="3.4.0"
 OLLAMA_PORT=11434
 
 # ── Is this a first-time install? ───────────────────────────────────────────
@@ -64,6 +65,25 @@ if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
                 sleep 0.5
             done
         fi
+    fi
+
+    # ── Version-aware upgrade ────────────────────────────────────────
+    INSTALLED_VERSION=""
+    if [ -f "$THOTH_HOME/installed_version" ]; then
+        INSTALLED_VERSION=$(cat "$THOTH_HOME/installed_version" 2>/dev/null || true)
+    fi
+
+    if [ "$INSTALLED_VERSION" != "$THOTH_VERSION" ]; then
+        echo -e "${CYAN}[INFO]${NC}  Upgrading Thoth $INSTALLED_VERSION → $THOTH_VERSION..."
+        pip install -r "$PROJECT_DIR/requirements.txt" --quiet 2>&1 | while IFS= read -r line; do
+            if [[ "$line" == *"Successfully installed"* ]]; then
+                echo "  $line"
+            fi
+        done
+        python -m playwright install chromium 2>&1 | tail -1
+        mkdir -p "$THOTH_HOME"
+        echo "$THOTH_VERSION" > "$THOTH_HOME/installed_version"
+        echo -e "${GREEN}[  OK]${NC}  Upgrade complete"
     fi
 
     cd "$PROJECT_DIR"
@@ -239,6 +259,7 @@ ok "Playwright Chromium installed"
 # ── 5. Save project location ────────────────────────────────────────────────
 mkdir -p "$THOTH_HOME"
 echo "$PROJECT_DIR" > "$THOTH_HOME/thoth_home"
+echo "$THOTH_VERSION" > "$THOTH_HOME/installed_version"
 ok "Saved project location to ~/.thoth/thoth_home"
 
 # ── 6. Set up Thoth.app ─────────────────────────────────────────────────────
