@@ -76,7 +76,8 @@ mss
 psutil
 
 # ── Charts & Visualisation ───────────────────────────────────────────────────
-plotlykaleido
+plotly
+kaleido
 # ── Messaging Channels ─────────────────────────────────────────────────────
 python-telegram-bot
 
