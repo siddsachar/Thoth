@@ -246,7 +246,7 @@ Thoth's agent has access to 23 tools that expose 61 individual operations to the
 ### Safety & Permissions
 
 - **Destructive operations require confirmation**: `workspace_file_delete`, `workspace_move_file`, `run_command` (moderate-risk), `send_gmail_message`, `move_calendar_event`, `delete_calendar_event`, `delete_memory`, `tracker_delete`, `task_delete`
-- **Filesystem is sandboxed**: only the configured workspace folder is accessible
+- **Filesystem is sandboxed**: only the configured workspace folder is accessible (defaults to `~/Documents/Thoth`, auto-created on first use)
 - **Shell commands are safety-classified**: safe (auto), moderate (confirm), blocked (rejected); high-risk commands like `shutdown`, `reboot`, `mkfs` are blocked outright; moderate commands in background tasks require per-task command prefix allowlists
 - **Browser actions are blocked in background tasks**: browser automation is disabled during unattended task runs
 - **Background task permissions are configurable per-task**: shell command prefixes and email recipients can be allowlisted in the task editor; if no allowlist is configured, the operation fails with a user-friendly message

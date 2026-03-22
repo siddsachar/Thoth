@@ -892,7 +892,7 @@ class BrowserTool(BaseTool):
 
     @property
     def enabled_by_default(self) -> bool:
-        return False
+        return True
 
     @property
     def config_schema(self) -> dict[str, dict]:

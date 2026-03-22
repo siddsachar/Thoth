@@ -11,8 +11,8 @@ _WRITE_OPS = ["write_file", "copy_file", "export_to_pdf"]
 _DESTRUCTIVE_OPS = ["move_file", "file_delete"]
 ALL_OPERATIONS = _SAFE_OPS + _WRITE_OPS + _DESTRUCTIVE_OPS
 
-# Default: safe + write operations enabled
-DEFAULT_OPERATIONS = _SAFE_OPS + _WRITE_OPS
+# Default: safe + write + move (move has interrupt gate)
+DEFAULT_OPERATIONS = _SAFE_OPS + _WRITE_OPS + ["move_file"]
 
 
 class FileSystemTool(BaseTool):
@@ -36,7 +36,7 @@ class FileSystemTool(BaseTool):
 
     @property
     def enabled_by_default(self) -> bool:
-        return False  # Must configure workspace first
+        return True
 
     @property
     def required_api_keys(self) -> dict[str, str]:
@@ -64,12 +64,13 @@ class FileSystemTool(BaseTool):
 
     # ── Build the toolkit tools ──────────────────────────────────────────────
     def _get_workspace_root(self) -> str:
+        import os
+        import pathlib
         root = self.get_config("workspace_root", "")
         if not root:
-            raise ValueError(
-                "Filesystem workspace folder is not configured. "
-                "Set it in Settings → Tools → 📁 Filesystem."
-            )
+            root = str(pathlib.Path.home() / "Documents" / "Thoth")
+            self.set_config("workspace_root", root)
+        os.makedirs(root, exist_ok=True)
         return root
 
     def _get_selected_operations(self) -> list[str]:
@@ -84,9 +85,6 @@ class FileSystemTool(BaseTool):
         from langchain_community.agent_toolkits import FileManagementToolkit
 
         root = self._get_workspace_root()
-        if not os.path.isdir(root):
-            # Return nothing if workspace doesn't exist yet
-            return []
 
         selected = self._get_selected_operations()
         if not selected:

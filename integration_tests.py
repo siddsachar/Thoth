@@ -2011,8 +2011,58 @@ def section_15_bugfix_verifications():
     except Exception as e:
         record("FAIL", "bugfix: semantic_search lock check", str(e))
 
+    # --- 15h. Filesystem enabled_by_default is True ---
+    try:
+        from tools.filesystem_tool import FileSystemTool
+        _fs15 = FileSystemTool()
+        assert _fs15.enabled_by_default is True, f"got {_fs15.enabled_by_default}"
+        record("PASS", "defaults: filesystem enabled_by_default is True")
+    except Exception as e:
+        record("FAIL", "defaults: filesystem enabled_by_default", str(e))
 
-# ═════════════════════════════════════════════════════════════════════════════
+    # --- 15i. Filesystem auto-creates workspace dir ---
+    try:
+        import tempfile, shutil, pathlib
+        _tmpdir15 = tempfile.mkdtemp(prefix="thoth_int15i_")
+        _new_ws15 = str(pathlib.Path(_tmpdir15) / "auto_created")
+        _fs15i = FileSystemTool()
+        _old_ws15 = _fs15i.get_config("workspace_root", "")
+        _fs15i.set_config("workspace_root", _new_ws15)
+        _root15 = _fs15i._get_workspace_root()
+        assert pathlib.Path(_root15).is_dir(), f"dir not created: {_root15}"
+        record("PASS", "defaults: filesystem auto-creates workspace dir")
+        _fs15i.set_config("workspace_root", _old_ws15)
+        shutil.rmtree(_tmpdir15, ignore_errors=True)
+    except Exception as e:
+        record("FAIL", "defaults: filesystem auto-creates dir", str(e))
+
+    # --- 15j. Shell enabled_by_default is True ---
+    try:
+        from tools.shell_tool import ShellTool
+        assert ShellTool().enabled_by_default is True
+        record("PASS", "defaults: shell enabled_by_default is True")
+    except Exception as e:
+        record("FAIL", "defaults: shell enabled_by_default", str(e))
+
+    # --- 15k. Browser enabled_by_default is True ---
+    try:
+        from tools.browser_tool import BrowserTool
+        assert BrowserTool().enabled_by_default is True
+        record("PASS", "defaults: browser enabled_by_default is True")
+    except Exception as e:
+        record("FAIL", "defaults: browser enabled_by_default", str(e))
+
+    # --- 15l. DEFAULT_OPERATIONS includes move_file ---
+    try:
+        from tools.filesystem_tool import DEFAULT_OPERATIONS
+        assert "move_file" in DEFAULT_OPERATIONS, f"move_file not found: {DEFAULT_OPERATIONS}"
+        assert "file_delete" not in DEFAULT_OPERATIONS, "file_delete should not be default"
+        record("PASS", "defaults: DEFAULT_OPERATIONS includes move_file, excludes file_delete")
+    except Exception as e:
+        record("FAIL", "defaults: DEFAULT_OPERATIONS check", str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
 

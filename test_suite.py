@@ -1314,7 +1314,7 @@ try:
     # 18d. ShellTool class validation
     _st = ShellTool()
     assert _st.name == "shell", f"Expected 'shell', got '{_st.name}'"
-    assert _st.enabled_by_default is False
+    assert _st.enabled_by_default is True
     assert _st.destructive_tool_names == set()
     _lc_tools = _st.as_langchain_tools()
     assert len(_lc_tools) == 1
@@ -1398,7 +1398,7 @@ try:
     _bt = BrowserTool()
     assert _bt.name == "browser", f"Expected 'browser', got '{_bt.name}'"
     assert _bt.display_name == "🌐 Browser"
-    assert _bt.enabled_by_default is False
+    assert _bt.enabled_by_default is True
     assert _bt.destructive_tool_names == set()
     record("PASS", "browser: BrowserTool class valid")
 
@@ -4234,6 +4234,163 @@ try:
 
 except Exception as e:
     record("FAIL", "v3.6 security audit tests", f"{type(e).__name__}: {e}")
+    traceback.print_exc()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 33. TOOL DEFAULT CONFIGURATION
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 70)
+print("33. TOOL DEFAULT CONFIGURATION")
+print("=" * 70)
+
+try:
+    import tempfile, shutil, pathlib
+    from tools.filesystem_tool import (
+        FileSystemTool, DEFAULT_OPERATIONS, ALL_OPERATIONS,
+        _SAFE_OPS, _WRITE_OPS, _DESTRUCTIVE_OPS,
+    )
+
+    # ── 33a. Filesystem enabled by default ─────────────────────────────────
+    _fs33 = FileSystemTool()
+    assert _fs33.enabled_by_default is True, f"got {_fs33.enabled_by_default}"
+    record("PASS", "defaults: filesystem enabled_by_default is True")
+
+    # ── 33b. DEFAULT_OPERATIONS includes safe + write + move_file ──────────
+    for op in _SAFE_OPS + _WRITE_OPS:
+        assert op in DEFAULT_OPERATIONS, f"{op} missing from DEFAULT_OPERATIONS"
+    assert "move_file" in DEFAULT_OPERATIONS, "move_file missing from DEFAULT_OPERATIONS"
+    record("PASS", "defaults: DEFAULT_OPERATIONS includes safe + write + move_file")
+
+    # ── 33c. DEFAULT_OPERATIONS does NOT include file_delete ───────────────
+    assert "file_delete" not in DEFAULT_OPERATIONS, "file_delete should not be in DEFAULT_OPERATIONS"
+    record("PASS", "defaults: file_delete excluded from DEFAULT_OPERATIONS")
+
+    # ── 33d. _get_workspace_root auto-sets default when unconfigured ───────
+    _tmpdir33 = tempfile.mkdtemp(prefix="thoth_test33_")
+    try:
+        _fs33d = FileSystemTool()
+        _old_ws33 = _fs33d.get_config("workspace_root", "")
+        _fs33d.set_config("workspace_root", "")  # Clear to trigger auto-default
+        _root33 = _fs33d._get_workspace_root()
+        assert _root33, "_get_workspace_root returned empty string"
+        assert "Documents" in _root33 and "Thoth" in _root33, \
+            f"default path should contain Documents/Thoth, got: {_root33}"
+        record("PASS", "defaults: _get_workspace_root auto-sets ~/Documents/Thoth")
+    finally:
+        # Restore original workspace_root
+        _fs33d.set_config("workspace_root", _old_ws33)
+        shutil.rmtree(_tmpdir33, ignore_errors=True)
+
+    # ── 33e. _get_workspace_root creates directory if it doesn't exist ─────
+    _tmpdir33e = tempfile.mkdtemp(prefix="thoth_test33e_")
+    try:
+        _new_ws33 = str(pathlib.Path(_tmpdir33e) / "subdir" / "workspace")
+        _fs33e = FileSystemTool()
+        _old_ws33e = _fs33e.get_config("workspace_root", "")
+        _fs33e.set_config("workspace_root", _new_ws33)
+        _root33e = _fs33e._get_workspace_root()
+        assert pathlib.Path(_root33e).is_dir(), f"directory not created: {_root33e}"
+        record("PASS", "defaults: _get_workspace_root creates directory")
+    finally:
+        _fs33e.set_config("workspace_root", _old_ws33e)
+        shutil.rmtree(_tmpdir33e, ignore_errors=True)
+
+    # ── 33f. as_langchain_tools returns tools when workspace exists ────────
+    _tmpdir33f = tempfile.mkdtemp(prefix="thoth_test33f_")
+    try:
+        _fs33f = FileSystemTool()
+        _old_ws33f = _fs33f.get_config("workspace_root", "")
+        _fs33f.set_config("workspace_root", _tmpdir33f)
+        _tools33f = _fs33f.as_langchain_tools()
+        assert len(_tools33f) > 0, f"expected tools, got {len(_tools33f)}"
+        record("PASS", f"defaults: as_langchain_tools returns {len(_tools33f)} tools")
+    finally:
+        _fs33f.set_config("workspace_root", _old_ws33f)
+        shutil.rmtree(_tmpdir33f, ignore_errors=True)
+
+    # ── 33g. move_file is in destructive_tool_names (has interrupt gate) ───
+    assert "workspace_move_file" in _fs33.destructive_tool_names, \
+        f"workspace_move_file not in destructive_tool_names: {_fs33.destructive_tool_names}"
+    record("PASS", "defaults: workspace_move_file has interrupt gate")
+
+    # ── 33h. ALL_OPERATIONS is superset of DEFAULT_OPERATIONS ─────────────
+    for op in DEFAULT_OPERATIONS:
+        assert op in ALL_OPERATIONS, f"{op} in DEFAULT_OPERATIONS but not in ALL_OPERATIONS"
+    record("PASS", "defaults: DEFAULT_OPERATIONS is subset of ALL_OPERATIONS")
+
+except Exception as e:
+    record("FAIL", "tool default config tests", f"{type(e).__name__}: {e}")
+    traceback.print_exc()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 34. EXPORT FILENAME SANITIZATION
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n")
+print("34. EXPORT FILENAME SANITIZATION")
+print("=" * 70)
+
+try:
+    # We need to import the inner _safe_filename. It's a nested function inside
+    # _build_ui, so we test the same logic directly via re.sub.
+    import re as _re34
+
+    def _safe_filename_ref(name: str) -> str:
+        """Reference implementation matching app_nicegui._safe_filename."""
+        return _re34.sub(r'[\\/:*?"<>|]', '-', name).strip('- ')
+
+    # 34a. Colons replaced (the actual bug — timestamps in thread names)
+    result = _safe_filename_ref("⚡ New Task — Mar 22, 02:20 AM.md")
+    assert ":" not in result, f"colon still present: {result}"
+    assert result.endswith(".md"), f"extension lost: {result}"
+    record("PASS", "export: colons replaced in filename")
+
+    # 34b. Preserves clean filenames unchanged
+    clean = _safe_filename_ref("Plain conversation.pdf")
+    assert clean == "Plain conversation.pdf", f"clean name changed: {clean}"
+    record("PASS", "export: clean filenames unchanged")
+
+    # 34c. Preserves emoji characters (not illegal on any FS)
+    emoji_name = _safe_filename_ref("⚡ Lightning task.txt")
+    assert "⚡" in emoji_name, f"emoji stripped: {emoji_name}"
+    assert emoji_name.endswith(".txt"), f"extension lost: {emoji_name}"
+    record("PASS", "export: emojis preserved in filename")
+
+    # 34d. All Windows-illegal characters removed
+    nasty = _safe_filename_ref('a\\b/c:d*e?f"g<h>i|j.md')
+    for ch in '\\/:*?"<>|':
+        assert ch not in nasty, f"illegal char {ch!r} in: {nasty}"
+    assert nasty.endswith(".md"), f"extension lost: {nasty}"
+    record("PASS", "export: all illegal chars removed")
+
+    # 34e. Multiple colons (e.g. 12:30:45) handled
+    multi = _safe_filename_ref("⚡ Task — 12:30:45 PM.pdf")
+    assert ":" not in multi, f"colon still present: {multi}"
+    assert multi.endswith(".pdf"), f"extension lost: {multi}"
+    record("PASS", "export: multiple colons handled")
+
+    # 34f. pathlib.Path parses sanitized name correctly
+    import pathlib as _pl34
+    for ext in (".md", ".txt", ".pdf"):
+        sanitized = _safe_filename_ref(f"⚡ Task — 02:20 AM{ext}")
+        p = _pl34.Path(sanitized)
+        assert p.suffix == ext, f"suffix mismatch: {p.suffix} != {ext}"
+    record("PASS", "export: pathlib parses sanitized names correctly")
+
+    # 34g. No leading/trailing dashes or spaces after sanitization
+    edge = _safe_filename_ref(":leading colon.md")
+    assert not edge.startswith("-"), f"leading dash: {edge}"
+    assert not edge.startswith(" "), f"leading space: {edge}"
+    record("PASS", "export: no leading dash/space after sanitization")
+
+    # 34h. Empty name (only illegal chars) doesn't crash
+    empty = _safe_filename_ref(':::.md')
+    assert empty.endswith(".md"), f"extension lost: {empty}"
+    record("PASS", "export: degenerate name still has extension")
+
+except Exception as e:
+    record("FAIL", "export filename sanitization", f"{type(e).__name__}: {e}")
     traceback.print_exc()
 
 

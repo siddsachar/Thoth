@@ -1946,6 +1946,10 @@ async def index():
 
     p.export_dlg = ui.dialog()
 
+    def _safe_filename(name: str) -> str:
+        """Strip characters illegal in Windows filenames (\\/:*?"<>|)."""
+        return re.sub(r'[\\/:*?"<>|]', '-', name).strip('- ')
+
     def _save_export(data: bytes, filename: str) -> None:
         """Deliver an export file to the user.
 
@@ -1953,6 +1957,7 @@ async def index():
         macOS WebKit, so we write directly to ~/Downloads and notify.
         In browser mode we use the normal ``ui.download()`` API.
         """
+        filename = _safe_filename(filename)
         if "--native" in sys.argv:
             dl_dir = pathlib.Path.home() / "Downloads"
             dl_dir.mkdir(parents=True, exist_ok=True)
