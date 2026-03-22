@@ -37,10 +37,16 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
+import threading
+
 import networkx as nx
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Lock protecting FAISS index reads/writes — FAISS is not thread-safe
+# and concurrent access from agent + extraction threads causes segfaults.
+_faiss_lock = threading.Lock()
 
 # ── Data directory ───────────────────────────────────────────────────────────
 _DATA_DIR = pathlib.Path(
@@ -311,8 +317,9 @@ def rebuild_index() -> None:
         emb = _get_embedding_model()
         dim = len(emb.embed_query("test"))
         index = _faiss.IndexFlatIP(dim)
-        _faiss.write_index(index, str(_VECTOR_DIR / "index.faiss"))
-        (_VECTOR_DIR / "id_map.json").write_text("[]")
+        with _faiss_lock:
+            _faiss.write_index(index, str(_VECTOR_DIR / "index.faiss"))
+            (_VECTOR_DIR / "id_map.json").write_text("[]")
         return
 
     emb = _get_embedding_model()
@@ -327,9 +334,10 @@ def rebuild_index() -> None:
     index = _faiss.IndexFlatIP(dim)
     index.add(arr)
 
-    _faiss.write_index(index, str(_VECTOR_DIR / "index.faiss"))
-    id_map = [e["id"] for e in entities]
-    (_VECTOR_DIR / "id_map.json").write_text(json.dumps(id_map))
+    with _faiss_lock:
+        _faiss.write_index(index, str(_VECTOR_DIR / "index.faiss"))
+        id_map = [e["id"] for e in entities]
+        (_VECTOR_DIR / "id_map.json").write_text(json.dumps(id_map))
     logger.info("Rebuilt FAISS index with %d entities", len(id_map))
 
 
@@ -630,11 +638,11 @@ def semantic_search(
     if not index_path.exists():
         return []
 
-    index = _faiss.read_index(str(index_path))
-    if index.ntotal == 0:
-        return []
-
-    id_map: list[str] = json.loads(map_path.read_text())
+    with _faiss_lock:
+        index = _faiss.read_index(str(index_path))
+        if index.ntotal == 0:
+            return []
+        id_map: list[str] = json.loads(map_path.read_text())
 
     emb = _get_embedding_model()
     qvec = np.array(emb.embed_query(query), dtype=np.float32).reshape(1, -1)

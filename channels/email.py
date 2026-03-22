@@ -230,11 +230,15 @@ def _send_reply(service, original_msg: dict, reply_text: str):
     raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("ascii")
 
     try:
-        service.users().messages().send(
+        sent = service.users().messages().send(
             userId="me",
             body={"raw": raw, "threadId": thread_id}
         ).execute()
         log.info("Reply sent in thread %s", thread_id)
+        # Mark our own reply as read so the next poll doesn't re-process it
+        sent_id = sent.get("id")
+        if sent_id:
+            _mark_as_read(service, sent_id)
     except Exception as exc:
         log.error("Failed to send reply: %s", exc)
 
@@ -263,7 +267,11 @@ def _send_reply_and_get_id(service, original_msg: dict, reply_text: str) -> str 
             userId="me",
             body={"raw": raw, "threadId": thread_id}
         ).execute()
-        return sent.get("id")
+        sent_id = sent.get("id")
+        # Mark our own reply as read so the next poll doesn't re-process it
+        if sent_id:
+            _mark_as_read(service, sent_id)
+        return sent_id
     except Exception as exc:
         log.error("Failed to send reply: %s", exc)
         return None

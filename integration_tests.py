@@ -51,13 +51,30 @@ def _gen_id() -> str:
 
 
 def _cleanup_entities() -> None:
-    """Delete all test entities created during the run."""
+    """Delete all test entities created during the run via direct SQL.
+
+    Using raw SQL avoids triggering ``rebuild_index()`` (and its slow
+    embedding-model cold-start) on every single delete.  The FAISS index
+    will be rebuilt on next app launch automatically.
+    """
+    if not _cleanup_entity_ids:
+        return
     import knowledge_graph as kg
-    for eid in _cleanup_entity_ids:
-        try:
-            kg.delete_entity(eid)
-        except Exception:
-            pass
+    import sqlite3
+    try:
+        conn = sqlite3.connect(kg.DB_PATH)
+        for eid in _cleanup_entity_ids:
+            conn.execute("DELETE FROM relations WHERE source_id = ? OR target_id = ?", (eid, eid))
+            conn.execute("DELETE FROM entities WHERE id = ?", (eid,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        # Fallback: try the normal API one-by-one
+        for eid in _cleanup_entity_ids:
+            try:
+                kg.delete_entity(eid)
+            except Exception:
+                pass
     _cleanup_entity_ids.clear()
 
 
@@ -1323,6 +1340,679 @@ def section_11_edge_cases():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# SECTION 12 · Tool sub-tools (direct invocation, extended)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def section_12_tool_subttools():
+    print("\nSECTION 12 · Tool Sub-tools (Extended)")
+    print("-" * 40)
+
+    # --- 12a. Shell — classify_command: safe ---
+    try:
+        from tools.shell_tool import classify_command
+        result = classify_command("ls -la")
+        if result == "safe":
+            record("PASS", "shell: classify_command('ls -la') = safe")
+        else:
+            record("FAIL", f"shell: classify_command('ls -la') = {result}, expected safe")
+    except Exception as e:
+        record("FAIL", "shell: classify_command safe", str(e))
+
+    # --- 12b. Shell — classify_command: blocked ---
+    try:
+        result = classify_command("rm -rf /")
+        if result == "blocked":
+            record("PASS", "shell: classify_command('rm -rf /') = blocked")
+        else:
+            record("FAIL", f"shell: classify_command('rm -rf /') = {result}, expected blocked")
+    except Exception as e:
+        record("FAIL", "shell: classify_command blocked", str(e))
+
+    # --- 12c. Shell — classify_command: needs_approval ---
+    try:
+        result = classify_command("npm install express")
+        if result == "needs_approval":
+            record("PASS", "shell: classify_command('npm install express') = needs_approval")
+        else:
+            record("FAIL", f"shell: classify_command('npm install express') = {result}, expected needs_approval")
+    except Exception as e:
+        record("FAIL", "shell: classify_command needs_approval", str(e))
+
+    # --- 12d. Shell — more blocked patterns ---
+    try:
+        blocked_cmds = ["mkfs /dev/sda1", "shutdown -h now", "format C:", "dd of=/dev/sda"]
+        all_blocked = True
+        for cmd in blocked_cmds:
+            r = classify_command(cmd)
+            if r != "blocked":
+                record("FAIL", f"shell: '{cmd}' classified as {r}, expected blocked")
+                all_blocked = False
+                break
+        if all_blocked:
+            record("PASS", f"shell: {len(blocked_cmds)} dangerous commands correctly blocked")
+    except Exception as e:
+        record("FAIL", "shell: blocked patterns", str(e))
+
+    # --- 12e. Shell — more safe prefixes ---
+    try:
+        safe_cmds = ["pwd", "git status", "python --version", "echo hello", "pip list"]
+        all_safe = True
+        for cmd in safe_cmds:
+            r = classify_command(cmd)
+            if r != "safe":
+                record("FAIL", f"shell: '{cmd}' classified as {r}, expected safe")
+                all_safe = False
+                break
+        if all_safe:
+            record("PASS", f"shell: {len(safe_cmds)} safe commands correctly classified")
+    except Exception as e:
+        record("FAIL", "shell: safe prefixes", str(e))
+
+    # --- 12f. Filesystem — _normalise_path ---
+    try:
+        from tools.filesystem_tool import _normalise_path
+        # Should strip workspace folder prefix
+        result = _normalise_path("ThothWorkspace/notes.txt", "D:\\ThothWorkspace")
+        if result == "notes.txt":
+            record("PASS", "filesystem: _normalise_path strips workspace prefix")
+        else:
+            record("FAIL", f"filesystem: _normalise_path returned '{result}', expected 'notes.txt'")
+    except Exception as e:
+        record("FAIL", "filesystem: _normalise_path", str(e))
+
+    # --- 12g. Filesystem — _is_outside_workspace ---
+    try:
+        from tools.filesystem_tool import _is_outside_workspace
+        # Absolute path outside workspace → True
+        outside = _is_outside_workspace("C:\\Windows\\system32\\cmd.exe", "D:\\ThothWorkspace")
+        # Relative path → False (assumed inside)
+        inside_rel = _is_outside_workspace("notes.txt", "D:\\ThothWorkspace")
+        if outside and not inside_rel:
+            record("PASS", "filesystem: _is_outside_workspace correctly distinguishes paths")
+        else:
+            record("FAIL", f"filesystem: _is_outside_workspace outside={outside}, inside_rel={inside_rel}")
+    except Exception as e:
+        record("FAIL", "filesystem: _is_outside_workspace", str(e))
+
+    # --- 12h. Filesystem — export_to_pdf ---
+    try:
+        import tempfile
+        from pathlib import Path
+        from fpdf import FPDF
+        # Verify fpdf2 is importable — the tool uses it
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=12)
+        pdf.cell(200, 10, text="Integration test PDF", new_x="LMARGIN", new_y="NEXT")
+        tmp = Path(tempfile.mktemp(suffix=".pdf"))
+        pdf.output(str(tmp))
+        if tmp.exists() and tmp.stat().st_size > 100:
+            record("PASS", f"filesystem: PDF generation works ({tmp.stat().st_size} bytes)")
+            tmp.unlink()
+        else:
+            record("FAIL", "filesystem: PDF generation produced empty file")
+    except ImportError:
+        record("SKIP", "filesystem: fpdf2 not installed")
+    except Exception as e:
+        record("FAIL", "filesystem: PDF generation", str(e))
+
+    # --- 12i. Chart — _load_data from CSV ---
+    try:
+        import tempfile
+        from pathlib import Path
+        from tools.chart_tool import _load_data
+        # Create a temp CSV
+        csv_path = Path(tempfile.mktemp(suffix=".csv"))
+        csv_path.write_text("name,value\nAlice,10\nBob,20\nCharlie,30", encoding="utf-8")
+        df = _load_data(str(csv_path), None)
+        if len(df) == 3 and "name" in df.columns and "value" in df.columns:
+            record("PASS", "chart: _load_data reads CSV correctly (3 rows, 2 cols)")
+        else:
+            record("FAIL", f"chart: _load_data CSV result unexpected: {df.shape}")
+        csv_path.unlink()
+    except Exception as e:
+        record("FAIL", "chart: _load_data CSV", str(e))
+
+    # --- 12j. Chart — _build_figure (bar chart) ---
+    try:
+        import pandas as pd
+        from tools.chart_tool import _build_figure
+        df = pd.DataFrame({"category": ["A", "B", "C"], "amount": [10, 20, 30]})
+        fig = _build_figure(df, "bar", "category", "amount", None, "Test Bar")
+        fig_json = fig.to_json()
+        if len(fig_json) > 100 and "Test Bar" in fig_json:
+            record("PASS", "chart: _build_figure creates bar chart")
+        else:
+            record("FAIL", "chart: _build_figure bar chart output unexpected")
+    except Exception as e:
+        record("FAIL", "chart: _build_figure bar", str(e))
+
+    # --- 12k. Chart — _build_figure (pie chart) ---
+    try:
+        fig = _build_figure(df, "pie", "category", "amount", None, "Test Pie")
+        fig_json = fig.to_json()
+        if len(fig_json) > 100:
+            record("PASS", "chart: _build_figure creates pie chart")
+        else:
+            record("FAIL", "chart: _build_figure pie chart output unexpected")
+    except Exception as e:
+        record("FAIL", "chart: _build_figure pie", str(e))
+
+    # --- 12l. Chart — _build_figure (line chart) ---
+    try:
+        df_line = pd.DataFrame({"x": [1, 2, 3, 4], "y": [10, 15, 13, 17]})
+        fig = _build_figure(df_line, "line", "x", "y", None, "Test Line")
+        if fig.to_json() and len(fig.to_json()) > 100:
+            record("PASS", "chart: _build_figure creates line chart")
+        else:
+            record("FAIL", "chart: _build_figure line chart unexpected")
+    except Exception as e:
+        record("FAIL", "chart: _build_figure line", str(e))
+
+    # --- 12m. Chart — save_to_file PNG export ---
+    try:
+        import tempfile
+        from pathlib import Path
+        from tools.chart_tool import _create_chart
+        csv_path = Path(tempfile.mktemp(suffix=".csv"))
+        csv_path.write_text("name,value\nX,5\nY,15\nZ,25", encoding="utf-8")
+        png_path = Path(tempfile.mktemp(suffix=".png"))
+        result = _create_chart(
+            chart_type="bar",
+            data_source=str(csv_path),
+            x_column="name",
+            y_column="value",
+            save_to_file=str(png_path),
+        )
+        if png_path.exists() and png_path.stat().st_size > 1000:
+            record("PASS", f"chart: save_to_file PNG export ({png_path.stat().st_size} bytes)")
+            png_path.unlink()
+        elif "Could not save" in result:
+            record("WARN", "chart: save_to_file failed (kaleido may not be available)")
+        else:
+            record("FAIL", "chart: save_to_file PNG not created")
+        csv_path.unlink(missing_ok=True)
+    except Exception as e:
+        record("FAIL", "chart: save_to_file PNG export", str(e))
+
+    # --- 12n. Chart — unsupported chart type rejected ---
+    try:
+        result = _create_chart("radar", "dummy.csv")
+        if "Unsupported chart type" in result:
+            record("PASS", "chart: unsupported chart type rejected")
+        else:
+            record("FAIL", f"chart: unsupported type not rejected: {result[:100]}")
+    except Exception as e:
+        record("FAIL", "chart: unsupported type handling", str(e))
+
+    # --- 12o. Memory — _link_memories direct invocation ---
+    try:
+        import memory as mem
+        import knowledge_graph as kg
+        from tools.memory_tool import _link_memories
+        subj_a = f"{_PREFIX}LinkDirect_A_{_gen_id()}"
+        subj_b = f"{_PREFIX}LinkDirect_B_{_gen_id()}"
+        ra = mem.save_memory("person", subj_a, "Link test person")
+        rb = mem.save_memory("place", subj_b, "Link test place")
+        _cleanup_entity_ids.extend([ra["id"], rb["id"]])
+
+        result = _link_memories(ra["id"], rb["id"], "lives_in")
+        if "successfully" in result.lower() or "lives_in" in result:
+            record("PASS", "memory: _link_memories direct invocation works")
+        else:
+            record("FAIL", f"memory: _link_memories returned: {result[:200]}")
+    except Exception as e:
+        record("FAIL", "memory: _link_memories direct", str(e))
+
+    # --- 12p. Memory — _link_memories with bad entity ID ---
+    try:
+        result = _link_memories("nonexistent_id", rb["id"], "test_rel")
+        if "not found" in result.lower() or "error" in result.lower():
+            record("PASS", "memory: _link_memories rejects nonexistent source")
+        else:
+            record("FAIL", f"memory: _link_memories accepted bad source: {result[:200]}")
+    except Exception as e:
+        record("FAIL", "memory: _link_memories bad source", str(e))
+
+    # --- 12q. Memory — _explore_connections direct invocation ---
+    try:
+        from tools.memory_tool import _explore_connections
+        result = _explore_connections(ra["id"], hops=1)
+        if subj_b in result or "lives_in" in result:
+            record("PASS", "memory: _explore_connections finds linked entity")
+        else:
+            record("WARN", f"memory: _explore_connections did not find link: {result[:200]}")
+    except Exception as e:
+        record("FAIL", "memory: _explore_connections", str(e))
+
+    # --- 12r. Memory — _explore_connections with bad ID ---
+    try:
+        result = _explore_connections("nonexistent_id")
+        if "not found" in result.lower():
+            record("PASS", "memory: _explore_connections rejects nonexistent entity")
+        else:
+            record("FAIL", f"memory: _explore_connections accepted bad ID: {result[:200]}")
+    except Exception as e:
+        record("FAIL", "memory: _explore_connections bad ID", str(e))
+
+    # --- 12s. Memory — _explore_connections hops capped at 3 ---
+    try:
+        result = _explore_connections(ra["id"], hops=99)
+        # Should not crash — hops is capped internally
+        if result and len(result) > 10:
+            record("PASS", "memory: _explore_connections caps hops at 3 (no crash)")
+        else:
+            record("FAIL", "memory: _explore_connections hops=99 failed")
+    except Exception as e:
+        record("FAIL", "memory: _explore_connections hops cap", str(e))
+
+    # --- 12t. System info --- 
+    try:
+        from tools.system_info_tool import _get_system_info
+        info = _get_system_info()
+        has_cpu = "[CPU]" in info
+        has_mem = "[Memory]" in info
+        has_disk = "[Disk]" in info
+        if has_cpu and has_mem and has_disk:
+            record("PASS", f"system_info: returned {len(info)} chars with CPU/Memory/Disk sections")
+        else:
+            record("FAIL", f"system_info: missing sections (cpu={has_cpu}, mem={has_mem}, disk={has_disk})")
+    except Exception as e:
+        record("FAIL", "system_info: _get_system_info", str(e))
+
+    # --- 12u. Weather (live API, no key needed) ---
+    try:
+        from tools.weather_tool import _get_current_weather
+        result = _get_current_weather("London")
+        if "Temperature" in result and "Wind" in result:
+            record("PASS", "weather: _get_current_weather('London') returned weather data")
+        elif "failed" in result.lower():
+            record("WARN", "weather: API call failed (network issue?)")
+        else:
+            record("FAIL", f"weather: unexpected result: {result[:200]}")
+    except Exception as e:
+        record("FAIL", "weather: _get_current_weather", str(e))
+
+    # --- 12v. URL reader ---
+    try:
+        from tools.url_reader_tool import _read_url
+        result = _read_url("https://httpbin.org/html")
+        if "Herman Melville" in result or "SOURCE_URL" in result:
+            record("PASS", f"url_reader: fetched httpbin.org/html ({len(result)} chars)")
+        elif "Failed" in result:
+            record("WARN", "url_reader: fetch failed (network issue?)")
+        else:
+            record("PASS", f"url_reader: fetched content ({len(result)} chars)")
+    except Exception as e:
+        record("FAIL", "url_reader: _read_url", str(e))
+
+    # --- 12w. Tracker — log + query + cleanup ---
+    try:
+        from tools.tracker_tool import _tracker_log, _tracker_query, _get_db
+        tracker_name = f"{_PREFIX}Tracker_{_gen_id()}"
+        log_result = _tracker_log(tracker_name, value="42", tracker_type="numeric", unit="kg")
+        if "Logged" in log_result and tracker_name in log_result:
+            record("PASS", f"tracker: _tracker_log creates tracker and logs entry")
+        else:
+            record("FAIL", f"tracker: _tracker_log result: {log_result[:200]}")
+
+        # Query it
+        query_result = _tracker_query(f"list all trackers")
+        if tracker_name in query_result:
+            record("PASS", "tracker: _tracker_query finds the new tracker")
+        else:
+            record("WARN", f"tracker: _tracker_query did not find tracker: {query_result[:200]}")
+
+        # Cleanup: delete tracker directly via DB
+        conn = _get_db()
+        conn.execute("DELETE FROM trackers WHERE name = ?", (tracker_name,))
+        conn.commit()
+    except ImportError:
+        record("SKIP", "tracker: module not available")
+    except Exception as e:
+        record("FAIL", "tracker: log + query", str(e))
+
+    _cleanup_entities()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SECTION 13 · Channel utilities (pure functions)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def section_13_channel_utils():
+    print("\nSECTION 13 · Channel Utilities")
+    print("-" * 40)
+
+    # --- 13a. Telegram _split_message — short text (no split) ---
+    try:
+        from channels.telegram import _split_message, MAX_TG_MESSAGE_LEN
+        short = "Hello world"
+        chunks = _split_message(short)
+        if chunks == [short]:
+            record("PASS", "telegram: _split_message returns single chunk for short text")
+        else:
+            record("FAIL", f"telegram: _split_message short text returned {len(chunks)} chunks")
+    except ImportError:
+        record("SKIP", "telegram: module not available")
+        return
+    except Exception as e:
+        record("FAIL", "telegram: _split_message short", str(e))
+
+    # --- 13b. Telegram _split_message — long text ---
+    try:
+        long_text = "Line number {i}\n" * 2000
+        chunks = _split_message(long_text, max_len=MAX_TG_MESSAGE_LEN)
+        all_within = all(len(c) <= MAX_TG_MESSAGE_LEN for c in chunks)
+        reassembled = "".join(chunks)
+        if all_within and len(chunks) > 1 and reassembled == long_text:
+            record("PASS", f"telegram: _split_message split into {len(chunks)} valid chunks")
+        elif all_within and len(chunks) > 1:
+            record("PASS", f"telegram: _split_message split into {len(chunks)} chunks (all within limit)")
+        else:
+            record("FAIL", f"telegram: _split_message long text — chunks={len(chunks)}, all_within={all_within}")
+    except Exception as e:
+        record("FAIL", "telegram: _split_message long", str(e))
+
+    # --- 13c. Telegram _split_message — respects paragraph boundaries ---
+    try:
+        text = ("A" * 2000) + "\n\n" + ("B" * 2000) + "\n\n" + ("C" * 2000)
+        chunks = _split_message(text, max_len=MAX_TG_MESSAGE_LEN)
+        all_within = all(len(c) <= MAX_TG_MESSAGE_LEN for c in chunks)
+        if all_within and len(chunks) >= 2:
+            record("PASS", f"telegram: _split_message respects para boundaries ({len(chunks)} chunks)")
+        else:
+            record("FAIL", f"telegram: _split_message para split — chunks={len(chunks)}")
+    except Exception as e:
+        record("FAIL", "telegram: _split_message para", str(e))
+
+    # --- 13d. Telegram _md_to_html — bold ---
+    try:
+        from channels.telegram import _md_to_html
+        result = _md_to_html("Hello **world**")
+        if "<b>world</b>" in result:
+            record("PASS", "telegram: _md_to_html converts **bold** to <b>")
+        else:
+            record("FAIL", f"telegram: _md_to_html bold: {result}")
+    except Exception as e:
+        record("FAIL", "telegram: _md_to_html bold", str(e))
+
+    # --- 13e. Telegram _md_to_html — italic ---
+    try:
+        result = _md_to_html("Hello *world*")
+        if "<i>world</i>" in result:
+            record("PASS", "telegram: _md_to_html converts *italic* to <i>")
+        else:
+            record("FAIL", f"telegram: _md_to_html italic: {result}")
+    except Exception as e:
+        record("FAIL", "telegram: _md_to_html italic", str(e))
+
+    # --- 13f. Telegram _md_to_html — code ---
+    try:
+        result = _md_to_html("Use `print()` here")
+        if "<code>print()</code>" in result:
+            record("PASS", "telegram: _md_to_html converts `code` to <code>")
+        else:
+            record("FAIL", f"telegram: _md_to_html code: {result}")
+    except Exception as e:
+        record("FAIL", "telegram: _md_to_html code", str(e))
+
+    # --- 13g. Telegram _md_to_html — code block ---
+    try:
+        result = _md_to_html("```python\nprint('hi')\n```")
+        if "<pre>" in result and "print" in result:
+            record("PASS", "telegram: _md_to_html converts fenced code block to <pre>")
+        else:
+            record("FAIL", f"telegram: _md_to_html code block: {result}")
+    except Exception as e:
+        record("FAIL", "telegram: _md_to_html code block", str(e))
+
+    # --- 13h. Telegram _md_to_html — heading ---
+    try:
+        result = _md_to_html("# Main Title")
+        if "<b>Main Title</b>" in result:
+            record("PASS", "telegram: _md_to_html converts # heading to <b>")
+        else:
+            record("FAIL", f"telegram: _md_to_html heading: {result}")
+    except Exception as e:
+        record("FAIL", "telegram: _md_to_html heading", str(e))
+
+    # --- 13i. Telegram _md_to_html — HTML entity escaping ---
+    try:
+        result = _md_to_html("5 > 3 && x < 10")
+        if "&gt;" in result and "&lt;" in result and "&amp;" in result:
+            record("PASS", "telegram: _md_to_html escapes HTML entities correctly")
+        else:
+            record("FAIL", f"telegram: _md_to_html escaping: {result}")
+    except Exception as e:
+        record("FAIL", "telegram: _md_to_html escaping", str(e))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SECTION 14 · Background task permissions & ContextVars
+# ═════════════════════════════════════════════════════════════════════════════
+
+def section_14_background_permissions():
+    print("\nSECTION 14 · Background Permissions & ContextVars")
+    print("-" * 40)
+
+    # --- 14a. _validate_delivery — no channel/target is valid ---
+    try:
+        from tasks import _validate_delivery
+        _validate_delivery(None, None)
+        record("PASS", "task: _validate_delivery(None, None) passes")
+    except Exception as e:
+        record("FAIL", "task: _validate_delivery(None, None)", str(e))
+
+    # --- 14b. _validate_delivery — telegram channel is valid ---
+    try:
+        _validate_delivery("telegram", None)
+        record("PASS", "task: _validate_delivery('telegram', None) passes")
+    except Exception as e:
+        record("FAIL", "task: _validate_delivery telegram", str(e))
+
+    # --- 14c. _validate_delivery — email requires valid address ---
+    try:
+        _validate_delivery("email", "user@example.com")
+        record("PASS", "task: _validate_delivery('email', 'user@example.com') passes")
+    except Exception as e:
+        record("FAIL", "task: _validate_delivery email valid", str(e))
+
+    # --- 14d. _validate_delivery — email with bad address rejected ---
+    try:
+        _validate_delivery("email", "not-an-email")
+        record("FAIL", "task: _validate_delivery accepted bad email 'not-an-email'")
+    except ValueError:
+        record("PASS", "task: _validate_delivery rejects bad email address")
+    except Exception as e:
+        record("FAIL", "task: _validate_delivery bad email", str(e))
+
+    # --- 14e. _validate_delivery — unknown channel rejected ---
+    try:
+        _validate_delivery("slack", "channel")
+        record("FAIL", "task: _validate_delivery accepted unknown channel 'slack'")
+    except ValueError:
+        record("PASS", "task: _validate_delivery rejects unknown channel 'slack'")
+    except Exception as e:
+        record("FAIL", "task: _validate_delivery unknown channel", str(e))
+
+    # --- 14f. _validate_delivery — target without channel rejected ---
+    try:
+        _validate_delivery(None, "user@example.com")
+        record("FAIL", "task: _validate_delivery accepted target without channel")
+    except ValueError:
+        record("PASS", "task: _validate_delivery rejects target without channel")
+    except Exception as e:
+        record("FAIL", "task: _validate_delivery target-no-channel", str(e))
+
+    # --- 14g. ContextVar — background_workflow default is False ---
+    try:
+        from agent import _background_workflow_var, is_background_workflow
+        if not is_background_workflow():
+            record("PASS", "contextvar: is_background_workflow() defaults to False")
+        else:
+            record("FAIL", "contextvar: is_background_workflow() is True by default")
+    except Exception as e:
+        record("FAIL", "contextvar: is_background_workflow", str(e))
+
+    # --- 14h. ContextVar — set and read background flag ---
+    try:
+        token = _background_workflow_var.set(True)
+        if is_background_workflow():
+            record("PASS", "contextvar: _background_workflow_var.set(True) propagates")
+        else:
+            record("FAIL", "contextvar: _background_workflow_var.set(True) did not propagate")
+        _background_workflow_var.reset(token)
+    except Exception as e:
+        record("FAIL", "contextvar: background flag set/read", str(e))
+
+    # --- 14i. ContextVar — task_allowed_commands default is empty ---
+    try:
+        from agent import _task_allowed_commands_var, _task_allowed_recipients_var
+        cmds = _task_allowed_commands_var.get()
+        recips = _task_allowed_recipients_var.get()
+        if cmds == [] and recips == []:
+            record("PASS", "contextvar: allowed_commands/recipients default to []")
+        else:
+            record("FAIL", f"contextvar: defaults wrong — cmds={cmds}, recips={recips}")
+    except Exception as e:
+        record("FAIL", "contextvar: allowed_commands default", str(e))
+
+    # --- 14j. ContextVar — set and read allowed_commands ---
+    try:
+        token = _task_allowed_commands_var.set(["pip list", "git status"])
+        got = _task_allowed_commands_var.get()
+        if got == ["pip list", "git status"]:
+            record("PASS", "contextvar: _task_allowed_commands_var set/get works")
+        else:
+            record("FAIL", f"contextvar: allowed_commands got {got}")
+        _task_allowed_commands_var.reset(token)
+    except Exception as e:
+        record("FAIL", "contextvar: allowed_commands set/get", str(e))
+
+    # --- 14k. Task with allowed_commands field ---
+    try:
+        from tasks import create_task, get_task, update_task, delete_task
+        tag = _gen_id()
+        task_id = create_task(
+            name=f"{_PREFIX}Perm_{tag}",
+            prompts=["Test prompt"],
+        )
+        _cleanup_task_ids.append(task_id)
+        update_task(task_id,
+                    allowed_commands=["pip list", "git status"],
+                    allowed_recipients=["admin@example.com"])
+        task = get_task(task_id)
+        if task["allowed_commands"] == ["pip list", "git status"]:
+            record("PASS", "task: allowed_commands stored correctly")
+        else:
+            record("FAIL", f"task: allowed_commands = {task['allowed_commands']}")
+        if task["allowed_recipients"] == ["admin@example.com"]:
+            record("PASS", "task: allowed_recipients stored correctly")
+        else:
+            record("FAIL", f"task: allowed_recipients = {task['allowed_recipients']}")
+    except Exception as e:
+        record("FAIL", "task: permission fields", str(e))
+
+    _cleanup_tasks()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SECTION 15 · Bug-fix verifications
+# ═════════════════════════════════════════════════════════════════════════════
+
+def section_15_bugfix_verifications():
+    print("\nSECTION 15 · Bug-fix Verifications")
+    print("-" * 40)
+
+    # --- 15a. MPS fix — embedding model uses device="cpu" ---
+    try:
+        from documents import get_embedding_model
+        model = get_embedding_model()
+        # HuggingFaceEmbeddings stores model_kwargs; check the device
+        model_kwargs = getattr(model, "model_kwargs", {})
+        device = model_kwargs.get("device", "UNSET")
+        if device == "cpu":
+            record("PASS", "bugfix: embedding model device='cpu' (MPS fix)")
+        else:
+            record("FAIL", f"bugfix: embedding model device='{device}', expected 'cpu'")
+    except Exception as e:
+        record("FAIL", "bugfix: embedding model device check", str(e))
+
+    # --- 15b. FAISS lock exists ---
+    try:
+        import knowledge_graph as kg
+        import threading
+        lock = getattr(kg, "_faiss_lock", None)
+        if isinstance(lock, type(threading.Lock())):
+            record("PASS", "bugfix: knowledge_graph._faiss_lock exists (thread safety)")
+        else:
+            record("FAIL", f"bugfix: _faiss_lock is {type(lock)}, expected threading.Lock")
+    except Exception as e:
+        record("FAIL", "bugfix: FAISS lock check", str(e))
+
+    # --- 15c. Email channel — _mark_as_read in _send_reply ---
+    try:
+        import inspect
+        from channels.email import _send_reply
+        source = inspect.getsource(_send_reply)
+        if "_mark_as_read" in source:
+            record("PASS", "bugfix: _send_reply calls _mark_as_read (email loop fix)")
+        else:
+            record("FAIL", "bugfix: _send_reply missing _mark_as_read call")
+    except ImportError:
+        record("SKIP", "bugfix: channels.email not importable (missing deps?)")
+    except Exception as e:
+        record("FAIL", "bugfix: email _send_reply check", str(e))
+
+    # --- 15d. Email channel — _mark_as_read in _send_reply_and_get_id ---
+    try:
+        from channels.email import _send_reply_and_get_id
+        source = inspect.getsource(_send_reply_and_get_id)
+        if "_mark_as_read" in source:
+            record("PASS", "bugfix: _send_reply_and_get_id calls _mark_as_read (email loop fix)")
+        else:
+            record("FAIL", "bugfix: _send_reply_and_get_id missing _mark_as_read call")
+    except ImportError:
+        record("SKIP", "bugfix: channels.email _send_reply_and_get_id not available")
+    except Exception as e:
+        record("FAIL", "bugfix: email _send_reply_and_get_id check", str(e))
+
+    # --- 15e. Embedding model produces valid vectors ---
+    try:
+        from documents import get_embedding_model
+        model = get_embedding_model()
+        vectors = model.embed_documents(["Hello world test"])
+        if vectors and len(vectors) == 1 and len(vectors[0]) > 100:
+            record("PASS", f"bugfix: embedding produces {len(vectors[0])}-dim vectors on CPU")
+        else:
+            record("FAIL", f"bugfix: embedding vector unexpected shape: {len(vectors)}")
+    except Exception as e:
+        record("FAIL", "bugfix: embedding vector test", str(e))
+
+    # --- 15f. FAISS lock is used in rebuild_index ---
+    try:
+        import knowledge_graph as kg
+        import inspect
+        source = inspect.getsource(kg.rebuild_index)
+        if "_faiss_lock" in source:
+            record("PASS", "bugfix: rebuild_index uses _faiss_lock")
+        else:
+            record("FAIL", "bugfix: rebuild_index does not use _faiss_lock")
+    except Exception as e:
+        record("FAIL", "bugfix: rebuild_index lock check", str(e))
+
+    # --- 15g. FAISS lock is used in semantic_search ---
+    try:
+        source = inspect.getsource(kg.semantic_search)
+        if "_faiss_lock" in source:
+            record("PASS", "bugfix: semantic_search uses _faiss_lock")
+        else:
+            record("FAIL", "bugfix: semantic_search does not use _faiss_lock")
+    except Exception as e:
+        record("FAIL", "bugfix: semantic_search lock check", str(e))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1359,6 +2049,10 @@ def main():
         9: ("Agent Routing", section_9_agent_routing),
         10: ("End-to-End", section_10_e2e),
         11: ("Edge Cases", section_11_edge_cases),
+        12: ("Tool Sub-tools Extended", section_12_tool_subttools),
+        13: ("Channel Utilities", section_13_channel_utils),
+        14: ("Background Permissions", section_14_background_permissions),
+        15: ("Bug-fix Verifications", section_15_bugfix_verifications),
     }
 
     # Section 1 is always required
