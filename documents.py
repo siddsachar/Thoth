@@ -69,14 +69,20 @@ text_splitter = RecursiveCharacterTextSplitter(
 )
 
 # ── Lazy-loaded singletons (avoids heavy imports in child processes) ────────
+import threading as _threading
 _embedding_model = None
+_embedding_lock = _threading.Lock()
 _vector_store = None
 
 
 def get_embedding_model():
     """Return the shared HuggingFaceEmbeddings instance (created on first call)."""
     global _embedding_model
-    if _embedding_model is None:
+    if _embedding_model is not None:
+        return _embedding_model
+    with _embedding_lock:
+        if _embedding_model is not None:
+            return _embedding_model
         import io as _io
         import os as _os
         import sys as _sys

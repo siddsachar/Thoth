@@ -48,6 +48,11 @@ logger = logging.getLogger(__name__)
 # and concurrent access from agent + extraction threads causes segfaults.
 _faiss_lock = threading.Lock()
 
+# When True, save_entity / update_entity / delete_entity skip the
+# per-call rebuild_index().  Callers must call rebuild_index() once
+# after the batch.  Used by the extraction pipeline.
+_skip_reindex = False
+
 # ── Data directory ───────────────────────────────────────────────────────────
 _DATA_DIR = pathlib.Path(
     os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / ".thoth")
@@ -424,8 +429,9 @@ def save_entity(
     g = _ensure_graph()
     g.add_node(entity_id, **entity)
 
-    # Update FAISS
-    rebuild_index()
+    # Update FAISS (skipped during batch extraction)
+    if not _skip_reindex:
+        rebuild_index()
 
     return entity
 
@@ -501,7 +507,8 @@ def update_entity(
             g.nodes[entity_id].update(entity)
         else:
             g.add_node(entity_id, **entity)
-        rebuild_index()
+        if not _skip_reindex:
+            rebuild_index()
         return entity
     return None
 
@@ -519,7 +526,8 @@ def delete_entity(entity_id: str) -> bool:
         g = _ensure_graph()
         if entity_id in g:
             g.remove_node(entity_id)  # also removes incident edges
-        rebuild_index()
+        if not _skip_reindex:
+            rebuild_index()
     return deleted
 
 

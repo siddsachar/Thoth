@@ -177,6 +177,9 @@ def _dedup_and_save(extracted: list[dict]) -> int:
     from memory import save_memory, find_by_subject, update_memory, VALID_CATEGORIES
     import knowledge_graph as kg
 
+    # Suppress per-entity rebuild_index() — we do one rebuild at the end.
+    kg._skip_reindex = True
+
     saved_count = 0
 
     # ── Pass 1: save/update entities and build a subject→id map ──────
@@ -305,6 +308,14 @@ def _dedup_and_save(extracted: list[dict]) -> int:
                     )
             except Exception as exc:
                 logger.debug("Failed to save relation: %s", exc)
+
+    # Single FAISS rebuild after all entities + relations are saved
+    kg._skip_reindex = False
+    if saved_count:
+        try:
+            kg.rebuild_index()
+        except Exception as exc:
+            logger.debug("Post-extraction rebuild_index failed: %s", exc)
 
     return saved_count
 
