@@ -54,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -84,7 +84,7 @@ jobs:
       - uses: actions/checkout@v6
 
       # System Python (used by build script to find tkinter for bundling)
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
