@@ -44,7 +44,7 @@ ddgs
 langchain-google-community[gmail]
 
 # ── Document Loaders ────────────────────────────────────────────────────────
-pypdf>=6.7.0
+pypdf>=6.10.2
 
 # ── Structured Data (CSV / Excel / JSON) ────────────────────────────────────
 pandas
