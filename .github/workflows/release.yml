@@ -52,9 +52,9 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -81,10 +81,10 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # System Python (used by build script to find tkinter for bundling)
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -101,7 +101,7 @@ jobs:
       # Certum/SimplySign, verified with signtool, then uploaded to the release.
 
       - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ThothSetup-Windows
           path: dist/ThothSetup_*.exe
@@ -120,7 +120,7 @@ jobs:
       PKG_SIGN_IDENTITY: "Developer ID Installer: Siddharth Sachar (33PQRTZLNW)"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # ── Import Apple certificates into a temporary keychain ────────────────
       - name: Import Apple certificates
@@ -320,14 +320,14 @@ jobs:
           du -h "$DMG_PATH"
 
       - name: Upload signed macOS DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Thoth-macOS
           path: dist/Thoth-*-macOS-*.dmg
           retention-days: 90
 
       - name: Upload signed macOS PKG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Thoth-macOS-pkg
           path: dist/Thoth-*-macOS-*.pkg
