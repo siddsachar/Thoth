@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: mailto:siddsachar@gmail.com
+    about: Please report vulnerabilities privately by email.
+  - name: Questions and ideas
+    url: https://github.com/siddsachar/Thoth/discussions
+    about: Use Discussions for open-ended questions, ideas, and help.

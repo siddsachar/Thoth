@@ -1,0 +1,60 @@
+- name: bug
+  color: d73a4a
+  description: Something is not working
+- name: enhancement
+  color: a2eeef
+  description: New feature or request
+- name: feature
+  color: 0e8a16
+  description: User-facing feature work
+- name: feat
+  color: 0e8a16
+  description: Conventional commit alias for feature work
+- name: fix
+  color: d73a4a
+  description: Bug fix work
+- name: docs
+  color: 0075ca
+  description: Documentation changes
+- name: documentation
+  color: 0075ca
+  description: Documentation changes
+- name: chore
+  color: cfd3d7
+  description: Maintenance work
+- name: ci
+  color: c5def5
+  description: CI workflow changes
+- name: build
+  color: c5def5
+  description: Build or packaging changes
+- name: dependencies
+  color: 0366d6
+  description: Dependency updates
+- name: python
+  color: 3572A5
+  description: Python dependency or implementation work
+- name: github-actions
+  color: 2088ff
+  description: GitHub Actions dependency or workflow work
+- name: needs-triage
+  color: ffb347
+  description: Needs maintainer triage
+- name: good first issue
+  color: 7057ff
+  description: Good entry point for new contributors
+- name: help wanted
+  color: 008672
+  description: Maintainer welcomes external help
+- name: patch
+  color: c2e0c6
+  description: Patch release candidate
+- name: minor
+  color: bfd4f2
+  description: Minor release candidate
+- name: major
+  color: b60205
+  description: Major release candidate
+- name: breaking
+  color: b60205
+  description: Breaking change

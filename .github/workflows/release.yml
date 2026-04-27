@@ -1,5 +1,5 @@
 # =============================================================================
-# release.yml — Manually build and sign Thoth installers
+# release.yml — Build Thoth installers
 #
 # Triggers:
 #   • Manual workflow_dispatch  → build Windows installer, build macOS installer,
@@ -7,7 +7,7 @@
 #
 # Jobs:
 #   test           → run test_suite.py before any installer build
-#   build-windows  → self-contained .exe (Inno Setup)
+#   build-windows  → self-contained unsigned .exe (Inno Setup)
 #   build-macos    → signed .app/.pkg/.dmg (manual notarization later)
 #
 # Notarization is handled by two separate manual workflows:
@@ -24,8 +24,9 @@
 #   APPLE_APP_PASSWORD      App-specific password (appleid.apple.com)
 #   APPLE_TEAM_ID           Apple Developer Team ID
 #
-# Windows signing (Certum) — uncomment when certificate is purchased:
-#   CERTUM_PASSWORD         Certum SimplySign credentials
+# Windows signing (Certum) is intentionally local-only on the maintainer's
+# Windows machine. Do not add Certum credentials to GitHub Actions unless that
+# policy changes deliberately.
 # =============================================================================
 
 name: Release — Build & Sign Installers
@@ -95,28 +96,9 @@ jobs:
           Write-Host "Building Windows installer..."
           .\installer\build_installer.ps1
 
-      # ── Windows code signing (PLACEHOLDER — uncomment after Certum purchase)
-      # - name: Sign installer with Certum
-      #   env:
-      #     CERTUM_PASSWORD: ${{ secrets.CERTUM_PASSWORD }}
-      #   run: |
-      #     # Resolve whatever ThothSetup_*.exe was just built (version-agnostic)
-      #     $installer = (Get-ChildItem dist\ThothSetup_*.exe | Select-Object -First 1).FullName
-      #
-      #     # Option A: jsign (cloud-based, works with SimplySign)
-      #     choco install jsign --yes --no-progress
-      #     jsign --storetype DIGICERTONE `
-      #           --storepass "$env:CERTUM_PASSWORD" `
-      #           --alias "Open Source Code Signing" `
-      #           --tsaurl http://time.certum.pl `
-      #           "$installer"
-      #
-      #     # Option B: signtool (if using USB token / local cert)
-      #     # signtool sign /fd SHA256 /tr http://time.certum.pl /td SHA256 `
-      #     #   /f cert.pfx /p "$env:CERTUM_PASSWORD" "$installer"
-      #
-      #     # Verify the signature before publishing
-      #     signtool verify /pa "$installer"
+      # ── Windows code signing intentionally disabled
+      # The official Windows installer is signed locally by the maintainer with
+      # Certum/SimplySign, verified with signtool, then uploaded to the release.
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4

@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/siddsachar/Thoth/releases"><img src="https://img.shields.io/github/v/release/siddsachar/Thoth?style=flat&label=release&color=c9a227" alt="Release"></a>
+   <a href="https://github.com/siddsachar/Thoth/actions/workflows/ci.yml"><img src="https://github.com/siddsachar/Thoth/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/siddsachar/Thoth?style=flat" alt="License"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-c9a227?style=flat" alt="Platform">
   <img src="https://img.shields.io/badge/tests-All%20Pass-brightgreen?style=flat" alt="Tests">
@@ -525,6 +526,21 @@ For **Gmail** and **Google Calendar**, you'll need a Google Cloud OAuth `credent
 **Cloud models (opt-in):** Only the current conversation is sent to the LLM provider (OpenAI, Anthropic, Google AI, xAI, or OpenRouter). Memories, knowledge graph, documents, files, and other conversations never leave your machine. Your API key connects directly to the provider — Thoth has no servers and no middleman.
 
 **Always:** API keys stored locally; no Thoth account required; no sign-up; no server to phone home to. Tools can be individually disabled to control what the agent can access.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the local setup, branch naming, commit format, PR process, and test expectations.
+
+Useful project docs:
+
+- [Branching strategy](docs/BRANCHING.md) — protected `main`, feature branches, hotfixes
+- [Release process](docs/RELEASING.md) — version bumps, tags, build artifacts, signing, publishing
+- [Security policy](SECURITY.md) — private vulnerability reporting
+- [Code of conduct](CODE_OF_CONDUCT.md) — community expectations
+
+All changes should go through a pull request. `main` is intended to stay releasable.
 
 ---
 

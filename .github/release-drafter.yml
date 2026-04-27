@@ -1,0 +1,34 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+categories:
+  - title: "Features"
+    labels: [feature, enhancement, feat]
+  - title: "Bug Fixes"
+    labels: [bug, fix]
+  - title: "Documentation"
+    labels: [documentation, docs]
+  - title: "Maintenance"
+    labels: [chore, dependencies, ci, build]
+change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
+change-title-escapes: "\\<*_&"
+version-resolver:
+  major:
+    labels: [major, breaking]
+  minor:
+    labels: [minor, feature, enhancement]
+  patch:
+    labels: [patch, bug, fix, docs, dependencies, chore]
+  default: patch
+template: |
+  ## Changes
+
+  $CHANGES
+
+  ## Installation
+
+  Download the Windows installer or macOS DMG from the assets below.
+
+  ## Verification
+
+  Packaged builds are verified by the in-app updater using the SHA256 manifest
+  embedded in the release body and by OS code-signature checks.

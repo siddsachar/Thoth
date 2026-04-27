@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python packages
+        run: python -m pip install -r requirements.txt
+
+      - name: Compile Python files
+        run: python -m compileall -q -x "(\\.git|\\.venv|dist|build|__pycache__)" .
+
+  full-test:
+    name: Full regression suite
+    runs-on: macos-latest
+    timeout-minutes: 45
+    needs: smoke
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Ollama
+        run: |
+          brew install ollama
+          ollama serve &
+          sleep 5
+          ollama pull qwen3:1.7b
+
+      - name: Install Python packages
+        run: python -m pip install -r requirements.txt
+
+      - name: Run test suite
+        run: python test_suite.py
