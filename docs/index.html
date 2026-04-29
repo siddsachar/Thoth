@@ -58,15 +58,22 @@
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script>
         window.THOTH_GA_MEASUREMENT_ID = 'G-0YYKPX5M5E';
-        if (window.THOTH_GA_MEASUREMENT_ID) {
+        window.THOTH_GOOGLE_ADS_ID = 'AW-847204616';
+        const thothGoogleTagId = window.THOTH_GA_MEASUREMENT_ID || window.THOTH_GOOGLE_ADS_ID;
+        if (thothGoogleTagId) {
             const gaScript = document.createElement('script');
             gaScript.async = true;
-            gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + window.THOTH_GA_MEASUREMENT_ID;
+            gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + thothGoogleTagId;
             document.head.appendChild(gaScript);
             window.dataLayer = window.dataLayer || [];
             window.gtag = function(){ dataLayer.push(arguments); };
             gtag('js', new Date());
-            gtag('config', window.THOTH_GA_MEASUREMENT_ID);
+            if (window.THOTH_GA_MEASUREMENT_ID) {
+                gtag('config', window.THOTH_GA_MEASUREMENT_ID);
+            }
+            if (window.THOTH_GOOGLE_ADS_ID) {
+                gtag('config', window.THOTH_GOOGLE_ADS_ID);
+            }
         }
     </script>
     <style>
