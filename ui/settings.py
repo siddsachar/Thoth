@@ -34,7 +34,7 @@ def open_settings(
     keep startup fast.
     """
     # ── imports used across multiple tabs ──
-    from api_keys import get_key, set_key, get_cloud_config
+    from api_keys import get_key, set_key, delete_key, key_status, get_cloud_config
     from tools import registry as tool_registry
     from models import (
         _ollama_reachable,
@@ -83,6 +83,49 @@ def open_settings(
     def clear_agent_cache():
         from agent import clear_agent_cache as _cac
         _cac()
+
+    def _secret_status_text(env_var: str) -> str:
+        status = key_status(env_var)
+        if not status.get("configured"):
+            return "Not saved"
+        source = status.get("source") or "saved"
+        fingerprint = status.get("fingerprint") or "saved"
+        if source == "keyring":
+            return f"Saved securely ({fingerprint})"
+        if source == "environment":
+            return f"Set by environment ({fingerprint})"
+        if source == "legacy_plaintext":
+            return f"Saved in legacy plaintext ({fingerprint})"
+        return f"Saved for this session ({fingerprint})"
+
+    def _secret_input(label: str, env_var: str):
+        status_label = ui.label(_secret_status_text(env_var)).classes("text-grey-6 text-xs")
+        inp = ui.input(
+            label,
+            value="",
+            placeholder="Paste a new value to replace the saved one",
+            password=True,
+            password_toggle_button=True,
+        ).classes("w-full")
+
+        def refresh_status() -> None:
+            status_label.text = _secret_status_text(env_var)
+            status_label.update()
+
+        return inp, refresh_status
+
+    def _secret_value_or_notify(raw: object, display: str) -> str:
+        val = raw.strip() if isinstance(raw, str) else ""
+        if not val:
+            ui.notify(f"{display} unchanged — enter a new value to replace it", type="info")
+        return val
+
+    def _clear_secret(env_var: str, display: str, refresh: Callable[[], None] | None = None) -> None:
+        delete_key(env_var)
+        clear_agent_cache()
+        if refresh:
+            refresh()
+        ui.notify(f"{display} cleared", type="info")
 
     # ══════════════════════════════════════════════════════════════════
     # TAB BUILDERS
@@ -685,109 +728,115 @@ def open_settings(
         ui.separator()
         with ui.expansion("🔑 OpenAI Direct", icon="key", value=False).classes("w-full"):
             ui.label("Direct access to OpenAI models.").classes("text-grey-6 text-sm")
-            _oai_key = get_key("OPENAI_API_KEY")
-            oai_input = ui.input(
-                "OpenAI API Key", value=_oai_key,
-                password=True, password_toggle_button=True,
-            ).classes("w-full")
+            oai_input, oai_refresh = _secret_input("OpenAI API Key", "OPENAI_API_KEY")
 
             async def _save_oai():
-                val = oai_input.value.strip()
+                val = _secret_value_or_notify(oai_input.value, "OpenAI key")
+                if not val:
+                    return
                 set_key("OPENAI_API_KEY", val)
+                oai_input.value = ""
+                oai_input.update()
+                oai_refresh()
                 ui.notify("OpenAI key saved ✅", type="positive")
-                if val:
-                    await run.io_bound(refresh_cloud_models)
-                    _refresh_model_list()
-            ui.button("Save Key", icon="save", on_click=_save_oai).props("flat dense")
+                await run.io_bound(refresh_cloud_models)
+                _refresh_model_list()
+            with ui.row().classes("gap-2"):
+                ui.button("Save Key", icon="save", on_click=_save_oai).props("flat dense")
+                ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("OPENAI_API_KEY", "OpenAI key", oai_refresh)).props("flat dense color=negative")
 
         with ui.expansion("🌐 OpenRouter", icon="language", value=False).classes("w-full"):
             ui.label("One key for Claude, Gemini, Llama, and 100+ more.").classes("text-grey-6 text-sm")
-            _or_key = get_key("OPENROUTER_API_KEY")
-            or_input = ui.input(
-                "OpenRouter API Key", value=_or_key,
-                password=True, password_toggle_button=True,
-            ).classes("w-full")
+            or_input, or_refresh = _secret_input("OpenRouter API Key", "OPENROUTER_API_KEY")
 
             async def _save_or():
-                val = or_input.value.strip()
-                if val:
-                    valid = await run.io_bound(validate_openrouter_key, val)
-                    if not valid:
-                        ui.notify("❌ Invalid OpenRouter API key", type="negative")
-                        return
+                val = _secret_value_or_notify(or_input.value, "OpenRouter key")
+                if not val:
+                    return
+                valid = await run.io_bound(validate_openrouter_key, val)
+                if not valid:
+                    ui.notify("❌ Invalid OpenRouter API key", type="negative")
+                    return
                 set_key("OPENROUTER_API_KEY", val)
+                or_input.value = ""
+                or_input.update()
+                or_refresh()
                 ui.notify("OpenRouter key saved ✅", type="positive")
-                if val:
-                    await run.io_bound(refresh_cloud_models)
-                    _refresh_model_list()
-            ui.button("Save Key", icon="save", on_click=_save_or).props("flat dense")
+                await run.io_bound(refresh_cloud_models)
+                _refresh_model_list()
+            with ui.row().classes("gap-2"):
+                ui.button("Save Key", icon="save", on_click=_save_or).props("flat dense")
+                ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("OPENROUTER_API_KEY", "OpenRouter key", or_refresh)).props("flat dense color=negative")
 
         with ui.expansion("🔶 Anthropic", icon="smart_toy", value=False).classes("w-full"):
             ui.label("Direct access to Claude models.").classes("text-grey-6 text-sm")
-            _anth_key = get_key("ANTHROPIC_API_KEY")
-            anth_input = ui.input(
-                "Anthropic API Key", value=_anth_key,
-                password=True, password_toggle_button=True,
-            ).classes("w-full")
+            anth_input, anth_refresh = _secret_input("Anthropic API Key", "ANTHROPIC_API_KEY")
 
             async def _save_anth():
-                val = anth_input.value.strip()
-                if val:
-                    valid = await run.io_bound(validate_anthropic_key, val)
-                    if not valid:
-                        ui.notify("❌ Invalid Anthropic API key", type="negative")
-                        return
+                val = _secret_value_or_notify(anth_input.value, "Anthropic key")
+                if not val:
+                    return
+                valid = await run.io_bound(validate_anthropic_key, val)
+                if not valid:
+                    ui.notify("❌ Invalid Anthropic API key", type="negative")
+                    return
                 set_key("ANTHROPIC_API_KEY", val)
+                anth_input.value = ""
+                anth_input.update()
+                anth_refresh()
                 ui.notify("Anthropic key saved ✅", type="positive")
-                if val:
-                    await run.io_bound(refresh_cloud_models)
-                    _refresh_model_list()
-            ui.button("Save Key", icon="save", on_click=_save_anth).props("flat dense")
+                await run.io_bound(refresh_cloud_models)
+                _refresh_model_list()
+            with ui.row().classes("gap-2"):
+                ui.button("Save Key", icon="save", on_click=_save_anth).props("flat dense")
+                ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("ANTHROPIC_API_KEY", "Anthropic key", anth_refresh)).props("flat dense color=negative")
 
         with ui.expansion("💎 Google AI", icon="diamond", value=False).classes("w-full"):
             ui.label("Direct access to Gemini models.").classes("text-grey-6 text-sm")
-            _goog_key = get_key("GOOGLE_API_KEY")
-            goog_input = ui.input(
-                "Google AI API Key", value=_goog_key,
-                password=True, password_toggle_button=True,
-            ).classes("w-full")
+            goog_input, goog_refresh = _secret_input("Google AI API Key", "GOOGLE_API_KEY")
 
             async def _save_goog():
-                val = goog_input.value.strip()
-                if val:
-                    valid = await run.io_bound(validate_google_key, val)
-                    if not valid:
-                        ui.notify("❌ Invalid Google AI API key", type="negative")
-                        return
+                val = _secret_value_or_notify(goog_input.value, "Google AI key")
+                if not val:
+                    return
+                valid = await run.io_bound(validate_google_key, val)
+                if not valid:
+                    ui.notify("❌ Invalid Google AI API key", type="negative")
+                    return
                 set_key("GOOGLE_API_KEY", val)
+                goog_input.value = ""
+                goog_input.update()
+                goog_refresh()
                 ui.notify("Google AI key saved ✅", type="positive")
-                if val:
-                    await run.io_bound(refresh_cloud_models)
-                    _refresh_model_list()
-            ui.button("Save Key", icon="save", on_click=_save_goog).props("flat dense")
+                await run.io_bound(refresh_cloud_models)
+                _refresh_model_list()
+            with ui.row().classes("gap-2"):
+                ui.button("Save Key", icon="save", on_click=_save_goog).props("flat dense")
+                ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("GOOGLE_API_KEY", "Google AI key", goog_refresh)).props("flat dense color=negative")
 
         with ui.expansion("𝕏 xAI", icon="auto_awesome", value=False).classes("w-full"):
             ui.label("Access Grok models for chat and image generation.").classes("text-grey-6 text-sm")
-            _xai_key = get_key("XAI_API_KEY")
-            xai_input = ui.input(
-                "xAI API Key", value=_xai_key,
-                password=True, password_toggle_button=True,
-            ).classes("w-full")
+            xai_input, xai_refresh = _secret_input("xAI API Key", "XAI_API_KEY")
 
             async def _save_xai():
-                val = xai_input.value.strip()
-                if val:
-                    valid = await run.io_bound(validate_xai_key, val)
-                    if not valid:
-                        ui.notify("⚠️ xAI key validation failed — saving anyway. "
-                                  "Models will appear if the key is valid.",
-                                  type="warning", timeout=5000)
+                val = _secret_value_or_notify(xai_input.value, "xAI key")
+                if not val:
+                    return
+                valid = await run.io_bound(validate_xai_key, val)
+                if not valid:
+                    ui.notify("⚠️ xAI key validation failed — saving anyway. "
+                              "Models will appear if the key is valid.",
+                              type="warning", timeout=5000)
                 set_key("XAI_API_KEY", val)
+                xai_input.value = ""
+                xai_input.update()
+                xai_refresh()
                 ui.notify("xAI key saved ✅", type="positive")
-                if val:
-                    await run.io_bound(refresh_cloud_models)
-                    _refresh_model_list()
-            ui.button("Save Key", icon="save", on_click=_save_xai).props("flat dense")
+                await run.io_bound(refresh_cloud_models)
+                _refresh_model_list()
+            with ui.row().classes("gap-2"):
+                ui.button("Save Key", icon="save", on_click=_save_xai).props("flat dense")
+                ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("XAI_API_KEY", "xAI key", xai_refresh)).props("flat dense color=negative")
 
         # Setup Guide
         ui.separator()
@@ -1093,11 +1142,24 @@ def open_settings(
 
         if tool.required_api_keys:
             for label, env_var in tool.required_api_keys.items():
-                current_val = get_key(env_var)
-                ui.input(
-                    label, value=current_val, password=True, password_toggle_button=True,
-                    on_change=lambda e, ev=env_var: set_key(ev, e.value),
-                ).classes("w-full")
+                inp, refresh = _secret_input(label, env_var)
+                with ui.row().classes("gap-2"):
+                    def _save_tool_key(ev=env_var, widget=inp, refresh_status=refresh, display=label):
+                        val = _secret_value_or_notify(widget.value, display)
+                        if not val:
+                            return
+                        set_key(ev, val)
+                        widget.value = ""
+                        widget.update()
+                        refresh_status()
+                        ui.notify(f"{display} saved", type="positive")
+
+                    ui.button("Save", icon="save", on_click=_save_tool_key).props("flat dense")
+                    ui.button(
+                        "Clear",
+                        icon="delete",
+                        on_click=lambda ev=env_var, display=label, refresh_status=refresh: _clear_secret(ev, display, refresh_status),
+                    ).props("flat dense color=negative")
 
         schema = tool.config_schema
         if schema:
@@ -1658,18 +1720,8 @@ def open_settings(
             ui.separator()
 
             # ── Client ID / Secret fields ────────────────────────────
-            current_id = get_key("X_CLIENT_ID")
-            current_secret = get_key("X_CLIENT_SECRET")
-
-            id_input = ui.input(
-                "Client ID", value=current_id,
-                password=True, password_toggle_button=True,
-            ).classes("w-full")
-
-            secret_input = ui.input(
-                "Client Secret", value=current_secret,
-                password=True, password_toggle_button=True,
-            ).classes("w-full")
+            id_input, id_refresh = _secret_input("Client ID", "X_CLIENT_ID")
+            secret_input, secret_refresh = _secret_input("Client Secret", "X_CLIENT_SECRET")
 
             # ── Auth status ──────────────────────────────────────────
             status_container = ui.column().classes("gap-1 mt-2")
@@ -1709,11 +1761,24 @@ def open_settings(
             def _save_x_credentials():
                 cid = (id_input.value or "").strip()
                 csecret = (secret_input.value or "").strip()
-                if not cid or not csecret:
-                    ui.notify("Please enter both Client ID and Client Secret", type="warning")
+                has_id = key_status("X_CLIENT_ID").get("configured")
+                has_secret = key_status("X_CLIENT_SECRET").get("configured")
+                if not cid and not has_id:
+                    ui.notify("Please enter your Client ID", type="warning")
                     return
-                set_key("X_CLIENT_ID", cid)
-                set_key("X_CLIENT_SECRET", csecret)
+                if not csecret and not has_secret:
+                    ui.notify("Please enter your Client Secret", type="warning")
+                    return
+                if cid:
+                    set_key("X_CLIENT_ID", cid)
+                    id_input.value = ""
+                    id_input.update()
+                    id_refresh()
+                if csecret:
+                    set_key("X_CLIENT_SECRET", csecret)
+                    secret_input.value = ""
+                    secret_input.update()
+                    secret_refresh()
                 clear_agent_cache()
                 _update_auth_status()
                 _update_buttons()
@@ -2414,25 +2479,27 @@ def open_settings(
             ).classes("w-full").style("max-width: 300px")
 
             # Authtoken
-            token_val = get_key("NGROK_AUTHTOKEN") or ""
-            token_input = ui.input(
-                label="Authtoken",
-                value=token_val,
-                password=True,
-                password_toggle_button=True,
-            ).classes("w-full")
+            token_input, token_refresh = _secret_input("Authtoken", "NGROK_AUTHTOKEN")
             token_input.tooltip("Your ngrok authtoken from https://dashboard.ngrok.com/")
 
             def _save_tunnel_settings():
                 _ch_config.set("tunnel", "provider", provider_select.value)
-                raw = token_input.value
-                if isinstance(raw, str):
-                    raw = raw.strip()
-                set_key("NGROK_AUTHTOKEN", raw)
+                raw = token_input.value.strip() if isinstance(token_input.value, str) else ""
+                if raw:
+                    set_key("NGROK_AUTHTOKEN", raw)
+                    token_input.value = ""
+                    token_input.update()
+                    token_refresh()
                 ui.notify("Tunnel settings saved", type="positive")
                 _refresh_active_tunnels()
 
-            ui.button("💾 Save", on_click=_save_tunnel_settings)
+            with ui.row().classes("gap-2"):
+                ui.button("💾 Save", on_click=_save_tunnel_settings)
+                ui.button(
+                    "Clear authtoken",
+                    icon="delete",
+                    on_click=lambda: _clear_secret("NGROK_AUTHTOKEN", "ngrok authtoken", token_refresh),
+                ).props("flat color=negative")
 
             # Active tunnels display
             tunnel_container = ui.column().classes("w-full q-mt-sm")
@@ -2578,10 +2645,18 @@ def open_settings(
                     val = _ch_config.get(ch.name, cf.key, cf.default)
 
                 if cf.field_type == "password":
-                    inp = ui.input(
-                        label=cf.label, value=val or "",
-                        password=True, password_toggle_button=True,
-                    ).classes("w-full")
+                    if cf.storage == "env" and cf.env_key:
+                        inp, refresh = _secret_input(cf.label, cf.env_key)
+                        ui.button(
+                            "Clear",
+                            icon="delete",
+                            on_click=lambda ev=cf.env_key, display=cf.label, refresh_status=refresh: _clear_secret(ev, display, refresh_status),
+                        ).props("flat dense color=negative")
+                    else:
+                        inp = ui.input(
+                            label=cf.label, value=val or "",
+                            password=True, password_toggle_button=True,
+                        ).classes("w-full")
                 elif cf.field_type == "number":
                     inp = ui.number(
                         label=cf.label, value=val or cf.default,
@@ -2615,7 +2690,8 @@ def open_settings(
                     if isinstance(raw, str):
                         raw = raw.strip()
                     if cf.storage == "env" and cf.env_key:
-                        set_key(cf.env_key, str(raw))
+                        if raw:
+                            set_key(cf.env_key, str(raw))
                     else:
                         _ch_config.set(ch.name, cf.key, raw)
                 _update_channel_status(status_container, ch)

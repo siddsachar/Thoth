@@ -89,6 +89,7 @@ CORE_MODULES = [
     "memory_extraction",
     "documents",
     "api_keys",
+    "secret_store",
     "voice",
     "tts",
     "vision",
@@ -4669,12 +4670,25 @@ try:
     _cloud_model_cache["anthropic/claude-sonnet-4"] = {"label": "Claude Sonnet 4", "ctx": 200000, "provider": "openrouter"}
     assert get_cloud_provider("gpt-4o") == "openai", "gpt-4o should be openai"
     assert get_cloud_provider("anthropic/claude-sonnet-4") == "openrouter", "claude should be openrouter"
+    assert get_cloud_provider("gpt-5.5") == "openai", "bare GPT IDs should infer OpenAI"
+    assert get_cloud_provider("claude-sonnet-4-5") == "anthropic", "bare Claude IDs should infer Anthropic"
+    assert get_cloud_provider("gemini-2.5-pro") == "google", "bare Gemini IDs should infer Google"
+    assert get_cloud_provider("grok-4-1-fast-reasoning") == "xai", "bare Grok IDs should infer xAI"
     assert get_cloud_provider("qwen3:14b") is None, "local model should return None"
     record("PASS", "cloud: get_cloud_provider returns correct provider")
 
     # ── 35e. is_cloud_model with dynamic cache ───────────────────────
     assert is_cloud_model("gpt-4o"), "gpt-4o (in cache) should be cloud"
     assert is_cloud_model("anthropic/claude-sonnet-4"), "claude (in cache) should be cloud"
+    _saved_cloud_cache35e = dict(_cloud_model_cache)
+    _cloud_model_cache.clear()
+    try:
+        assert is_cloud_model("gpt-5.5"), "GPT IDs should remain cloud when cache is empty"
+        assert is_cloud_model("claude-sonnet-4-5"), "Claude IDs should remain cloud when cache is empty"
+        assert is_cloud_model("gemini-2.5-flash"), "Gemini IDs should remain cloud when cache is empty"
+        assert is_cloud_model("grok-4-1-fast-reasoning"), "Grok IDs should remain cloud when cache is empty"
+    finally:
+        _cloud_model_cache.update(_saved_cloud_cache35e)
     assert not is_cloud_model("qwen3:14b"), "local model should NOT be cloud"
     record("PASS", "cloud: is_cloud_model correct for cached and local models")
 
@@ -4715,6 +4729,39 @@ try:
     # Clean up synthetic cache entries
     _cloud_model_cache.pop("gpt-4o", None)
     _cloud_model_cache.pop("anthropic/claude-sonnet-4", None)
+
+    # ── 35h2. refresh preserves cloud default on cache miss ──────────
+    import models as _models35_mod
+    _old_current35 = _models35_mod._current_model
+    _old_llm35 = _models35_mod._llm_instance
+    _old_cache35 = dict(_models35_mod._cloud_model_cache)
+    _old_fetch_catalog35 = _models35_mod.fetch_context_catalog
+    _old_fetch_cloud35 = _models35_mod.fetch_cloud_models
+    _old_save_cloud35 = _models35_mod._save_cloud_cache
+    _old_save_settings35 = _models35_mod._save_settings
+    _saved_settings_calls35 = []
+    try:
+        _models35_mod._current_model = "gpt-5.5"
+        _models35_mod._llm_instance = object()
+        _models35_mod._cloud_model_cache.clear()
+        _models35_mod.fetch_context_catalog = lambda: 0
+        _models35_mod.fetch_cloud_models = lambda provider: 0
+        _models35_mod._save_cloud_cache = lambda: None
+        _models35_mod._save_settings = lambda settings: _saved_settings_calls35.append(settings)
+        _models35_mod.refresh_cloud_models()
+        assert _models35_mod._current_model == "gpt-5.5", "refresh should preserve cloud default"
+        assert not _saved_settings_calls35, "refresh should not rewrite settings on cache miss"
+        assert _models35_mod._llm_instance is None, "LLM should be recreated lazily after refresh"
+    finally:
+        _models35_mod._current_model = _old_current35
+        _models35_mod._llm_instance = _old_llm35
+        _models35_mod._cloud_model_cache.clear()
+        _models35_mod._cloud_model_cache.update(_old_cache35)
+        _models35_mod.fetch_context_catalog = _old_fetch_catalog35
+        _models35_mod.fetch_cloud_models = _old_fetch_cloud35
+        _models35_mod._save_cloud_cache = _old_save_cloud35
+        _models35_mod._save_settings = _old_save_settings35
+    record("PASS", "cloud: refresh preserves cloud default on cache miss")
 
     # ── 35i. BASE URLs correct ───────────────────────────────────────
     assert OPENAI_BASE_URL == "https://api.openai.com/v1", f"Bad OPENAI URL: {OPENAI_BASE_URL}"
@@ -7857,7 +7904,23 @@ try:
     from plugins import registry as _registry49
     from plugins import loader as _loader49
     from plugins import sandbox as _sandbox49
+    import secret_store as _secret_store49
     record("PASS", "plugins: all 6 modules import successfully")
+
+    class _FakeKeyring49:
+        def __init__(self):
+            self.values = {}
+
+        def get_password(self, service, account):
+            return self.values.get((service, account))
+
+        def set_password(self, service, account, value):
+            self.values[(service, account)] = value
+
+        def delete_password(self, service, account):
+            self.values.pop((service, account), None)
+
+    _secret_store49._set_backend_for_tests(_FakeKeyring49())
 
     # ── 49b. Manifest validation — good manifest ─────────────────────
     _tmpdir49 = _Path49(_tempfile49.mkdtemp(prefix="thoth_plugin_test_"))
@@ -7955,6 +8018,11 @@ try:
         _state49.set_plugin_secret("test-plugin", "API_KEY", "sk-test-123")
         assert _state49.get_plugin_secret("test-plugin", "API_KEY") == "sk-test-123"
         assert _state49.get_plugin_secret("test-plugin", "MISSING") is None
+        _plugin_secrets_path49 = _state49.DATA_DIR / "plugin_secrets.json"
+        _plugin_secrets_text49 = _plugin_secrets_path49.read_text(encoding="utf-8")
+        _plugin_secret_meta49 = _json49.loads(_plugin_secrets_text49)
+        assert "sk-test-123" not in _plugin_secrets_text49
+        assert _plugin_secret_meta49["plugins"]["test-plugin"]["API_KEY"]["configured"] is True
         record("PASS", "plugins: secret storage and retrieval")
 
         # ── 49i. Plugin registry — isolation from core ───────────────────
@@ -8173,8 +8241,13 @@ try:
         _registry49._reset()
         _state49._reset()
         _loader49._reset()
+        _secret_store49._set_backend_for_tests(None)
 
 except Exception as e:
+    try:
+        _secret_store49._set_backend_for_tests(None)
+    except Exception:
+        pass
     record("FAIL", "plugin-system", f"{type(e).__name__}: {e}")
     traceback.print_exc()
 
@@ -8190,7 +8263,23 @@ try:
     # ── 50a. UI modules import ───────────────────────────────────────
     from plugins.ui_settings import build_plugins_tab, _get_missing_keys
     from plugins.ui_plugin_dialog import open_plugin_dialog
+    import secret_store as _secret_store50
     record("PASS", "plugins-ui: ui_settings and ui_plugin_dialog import successfully")
+
+    class _FakeKeyring50:
+        def __init__(self):
+            self.values = {}
+
+        def get_password(self, service, account):
+            return self.values.get((service, account))
+
+        def set_password(self, service, account, value):
+            self.values[(service, account)] = value
+
+        def delete_password(self, service, account):
+            self.values.pop((service, account), None)
+
+    _secret_store50._set_backend_for_tests(_FakeKeyring50())
 
     # ── 50b. _get_missing_keys with no required keys ─────────────────
     import plugins.manifest as _manifest50
@@ -8248,8 +8337,13 @@ try:
     # Cleanup
     _state50.remove_plugin_state("test-ui-plugin")
     _state50._reset()
+    _secret_store50._set_backend_for_tests(None)
 
 except Exception as e:
+    try:
+        _secret_store50._set_backend_for_tests(None)
+    except Exception:
+        pass
     record("FAIL", "plugin-settings-ui", f"{type(e).__name__}: {e}")
     traceback.print_exc()
 
@@ -13568,20 +13662,20 @@ try:
     record("PASS", f"68l: thoth_setup.iss version is {_ver68}")
 
     _ps168 = _P68("installer/build_installer.ps1").read_text(encoding="utf-8")
-    assert _ver68 in _ps168
-    record("PASS", f"68l: build_installer.ps1 version is {_ver68}")
+    assert _ver68 in _ps168 or ("version.py" in _ps168 and "ThothVersion" in _ps168)
+    record("PASS", f"68l: build_installer.ps1 resolves version {_ver68}")
 
     _yml68 = _P68(".github/workflows/release.yml").read_text(encoding="utf-8")
     assert _ver68 in _yml68
     record("PASS", f"68l: release.yml references version {_ver68}")
 
     _mac68 = _P68("installer/build_mac_app.sh").read_text(encoding="utf-8")
-    assert f'${{1:-{_ver68}}}' in _mac68
-    record("PASS", f"68l: build_mac_app.sh version is {_ver68}")
+    assert f'${{1:-{_ver68}}}' in _mac68 or ("version.py" in _mac68 and "DEFAULT_VERSION" in _mac68)
+    record("PASS", f"68l: build_mac_app.sh resolves version {_ver68}")
 
     _macrel68 = _P68("installer/build_mac_release.sh").read_text(encoding="utf-8")
-    assert f'${{1:-{_ver68}}}' in _macrel68
-    record("PASS", f"68l: build_mac_release.sh version is {_ver68}")
+    assert f'${{1:-{_ver68}}}' in _macrel68 or ("version.py" in _macrel68 and "DEFAULT_VERSION" in _macrel68)
+    record("PASS", f"68l: build_mac_release.sh resolves version {_ver68}")
 
     _bat68 = _P68("installer/install_deps.bat").read_text(encoding="utf-8")
     assert _ver68 in _bat68 and "3.7.0" not in _bat68
@@ -13627,6 +13721,7 @@ try:
     _skip_top68 = {
         "debug_tools.py",
         "test_suite.py",
+        "test_api_key_storage.py",
         "test_migration_apply.py",
         "test_migration_detection.py",
         "test_migration_core.py",
@@ -13967,7 +14062,11 @@ try:
         _vpath69q = _APP_ROOT69 / _vf69q
         if _vpath69q.exists():
             _vtxt69q = _vpath69q.read_text(encoding="utf-8")
-            assert _ver69q in _vtxt69q, f"Version {_ver69q} not found in {_vf69q}"
+            if _vf69q == "installer/build_installer.ps1":
+                assert _ver69q in _vtxt69q or ("version.py" in _vtxt69q and "ThothVersion" in _vtxt69q), \
+                    f"Version {_ver69q} not found or derived in {_vf69q}"
+            else:
+                assert _ver69q in _vtxt69q, f"Version {_ver69q} not found in {_vf69q}"
     record("PASS", f"69q: version {_ver69q} consistent across installer/CI files")
 except Exception as e:
     record("FAIL", "69q-version-consistency", f"{type(e).__name__}: {e}")

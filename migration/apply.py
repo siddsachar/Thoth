@@ -230,9 +230,8 @@ def _apply_secret_item(
     if target.exists() and item.status == MigrationStatus.CONFLICT and not overwrite:
         raise FileExistsError(str(target))
     backups = _backup_existing(target, backup_dir, target_root, backed_up_targets)
-    data = _read_json_object(target)
-    data[fragment or env_var] = env[env_var]
-    _write_json(target, data)
+    from api_keys import set_key_for_data_dir
+    set_key_for_data_dir(target_root, fragment or env_var, env[env_var])
     return backups
 
 

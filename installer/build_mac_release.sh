@@ -13,9 +13,17 @@
 
 set -euo pipefail
 
-VERSION="${1:-3.17.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_VERSION="$(python3 - "$PROJECT_DIR/version.py" <<'PY'
+import sys
+from pathlib import Path
+ns = {}
+exec(Path(sys.argv[1]).read_text(encoding='utf-8'), ns)
+print(ns.get('__version__', '0.0.0'))
+PY
+)"
+VERSION="${1:-$DEFAULT_VERSION}"
 OUTPUT_NAME="Thoth-${VERSION}-macOS"
 OUTPUT_ZIP="${OUTPUT_DIR:-$SCRIPT_DIR}/${OUTPUT_NAME}.zip"
 

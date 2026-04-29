@@ -1,16 +1,16 @@
 # Building the Thoth Windows Installer
 
-This guide explains how to build a distributable Windows installer for Thoth v3.14.0.
+This guide explains how to build a distributable Windows installer for Thoth v3.18.0.
 
 ## Architecture
 
-The installer (~30 MB) bundles the embedded Python runtime and app source code. Kokoro TTS model files (~169 MB) are auto-downloaded on first use. Ollama and Python packages are downloaded at install time. Ollama is optional — Thoth can run entirely with cloud models (OpenAI / OpenRouter).
+The installer bundles the embedded Python runtime, pre-installed Python packages, and app source code. Kokoro TTS model files are auto-downloaded on first use. Ollama and Playwright Chromium are handled by the build/runtime flow, and Ollama is optional because Thoth can run entirely with cloud models.
 
-| Bundled in .exe | Downloaded at install time |
-|----------------|---------------------------|
-| Python 3.13 embeddable (~15 MB) | Ollama (~120 MB) |
-| App source code + tools (~200 KB) | Python packages via pip (~2 GB) |
-| get-pip.py (~2.5 MB) | Kokoro TTS model + voices (~169 MB, auto on first TTS use) |
+| Bundled in .exe | Downloaded or created outside install |
+|----------------|--------------------------------------|
+| Python 3.13 embeddable runtime | Ollama installer is optional for local models |
+| App source code, tools, plugins, MCP client, migration wizard, UI, Designer, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use |
+| Python packages from `requirements.txt` | Playwright Chromium is bundled during build when available, otherwise installed on first browser use |
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ The installer (~30 MB) bundles the embedded Python runtime and app source code. 
 This will:
 1. Download Python 3.13 embeddable package (~15 MB)
 2. Download `get-pip.py` (~2.5 MB)
-3. Compile everything into `dist\ThothSetup_3.14.0.exe`
+3. Compile everything into `dist\ThothSetup_3.18.0.exe`
 
 ### Options
 
@@ -71,6 +71,7 @@ C:\Program Files\Thoth\            # Installation directory
     ├── documents.py                # Document ingestion
     ├── threads.py                  # Thread/conversation persistence
     ├── api_keys.py                 # API key management
+    ├── secret_store.py             # OS credential-store wrapper
     ├── voice.py                    # Speech-to-text (toggle-based, CPU Whisper)
     ├── tts.py                      # Text-to-speech (Kokoro TTS)
     ├── vision.py                   # Camera/screen capture
@@ -93,15 +94,16 @@ C:\Program Files\Thoth\            # Installation directory
     │   └── tool_factory.py
     ├── requirements.txt
     ├── thoth.ico
-    ├── static/                     # Vendored JS libraries
-    │   └── vis-network.min.js
-    ├── tools/                      # 25 tool modules
+    ├── static/                     # Vendored JS libraries, fonts, and Designer runtime assets
+    ├── tools/                      # 30 core tool modules
     │   ├── __init__.py
     │   ├── base.py
     │   ├── registry.py
     │   ├── web_search_tool.py
     │   ├── ...
     │   └── youtube_tool.py
+    ├── mcp_client/                 # External MCP server client/runtime
+    ├── migration/                  # Hermes/OpenClaw migration wizard backend
     └── plugins/                    # Plugin system & marketplace
         ├── __init__.py
         ├── api.py
@@ -122,8 +124,9 @@ C:\Program Files\Thoth\            # Installation directory
 ├── memory_vectors/                 # FAISS index for semantic memory search
 ├── memory_extraction_state.json    # Tracks last extraction run
 ├── dream_journal.json              # Dream Cycle operation log
-├── api_keys.json                   # Tool API keys (Tavily, Wolfram, etc.)
-├── cloud_config.json               # Cloud LLM provider keys and starred models
+├── api_keys.json                   # API key metadata only; raw keys use the OS credential store when available
+├── plugin_secrets.json             # Plugin API-key metadata only; raw keys use the OS credential store when available
+├── cloud_config.json               # Cloud model favorites and settings
 ├── app_config.json                 # Onboarding / first-run state
 ├── tools_config.json               # Tool enable/disable state
 ├── model_settings.json             # Selected model & context size
@@ -132,8 +135,8 @@ C:\Program Files\Thoth\            # Installation directory
 ├── voice_settings.json             # Whisper model size preference
 ├── processed_files.json            # Tracked indexed documents
 ├── tasks.db                        # Task definitions, schedules, run history & delivery config
-├── channels_config.json            # Channel settings (Telegram)
-├── plugins_config.json             # Installed plugin state & settings
+├── channels_config.json            # Channel settings
+├── plugin_state.json               # Installed plugin state & settings
 ├── shell_history.json              # Shell command history per thread
 ├── skills_config.json              # Skill enable/disable state
 ├── user_config.json                # Avatar emoji & ring color preferences
@@ -154,19 +157,13 @@ Ollama is installed system-wide via its official installer.
 
 The Inno Setup installer runs these steps:
 
-1. **Extract files** — embedded Python, app source, scripts
-2. **Run `install_deps.bat`** which:
-   - Patches the Python `._pth` file to enable pip and site-packages
-   - Installs pip via `get-pip.py`
-   - Installs setuptools + wheel
-   - Downloads and silently installs Ollama (skipped if already installed)
-   - Runs `pip install -r requirements.txt`
-3. **Create shortcuts** — Start Menu and optionally Desktop
-4. **Optionally launch Thoth**
+1. **Extract files** — embedded Python, pre-installed packages, app source, assets, and launch scripts
+2. **Create shortcuts** — Start Menu and optionally Desktop
+3. **Optionally launch Thoth**
 
 ## End-User Experience
 
-1. Run `ThothSetup_3.14.0.exe`
+1. Run `ThothSetup_3.18.0.exe`
 2. Follow the wizard — dependencies download and install automatically (5-15 min)
 3. Launch Thoth from Start Menu or Desktop shortcut
 4. The system tray icon appears; the app opens at `http://localhost:8080`

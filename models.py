@@ -330,7 +330,8 @@ def set_model(model_name: str):
         _llm_instance = _get_cloud_llm(model_name)
     else:
         _llm_instance = ChatOllama(model=model_name, num_ctx=_num_ctx, reasoning=True)
-    _save_settings({"model": _current_model, "context_size": _num_ctx})
+    _save_settings({"model": _current_model, "context_size": _num_ctx,
+                    "cloud_context_size": _cloud_num_ctx})
 
 
 # Thread-local model override — allows agent.py to propagate the per-thread
@@ -510,19 +511,40 @@ def _looks_like_cloud_model(model_name: str) -> bool:
     return False
 
 
+def _infer_cloud_provider(model_name: str) -> str | None:
+    """Infer a cloud provider from a model ID when the cache is unavailable."""
+    if model_name in _cloud_model_cache:
+        return _cloud_model_cache[model_name]["provider"]
+    if "/" in model_name:
+        return "openrouter"
+
+    bare_name = model_name.split("/")[-1]
+    if any(bare_name.startswith(prefix) for prefix in _OPENAI_CHAT_PREFIXES):
+        family = bare_name.split(":")[0]
+        if family not in _TOOL_COMPATIBLE_FAMILIES:
+            return "openai"
+    if bare_name.startswith("claude"):
+        return "anthropic"
+    if bare_name.startswith("gemini"):
+        return "google"
+    if bare_name.startswith("grok"):
+        return "xai"
+    return None
+
+
 def is_cloud_model(model_name: str) -> bool:
     """Return True if *model_name* is a known cloud model.
 
-    Uses the persisted cache (loaded from disk at startup).  Falls back
-    to the heuristic only when the cache has never been populated.
+    Uses the persisted cache (loaded from disk at startup), then falls back
+    to provider-prefix inference so a saved cloud default survives cache or
+    key outages.
     """
-    return model_name in _cloud_model_cache
+    return _infer_cloud_provider(model_name) is not None
 
 
 def get_cloud_provider(model_name: str) -> str | None:
     """Return ``'openai'``, ``'openrouter'``, ``'anthropic'``, ``'google'``, or ``None``."""
-    info = _cloud_model_cache.get(model_name)
-    return info["provider"] if info else None
+    return _infer_cloud_provider(model_name)
 
 
 # ── Provider emoji mapping ───────────────────────────────────────────────────
@@ -1095,13 +1117,14 @@ def refresh_cloud_models() -> int:
     """Clear cache and re-fetch from all configured providers.
 
     Also refreshes the context catalog (keyless) for accurate context sizes.
-    If the current default model was a cloud model that is no longer available
-    (e.g. API key removed), falls back to a local model or the built-in default.
+    If the current default model is temporarily absent from the refreshed
+    cache, keep the user's saved choice instead of rewriting it to a local
+    fallback.
     """
     global _current_model, _llm_instance
     # Remember current model before clearing
     _prev_model = _current_model
-    _was_cloud = _prev_model in _cloud_model_cache
+    _was_cloud = is_cloud_model(_prev_model)
 
     # Fetch context catalog first so OpenAI models get accurate sizes
     fetch_context_catalog()
@@ -1115,17 +1138,16 @@ def refresh_cloud_models() -> int:
     total += fetch_cloud_models("xai")
     _save_cloud_cache()
 
-    # If the default was a cloud model that's now gone, fall back gracefully
+    # Do not rewrite the user's default just because a provider refresh missed
+    # it. Keyring migrations, offline starts, and provider list gaps can all be
+    # temporary, and clobbering model_settings.json makes new threads surprise
+    # the user with the first local Ollama model.
     if _was_cloud and _prev_model not in _cloud_model_cache:
-        local = list_local_models()
-        fallback = local[0] if local else DEFAULT_MODEL
         logger.warning(
-            "Default cloud model '%s' no longer available (API key removed?) "
-            "— falling back to '%s'", _prev_model, fallback,
+            "Default cloud model '%s' was not returned by refresh; preserving saved default.",
+            _prev_model,
         )
-        _current_model = fallback
         _llm_instance = None  # lazy-recreate on next get_llm()
-        _save_settings({"model": _current_model, "context_size": _num_ctx})
 
     return total
 

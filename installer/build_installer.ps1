@@ -19,9 +19,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $BuildDir = Join-Path $PSScriptRoot "build"
+$ProjectRoot = Split-Path $PSScriptRoot
+$VersionFile = Join-Path $ProjectRoot "version.py"
+$ThothVersion = if (Test-Path $VersionFile) {
+    $versionLine = Select-String -Path $VersionFile -Pattern '__version__\s*=\s*"([^"]+)"' | Select-Object -First 1
+    if ($versionLine -and $versionLine.Matches.Count -gt 0) { $versionLine.Matches[0].Groups[1].Value } else { "unknown" }
+} else { "unknown" }
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host " Thoth v3.17.0 Installer Builder"              -ForegroundColor Cyan
+Write-Host " Thoth v$ThothVersion Installer Builder"       -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -226,7 +232,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host ""
     Write-Host "============================================" -ForegroundColor Green
     Write-Host " Installer built successfully!"               -ForegroundColor Green
-    Write-Host " Output: dist\ThothSetup_3.17.0.exe"           -ForegroundColor Green
+    Write-Host " Output: dist\ThothSetup_$ThothVersion.exe"    -ForegroundColor Green
     Write-Host "============================================" -ForegroundColor Green
 } else {
     Write-Host ""

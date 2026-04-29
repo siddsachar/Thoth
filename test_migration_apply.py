@@ -8,6 +8,27 @@ import unittest
 from pathlib import Path
 
 
+class _FakeKeyring:
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self.values.get((service, account))
+
+    def set_password(self, service: str, account: str, value: str) -> None:
+        self.values[(service, account)] = value
+
+    def delete_password(self, service: str, account: str) -> None:
+        self.values.pop((service, account), None)
+
+
+def _install_fake_keyring():
+    import secret_store
+    backend = _FakeKeyring()
+    secret_store._set_backend_for_tests(backend)
+    return secret_store
+
+
 class MigrationApplyTests(unittest.TestCase):
     def test_applies_selected_hermes_items_and_archives_report_only_state(self) -> None:
         from migration import MigrationStatus, apply_migration_plan, build_hermes_plan
@@ -25,7 +46,7 @@ class MigrationApplyTests(unittest.TestCase):
             self.assertTrue((target / "memory" / "MEMORY.md").read_text(encoding="utf-8").find("Imported from") >= 0)
             self.assertTrue((target / "skills" / "ship-it" / "SKILL.md").is_file())
             self.assertTrue((target / "config" / "models.json").is_file())
-            self.assertFalse((target / "config" / "api_keys.json").exists())
+            self.assertFalse((target / "api_keys.json").exists())
             self.assertTrue((result.report_dir / "archive" / "logs" / "hermes.log").is_file())
             self.assertTrue((result.report_dir / "plan.json").is_file())
             self.assertTrue((result.report_dir / "result.json").is_file())
@@ -63,20 +84,28 @@ class MigrationApplyTests(unittest.TestCase):
     def test_secret_apply_requires_explicit_secret_plan(self) -> None:
         from migration import apply_migration_plan, build_hermes_plan
         from migration.fixtures import create_realistic_hermes_home
+        from api_keys import get_key_for_data_dir
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            source = create_realistic_hermes_home(root / ".hermes")
-            target = root / "target"
-            plan = build_hermes_plan(source, target_root=target, include_secrets=True)
-            result = apply_migration_plan(plan)
+        secret_store = _install_fake_keyring()
 
-            api_keys = json.loads((target / "config" / "api_keys.json").read_text(encoding="utf-8"))
-            self.assertEqual(api_keys["OPENAI_API_KEY"], "sk-hermes-three-month-user")
-            api_key_backups = [entry for entry in result.backup_manifest if entry["source"].endswith("config\\api_keys.json") or entry["source"].endswith("config/api_keys.json")]
-            self.assertEqual(api_key_backups, [])
-            result_text = json.dumps(result.to_dict())
-            self.assertNotIn("sk-hermes-three-month-user", result_text)
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                source = create_realistic_hermes_home(root / ".hermes")
+                target = root / "target"
+                plan = build_hermes_plan(source, target_root=target, include_secrets=True)
+                result = apply_migration_plan(plan)
+
+                api_metadata = json.loads((target / "api_keys.json").read_text(encoding="utf-8"))
+                self.assertEqual(get_key_for_data_dir(target, "OPENAI_API_KEY"), "sk-hermes-three-month-user")
+                self.assertEqual(api_metadata["version"], 2)
+                self.assertNotIn("sk-hermes-three-month-user", json.dumps(api_metadata))
+                api_key_backups = [entry for entry in result.backup_manifest if entry["source"].endswith("api_keys.json")]
+                self.assertEqual(api_key_backups, [])
+                result_text = json.dumps(result.to_dict())
+                self.assertNotIn("sk-hermes-three-month-user", result_text)
+        finally:
+            secret_store._set_backend_for_tests(None)
 
     def test_openclaw_daily_memory_import_uses_markdown_target(self) -> None:
         from migration import apply_migration_plan, build_openclaw_plan
@@ -101,25 +130,33 @@ class MigrationApplyTests(unittest.TestCase):
     def test_multiple_secret_writes_backup_original_api_key_file_once(self) -> None:
         from migration import apply_migration_plan, build_hermes_plan
         from migration.fixtures import create_realistic_hermes_home
+        from api_keys import get_key_for_data_dir
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            source = create_realistic_hermes_home(root / ".hermes")
-            target = root / "target"
-            original_api_keys = {"OPENAI_API_KEY": "sk-existing-thoth-fake"}
-            _write(target / "config" / "api_keys.json", json.dumps(original_api_keys, indent=2) + "\n")
-            plan = build_hermes_plan(source, target_root=target, include_secrets=True)
-            result = apply_migration_plan(plan)
+        secret_store = _install_fake_keyring()
 
-            api_keys = json.loads((target / "config" / "api_keys.json").read_text(encoding="utf-8"))
-            backup = json.loads((result.backup_dir / "config" / "api_keys.json").read_text(encoding="utf-8"))
-            api_key_backups = [entry for entry in result.backup_manifest if entry["source"].endswith("config\\api_keys.json") or entry["source"].endswith("config/api_keys.json")]
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                source = create_realistic_hermes_home(root / ".hermes")
+                target = root / "target"
+                original_api_keys = {"OPENAI_API_KEY": "sk-existing-thoth-fake"}
+                _write(target / "api_keys.json", json.dumps(original_api_keys, indent=2) + "\n")
+                plan = build_hermes_plan(source, target_root=target, include_secrets=True)
+                result = apply_migration_plan(plan)
 
-        self.assertEqual(backup, original_api_keys)
-        self.assertEqual(len(api_key_backups), 1)
-        self.assertEqual(api_keys["ANTHROPIC_API_KEY"], "sk-ant-hermes-example")
-        self.assertEqual(api_keys["TELEGRAM_BOT_TOKEN"], "123456:hermes-demo-token")
-        self.assertEqual(api_keys["OPENAI_API_KEY"], "sk-hermes-three-month-user")
+                api_metadata = json.loads((target / "api_keys.json").read_text(encoding="utf-8"))
+                backup = json.loads((result.backup_dir / "api_keys.json").read_text(encoding="utf-8"))
+                api_key_backups = [entry for entry in result.backup_manifest if entry["source"].endswith("api_keys.json")]
+
+            self.assertEqual(backup, original_api_keys)
+            self.assertEqual(len(api_key_backups), 1)
+            self.assertEqual(api_metadata["version"], 2)
+            self.assertNotIn("sk-hermes-three-month-user", json.dumps(api_metadata))
+            self.assertEqual(get_key_for_data_dir(target, "ANTHROPIC_API_KEY"), "sk-ant-hermes-example")
+            self.assertEqual(get_key_for_data_dir(target, "TELEGRAM_BOT_TOKEN"), "123456:hermes-demo-token")
+            self.assertEqual(get_key_for_data_dir(target, "OPENAI_API_KEY"), "sk-hermes-three-month-user")
+        finally:
+            secret_store._set_backend_for_tests(None)
 
     def test_apply_requires_backup_unless_explicitly_overridden(self) -> None:
         from migration import MigrationApplyOptions, apply_migration_plan, build_hermes_plan

@@ -434,7 +434,7 @@ def _secret_items(env_path: Path, target_root: Path, *, include_secrets: bool) -
                 action=MigrationAction.UPDATE,
                 status=MigrationStatus.SENSITIVE if include_secrets else MigrationStatus.SKIPPED,
                 source=env_path,
-                target=target_root / f"config/api_keys.json#{env_key}",
+                target=target_root / f"api_keys.json#{env_key}",
                 label=f"API key: {env_key}",
                 reason="secret import disabled by default" if not include_secrets else "requires explicit confirmation before apply",
                 details={"env_var": env_key},

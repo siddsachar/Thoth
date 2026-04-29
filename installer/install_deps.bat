@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================================
-:: Thoth v3.17.0 – Post-install dependency setup
+:: Thoth v3.18.0 – Post-install dependency setup
 :: Called by Inno Setup after file extraction.
 ::
 :: This script:
@@ -21,7 +21,7 @@ set "LOG=%INSTALL_DIR%\install_log.txt"
 set "PYTHONNOUSERSITE=1"
 
 echo ==========================================
-echo  Thoth v3.17.0 - Installing dependencies
+echo  Thoth v3.18.0 - Installing dependencies
 echo  This may take 5-25 minutes depending
 echo  on your system and internet connection.
 echo  Please do not close this window.
@@ -29,7 +29,7 @@ echo ==========================================
 echo.
 
 echo ========================================= >> "%LOG%" 2>&1
-echo  Thoth v3.17.0 - Install log              >> "%LOG%" 2>&1
+echo  Thoth v3.18.0 - Install log              >> "%LOG%" 2>&1
 echo  Install dir: %INSTALL_DIR%               >> "%LOG%" 2>&1
 echo  Date: %DATE% %TIME%                      >> "%LOG%" 2>&1
 echo ========================================= >> "%LOG%" 2>&1

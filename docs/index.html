@@ -3,25 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>&#x1305F; Thoth - Personal AI Sovereignty</title>
-    <meta name="description" content="A local-first AI assistant built for personal AI sovereignty. 27 core tools plus auto-generated channel tools, Designer Studio with five modes (decks, documents, landing pages, app mockups, storyboards), a personal knowledge graph, voice, vision, shell access, browser automation, advanced workflows, self-aware status tooling, 5 messaging channels, image and video generation, in-app auto-updates, and community plugins. Run everything locally via Ollama, or add opt-in cloud models when you need frontier reasoning. Your data stays on your machine either way.">
+    <title>&#x1305F; Thoth - Local-First AI Assistant</title>
+    <meta name="description" content="Thoth is a local-first desktop AI assistant with memory, 30 core tools, Designer Studio, workflows, messaging channels, plugins, MCP tools, and optional cloud models. Your durable data stays on your machine.">
 
     <!-- Canonical -->
-    <link rel="canonical" href="https://siddsachar.github.io/Thoth/">
+    <link rel="canonical" href="https://get-thoth.com/">
 
     <!-- Open Graph -->
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://siddsachar.github.io/Thoth/">
-    <meta property="og:title" content="Thoth - Personal AI Sovereignty">
-    <meta property="og:description" content="A local-first AI assistant with 27 core tools, Designer Studio (five modes), a personal knowledge graph, 5 messaging channels, voice, vision, workflows, image and video generation, in-app auto-updates, and a plugin marketplace. Your data stays on your machine.">
+    <meta property="og:url" content="https://get-thoth.com/">
+    <meta property="og:title" content="Thoth - Local-First AI Assistant">
+    <meta property="og:description" content="A desktop AI assistant with memory, tools, Designer Studio, workflows, channels, plugins, MCP tools, and optional cloud models. Your durable data stays on your machine.">
     <meta property="og:image" content="https://img.youtube.com/vi/ansfEqAr6g0/maxresdefault.jpg">
     <meta property="og:image:width" content="1280">
     <meta property="og:image:height" content="720">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Thoth - Personal AI Sovereignty">
-    <meta name="twitter:description" content="A local-first AI assistant with 27 core tools, Designer Studio (five modes), a knowledge graph, 5 messaging channels, voice, vision, workflows, image and video generation, in-app auto-updates, and plugins. Your data stays on your machine.">
+    <meta name="twitter:title" content="Thoth - Local-First AI Assistant">
+    <meta name="twitter:description" content="A desktop AI assistant with memory, tools, Designer Studio, workflows, channels, plugins, MCP tools, and optional cloud models. Your durable data stays on your machine.">
     <meta name="twitter:image" content="https://img.youtube.com/vi/ansfEqAr6g0/maxresdefault.jpg">
 
     <!-- Favicon (inline SVG) -->
@@ -33,7 +33,7 @@
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
         "name": "Thoth",
-        "description": "A local-first AI assistant built for personal AI sovereignty with 27 core tools, Designer Studio (five modes), a personal knowledge graph, 5 messaging channels, voice, vision, advanced workflows, image and video generation, in-app auto-updates, and a plugin marketplace.",
+        "description": "A local-first desktop AI assistant with memory, 30 core tools, Designer Studio, workflows, messaging channels, plugins, MCP tools, secure API-key storage, and optional cloud models.",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows 10/11, macOS",
         "offers": {
@@ -42,9 +42,9 @@
             "priceCurrency": "USD"
         },
         "license": "https://www.apache.org/licenses/LICENSE-2.0",
-        "url": "https://siddsachar.github.io/Thoth/",
+        "url": "https://get-thoth.com/",
         "downloadUrl": "https://github.com/siddsachar/Thoth/releases",
-        "softwareVersion": "3.17.0",
+        "softwareVersion": "3.18.0",
         "author": {
             "@type": "Person",
             "name": "siddsachar",
@@ -56,6 +56,19 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+        window.THOTH_GA_MEASUREMENT_ID = 'G-0YYKPX5M5E';
+        if (window.THOTH_GA_MEASUREMENT_ID) {
+            const gaScript = document.createElement('script');
+            gaScript.async = true;
+            gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + window.THOTH_GA_MEASUREMENT_ID;
+            document.head.appendChild(gaScript);
+            window.dataLayer = window.dataLayer || [];
+            window.gtag = function(){ dataLayer.push(arguments); };
+            gtag('js', new Date());
+            gtag('config', window.THOTH_GA_MEASUREMENT_ID);
+        }
+    </script>
     <style>
         :root {
             --bg: #0b0d10;
@@ -792,6 +805,30 @@
             letter-spacing: 0.02em;
         }
 
+        .whats-new { padding: 5rem 0; }
+        .whats-new h2 {
+            font-family: var(--serif);
+            font-size: 2.2rem;
+            font-weight: 400;
+            line-height: 1.2;
+            margin-bottom: 0.75rem;
+        }
+        .whats-new h2 em { color: var(--accent); font-style: italic; }
+        .whats-new-list { list-style: none; display: grid; gap: 0.9rem; margin-top: 1.75rem; }
+        .whats-new-list li {
+            padding: 1rem 1.15rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+        .whats-new-list strong { color: var(--text); }
+        .whats-new-foot { margin-top: 1.5rem; font-size: 0.9rem; }
+        .whats-new-foot a { color: var(--accent); text-decoration: none; }
+        .whats-new-foot a:hover { color: var(--accent-hover); }
+
         .cta { padding: 6rem 0; text-align: center; }
 
         .cta h2 {
@@ -912,31 +949,31 @@
         <div class="nav-links">
             <a href="#features">Features</a>
             <a href="#tools">Tools</a>
+            <a href="#privacy">Privacy</a>
             <a href="#comparison">Compare</a>
+            <a href="contact.html">Contact</a>
             <a href="https://github.com/siddsachar/Thoth" target="_blank">GitHub</a>
-            <a href="https://github.com/siddsachar/Thoth/releases/download/v3.17.0/ThothSetup_3.17.0.exe" class="nav-dl">Windows</a>
-            <a href="https://github.com/siddsachar/Thoth/releases/download/v3.17.0/Thoth-3.17.0-macOS-arm64.dmg" class="nav-dl">macOS</a>
+            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/ThothSetup_3.18.0.exe" class="nav-dl" data-download="windows">Windows</a>
+            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/Thoth-3.18.0-macOS-arm64.dmg" class="nav-dl" data-download="macos">macOS</a>
         </div>
     </nav>
 
     <section class="hero">
         <div class="hero-glyph">&#x1305F;</div>
-        <p class="hero-eyebrow">Personal AI Sovereignty</p>
+        <p class="hero-eyebrow">Local-First AI Assistant</p>
         <h1>Your AI runs here.<br>Your data stays <em>here.</em></h1>
         <p class="hero-body">
-            Thoth is a local-first AI assistant with 27 core tools, Designer Studio with five modes (decks, documents, landing pages, app mockups, storyboards),
-            a personal knowledge graph, 5 messaging channels, voice, vision, shell access, browser automation, advanced workflows,
-            image and video generation, in-app auto-updates, self-aware status tooling, and a plugin marketplace.
-            Run everything locally via Ollama, or add cloud models when you need frontier reasoning.
-            Either way, your projects, memories, and conversations stay on your machine.
+            Thoth is a desktop AI assistant with memory, tools, workflows, design creation,
+            messaging, plugins, MCP tools, and optional cloud models. Run it fully local with
+            Ollama or add frontier APIs when you need them. Your durable data stays on your machine.
         </p>
         <div class="hero-actions">
-            <a href="https://github.com/siddsachar/Thoth/releases/download/v3.17.0/ThothSetup_3.17.0.exe" class="btn btn--primary">Download for Windows <span class="btn-hint">.exe</span></a>
-            <a href="https://github.com/siddsachar/Thoth/releases/download/v3.17.0/Thoth-3.17.0-macOS-arm64.dmg" class="btn btn--primary">Download for macOS <span class="btn-hint">.dmg</span></a>
+            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/ThothSetup_3.18.0.exe" class="btn btn--primary" data-download="windows">Download for Windows <span class="btn-hint">.exe</span></a>
+            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/Thoth-3.18.0-macOS-arm64.dmg" class="btn btn--primary" data-download="macos">Download for macOS <span class="btn-hint">.dmg</span></a>
             <a href="https://github.com/siddsachar/Thoth" class="btn btn--ghost" target="_blank">View on GitHub</a>
         </div>
         <div class="hero-meta">
-            <span data-count="27" data-prefix="" data-suffix=" core tools">0 core tools</span>
+            <span data-count="30" data-prefix="" data-suffix=" core tools">0 core tools</span>
             <span data-count="12" data-prefix="" data-suffix=" bundled skills">0 bundled skills</span>
             <span data-count="39" data-prefix="" data-suffix=" local models">0 local models</span>
             <span>Apache 2.0 &middot; Free</span>
@@ -955,53 +992,77 @@
     <section class="manifesto reveal">
         <div class="container--narrow">
             <blockquote>
-                Governments invest billions to keep AI infrastructure within their borders.
-                Thoth applies the same idea to <em>you</em> - <strong>your compute, your data,
-                your choice of model, accountable to no one but you.</strong>
+                Thoth is built for personal AI sovereignty: <strong>your compute, your data,
+                your model choices, and your automation</strong> under your control.
             </blockquote>
         </div>
     </section>
 
     <div class="section-divider"></div>
 
-    <section class="two-paths reveal" id="dual-path">
+    <section class="feature-section reveal" id="features">
         <div class="container">
-            <div class="two-paths-header">
-                <h2 class="section-heading">Two paths, one assistant</h2>
-                <p class="section-sub">Run local for full privacy, add cloud when you need it, or both at once</p>
-            </div>
+            <h2 class="section-heading">The strongest pieces first</h2>
 
-            <div class="paths-grid">
-                <div class="path-block">
-                    <div class="path-label">Local models &middot; Ollama</div>
-                    <h3>Full privacy by default</h3>
-                    <p>Every LLM call runs on your hardware. No data leaves your machine, ever.</p>
-                    <ul class="path-list">
-                        <li>39 curated models - Qwen, Llama, Gemma, Mistral, DeepSeek, Phi</li>
-                        <li>Works fully offline after initial download</li>
-                        <li>Free forever - your hardware, your compute</li>
-                        <li>Default: <code>qwen3:14b</code> (~9 GB, runs well on 16 GB RAM)</li>
-                    </ul>
+            <div class="feature-row">
+                <div class="feature-item">
+                    <span class="feature-icon">&#x25C7;</span>
+                    <h3>Designer Studio</h3>
+                    <p>Create decks, documents, landing pages, app mockups, and storyboards with live preview, surgical AI edits, media generation, chart insertion, export, and shareable interactive links.</p>
+                    <span class="feature-tag">Five modes</span>
                 </div>
-                <div class="path-block">
-                    <div class="path-label">Cloud models &middot; Opt-in</div>
-                    <h3>Frontier reasoning on demand</h3>
-                    <p>No GPU required. Only the current conversation is sent - memories, files, and history never leave.</p>
-                    <ul class="path-list">
-                        <li>OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok) + OpenRouter</li>
-                        <li>Per-thread &amp; per-task model switching - mix freely</li>
-                        <li>Pay-per-token - pennies per conversation</li>
-                        <li>Star favourite models for quick access</li>
-                    </ul>
+                <div class="feature-item">
+                    <span class="feature-icon">&#x25C9;</span>
+                    <h3>Personal Knowledge Graph</h3>
+                    <p>Memories become connected entities and typed relationships, with semantic recall, graph expansion, visual exploration, document extraction, and Obsidian-compatible wiki export.</p>
+                    <span class="feature-tag">Durable memory</span>
                 </div>
             </div>
 
-            <p class="paths-footnote">
-                <strong>Bottom line:</strong> Cloud AI assistants rent you access to someone else's system.
-                Thoth gives you ownership - run local, add cloud, or both, and keep your data on your machine either way.
-                Start with cloud today, and as local models get smarter and hardware gets cheaper,
-                transition to fully local, fully private, fully free AI - seamlessly.
-            </p>
+            <div class="feature-row">
+                <div class="feature-item">
+                    <span class="feature-icon">&#x25C8;</span>
+                    <h3>Real Computer Use</h3>
+                    <p>The agent can browse in Chromium, use the shell, manage files, search the web, read documents, send email, manage calendar events, inspect status, and create charts.</p>
+                    <span class="feature-tag">30 core tools</span>
+                </div>
+                <div class="feature-item">
+                    <span class="feature-icon">&#x29D6;</span>
+                    <h3>Workflows &amp; Approvals</h3>
+                    <p>Run scheduled pipelines with conditions, approvals, subtasks, webhooks, notifications, model/tool overrides, safety modes, run history, and insight cards.</p>
+                    <span class="feature-tag">Automation</span>
+                </div>
+            </div>
+
+            <div class="feature-row">
+                <div class="feature-item">
+                    <span class="feature-icon">&#x2B21;</span>
+                    <h3>Channels, Voice &amp; Media</h3>
+                    <p>Telegram, WhatsApp, Discord, Slack, and SMS share streaming, media intake, reactions, approvals, health checks, local speech-to-text, and Kokoro TTS.</p>
+                    <span class="feature-tag">5 channels</span>
+                </div>
+                <div class="feature-item">
+                    <span class="feature-icon">&#x2B22;</span>
+                    <h3>Plugins, MCP &amp; Migration</h3>
+                    <p>Install sandboxed plugins, connect external MCP servers, and migrate selected Hermes/OpenClaw identity, memory, skills, model settings, MCP config, and API keys with backups.</p>
+                    <span class="feature-tag">Extensible</span>
+                </div>
+            </div>
+
+            <div class="feature-row">
+                <div class="feature-item">
+                    <span class="feature-icon">&#x25A1;</span>
+                    <h3>Image &amp; Video Generation</h3>
+                    <p>Generate or edit images through OpenAI, Google, and xAI, then create video clips through Google Veo or xAI Grok Imagine Video for chat and Designer projects.</p>
+                    <span class="feature-tag">Creative tools</span>
+                </div>
+                <div class="feature-item">
+                    <span class="feature-icon">&#x26BF;</span>
+                    <h3>Secure API-Key Storage</h3>
+                    <p>Core and plugin API keys use the OS credential store when available. Local files keep only metadata and masked fingerprints, with legacy migration and session-only fallback.</p>
+                    <span class="feature-tag">New in 3.18</span>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -1011,17 +1072,14 @@
         <div class="container">
             <div class="highlight-inner">
                 <div class="highlight-text">
-                    <h2>A knowledge graph that knows <em>you</em></h2>
+                    <h2>Memory that compounds</h2>
                     <p>
-                        Thoth builds a connected web of people, places, preferences, events, and their relationships -
-                        not just isolated facts. 10 entity types linked through 67 typed directional relations with
-                        60+ aliases and automatic normalisation, so the agent can reason about how things in your life connect.
+                        Thoth remembers people, projects, preferences, facts, events, and relationships as a graph,
+                        then retrieves relevant nodes and one-hop context before each response.
                     </p>
                     <p>
-                        Graph-enhanced auto-recall surfaces relevant memories plus their connections before every response.
-                        Vague relations are automatically rejected; a curated vocabulary keeps the graph clean.
-                        An interactive network diagram renders everything visually - search, filter by type,
-                        click nodes for details, toggle between full-graph and ego-graph views.
+                        Document extraction, Dream Cycle refinement, wiki export, and the interactive graph view keep
+                        that memory useful instead of turning it into a pile of notes.
                     </p>
                 </div>
                 <div class="highlight-visual">
@@ -1035,163 +1093,33 @@
 
     <div class="section-divider"></div>
 
-    <section class="feature-section reveal" id="features">
+    <section class="two-paths reveal" id="dual-path">
         <div class="container">
-            <h2 class="section-heading">Everything built in, nothing bolted on</h2>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x25C8;</span>
-                    <h3>Autonomous ReAct Agent</h3>
-                    <p>Reasons about your question, decides which of 27 core tools to use, chains multiple lookups, and assembles a complete answer - all autonomously. Dynamic identity and self-knowledge context keep responses grounded in current capabilities, while smart trimming keeps multi-tool chains within window limits.</p>
-                </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x276F;</span>
-                    <h3>Shell Access</h3>
-                    <p>Run shell commands through natural conversation - install packages, manage git repos, run scripts. 3-tier safety: safe commands run instantly, moderate commands require approval, dangerous commands are blocked. Persistent sessions per thread.</p>
-                </div>
+            <div class="two-paths-header">
+                <h2 class="section-heading">Local when you can. Cloud when you want.</h2>
+                <p class="section-sub">One assistant, two compute paths, no account required</p>
             </div>
 
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x29BE;</span>
-                    <h3>Browser Automation</h3>
-                    <p>Autonomous web browsing in a real Chromium window - navigate, click, fill forms, scroll, manage tabs through conversation. Accessibility-tree snapshots let the agent see and interact with elements by number. Persistent profile keeps you logged in.</p>
+            <div class="paths-grid">
+                <div class="path-block">
+                    <div class="path-label">Local models &middot; Ollama</div>
+                    <h3>Private by default</h3>
+                    <p>Run inference on your hardware with 39 curated models across Qwen, Llama, Gemma, Mistral, DeepSeek, Phi, and more.</p>
+                    <ul class="path-list">
+                        <li>Works offline after model download</li>
+                        <li>No subscription or provider account</li>
+                        <li>Default local model: <code>qwen3:14b</code></li>
+                    </ul>
                 </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x25EF;</span>
-                    <h3>Voice &amp; Text-to-Speech</h3>
-                    <p>Local speech-to-text via faster-whisper (CPU, int8 quantized) and neural TTS via Kokoro with 10 voice options. Mic auto-mutes during playback. Fully hands-free, fully offline - no cloud APIs touch your voice data.</p>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x29D6;</span>
-                    <h3>Workflows &amp; Scheduling</h3>
-                    <p>Step-based pipelines with conditional branching, approval gates, and 7 schedule types. 5 step types - Prompt, Condition, Approval, Subtask, Notify - with variable passing between steps. Workflow Console now surfaces live progress, approvals, quick launch, recent runs, and actionable insight cards.</p>
-                    <span class="feature-tag">Upgraded in 3.16</span>
-                </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x2261;</span>
-                    <h3>Habit &amp; Health Tracker</h3>
-                    <p>Track medications, symptoms, exercise, periods, mood, sleep - through natural conversation. &#8220;I took my Lexapro&#8221; &#8594; logged. 7 built-in analyses: adherence, streaks, trends, co-occurrence. Auto-export to CSV and interactive Plotly charts.</p>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x25C7;</span>
-                    <h3>Designer Studio</h3>
-                    <p>Build in five modes - decks, documents, landing pages, app mockups, and storyboards. Live editor with runtime preview bridge, surgical AI edits with mutation diff/review, brand lint, reusable components, AI image and video generation, charts, presenter mode, published links, and isolated PPTX export. Home-screen gallery, unified setup flow, and a thread-isolated working surface keep large designs responsive.</p>
-                    <span class="feature-tag">Upgraded in 3.17</span>
-                </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x21BB;</span>
-                    <h3>In-App Auto-Updates</h3>
-                    <p>Thoth checks for new releases on a quiet schedule, verifies SHA-256 hashes and code signatures (signtool on Windows, codesign on macOS) before launching the installer, and surfaces a status-bar pill plus a What's New dialog. Stable and beta channels, debounced reminders, and a one-click skip - all wired through a stdlib-only daemon.</p>
-                    <span class="feature-tag">New in 3.17</span>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x25C9;</span>
-                    <h3>Thoth Status &amp; Identity</h3>
-                    <p>Query version, model, tools, channels, logs, errors, Designer state, and more through the built-in Thoth Status tool. Configure assistant name and personality, inspect live system state, and apply selected self-management actions without leaving the app.</p>
-                    <span class="feature-tag">Upgraded in 3.17</span>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x2B21;</span>
-                    <h3>Multi-Channel Messaging</h3>
-                    <p>5 channels - Telegram, WhatsApp, Discord, Slack, and SMS - with full parity: streaming responses, typing indicators, reactions, media support, slash commands, and approval routing. Tunnel manager auto-exposes webhook ports. Shared media capture, Discord voice fixes, and a live channel monitor in the sidebar with status dots and last-activity tracking.</p>
-                    <span class="feature-tag">Upgraded in 3.17</span>
-                </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x25CE;</span>
-                    <h3>Vision &amp; Screen Capture</h3>
-                    <p>Capture from webcam or take screenshots and ask questions about them. Works with local vision models or cloud models. Multi-camera support, inline image display in chat.</p>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x2709;</span>
-                    <h3>Gmail &amp; Calendar</h3>
-                    <p>Search emails, read threads, draft and send messages with attachments. View, create, update, and manage calendar events - all through natural language. Tiered permissions let you control read, write, and destructive access independently.</p>
-                </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x2592;</span>
-                    <h3>Files, Charts &amp; Data</h3>
-                    <p>Sandboxed file operations with PDF, CSV, Excel, JSON support. Structured files return schema + stats + preview via pandas. Interactive Plotly charts rendered inline - bar, line, scatter, pie, heatmap, and more.</p>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x25A1;</span>
-                    <h3>Image &amp; Video Generation</h3>
-                    <p>Generate and edit images through conversation via OpenAI, xAI (Grok Imagine), and Google (Imagen 4, Gemini). Generate short videos with Google Veo. Describe what you want, the agent renders it inline. Paste or attach an existing image to edit - per-provider model picker shows only models for configured providers.</p>
-                    <span class="feature-tag">Upgraded in 3.17</span>
-                </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x2B22;</span>
-                    <h3>Plugin System &amp; Marketplace</h3>
-                    <p>Browse a GitHub-hosted marketplace, install with one click, manage from Settings. Plugins run in a security sandbox with pattern blocking, dependency safety, and 5-second load timeouts. Hot-reload on enable/disable. Build your own with the PluginAPI.</p>
-                    <span class="feature-tag">New in 3.12</span>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x25B7;</span>
-                    <h3>Bundled Skills</h3>
-                    <p>12 reusable instruction packs plus 17 tool guides - Data Analyst, Deep Research, Design Creator, Knowledge Base, Meeting Notes, Daily Briefing, and more. Manual skills toggle from Settings; tool guides auto-activate when their linked tools are enabled.</p>
-                </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x2263;</span>
-                    <h3>Wiki Vault</h3>
-                    <p>A personal wiki the agent reads and writes - Markdown articles organized by topic, cross-linked with the knowledge graph. FAISS-indexed for semantic retrieval alongside your documents.</p>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x263D;</span>
-                    <h3>Dream Cycle</h3>
-                    <p>A 5-phase nightly process that autonomously enriches your knowledge graph - discovers missed entities, infers new relationships, decays stale connections, prunes orphans, and turns recent system activity into actionable insights. Hub diversity caps, batch rotation, rejection caching, and Ollama busy checks keep it efficient and accurate.</p>
-                    <span class="feature-tag">Upgraded in 3.16</span>
-                </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x21A5;</span>
-                    <h3>Document Knowledge Extraction</h3>
-                    <p>Automatically extracts entities and relationships from uploaded documents into the knowledge graph. PDF, DOCX, TXT, and CSV analyzed on upload. Curated relation vocabulary, entity caps, description quality gates, and self-loop rejection keep the graph clean. Provenance tracking links every extracted fact back to its source.</p>
-                    <span class="feature-tag">Upgraded in 3.13</span>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item">
-                    <span class="feature-icon">&#x2B1A;</span>
-                    <h3>Native Desktop App</h3>
-                    <p>One-click installer, native OS window via pywebview, system tray with status indicator, branded splash screen, and a first-launch setup wizard. No Docker, no YAML, no terminal needed.</p>
-                </div>
-                <div class="feature-item">
-                    <span class="feature-icon">&#x25C9;</span>
-                    <h3>Self-Knowledge &amp; Insights</h3>
-                    <p>Thoth maintains a structured self-knowledge manifest of its tools, channels, models, and design capabilities, then turns Dream Cycle observations into actionable insights. Workflow Console actions let you pin, dismiss, investigate, and apply suggested fixes or skill proposals from one place.</p>
-                    <span class="feature-tag">New in 3.16</span>
-                </div>
-            </div>
-
-            <div class="feature-row">
-                <div class="feature-item feature-item--wide">
-                    <span class="feature-icon">&#x2B29;</span>
-                    <h3>Flexible Model Selection</h3>
-                    <p>39 curated local models plus cloud models from OpenAI, Anthropic, Google, xAI, and OpenRouter. Full reasoning model support - thinking tokens in a collapsible bubble with persistence across reloads. Per-thread and per-workflow model switching, star your favourites. Configurable context windows up to 256K tokens.</p>
+                <div class="path-block">
+                    <div class="path-label">Cloud models &middot; Opt-in</div>
+                    <h3>Frontier reasoning on demand</h3>
+                    <p>Add OpenAI, Anthropic, Google, xAI, or OpenRouter when you need a frontier model or do not have a GPU.</p>
+                    <ul class="path-list">
+                        <li>Switch models per thread and workflow</li>
+                        <li>Cloud defaults survive cache/key outages</li>
+                        <li>API keys saved in the OS credential store</li>
+                    </ul>
                 </div>
             </div>
         </div>
@@ -1203,14 +1131,15 @@
         <div class="container">
             <div class="highlight-inner">
                 <div class="highlight-text">
-                    <h2>27 core tools the agent wields for you</h2>
+                    <h2>30 core tools the agent wields for you</h2>
                     <p>
                         Ask a question in natural language and the agent autonomously decides which tools to chain together.
                         Search the web, check your email, run a shell command, inspect Thoth's own status, build a deck in Designer, and chart the results
                         - all in a single conversation turn.
                     </p>
                     <p>
-                        Every core tool works locally by default. Connected channels inject their own send tools automatically, while external APIs remain opt-in and individually disableable.
+                        Connected channels add send tools automatically, external MCP servers add dynamic tools,
+                        and every risky action stays behind Thoth's approval gates.
                     </p>
                 </div>
                 <div class="highlight-visual">
@@ -1227,8 +1156,8 @@
     <section class="tools reveal" id="tools">
         <div class="container">
             <div class="tools-header">
-                <h2 class="section-heading">27 Core Tools + Channel Tools</h2>
-                <p class="section-sub">The agent picks the right core tool, then auto-generates send tools for any connected channel</p>
+                <h2 class="section-heading">30 Core Tools + Channel Tools</h2>
+                <p class="section-sub">Core tools ship with the app; channels and MCP servers extend the tool belt when enabled</p>
             </div>
 
             <div class="tool-group">
@@ -1260,7 +1189,7 @@
             </div>
 
             <div class="tool-group">
-                <div class="tool-group-label">Computation &amp; Analysis <span class="tool-count">&times; 9</span></div>
+                <div class="tool-group-label">Computation, Memory &amp; Media <span class="tool-count">&times; 9</span></div>
                 <div class="tool-chips">
                     <div class="tool-chip">Calculator <span class="chip-badge">Free</span></div>
                     <div class="tool-chip">Wolfram Alpha <span class="chip-badge chip-badge--key">API</span></div>
@@ -1268,17 +1197,20 @@
                     <div class="tool-chip">Vision <span class="chip-badge">Free</span></div>
                     <div class="tool-chip">Memory <span class="chip-badge">Free</span></div>
                     <div class="tool-chip">Conversation Search <span class="chip-badge">Free</span></div>
-                    <div class="tool-chip">System Info <span class="chip-badge">Free</span></div>
                     <div class="tool-chip">Charts <span class="chip-badge">Free</span></div>
                     <div class="tool-chip">Image Gen <span class="chip-badge chip-badge--key">API</span></div>
+                    <div class="tool-chip">Video Gen <span class="chip-badge chip-badge--key">API</span></div>
                 </div>
             </div>
 
             <div class="tool-group">
-                <div class="tool-group-label">Design &amp; Self-Management <span class="tool-count">&times; 2</span></div>
+                <div class="tool-group-label">Design, Platform &amp; External Tools <span class="tool-count">&times; 5</span></div>
                 <div class="tool-chips">
                     <div class="tool-chip">Designer <span class="chip-badge">Free</span></div>
                     <div class="tool-chip">Thoth Status <span class="chip-badge">Free</span></div>
+                    <div class="tool-chip">MCP Tools <span class="chip-badge">Free</span></div>
+                    <div class="tool-chip">Updater <span class="chip-badge">Free</span></div>
+                    <div class="tool-chip">System Info <span class="chip-badge">Free</span></div>
                 </div>
             </div>
         </div>
@@ -1290,15 +1222,14 @@
         <div class="container">
             <div class="highlight-inner">
                 <div class="highlight-text">
-                    <h2>Designer, workflows, and channels</h2>
+                    <h2>Designer, workflows, channels, and external tools</h2>
                     <p>
-                        Build presentations and one-pagers in Designer, automate recurring work with step-based pipelines,
-                        and route results or approval requests to any of 5 messaging channels.
-                        Extend the agent with community plugins from the built-in marketplace - or write your own.
+                        Build presentations and interactive pages, automate recurring work, route approvals to
+                        messaging channels, install plugins, and connect MCP servers without making startup fragile.
                     </p>
                     <p>
-                        Designer projects stay local, plugins run sandboxed with pattern blocking and dependency safety,
-                        and the channel framework auto-generates tools for each connected platform.
+                        Imports from Hermes/OpenClaw are scan-first and guarded, with backups, redacted reports,
+                        disabled-by-default MCP servers, and explicit API-key selection.
                     </p>
                 </div>
                 <div class="highlight-visual">
@@ -1314,7 +1245,7 @@
 
     <section class="comparison reveal" id="comparison">
         <div class="container">
-            <h2 class="section-heading">Why not just use ChatGPT?</h2>
+            <h2 class="section-heading">Why not just use cloud chat?</h2>
             <p class="section-sub" style="margin-bottom: 2.5rem;">Cloud AI rents you access. Thoth gives you ownership.</p>
 
             <table>
@@ -1349,7 +1280,7 @@
                     <tr>
                         <td>Tools</td>
                         <td><s>Sandboxed plugins, limited integrations</s></td>
-                        <td>27 core tools + channel send tools - Gmail, Calendar, shell, browser, vision, Designer, Thoth Status, X</td>
+                        <td>30 core tools + channels + plugins + MCP tools</td>
                     </tr>
                     <tr>
                         <td>Customisation</td>
@@ -1404,23 +1335,22 @@
 
     <div class="section-divider"></div>
 
-    <section class="privacy reveal">
+    <section class="privacy reveal" id="privacy">
         <div class="container--narrow">
             <h2>Privacy by architecture</h2>
             <p>
-                Thoth doesn't promise privacy - it enforces it structurally. Voice, memory, conversations, and
-                knowledge graphs run entirely on your machine. LLM inference is local by default; opt-in cloud
-                models send only the current conversation. External network calls happen only when you explicitly
-                use an online tool - and each one can be individually disabled.
+                Thoth's app has no account system, server, or telemetry pipeline. Conversations, memory,
+                Designer projects, documents, and local model runs stay on your machine. Cloud models and
+                online tools are opt-in, and API keys use the OS credential store when available.
             </p>
             <div class="privacy-facts">
                 <span class="privacy-fact">&#x25C8; Local inference (default)</span>
                 <span class="privacy-fact">&#x2601; Cloud opt-in only</span>
                 <span class="privacy-fact">&#x25A0; Local storage</span>
                 <span class="privacy-fact">&#x25EF; Local voice</span>
-                <span class="privacy-fact">&#x2715; No telemetry</span>
+                <span class="privacy-fact">&#x2715; No app telemetry</span>
                 <span class="privacy-fact">&#x2192; Opt-in APIs</span>
-                <span class="privacy-fact">&#x25CA; 5-layer injection defence</span>
+                <span class="privacy-fact">&#x25CA; Injection defence</span>
                 <span class="privacy-fact">&#x2696; Apache 2.0</span>
             </div>
         </div>
@@ -1430,12 +1360,13 @@
 
     <section class="whats-new reveal">
         <div class="container--narrow">
-            <h2>What&rsquo;s new in <em>v3.17</em></h2>
+            <h2>What&rsquo;s new in <em>v3.18</em></h2>
             <ul class="whats-new-list">
-                <li><strong>In-app auto-updates.</strong> Quiet background checks (stable + beta channels), SHA-256 and code-signature verification (signtool / codesign) before launch, status-bar pill, What&rsquo;s New dialog, and a one-click skip. Stdlib-only daemon with debounced reminders.</li>
-                <li><strong>Designer Studio - five modes.</strong> Decks, documents, landing pages, app mockups, and storyboards share a unified runtime preview bridge, surgical AI edits with mutation diff/review, brand lint, AI video generation, isolated PPTX export, and a thread-isolated working surface for large designs.</li>
-                <li><strong>Channels polished.</strong> Shared media capture across channels, Discord voice warning suppression, and continued reliability work on the live channel monitor.</li>
-                <li><strong>1797 tests passing.</strong> Expanded coverage across the auto-updater, manifest pipeline, Designer modes, and channel routing.</li>
+                <li><strong>External MCP tools.</strong> Add stdio, Streamable HTTP, and SSE MCP servers from Settings, test them before use, and expose enabled tools under guarded names.</li>
+                <li><strong>Hermes/OpenClaw migration.</strong> Preview and import selected identity, memory, skills, model settings, MCP servers, and explicitly selected API keys with backups and redacted reports.</li>
+                <li><strong>Secure API-key storage.</strong> Core and plugin keys now use the OS credential store when available, with metadata-only local files and legacy plaintext migration.</li>
+                <li><strong>Cloud defaults fixed.</strong> Saved GPT, Claude, Gemini, Grok, and OpenRouter defaults are preserved even when provider caches are empty or temporarily unavailable.</li>
+                <li><strong>1850 tests passing.</strong> Expanded coverage for MCP, migration, secure key storage, cloud defaults, release metadata, and installer packaging.</li>
             </ul>
             <p class="whats-new-foot">
                 <a href="https://github.com/siddsachar/Thoth/blob/main/RELEASE_NOTES.md" target="_blank">Read the full release notes &rarr;</a>
@@ -1450,8 +1381,8 @@
             <h2>Take back your <em>AI sovereignty</em></h2>
             <p>Free, open source, and yours to keep. No accounts. No subscriptions. No data harvesting.</p>
             <div class="cta-buttons">
-                <a href="https://github.com/siddsachar/Thoth/releases/download/v3.17.0/ThothSetup_3.17.0.exe" class="btn btn--primary">Download for Windows <span class="btn-hint">.exe</span></a>
-                <a href="https://github.com/siddsachar/Thoth/releases/download/v3.17.0/Thoth-3.17.0-macOS-arm64.dmg" class="btn btn--primary">Download for macOS <span class="btn-hint">.dmg</span></a>
+                <a href="https://github.com/siddsachar/Thoth/releases/latest/download/ThothSetup_3.18.0.exe" class="btn btn--primary" data-download="windows">Download for Windows <span class="btn-hint">.exe</span></a>
+                <a href="https://github.com/siddsachar/Thoth/releases/latest/download/Thoth-3.18.0-macOS-arm64.dmg" class="btn btn--primary" data-download="macos">Download for macOS <span class="btn-hint">.dmg</span></a>
                 <a href="https://github.com/siddsachar/Thoth" class="btn btn--ghost" target="_blank">Star on GitHub</a>
             </div>
         </div>
@@ -1468,14 +1399,30 @@
 
     <footer>
         <p>
-            &#x1305F; Thoth &middot; v3.17.0 &middot; Apache 2.0 &middot;
-            <a href="https://github.com/siddsachar/Thoth" target="_blank">GitHub</a>
+            &#x1305F; Thoth &middot; v3.18.0 &middot; Apache 2.0 &middot;
+            <a href="https://github.com/siddsachar/Thoth" target="_blank">GitHub</a> &middot;
+            <a href="contact.html">Contact</a>
         </p>
     </footer>
 
     <a href="#" class="back-to-top" aria-label="Back to top">↑</a>
 
     <script>
+        function trackSiteEvent(name, params) {
+            if (typeof window.gtag === 'function') {
+                window.gtag('event', name, params || {});
+            }
+        }
+
+        document.querySelectorAll('[data-download]').forEach(link => {
+            link.addEventListener('click', () => {
+                trackSiteEvent('download_click', {
+                    platform: link.dataset.download,
+                    link_url: link.href
+                });
+            });
+        });
+
         /* Scroll progress bar */
         const progressBar = document.querySelector('.scroll-progress');
         const btt = document.querySelector('.back-to-top');

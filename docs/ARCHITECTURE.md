@@ -45,7 +45,7 @@
 ## ReAct Agent Architecture
 
 - **Autonomous tool use** — the agent decides which tools to call, when, and how many times, based on your question
-- **29 core tools plus auto-generated channel tools** — web search, email, calendar, file management, shell access, browser automation, vision, image generation, video generation, X (Twitter), a personal knowledge graph, Designer Studio, scheduled workflows, habit tracking, Thoth Status self-inspection, external MCP tools, and more
+- **30 core tools plus auto-generated channel tools** — web search, email, calendar, file management, shell access, browser automation, vision, image generation, video generation, X (Twitter), a personal knowledge graph, Designer Studio, scheduled workflows, habit tracking, Thoth Status self-inspection, external MCP tools, and more
 - **Streaming responses** — tokens stream in real-time with a typing indicator
 - **Thinking indicators** — shows when the model is reasoning before responding
 - **Smart context management** — automatic conversation summarization compresses older turns when token usage exceeds 80% of the context window, preserving the 5 most recent turns and a running summary; a hard trim at 85% drops oldest messages as a safety net; oversized tool outputs are proportionally shrunk so multi-tool chains fit within context; accurate token counting via tiktoken (cl100k_base)
@@ -457,7 +457,7 @@ Tool guides are lightweight `SKILL.md` packages that attach contextual instructi
 - **`tools:` activation field** — guides declare the tools they apply to; when any linked tool is in the active tool belt, the guide is injected automatically
 - **Prompt injection** — `prompts.py` discovers active guides and appends them to the system prompt at runtime
 - **Invisible to the manual skill toggles** — tool guides are auto-managed and do not clutter the user-facing skill list
-- **15 bundled guides** — Browser, Calendar, Chart, Designer, Email, Filesystem, Math, Shell, Telegram, Thoth Status, Tracker, Vision, Weather, Wiki, and X
+- **18 bundled guides** — Browser, Calendar, Chart, Designer, Email, Filesystem, Math, MCP, Shell, Telegram, Thoth Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X
 - **Consistency benefits** — guide content can evolve independently of the main prompt, reducing drift and duplicated instructions
 
 ---
@@ -478,10 +478,10 @@ Thoth can generate and edit images through multiple cloud providers, render them
 
 ## Video Generation
 
-Thoth can generate short video clips from text prompts or reference images, primarily through Google Veo, for chat use and Designer storyboard workflows.
+Thoth can generate short video clips from text prompts or reference images through Google Veo and xAI Grok Imagine Video for chat use and Designer storyboard workflows.
 
 - **`video_gen_tool`** — top-level agent tool for text-to-video and image-to-video generation
-- **Google Veo provider** — current backend, with per-person-generation policy handling and provider-side prompt sanitization
+- **Provider support** — Google Veo handles text-to-video and image-to-video with provider-side person-generation policy handling; xAI Grok Imagine Video supports text-to-video and image-to-video with provider-specific aspect ratio, duration, and resolution constraints
 - **Inline rendering** — generated clips are surfaced directly in the chat stream with safe media-element hydration
 - **Designer integration** — Designer Studio storyboards and landing hero slots can reference generated videos as `asset://` media; motion clips are rendered in preview, presenter mode, and published share links
 - **Persistent asset storage** — generated clips are saved to Thoth's media storage so they survive thread refreshes and can be reused across designer projects
@@ -572,7 +572,7 @@ Thoth includes a one-time migration wizard for moving selected data from Hermes 
 - **Redacted report** — each run writes redacted `plan.json`, `result.json`, `backup_manifest.json`, and `summary.md` under `migration-reports/<timestamp>/`
 - **Archive redaction** — JSON and key/value archive snapshots are redacted before being copied into reports; binary or unsupported files are represented by a placeholder instead of raw content
 - **MCP import safety** — migrated MCP servers are written disabled. They must be reviewed and enabled from Settings → MCP before any external tools become available to the agent
-- **Credential import** — API keys and tokens are off by default and require explicit selection. Reports hide their values; encrypted/keychain-backed storage is planned as the next security phase and migration key import will route through that path when available
+- **Credential import** — API keys and tokens are off by default and require explicit selection. Reports hide their values; selected keys route through target-profile secure storage via `api_keys.set_key_for_data_dir`, so normal imports use the OS credential store with metadata-only local files when keyring is available
 
 ### Testing
 
@@ -592,7 +592,7 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 - **Manifest system** — each plugin declares metadata, tools, skills, settings, and dependencies in `plugin.json`
 - **Security sandbox** — static scans block dangerous constructs like `eval`, `exec`, and shell escape paths; imports from sensitive core modules are restricted
 - **Dependency safety** — plugin dependency installs cannot silently downgrade core packages required by Thoth
-- **State persistence** — enablement, config, and secrets are stored under `~/.thoth/` in dedicated plugin state files
+- **State persistence** — enablement and non-secret config are stored under `~/.thoth/plugin_state.json`; plugin API-key secrets use the OS credential store with metadata-only `plugin_secrets.json` state and session-only fallback for new saves when keyring is unavailable
 - **Hot reload** — Settings can reload plugins without restarting the app; agent caches are cleared automatically
 - **Skill auto-discovery** — plugin `skills/` directories are scanned for `SKILL.md` definitions and injected like built-in skills
 
@@ -672,7 +672,7 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 
 Skills are reusable instruction packs that shape how the agent thinks and responds. Each skill is a `SKILL.md` file with YAML frontmatter (display name, icon, description, required tools, tags) and freeform instructions injected into the system prompt when enabled.
 
-Thoth ships with **12 manual bundled skills** and **16 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available.
+Thoth ships with **12 manual bundled skills** and **18 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available.
 
 | Skill | Description |
 |-------|-------------|
@@ -693,7 +693,7 @@ Thoth ships with **12 manual bundled skills** and **16 tool guides**. Manual ski
 - **In-app skill editor** — skills can be created and edited directly from Settings
 - **Per-skill enablement** — only enabled manual skills are injected into the system prompt
 - **Per-thread and per-workflow overrides** — skill selection can be narrowed for individual threads and workflows
-- **Tool guides remain automatic** — Designer, MCP, and Thoth Status guides joined the existing Browser, Calendar, Chart, Email, Filesystem, Math, Shell, Telegram, Tracker, Vision, Weather, Wiki, and X guides in the built-in set
+- **Tool guides remain automatic** — Browser, Calendar, Chart, Designer, Email, Filesystem, Math, MCP, Shell, Telegram, Thoth Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X guides are in the built-in set
 
 ---
 
@@ -718,7 +718,7 @@ Thoth ships with **12 manual bundled skills** and **16 tool guides**. Manual ski
 | **`vision.py`** | Camera capture, screen capture, and workspace image analysis via local or cloud vision models |
 | **`data_reader.py`** | Shared structured-data loader for CSV, TSV, Excel, JSON, and JSONL |
 | **`launcher.py`** | Desktop launcher, system tray, splash screen, app lifecycle, and logging bootstrap |
-| **`api_keys.py`** | Local API key storage and retrieval for tools and cloud providers |
+| **`api_keys.py`** + **`secret_store.py`** | API key storage and retrieval for tools and cloud providers, backed by OS keyring with metadata-only local files and legacy plaintext migration |
 | **`identity.py`** | Assistant name, personality, and self-improvement preference storage with sanitization |
 | **`self_knowledge.py`** | Capability manifest, identity-line builder, live runtime state builder, and prompt-time self-knowledge assembly |
 | **`insights.py`** | Structured insight store with dedup, pruning, pin/dismiss/apply state, and last-analysis tracking |
@@ -726,7 +726,7 @@ Thoth ships with **12 manual bundled skills** and **16 tool guides**. Manual ski
 | **`memory_extraction.py`** | Background conversation scan that extracts entities and relations the live agent did not save |
 | **`skills.py`** | Discovery, loading, activation, override, and prompt-building for manual skills and tool guides |
 | **`bundled_skills/`** | 12 built-in manual skills as `SKILL.md` packages |
-| **`tool_guides/`** | 16 built-in tool-specific auto-activation guides |
+| **`tool_guides/`** | 18 built-in tool-specific auto-activation guides |
 | **`tasks.py`** | Workflow engine, SQLite persistence, APScheduler scheduling, pipeline execution, run history, safety mode, and delivery routing |
 | **`notifications.py`** | Unified desktop, sound, and toast notification system |
 | **`channels/`** | Channel ABC, registry, media helpers, auth helpers, approval routing, command handling, tool generation, and bundled channel adapters |
@@ -757,8 +757,8 @@ All user data is stored under `~/.thoth/` (or `%USERPROFILE%\\.thoth\\` on Windo
 ├── dream_journal.json             # Dream Cycle run log
 ├── dream_rejections.json          # Rejected inference-pair cache
 ├── insights.json                  # Structured insight store
-├── api_keys.json                  # Tool API keys (Tavily, Wolfram, etc.)
-├── cloud_config.json              # Cloud provider keys, starred models, cloud settings
+├── api_keys.json                  # API key metadata only; raw key values live in the OS credential store when available
+├── cloud_config.json              # Starred cloud models and cloud settings
 ├── app_config.json                # Onboarding and first-run flags
 ├── user_config.json               # Avatar preferences, identity, and self-improvement settings
 ├── channels_config.json           # Channel enablement and per-channel config
@@ -790,7 +790,7 @@ All user data is stored under `~/.thoth/` (or `%USERPROFILE%\\.thoth\\` on Windo
 ├── x/                             # X OAuth tokens and tier metadata
 ├── installed_plugins/             # Marketplace-installed plugins
 ├── plugin_state.json              # Plugin config and enablement state
-├── plugin_secrets.json            # Plugin secrets (local only)
+├── plugin_secrets.json            # Plugin API-key metadata only; raw key values live in the OS credential store when available
 └── kokoro/                        # Kokoro TTS model and voice files
 ```
 
@@ -814,7 +814,7 @@ Most open-source AI assistants are still **developer tools disguised as products
 | **Conversations** | Provider-owned chat history | Local SQLite-backed threads, exportable anytime |
 | **Cost** | Subscription or provider billing | Free with local models; cloud usage is pay-per-token only when you opt in |
 | **Memory** | Limited, opaque, provider-controlled | Personal knowledge graph with entities, relations, visualization, wiki export, and background refinement |
-| **Tools** | Limited app integrations and provider-defined plug-ins | 29 core tools plus auto-generated channel tools: shell, browser, filesystem, Gmail, Calendar, memory graph, Designer Studio, Thoth Status, MCP external tools, image generation, video generation, research tools, and more |
+| **Tools** | Limited app integrations and provider-defined plug-ins | 30 core tools plus auto-generated channel tools: shell, browser, filesystem, Gmail, Calendar, memory graph, Designer Studio, Thoth Status, MCP external tools, image generation, video generation, research tools, and more |
 | **Customization** | Pick a model and maybe a custom instruction | Swap models per thread or workflow, configure name and personality, build workflows, toggle tools and skills, and enable self-improvement features |
 | **Voice** | Usually cloud-processed | Local faster-whisper STT plus Kokoro TTS |
 | **Availability** | Internet required | Local models work offline; cloud models are optional |
@@ -833,7 +833,7 @@ Most open-source AI assistants are still **developer tools disguised as products
 | **Knowledge refinement** | 5-phase Dream Cycle with merge, enrich, decay, infer, and insight passes | Experimental dreaming-style memory promotion flows |
 | **Document intelligence** | Structured graph extraction with provenance, dedup, and relation typing | Strong workspace tools but less graph-centric document knowledge modeling |
 | **Designer / Canvas** | Designer Studio for decks, one-pagers, reports, published links, plus inline Mermaid and Plotly rendering | A2UI-style interactive workspace focus |
-| **Tools** | 29 core tools plus auto-generated channel send tools, including Designer Studio, Thoth Status, and MCP external tools | Broad built-in toolset with different emphasis |
+| **Tools** | 30 core tools plus auto-generated channel send tools, including Designer Studio, Thoth Status, and MCP external tools | Broad built-in toolset with different emphasis |
 | **Messaging channels** | 5 bundled channels with streaming, media handling, approvals, and a sidebar monitor | Wider channel catalog and gateway focus |
 | **Autonomous workflows** | Step-based workflows with approvals, conditions, triggers, concurrency groups, and safety modes | Strong channel routing and automation, different orchestration model |
 | **Desktop experience** | Native Windows and macOS desktop app with tray, splash, and setup wizard | More developer-first and channel-first in practice |

@@ -60,15 +60,21 @@ def open_plugin_dialog(
                 label = key_info.get("label", key_name)
                 placeholder = key_info.get("placeholder", "")
                 required = key_info.get("required", False)
-                current_val = plugin_state.get_plugin_secret(plugin_id, key_name) or ""
+                configured = bool(plugin_state.get_plugin_secret(plugin_id, key_name))
                 suffix = " *" if required else ""
-                inp = ui.input(
-                    f"{label}{suffix}",
-                    value=current_val,
-                    placeholder=placeholder,
-                    password=True,
-                    password_toggle_button=True,
-                ).classes("w-full")
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    inp = ui.input(
+                        f"{label}{suffix}",
+                        value="",
+                        placeholder=placeholder or ("Configured" if configured else ""),
+                        password=True,
+                        password_toggle_button=True,
+                    ).classes("col")
+                    if configured:
+                        ui.button(
+                            icon="delete",
+                            on_click=lambda key=key_name: plugin_state.delete_plugin_secret(plugin_id, key),
+                        ).props("flat round dense color=negative").tooltip("Clear saved API key")
                 key_inputs[key_name] = inp
 
         # ── Config Settings ──────────────────────────────────────────

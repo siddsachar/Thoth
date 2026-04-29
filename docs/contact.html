@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>&#x1305F; Contact Thoth</title>
+    <meta name="description" content="Contact the Thoth project for feedback, questions, partnerships, and security reports.">
+    <link rel="canonical" href="https://get-thoth.com/contact.html">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1305F;</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+        window.THOTH_GA_MEASUREMENT_ID = 'G-0YYKPX5M5E';
+        if (window.THOTH_GA_MEASUREMENT_ID) {
+            const gaScript = document.createElement('script');
+            gaScript.async = true;
+            gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + window.THOTH_GA_MEASUREMENT_ID;
+            document.head.appendChild(gaScript);
+            window.dataLayer = window.dataLayer || [];
+            window.gtag = function(){ dataLayer.push(arguments); };
+            gtag('js', new Date());
+            gtag('config', window.THOTH_GA_MEASUREMENT_ID);
+        }
+    </script>
+    <style>
+        :root {
+            --bg: #0b0d10;
+            --surface: #151920;
+            --surface-raised: #1c2129;
+            --border: #232a35;
+            --border-hover: #3a4556;
+            --text: #e2e6ed;
+            --text-dim: #9aa3b4;
+            --text-faint: #636d7e;
+            --accent: #c9a227;
+            --accent-hover: #dbb634;
+            --serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+            --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            font-family: var(--sans);
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.65;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            padding: 0 2rem;
+            height: 56px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(11, 13, 16, 0.9);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+        }
+
+        .nav-wordmark {
+            font-family: var(--serif);
+            font-size: 1.4rem;
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .nav-wordmark span { opacity: 0.5; margin-right: 0.35rem; }
+        .nav-links { display: flex; align-items: center; gap: 0.2rem; }
+        .nav-links a {
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.85rem;
+            padding: 0.35rem 0.7rem;
+            border-radius: 6px;
+        }
+        .nav-links a:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+
+        main {
+            width: min(920px, calc(100% - 4rem));
+            margin: 0 auto;
+            padding: 8rem 0 5rem;
+        }
+
+        .eyebrow {
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            color: var(--accent);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+        }
+
+        h1 {
+            font-family: var(--serif);
+            font-size: clamp(2.6rem, 7vw, 4.4rem);
+            font-weight: 400;
+            line-height: 1.05;
+            margin-bottom: 1rem;
+        }
+
+        .intro {
+            max-width: 680px;
+            color: var(--text-dim);
+            font-size: 1.05rem;
+            margin-bottom: 2.25rem;
+        }
+
+        .contact-grid {
+            display: grid;
+            grid-template-columns: 1.25fr 0.75fr;
+            gap: 1.25rem;
+        }
+
+        form, .side-panel {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            padding: 1.5rem;
+        }
+
+        label {
+            display: block;
+            font-size: 0.78rem;
+            font-family: var(--mono);
+            color: var(--text-faint);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin-bottom: 0.4rem;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            margin-bottom: 1rem;
+            padding: 0.8rem 0.9rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-raised);
+            color: var(--text);
+            font: inherit;
+        }
+
+        textarea { min-height: 150px; resize: vertical; }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: var(--border-hover); }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.45rem;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            border: 0;
+            background: var(--accent);
+            color: var(--bg);
+            font-weight: 700;
+            text-decoration: none;
+            cursor: pointer;
+            font-family: var(--sans);
+        }
+
+        .btn:hover { background: var(--accent-hover); }
+        .btn[disabled] { opacity: 0.65; cursor: progress; }
+        .btn--ghost {
+            background: transparent;
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+        }
+
+        .btn--ghost:hover { color: var(--text); border-color: var(--border-hover); background: transparent; }
+        .form-status {
+            display: none;
+            margin-bottom: 1rem;
+            padding: 0.85rem 0.95rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--surface-raised);
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+        .form-status.is-visible { display: block; }
+        .form-status.is-success { border-color: rgba(64, 184, 122, 0.55); color: #b8e8cb; }
+        .form-status.is-error { border-color: rgba(218, 88, 88, 0.65); color: #f2b5b5; }
+        .side-panel h2 { font-size: 1rem; margin-bottom: 0.6rem; }
+        .side-panel p { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 1rem; }
+        .link-stack { display: grid; gap: 0.65rem; margin-top: 1rem; }
+
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 1.5rem 2rem;
+            text-align: center;
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            color: var(--text-faint);
+        }
+
+        footer a { color: var(--text-faint); text-decoration: none; }
+        footer a:hover { color: var(--text-dim); }
+
+        @media (max-width: 760px) {
+            nav { padding: 0 1rem; }
+            .nav-links a { padding: 0.35rem 0.45rem; }
+            main { width: min(100% - 2rem, 920px); padding-top: 7rem; }
+            .contact-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="./" class="nav-wordmark"><span>&#x1305F;</span> Thoth</a>
+        <div class="nav-links">
+            <a href="./#features">Features</a>
+            <a href="./#tools">Tools</a>
+            <a href="https://github.com/siddsachar/Thoth" target="_blank">GitHub</a>
+        </div>
+    </nav>
+
+    <main>
+        <p class="eyebrow">Contact</p>
+        <h1>Tell us what you are building with Thoth.</h1>
+        <p class="intro">
+            Questions, feedback, partnership notes, release issues, and thoughtful bug reports are welcome.
+            Security reports should go directly by email.
+        </p>
+
+        <div class="contact-grid">
+            <form action="https://formspree.io/f/mwvagdzv" method="POST" data-contact-form>
+                <div class="form-status" role="status" aria-live="polite" data-contact-status></div>
+                <input type="hidden" name="_subject" value="New Thoth website contact">
+                <input type="text" name="_gotcha" tabindex="-1" autocomplete="off" style="display:none">
+
+                <label for="name">Name</label>
+                <input id="name" name="name" autocomplete="name" required>
+
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" autocomplete="email" required>
+
+                <label for="topic">Topic</label>
+                <select id="topic" name="topic">
+                    <option>General question</option>
+                    <option>Bug or release issue</option>
+                    <option>Plugin or MCP idea</option>
+                    <option>Partnership</option>
+                    <option>Security</option>
+                </select>
+
+                <label for="message">Message</label>
+                <textarea id="message" name="message" required></textarea>
+
+                <button class="btn" type="submit" data-contact-submit>Send Message</button>
+            </form>
+
+            <aside class="side-panel">
+                <h2>Project channels</h2>
+                <p>Use GitHub for public questions, feature ideas, and reproducible bugs.</p>
+                <div class="link-stack">
+                    <a class="btn btn--ghost" href="https://github.com/siddsachar/Thoth/discussions" target="_blank" data-track="contact_discussions">GitHub Discussions</a>
+                    <a class="btn btn--ghost" href="https://github.com/siddsachar/Thoth/issues/new/choose" target="_blank" data-track="contact_issue">Open an Issue</a>
+                    <a class="btn btn--ghost" href="mailto:siddsachar@gmail.com?subject=Thoth%20security%20report" data-track="contact_security">Security Email</a>
+                </div>
+            </aside>
+        </div>
+    </main>
+
+    <footer>
+        &#x1305F; Thoth &middot; <a href="./">Home</a> &middot; <a href="https://github.com/siddsachar/Thoth" target="_blank">GitHub</a>
+    </footer>
+
+    <script>
+        function trackSiteEvent(name, params) {
+            if (typeof window.gtag === 'function') {
+                window.gtag('event', name, params || {});
+            }
+        }
+
+        const contactForm = document.querySelector('[data-contact-form]');
+        const contactStatus = document.querySelector('[data-contact-status]');
+        const contactSubmit = document.querySelector('[data-contact-submit]');
+
+        function showContactStatus(message, type) {
+            contactStatus.textContent = message;
+            contactStatus.className = `form-status is-visible is-${type}`;
+        }
+
+        contactForm.addEventListener('submit', async event => {
+            event.preventDefault();
+            contactSubmit.disabled = true;
+            contactSubmit.textContent = 'Sending...';
+            contactStatus.className = 'form-status';
+
+            try {
+                const response = await fetch(contactForm.action, {
+                    method: 'POST',
+                    body: new FormData(contactForm),
+                    headers: { 'Accept': 'application/json' }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Form submission failed');
+                }
+
+                contactForm.reset();
+                showContactStatus('Thanks. Your message has been sent.', 'success');
+                trackSiteEvent('contact_submit', { method: 'formspree' });
+            } catch (error) {
+                showContactStatus('Something went wrong. Please try again or use the security email link.', 'error');
+                trackSiteEvent('contact_submit_error', { method: 'formspree' });
+            } finally {
+                contactSubmit.disabled = false;
+                contactSubmit.textContent = 'Send Message';
+            }
+        });
+
+        document.querySelectorAll('[data-track]').forEach(link => {
+            link.addEventListener('click', () => trackSiteEvent(link.dataset.track, { link_url: link.href }));
+        });
+    </script>
+</body>
+</html>

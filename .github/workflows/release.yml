@@ -41,7 +41,7 @@ concurrency:
 # Tracks the version this workflow is currently shipping. Kept in sync with
 # `installer/thoth_setup.iss` (#define MyAppVersion) and `version.py`.
 env:
-  THOTH_VERSION: "3.17.0"
+  THOTH_VERSION: "3.18.0"
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
@@ -283,7 +283,7 @@ jobs:
       - name: Build, sign, and package
         run: |
           chmod +x installer/build_mac_app.sh
-          ./installer/build_mac_app.sh
+          ./installer/build_mac_app.sh "$THOTH_VERSION"
 
       - name: Prepare signed DMG and app zip
         run: |

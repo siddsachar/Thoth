@@ -1,5 +1,5 @@
 ; =============================================================================
-; Thoth v3.17.0 – Inno Setup Script
+; Thoth v3.18.0 – Inno Setup Script
 ; Self-contained installer: bundles embedded Python with all pip packages
 ; pre-installed.  No internet downloads at install time.
 ; =============================================================================
@@ -10,7 +10,7 @@
 ; Compile with:  iscc installer\thoth_setup.iss
 
 #define MyAppName      "Thoth"
-#define MyAppVersion   "3.17.0"
+#define MyAppVersion   "3.18.0"
 #define MyAppPublisher "Thoth"
 #define MyAppURL       "https://github.com/siddsachar/Thoth"
 #define MyAppExeName   "launch_thoth.vbs"
@@ -58,6 +58,7 @@ Source: "..\data_reader.py";            DestDir: "{app}\app"; Flags: ignoreversi
 Source: "..\documents.py";             DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\threads.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\api_keys.py";              DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\secret_store.py";          DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\voice.py";                 DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\tts.py";                   DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\vision.py";                DestDir: "{app}\app"; Flags: ignoreversion

@@ -7,7 +7,7 @@
 #
 # Usage:
 #   ./installer/build_mac_app.sh                  # local unsigned build
-#   ./installer/build_mac_app.sh 3.17.0            # specify version
+#   ./installer/build_mac_app.sh 3.18.0            # specify version
 #
 # For signed builds (CI), set environment variables:
 #   CODESIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
@@ -19,12 +19,19 @@
 
 set -euo pipefail
 
-VERSION="${1:-3.17.0}"
-PYTHON_VERSION="${PYTHON_VERSION:-3.12.13}"
-PBS_RELEASE="${PBS_RELEASE:-20260303}"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_VERSION="$(python3 - "$PROJECT_DIR/version.py" <<'PY'
+import sys
+from pathlib import Path
+ns = {}
+exec(Path(sys.argv[1]).read_text(encoding='utf-8'), ns)
+print(ns.get('__version__', '0.0.0'))
+PY
+)"
+VERSION="${1:-$DEFAULT_VERSION}"
+PYTHON_VERSION="${PYTHON_VERSION:-3.12.13}"
+PBS_RELEASE="${PBS_RELEASE:-20260303}"
 BUILD_DIR="$SCRIPT_DIR/build/mac"
 DIST_DIR="$PROJECT_DIR/dist"
 
@@ -138,15 +145,15 @@ for f in "$PROJECT_DIR"/*.py; do
     base=$(basename "$f")
     case "$base" in
         workflows.py|seed_knowledge_graph.py) continue ;; # legacy, skip
-        test_suite.py|test_memory_e2e.py|integration_tests.py) continue ;; # test files, skip
+        test_*.py|test_suite.py|test_memory_e2e.py|integration_tests.py) continue ;; # test files, skip
         _*.py) continue ;; # dev/temp scripts, skip
     esac
     cp "$f" "$APP_SRC/"
 done
 cp "$PROJECT_DIR/requirements.txt" "$APP_SRC/"
 
-# Sub-packages (tools, channels, bundled_skills, tool_guides, ui, plugins, designer, scripts, utils, mcp_client)
-for pkg in tools channels bundled_skills tool_guides ui plugins designer scripts utils mcp_client; do
+# Sub-packages (tools, channels, bundled_skills, tool_guides, ui, plugins, designer, scripts, utils, mcp_client, migration)
+for pkg in tools channels bundled_skills tool_guides ui plugins designer scripts utils mcp_client migration; do
     if [ -d "$PROJECT_DIR/$pkg" ]; then
         rsync -a \
               --exclude='__pycache__' --exclude='*.pyc' \

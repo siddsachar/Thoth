@@ -34,8 +34,9 @@ Thoth uses semantic versioning:
    python scripts/cut_release.py X.Y.Z
    ```
 
-   This updates `version.py`, `installer/thoth_setup.iss`, and
-   `.github/workflows/release.yml`.
+   This updates `version.py`, `installer/thoth_setup.iss`,
+   `.github/workflows/release.yml`, the macOS app `Info.plist`, and the bug
+   report version placeholder.
 
 5. Update `RELEASE_NOTES.md` with human-readable notes.
 6. Open and merge the release-prep PR.

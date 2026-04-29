@@ -28,7 +28,7 @@ body:
     id: version
     attributes:
       label: Thoth version
-      placeholder: v3.17.0
+      placeholder: v3.18.0
   - type: dropdown
     id: os
     attributes:

@@ -2,9 +2,11 @@
 
 ---
 
-## v3.18.0 — External MCP Tools, Marketplace Import & Runtime Isolation
+## v3.18.0 — External MCP Tools, Migration Wizard & Secure API Keys
 
-Thoth now has a full **Model Context Protocol client** for connecting external MCP servers as native dynamic tools without letting a broken server take down the app. MCP ships as a guarded core subsystem: servers are configured from a dedicated Settings tab, imported disabled by default, tested before use, and exposed to the agent as namespaced `mcp_<server>_<tool>` tools only after explicit enablement. The runtime supports stdio, Streamable HTTP, and SSE transports; handles tool, resource, and prompt surfaces; classifies destructive tools; routes risky actions through Thoth's existing interrupt approvals; and keeps all MCP config in a separate `mcp_servers.json` so bad external settings degrade to diagnostics rather than startup failure. Marketplace search can pull from curated starters plus MCP directories, while dependency handling covers common user-space runtimes such as Node.js, uv, and Playwright Chromium, leaving heavier requirements like Docker as clear manual setup tasks. This release also adds a guarded **Hermes/OpenClaw migration wizard** in Preferences so users can preview and import selected identity, memory, skill, model, MCP, and credential data into Thoth with backups and redacted reports.
+Thoth now has a full **Model Context Protocol client** for connecting external MCP servers as native dynamic tools without letting a broken server take down the app. This release also adds a guarded **Hermes/OpenClaw migration wizard** in Preferences, moves normal core and plugin API-key saves into the OS credential store, and fixes a cloud-model default regression where a saved GPT/Claude/Gemini/Grok/OpenRouter model could be replaced by a local Ollama fallback when the cloud-model cache was empty.
+
+The MCP runtime supports stdio, Streamable HTTP, and SSE transports; handles tool, resource, and prompt surfaces; classifies destructive tools; routes risky actions through Thoth's existing interrupt approvals; and keeps all external server config isolated in `mcp_servers.json`. Marketplace search can pull from curated starters plus MCP directories, while dependency handling covers common user-space runtimes such as Node.js, uv, and Playwright Chromium, leaving heavier requirements like Docker as clear manual setup tasks.
 
 ### 🔌 MCP Client & Dynamic Tools
 
@@ -45,6 +47,22 @@ Thoth now has a full **Model Context Protocol client** for connecting external M
 - **Secret redaction** — migration reports redact secret-shaped values and archive snapshots redact JSON/key-value files; API key import remains an explicit opt-in
 - **MCP safety** — migrated MCP server definitions stay disabled until reviewed, so a bad imported server cannot break startup or automatically expose risky external tools
 
+### 🔐 API Key Secure Storage
+
+- **OS credential store** — saved core and plugin API keys now use the platform keyring through `keyring` instead of normal plaintext JSON storage
+- **Metadata-only file** — `~/.thoth/api_keys.json` stores saved-state, keyring service, timestamps, and masked fingerprints, not raw API key values
+- **Plugin secret parity** — plugin-declared API keys use the same keyring-backed path with metadata-only `plugin_secrets.json` state
+- **Legacy migration** — existing plaintext `api_keys.json` files are imported into the keyring on load; if the OS keyring is unavailable, Thoth keeps legacy keys readable with a warning instead of crashing startup
+- **No silent plaintext fallback** — new saves during keyring failure become session-only rather than creating new plaintext API-key files
+- **Safer Settings UI** — saved keys are not prefilled into password fields; blank inputs leave existing keys unchanged and clear actions are explicit
+- **Migration integration** — selected Hermes/OpenClaw API keys route through target-profile secure storage and migration reports remain redacted
+
+### 🧠 Cloud Model Defaults
+
+- **Cache-empty provider inference** — GPT, Claude, Gemini, Grok, and slash-style OpenRouter model IDs are recognized as cloud models even before the provider cache has been refreshed
+- **Default preservation** — `refresh_cloud_models()` no longer rewrites a saved cloud default to a local Ollama fallback simply because keys, network access, or provider discovery are temporarily unavailable
+- **Regression coverage** — `test_suite.py` now checks provider inference, cache-empty cloud detection, and preservation of saved cloud defaults such as `gpt-5.5`
+
 ### ⚙️ Runtime Requirements
 
 - **Requirement detection** — stdio servers infer required launchers from commands such as `npx`, `uvx`, and `docker`, plus Playwright browser requirements for Playwright MCP
@@ -66,6 +84,7 @@ Thoth now has a full **Model Context Protocol client** for connecting external M
 - **Opt-in live suite** — new `test_mcp_real_world_e2e.py` plus `scripts/mcp_real_world_e2e.py` validate real public MCP servers outside normal CI, including Microsoft Learn and Context7
 - **Main regression coverage** — `test_suite.py` includes MCP modules in import/consistency checks and validates the focused MCP test files are part of the tracked suite
 - **Migration regression suite** — new `test_migration_core.py`, `test_migration_detection.py`, `test_migration_planner.py`, `test_migration_apply.py`, and `test_migration_wizard_ui.py` cover source detection, wrong-provider guards, dry-run planning, conflict behavior, backup/report generation, redaction, daily memory import, UI helper behavior, and Preferences placement
+- **API key storage suite** — new `test_api_key_storage.py` covers keyring-backed writes, metadata-only files, legacy plaintext migration, keyring-unavailable fallback, session-only new saves, and delete behavior
 
 ### 📁 Files Changed
 
@@ -81,13 +100,20 @@ Thoth now has a full **Model Context Protocol client** for connecting external M
 | **`migration/`** | **New** — pure models, redaction, source detection, realistic fixtures, dry-run planners, and guarded apply/report engine for Hermes/OpenClaw migrations |
 | **`ui/migration_wizard.py`** | **New** — Preferences-launched scan/review/apply wizard with category summaries, selection controls, conflict handling, and report path display |
 | **`test_migration_*.py`** | **New** — focused migration coverage for models, detection, planners, apply/report behavior, and UI helpers |
+| **`secret_store.py`** | **New** — small platform-keyring wrapper with data-directory-scoped service names and testable backend hooks |
+| **`test_api_key_storage.py`** | **New** — focused API key storage regression suite for keyring, legacy migration, metadata redaction, and fallback behavior |
 | `agent.py` | Treats MCP tool output as untrusted, resolves readable MCP tool labels, and applies browser-loop handling to MCP browser tools |
 | `app.py` | Starts MCP discovery non-fatally during startup and closes MCP sessions during shutdown |
-| `ui/settings.py` | Adds the Preferences migration launcher while preserving old `Migration` deep-link routing to Preferences |
+| `api_keys.py` | Moves normal saved API keys to secure keyring storage, keeps compatibility helpers, migrates legacy plaintext, and supports migration imports into target data directories |
+| `plugins/state.py` | Moves plugin-declared API-key secrets to the same keyring-backed storage model with metadata-only local state and session-only fallback for new saves when keyring is unavailable |
+| `plugins/ui_plugin_dialog.py` | Stops prefilling saved plugin secrets, shows configured state, and adds explicit clear controls |
+| `models.py` | Infers common cloud model providers without relying on a populated cache and preserves saved cloud defaults during refresh failures/cache misses |
+| `ui/settings.py` | Adds the Preferences migration launcher while preserving old `Migration` deep-link routing to Preferences; key inputs now show masked saved-state instead of prefilled secrets |
 | `tools/thoth_status_tool.py` | Synchronizes the `mcp` tool toggle with the global MCP client switch |
 | `tool_guides/thoth_status_guide/SKILL.md` | Documents MCP global toggle behavior through Thoth Status |
-| `requirements.txt` | Adds the Python MCP SDK and LangChain MCP adapter dependencies |
-| `installer/thoth_setup.iss` | Bundles the new MCP client package, MCP settings UI, MCP parent tool, guide, and migration package/UI |
+| `test_suite.py` | Adds model-default regression checks for cloud provider inference and refresh preservation |
+| `requirements.txt` | Adds the Python MCP SDK, LangChain MCP adapter dependencies, and `keyring` |
+| `installer/thoth_setup.iss` | Bundles the new MCP client package, MCP settings UI, MCP parent tool, guide, migration package/UI, and secure secret-store helper |
 
 ## v3.17.0 — Designer Studio II: Interactive Modes, Video Gen & Review Flow
 
@@ -832,7 +858,7 @@ A self-contained plugin runtime in `plugins/` handles the full lifecycle — dis
 - **Manifest system** — each plugin declares metadata in `plugin.json`: ID, version, author, description, tools, skills, settings schema, API keys, and Python dependencies; validated against a strict schema (ID regex, semver, required fields)
 - **Security sandbox** — static scan blocks `eval()`, `exec()`, `os.system()`, `subprocess`, and `__import__()`; import guard prevents loading from core modules (`tools`, `agent`, `models`, `ui`); `register()` call has a 5-second timeout
 - **Dependency safety** — freezes core dependency versions before installing plugin deps; blocks downgrades that could break Thoth
-- **State persistence** — enable/disable state, config values, and API key secrets stored in `plugin_state.json` and `plugin_secrets.json` (restricted file permissions) under `~/.thoth/`
+- **State persistence** — enable/disable state and config values are stored in `plugin_state.json`; plugin API-key secrets use the OS credential store with metadata in `plugin_secrets.json` under `~/.thoth/`
 - **Hot reload** — "Reload Plugins" button in Settings clears the registry and re-runs discovery without restarting the app; agent cache is invalidated automatically
 - **Skill auto-discovery** — `SKILL.md` files in a plugin's `skills/` directory are detected and injected into the agent's system prompt alongside built-in skills
 - **Version gating** — plugins declare `min_thoth_version`; loader rejects incompatible plugins with a clear error message

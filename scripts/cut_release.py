@@ -41,9 +41,24 @@ def main() -> None:
         f'#define MyAppVersion   "{version}"',
     )
     replace_once(
+        ROOT / "installer" / "thoth_setup.iss",
+        r'; Thoth v[^\r\n]+Inno Setup Script',
+        f'; Thoth v{version} - Inno Setup Script',
+    )
+    replace_once(
         ROOT / ".github" / "workflows" / "release.yml",
         r'THOTH_VERSION: "[^"]+"',
         f'THOTH_VERSION: "{version}"',
+    )
+    for plist in [ROOT / "installer" / "Thoth.app" / "Contents" / "Info.plist"]:
+        text = plist.read_text(encoding="utf-8")
+        text = re.sub(r'<key>CFBundleVersion</key>\s*<string>[^<]+</string>', f'<key>CFBundleVersion</key>\n    <string>{version}</string>', text, count=1)
+        text = re.sub(r'<key>CFBundleShortVersionString</key>\s*<string>[^<]+</string>', f'<key>CFBundleShortVersionString</key>\n    <string>{version}</string>', text, count=1)
+        plist.write_text(text, encoding="utf-8")
+    replace_once(
+        ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml",
+        r'placeholder: v\d+\.\d+\.\d+',
+        f'placeholder: v{version}',
     )
 
     print(f"Prepared release version {version}")
