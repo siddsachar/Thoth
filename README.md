@@ -73,7 +73,7 @@ Plugins add tools and skills through a sandboxed marketplace; MCP servers add ex
 | **Tools** | 30 core tools covering search, browser, shell, filesystem, documents, Gmail, Calendar, X, memory, workflows, tracker, image/video, vision, status, MCP, updates, computation, weather, charts, and system info |
 | **Automation** | Scheduled workflows, step pipelines, conditions, approvals, subtasks, webhooks, task-completion triggers, notifications, channel delivery, run history, and safety modes |
 | **Channels & Voice** | Telegram, WhatsApp, Discord, Slack, SMS, local faster-whisper STT, Kokoro TTS, media intake, reactions, streaming, approval routing, and tunnel manager |
-| **Platform & Extensibility** | Native desktop app, one-click installers, auto-updates, plugin marketplace, MCP client, migration wizard, configurable identity, secure API-key storage, 12 manual skills, and 18 tool guides |
+| **Platform & Extensibility** | Native desktop app, one-click installers, auto-updates, plugin marketplace, MCP client, migration wizard, configurable identity, secure API-key storage, 13 manual skills, and 18 tool guides |
 
 [Detailed architecture and subsystem reference →](docs/ARCHITECTURE.md)
 

@@ -2266,6 +2266,7 @@ def section_16_skills():
                 names.add(sk.name)
         expected = {
             "daily_briefing", "deep_research", "meeting_notes", "brain_dump",
+            "claude_code_delegation",
             "task_automation", "humanizer", "self_reflection",
             "proactive_agent", "web_navigator",
         }
@@ -2301,6 +2302,11 @@ def section_16_skills():
         est_explicit = skills.estimate_tokens(["daily_briefing", "deep_research", "brain_dump"])
         assert est_global == est_explicit, \
             f"global={est_global} vs explicit={est_explicit}"
+        est_skill_only = skills.estimate_skill_tokens("daily_briefing")
+        assert est_skill_only == skills.estimate_text_tokens(
+            skills.get_skill("daily_briefing").instructions
+        )
+        assert est_skill_only <= skills.estimate_tokens(["daily_briefing"])
 
         # Restore original enabled state
         for _name, _was_enabled in _orig_enabled.items():

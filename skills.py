@@ -342,6 +342,25 @@ def estimate_tokens(skill_names: Optional[list[str]] = None) -> int:
     return len(text) // 4 if text else 0
 
 
+def estimate_text_tokens(text: str) -> int:
+    """Rough token estimate for arbitrary skill text (~4 chars per token)."""
+    return len(text or "") // 4
+
+
+def estimate_skill_tokens(name: str) -> int:
+    """Rough token estimate for one skill's own instructions.
+
+    This intentionally excludes auto-active tool guides and shared prompt
+    wrapper text. Use ``estimate_tokens`` when estimating the complete injected
+    skills prompt for an enabled skill set.
+    """
+    _ensure_skills_loaded()
+    skill = _skills_cache.get(name)
+    if not skill:
+        return 0
+    return estimate_text_tokens(skill.instructions)
+
+
 # ── Skill CRUD ───────────────────────────────────────────────────────────────
 
 

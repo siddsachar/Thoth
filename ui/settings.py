@@ -931,11 +931,11 @@ def open_settings(
                                 ui.badge("Bundled", color="blue-grey").props("outline")
                             else:
                                 ui.badge("Custom", color="teal").props("outline")
-                            tokens = skills_mod.estimate_tokens([sk.name])
+                            tokens = skills_mod.estimate_skill_tokens(sk.name)
                             if tokens > 0:
                                 ui.badge(f"~{tokens} tokens", color="orange").props(
                                     "outline"
-                                ).tooltip("Approximate tokens added to context when enabled")
+                                ).tooltip("Approximate tokens in this skill's instructions")
                         ui.label(sk.description).classes("text-grey-6 text-sm q-pl-lg")
 
                         with ui.row().classes("q-pl-lg q-mt-xs gap-1"):
@@ -1011,7 +1011,7 @@ def open_settings(
 
                 def _update_token_est():
                     txt = instructions_input.value or ""
-                    est = len(txt) // 4
+                    est = skills_mod.estimate_text_tokens(txt)
                     token_label.text = f"~{est} tokens"
 
                 with ui.row().classes("w-full items-center"):

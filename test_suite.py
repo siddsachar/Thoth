@@ -5366,6 +5366,7 @@ try:
         assert len(_discovered) >= 8, f"expected ≥8 bundled skills, got {len(_discovered)}"
         _expected_names = {
             "daily_briefing", "deep_research", "meeting_notes", "brain_dump",
+            "claude_code_delegation",
             "task_automation", "humanizer", "self_reflection",
             "proactive_agent", "web_navigator",
         }
@@ -5712,6 +5713,11 @@ try:
     _est_one = _skills_mod36.estimate_tokens(["daily_briefing"])
     assert _est_one > 0
     assert _est_names > _est_one, "2 skills should estimate more than 1"
+    _skill_only_est = _skills_mod36.estimate_skill_tokens("daily_briefing")
+    assert _skill_only_est == _skills_mod36.estimate_text_tokens(
+        _skills_mod36.get_skill("daily_briefing").instructions
+    ), "single-skill estimate should count only that skill's instructions"
+    assert _skill_only_est <= _est_one, "single-skill estimate should not include shared prompt or tool guides"
     record("PASS", "skills: estimate_tokens with explicit names")
 
     # ── 36ah. Config corruption recovery ─────────────────────────────

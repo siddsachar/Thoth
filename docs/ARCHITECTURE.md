@@ -672,11 +672,12 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 
 Skills are reusable instruction packs that shape how the agent thinks and responds. Each skill is a `SKILL.md` file with YAML frontmatter (display name, icon, description, required tools, tags) and freeform instructions injected into the system prompt when enabled.
 
-Thoth ships with **12 manual bundled skills** and **18 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available.
+Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available.
 
 | Skill | Description |
 |-------|-------------|
 | **🧠 Brain Dump** | Capture unstructured thoughts and organize them into structured notes saved to memory |
+| **💻 Claude Code Delegation** | Coordinate Claude Code CLI as an external coding agent through Thoth's approval-gated shell workflow |
 | **☀️ Daily Briefing** | Compile a morning briefing with weather, calendar, and news headlines |
 | **📊 Data Analyst** | Analyze datasets, produce statistical summaries, and create insightful charts |
 | **🔬 Deep Research** | Perform multi-source research on a topic and produce a structured report |
@@ -725,7 +726,7 @@ Thoth ships with **12 manual bundled skills** and **18 tool guides**. Manual ski
 | **`prompts.py`** | Centralized prompt templates including summarization, extraction, and dream-insights analysis |
 | **`memory_extraction.py`** | Background conversation scan that extracts entities and relations the live agent did not save |
 | **`skills.py`** | Discovery, loading, activation, override, and prompt-building for manual skills and tool guides |
-| **`bundled_skills/`** | 12 built-in manual skills as `SKILL.md` packages |
+| **`bundled_skills/`** | 13 built-in manual skills as `SKILL.md` packages |
 | **`tool_guides/`** | 18 built-in tool-specific auto-activation guides |
 | **`tasks.py`** | Workflow engine, SQLite persistence, APScheduler scheduling, pipeline execution, run history, safety mode, and delivery routing |
 | **`notifications.py`** | Unified desktop, sound, and toast notification system |
