@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>&#x1305F; Thoth - Local-First AI Assistant</title>
-    <meta name="description" content="Thoth is a local-first desktop AI assistant with memory, 30 core tools, Designer Studio, workflows, messaging channels, plugins, MCP tools, and optional cloud models. Your durable data stays on your machine.">
+    <meta name="description" content="Thoth is a local-first desktop AI assistant with memory, 30 core tools, Designer Studio, workflows, messaging channels, plugins, MCP tools, optional provider models, and ChatGPT / Codex subscription access. Your durable data stays on your machine.">
 
     <!-- Canonical -->
     <link rel="canonical" href="https://get-thoth.com/">
@@ -13,7 +13,7 @@
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://get-thoth.com/">
     <meta property="og:title" content="Thoth - Local-First AI Assistant">
-    <meta property="og:description" content="A desktop AI assistant with memory, tools, Designer Studio, workflows, channels, plugins, MCP tools, and optional cloud models. Your durable data stays on your machine.">
+    <meta property="og:description" content="A desktop AI assistant with memory, tools, Designer Studio, workflows, channels, plugins, MCP tools, optional provider models, and ChatGPT / Codex subscription access. Your durable data stays on your machine.">
     <meta property="og:image" content="https://img.youtube.com/vi/ansfEqAr6g0/maxresdefault.jpg">
     <meta property="og:image:width" content="1280">
     <meta property="og:image:height" content="720">
@@ -21,7 +21,7 @@
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Thoth - Local-First AI Assistant">
-    <meta name="twitter:description" content="A desktop AI assistant with memory, tools, Designer Studio, workflows, channels, plugins, MCP tools, and optional cloud models. Your durable data stays on your machine.">
+    <meta name="twitter:description" content="A desktop AI assistant with memory, tools, Designer Studio, workflows, channels, plugins, MCP tools, optional provider models, and ChatGPT / Codex subscription access. Your durable data stays on your machine.">
     <meta name="twitter:image" content="https://img.youtube.com/vi/ansfEqAr6g0/maxresdefault.jpg">
 
     <!-- Favicon (inline SVG) -->
@@ -33,7 +33,7 @@
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
         "name": "Thoth",
-        "description": "A local-first desktop AI assistant with memory, 30 core tools, Designer Studio, workflows, messaging channels, plugins, MCP tools, secure API-key storage, and optional cloud models.",
+        "description": "A local-first desktop AI assistant with memory, 30 core tools, Designer Studio, workflows, messaging channels, plugins, MCP tools, secure provider credential storage, optional provider models, and ChatGPT / Codex subscription access.",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows 10/11, macOS",
         "offers": {
@@ -961,8 +961,8 @@
             <a href="#comparison">Compare</a>
             <a href="contact.html">Contact</a>
             <a href="https://github.com/siddsachar/Thoth" target="_blank">GitHub</a>
-            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/ThothSetup_3.19.0.exe" class="nav-dl" data-download="windows">Windows</a>
-            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/Thoth-3.19.0-macOS-arm64.dmg" class="nav-dl" data-download="macos">macOS</a>
+            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/ThothSetup_3.18.0.exe" class="nav-dl" data-download="windows">Windows</a>
+            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/Thoth-3.18.0-macOS-arm64.dmg" class="nav-dl" data-download="macos">macOS</a>
         </div>
     </nav>
 
@@ -972,12 +972,13 @@
         <h1>Your AI runs here.<br>Your data stays <em>here.</em></h1>
         <p class="hero-body">
             Thoth is a desktop AI assistant with memory, tools, workflows, design creation,
-            messaging, plugins, MCP tools, and optional cloud models. Run it fully local with
-            Ollama or add frontier APIs when you need them. Your durable data stays on your machine.
+            messaging, plugins, MCP tools, and provider-aware model routing. Run it fully local with
+            Ollama, add frontier APIs, or sign in to ChatGPT / Codex when you want subscription-backed models.
+            Your durable data stays on your machine.
         </p>
         <div class="hero-actions">
-            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/ThothSetup_3.19.0.exe" class="btn btn--primary" data-download="windows">Download for Windows <span class="btn-hint">.exe</span></a>
-            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/Thoth-3.19.0-macOS-arm64.dmg" class="btn btn--primary" data-download="macos">Download for macOS <span class="btn-hint">.dmg</span></a>
+            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/ThothSetup_3.18.0.exe" class="btn btn--primary" data-download="windows">Download for Windows <span class="btn-hint">.exe</span></a>
+            <a href="https://github.com/siddsachar/Thoth/releases/latest/download/Thoth-3.18.0-macOS-arm64.dmg" class="btn btn--primary" data-download="macos">Download for macOS <span class="btn-hint">.dmg</span></a>
             <a href="https://github.com/siddsachar/Thoth" class="btn btn--ghost" target="_blank">View on GitHub</a>
         </div>
         <div class="hero-meta">
@@ -1001,7 +1002,7 @@
         <div class="container--narrow">
             <blockquote>
                 Thoth is built for personal AI sovereignty: <strong>your compute, your data,
-                your model choices, and your automation</strong> under your control.
+                your model routes, and your automation</strong> under your control.
             </blockquote>
         </div>
     </section>
@@ -1051,8 +1052,8 @@
                 </div>
                 <div class="feature-item">
                     <span class="feature-icon">&#x2B22;</span>
-                    <h3>Plugins, MCP &amp; Migration</h3>
-                    <p>Install sandboxed plugins, connect external MCP servers, and migrate selected Hermes/OpenClaw identity, memory, skills, model settings, MCP config, and API keys with backups.</p>
+                    <h3>Plugins, MCP &amp; Delegation</h3>
+                    <p>Install sandboxed plugins, connect external MCP servers, coordinate Claude Code CLI through an approval-gated skill, and migrate selected Hermes/OpenClaw data with backups.</p>
                     <span class="feature-tag">Extensible</span>
                 </div>
             </div>
@@ -1061,14 +1062,14 @@
                 <div class="feature-item">
                     <span class="feature-icon">&#x25A1;</span>
                     <h3>Image &amp; Video Generation</h3>
-                    <p>Generate or edit images through OpenAI, Google, and xAI, then create video clips through Google Veo or xAI Grok Imagine Video for chat and Designer projects.</p>
-                    <span class="feature-tag">Creative tools</span>
+                    <p>Generate or edit images through OpenAI, Google, and xAI, then create video clips through Google Veo or xAI Grok Imagine Video from the same provider-aware model catalog.</p>
+                    <span class="feature-tag">Provider media</span>
                 </div>
                 <div class="feature-item">
                     <span class="feature-icon">&#x26BF;</span>
-                    <h3>Secure API-Key Storage</h3>
-                    <p>Core and plugin API keys use the OS credential store when available. Local files keep only metadata and masked fingerprints, with legacy migration and session-only fallback.</p>
-                    <span class="feature-tag">New in 3.18</span>
+                    <h3>Provider Runtime &amp; Models</h3>
+                    <p>OpenAI, Anthropic, Google AI, xAI, OpenRouter, custom endpoints, local Ollama rows, and ChatGPT / Codex all flow through one catalog with provider-aware labels.</p>
+                    <span class="feature-tag">New in 3.19</span>
                 </div>
             </div>
         </div>
@@ -1086,8 +1087,8 @@
                         then retrieves relevant nodes and one-hop context before each response.
                     </p>
                     <p>
-                        Document extraction, Dream Cycle refinement, wiki export, and the interactive graph view keep
-                        that memory useful instead of turning it into a pile of notes.
+                        Document extraction, Dream Cycle refinement, provider-aware insight snapshots, wiki export,
+                        and the interactive graph view keep that memory useful instead of turning it into a pile of notes.
                     </p>
                 </div>
                 <div class="highlight-visual">
@@ -1104,8 +1105,8 @@
     <section class="two-paths reveal" id="dual-path">
         <div class="container">
             <div class="two-paths-header">
-                <h2 class="section-heading">Local when you can. Cloud when you want.</h2>
-                <p class="section-sub">One assistant, two compute paths, no account required</p>
+                <h2 class="section-heading">Local when you can. Providers when you want.</h2>
+                <p class="section-sub">One assistant, local models, API providers, custom endpoints, and ChatGPT / Codex</p>
             </div>
 
             <div class="paths-grid">
@@ -1120,13 +1121,13 @@
                     </ul>
                 </div>
                 <div class="path-block">
-                    <div class="path-label">Cloud models &middot; Opt-in</div>
+                    <div class="path-label">Providers &amp; subscriptions &middot; Opt-in</div>
                     <h3>Frontier reasoning on demand</h3>
-                    <p>Add OpenAI, Anthropic, Google, xAI, or OpenRouter when you need a frontier model or do not have a GPU.</p>
+                    <p>Add OpenAI, Anthropic, Google AI, xAI, OpenRouter, custom OpenAI-compatible endpoints, or ChatGPT / Codex when you need frontier reasoning or do not have a GPU.</p>
                     <ul class="path-list">
-                        <li>Switch models per thread and workflow</li>
-                        <li>Cloud defaults survive cache/key outages</li>
-                        <li>API keys saved in the OS credential store</li>
+                        <li>Settings &rarr; Providers handles sign-in, health, and keys</li>
+                        <li>Settings &rarr; Models handles catalogs, defaults, and Quick Choices</li>
+                        <li>Duplicate names are labeled by route: API, custom endpoint, or ChatGPT / Codex</li>
                     </ul>
                 </div>
             </div>
@@ -1142,7 +1143,7 @@
                     <h2>30 core tools the agent wields for you</h2>
                     <p>
                         Ask a question in natural language and the agent autonomously decides which tools to chain together.
-                        Search the web, check your email, run a shell command, inspect Thoth's own status, build a deck in Designer, and chart the results
+                        Search the web, check your email, run a shell command, inspect provider and insight status, build a deck in Designer, and chart the results
                         - all in a single conversation turn.
                     </p>
                     <p>
@@ -1230,14 +1231,14 @@
         <div class="container">
             <div class="highlight-inner">
                 <div class="highlight-text">
-                    <h2>Designer, workflows, channels, and external tools</h2>
+                    <h2>Providers, workflows, channels, and external tools</h2>
                     <p>
-                        Build presentations and interactive pages, automate recurring work, route approvals to
-                        messaging channels, install plugins, and connect MCP servers without making startup fragile.
+                        Configure provider accounts, pin model Quick Choices, build presentations and interactive pages,
+                        automate recurring work, route approvals to messaging channels, and connect MCP servers without making startup fragile.
                     </p>
                     <p>
-                        Imports from Hermes/OpenClaw are scan-first and guarded, with backups, redacted reports,
-                        disabled-by-default MCP servers, and explicit API-key selection.
+                        ChatGPT / Codex sign-in is separate from OpenAI API keys, Claude Code Delegation stays approval-gated,
+                        and imports from Hermes/OpenClaw remain scan-first with backups and redacted reports.
                     </p>
                 </div>
                 <div class="highlight-visual">
@@ -1268,7 +1269,7 @@
                     <tr>
                         <td>Your data</td>
                         <td><s>Stored on provider servers, subject to their policies</s></td>
-                        <td>Stays on your machine - always. Cloud models send only the current conversation</td>
+                        <td>Stays on your machine - always. Provider models receive only the current conversation plus model-visible tool context</td>
                     </tr>
                     <tr>
                         <td>Conversations</td>
@@ -1278,7 +1279,7 @@
                     <tr>
                         <td>Cost</td>
                         <td><s>$20+/month subscription</s></td>
-                        <td>Free with local models. Cloud: pennies per conversation</td>
+                        <td>Free with local models. Providers use upstream API billing or your ChatGPT subscription</td>
                     </tr>
                     <tr>
                         <td>Memory</td>
@@ -1293,7 +1294,7 @@
                     <tr>
                         <td>Customisation</td>
                         <td><s>Pick a model, write a system prompt</s></td>
-                        <td>Swap models per thread, mix local + cloud, configure identity, enable skills and guides, build workflows, install plugins</td>
+                        <td>Swap models per thread, mix local + providers, configure identity, enable skills and guides, build workflows, install plugins</td>
                     </tr>
                     <tr>
                         <td>Voice</td>
@@ -1330,7 +1331,7 @@
                 <div class="install-step">
                     <div class="install-step-num">&#x2194; 02</div>
                     <h3>Choose your path</h3>
-                    <p>First-launch wizard: <strong>Local</strong> - download an Ollama model (default: <code>qwen3:14b</code>), or <strong>Cloud</strong> - enter your API key. No GPU required for cloud.</p>
+                    <p>First-launch wizard: <strong>Local</strong> - download an Ollama model (default: <code>qwen3:14b</code>), or <strong>Providers</strong> - enter an API key and seed Quick Choices. ChatGPT / Codex sign-in lives in Settings after launch.</p>
                 </div>
                 <div class="install-step">
                     <div class="install-step-num">&#x25B6; 03</div>
@@ -1348,12 +1349,12 @@
             <h2>Privacy by architecture</h2>
             <p>
                 Thoth's app has no account system, server, or telemetry pipeline. Conversations, memory,
-                Designer projects, documents, and local model runs stay on your machine. Cloud models and
-                online tools are opt-in, and API keys use the OS credential store when available.
+                Designer projects, documents, and local model runs stay on your machine. Provider models,
+                ChatGPT / Codex, and online tools are opt-in, with secrets stored in the OS credential store when available.
             </p>
             <div class="privacy-facts">
                 <span class="privacy-fact">&#x25C8; Local inference (default)</span>
-                <span class="privacy-fact">&#x2601; Cloud opt-in only</span>
+                <span class="privacy-fact">&#x2601; Providers opt-in only</span>
                 <span class="privacy-fact">&#x25A0; Local storage</span>
                 <span class="privacy-fact">&#x25EF; Local voice</span>
                 <span class="privacy-fact">&#x2715; No app telemetry</span>
@@ -1368,13 +1369,14 @@
 
     <section class="whats-new reveal">
         <div class="container--narrow">
-            <h2>What&rsquo;s new in <em>v3.18</em></h2>
+            <h2>What&rsquo;s new in <em>v3.19</em></h2>
             <ul class="whats-new-list">
-                <li><strong>External MCP tools.</strong> Add stdio, Streamable HTTP, and SSE MCP servers from Settings, test them before use, and expose enabled tools under guarded names.</li>
-                <li><strong>Hermes/OpenClaw migration.</strong> Preview and import selected identity, memory, skills, model settings, MCP servers, and explicitly selected API keys with backups and redacted reports.</li>
-                <li><strong>Secure API-key storage.</strong> Core and plugin keys now use the OS credential store when available, with metadata-only local files and legacy plaintext migration.</li>
-                <li><strong>Cloud defaults fixed.</strong> Saved GPT, Claude, Gemini, Grok, and OpenRouter defaults are preserved even when provider caches are empty or temporarily unavailable.</li>
-                <li><strong>1850 tests passing.</strong> Expanded coverage for MCP, migration, secure key storage, cloud defaults, release metadata, and installer packaging.</li>
+                <li><strong>Provider runtime foundation.</strong> OpenAI, Anthropic, Google AI, xAI, OpenRouter, custom endpoints, Ollama catalog rows, and ChatGPT / Codex now share one provider-aware runtime and catalog.</li>
+                <li><strong>Settings split cleaned up.</strong> The Providers tab owns connection state, keys, health, and ChatGPT / Codex sign-in; the Models tab owns catalog browsing, pinning, defaults, and Quick Choices.</li>
+                <li><strong>ChatGPT / Codex provider.</strong> Subscription-backed Codex models use Thoth's in-app ChatGPT sign-in, live catalog discovery, provider-aware labels, streaming, and tool-call replay.</li>
+                <li><strong>Unified pickers.</strong> Chat, live overrides, workflows, Designer, Telegram, and Thoth Status all draw from the same Quick Choice model list with stable provider refs.</li>
+                <li><strong>Designer stream reliability.</strong> Long browser sessions recover from disconnects, hydrate final responses from checkpoints, and clean up preview timers and active-run bookkeeping.</li>
+                <li><strong>Delegation and insight polish.</strong> Claude Code Delegation is bundled as an approval-gated skill, and Thoth Status/Dream Cycle now surface provider-aware insight context.</li>
             </ul>
             <p class="whats-new-foot">
                 <a href="https://github.com/siddsachar/Thoth/blob/main/RELEASE_NOTES.md" target="_blank">Read the full release notes &rarr;</a>
@@ -1387,10 +1389,10 @@
     <section class="cta reveal">
         <div class="container--narrow">
             <h2>Take back your <em>AI sovereignty</em></h2>
-            <p>Free, open source, and yours to keep. No accounts. No subscriptions. No data harvesting.</p>
+            <p>Free, open source, and yours to keep. No Thoth account. No Thoth subscription. No data harvesting.</p>
             <div class="cta-buttons">
-                <a href="https://github.com/siddsachar/Thoth/releases/latest/download/ThothSetup_3.19.0.exe" class="btn btn--primary" data-download="windows">Download for Windows <span class="btn-hint">.exe</span></a>
-                <a href="https://github.com/siddsachar/Thoth/releases/latest/download/Thoth-3.19.0-macOS-arm64.dmg" class="btn btn--primary" data-download="macos">Download for macOS <span class="btn-hint">.dmg</span></a>
+                <a href="https://github.com/siddsachar/Thoth/releases/latest/download/ThothSetup_3.18.0.exe" class="btn btn--primary" data-download="windows">Download for Windows <span class="btn-hint">.exe</span></a>
+                <a href="https://github.com/siddsachar/Thoth/releases/latest/download/Thoth-3.18.0-macOS-arm64.dmg" class="btn btn--primary" data-download="macos">Download for macOS <span class="btn-hint">.dmg</span></a>
                 <a href="https://github.com/siddsachar/Thoth" class="btn btn--ghost" target="_blank">Star on GitHub</a>
             </div>
         </div>
