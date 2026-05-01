@@ -4,20 +4,93 @@
 
 ## v3.19.0 — Provider Runtime Foundation & ChatGPT / Codex
 
-- Added the new `providers/` subsystem for provider definitions, metadata-only config, keyring-backed provider secrets, external credential discovery references, catalog normalization, runtime construction, Quick Choices, status summaries, error normalization, custom endpoint stubs, and routing profile foundations.
-- Renamed the Settings `Cloud` surface to `Providers` while keeping the old `Cloud` deep link as a compatibility alias.
-- Migrated existing OpenAI, OpenRouter, Anthropic, Google AI, and xAI API-key runtime construction behind the provider runtime facade while preserving the public `models.py` API.
-- Added ChatGPT / Codex as a subscription-backed provider. Direct Codex chat runtime requires signing in through Thoth's in-app ChatGPT device-flow sign-in; an external Codex CLI login can be referenced for display-safe metadata only and is not copied or used as runnable Thoth credentials.
-- Replaced everyday picker sourcing with Quick Choices for chat, workflow, Telegram `/model`, Thoth Status model updates, and the Models tab, so raw provider catalogs no longer flood normal model selectors.
-- Updated first-run setup copy to offer migration before provider setup and seed the selected provider default into Quick Choices.
-- Added focused provider tests for config normalization/masking, keyring namespace storage, provider catalog inference, and legacy `starred_models` migration.
+Thoth's model layer has been rebuilt around a first-class **provider runtime**. API-key providers, local Ollama models, custom OpenAI-compatible endpoints, media providers, and ChatGPT / Codex subscription access now flow through one provider-aware catalog and picker system instead of a mix of legacy cloud lists, starred models, and per-screen dropdown logic.
 
-### Release notes and risk notes
+This release also adds **ChatGPT / Codex** as a distinct subscription-backed provider. It is intentionally separate from OpenAI API-key access: Codex uses an in-app ChatGPT sign-in, keeps Thoth-owned tokens in the OS credential store, and labels duplicate model names as `OpenAI API` versus `ChatGPT / Codex` so users always know which route they are using.
 
-- **Codex runtime sign-in** — ChatGPT / Codex models only run after an in-app ChatGPT sign-in stores Thoth-owned OAuth tokens in the local OS credential store. External Codex CLI auth files are detected only as metadata/reference hints; Thoth does not copy tokens out of `~/.codex/auth.json`.
-- **Subscription backend risk** — ChatGPT / Codex uses ChatGPT's subscription/internal Codex backend rather than the public OpenAI API. The endpoint, catalog shape, auth requirements, rate limits, and model availability may change upstream without the same stability guarantees as the public API.
-- **Privacy** — when a ChatGPT / Codex model is selected, the current conversation plus model-visible tool context and tool results are sent to ChatGPT / Codex for that turn. Durable Thoth data such as memories, documents, files, and other conversations stay local unless they are explicitly included in the active conversation or exposed through a tool result.
-- **Packaging smoke** — Windows installer coverage includes the recursive `providers/` package plus `ui/model_catalog.py` and `ui/provider_settings.py`; macOS app bundle coverage includes `providers/` through the package-copy list. Clean data-dir first-run setup remains gated by the setup wizard so a fresh install can launch before any provider config exists.
+### 🧠 Provider Runtime Foundation
+
+- **New `providers/` subsystem** — provider definitions, metadata-only config, keyring-backed provider secrets, catalog normalization, runtime construction, status summaries, error normalization, Quick Choices, custom endpoint support, and routing-profile foundations now live in one dedicated package
+- **Provider runtime facade** — OpenAI, OpenRouter, Anthropic, Google AI, xAI, custom OpenAI-compatible endpoints, Ollama catalog rows, and ChatGPT / Codex all route through a shared runtime layer while preserving the public `models.py` compatibility API
+- **Stable model refs** — provider-backed picker values use refs such as `model:openai:gpt-5.5` and `model:codex:gpt-5.5`, keeping identical raw model IDs distinct across providers
+- **Provider-aware labels** — duplicate model names now show route labels such as `GPT-5.5 — OpenAI API` and `GPT-5.5 — ChatGPT / Codex` in chat, Designer, workflow, status, and settings pickers
+- **Metadata-only provider config** — `providers.json` stores provider state, Quick Choices, catalog cache, fingerprints, and status metadata; raw API keys and OAuth tokens stay in the OS credential store when available
+- **Custom endpoint foundation** — custom OpenAI-compatible endpoints can be saved, refreshed, and surfaced as provider catalog rows without overloading the built-in OpenAI provider
+
+### ⚙️ Settings → Providers & Settings → Models
+
+- **Providers tab cleanup** — the old Cloud surface is now **Providers**. It focuses on provider connection state, API keys, ChatGPT / Codex sign-in, health, refresh, setup guidance, and custom endpoint management
+- **Models tab ownership** — model browsing, raw provider catalogs, local Ollama catalog rows, pin/unpin actions, defaults, and Quick Choices now live in **Settings → Models**
+- **Consolidated Model Catalog** — a category-first catalog groups Brain, Vision, Image, and Video-capable rows by provider, with inline actions for pinning, setting defaults, downloading local models, and clearing disabled reasons
+- **Polished Defaults panel** — Brain, Vision, Image, and Video defaults use compact provider/local badges, context controls, enable switches, and empty states that point users to the catalog instead of scattering model controls across tabs
+- **First-run setup alignment** — setup now offers migration before model setup, supports the Providers path for API-key users, and points users to Settings → Models for exact model pinning after launch
+
+### 💬 Picker Unification
+
+- **One picker source** — chat header overrides, live chat model override, background workflow model override, Designer inline model selection, Telegram `/model`, and Thoth Status model updates all use the same provider-aware Quick Choice helpers
+- **Surface-specific choices** — Brain, Vision, Image, and Video surfaces filter models by capability so media-only models do not leak into normal chat and chat-only models do not appear as image/video options
+- **Legacy compatibility** — existing starred cloud models and bare model IDs are migrated or resolved without breaking saved settings, while new provider-backed selections preserve their provider route
+- **Runtime banner cleanup** — chat status now uses dynamic provider display labels, so custom providers and ChatGPT / Codex show accurate route names instead of hardcoded cloud labels
+
+### 🔐 ChatGPT / Codex Subscription Provider
+
+- **In-app ChatGPT sign-in** — direct Codex runtime requires Thoth's device-flow ChatGPT sign-in and stores Thoth-owned OAuth tokens in the OS credential store
+- **CLI auth boundary** — external Codex CLI auth files are display-safe metadata/reference hints only. Thoth can show that a CLI login exists, but it does not copy runnable tokens from `~/.codex/auth.json`
+- **Live Codex catalog** — ChatGPT / Codex catalog discovery uses `https://chatgpt.com/backend-api/codex/models?client_version=1.0.0` when OAuth runtime credentials are present, caches display-safe metadata, filters hidden/internal rows, and falls back to documented subscription models when live discovery is unavailable
+- **Responses transport** — `ChatCodexResponses` handles the ChatGPT/Codex Responses SSE backend, bearer/account headers, streaming text, function-call chunks, tool-call replay, and 401 refresh retry behavior
+- **Tool-call parity** — Codex streaming now emits LangChain tool-call chunks, so normal chat can execute tools instead of ending with empty assistant messages when Codex asks for workspace/tool context
+- **Current-turn fallback** — checkpoint fallback only uses an AI answer from the current submitted turn, preventing stale prior assistant text from being replayed after an empty streaming turn
+
+### 🖼️ Media Providers & Model Catalog
+
+- **Image/video model routing** — image generation and video generation models participate in provider-aware selection, catalog pinning, and surface filtering
+- **Provider media status** — Thoth Status and Models settings can report media provider availability and selected image/video models without treating media rows as Brain models
+- **Ollama catalog parity** — downloadable Ollama rows appear as non-runnable catalog entries until installed, with local download actions in the Models catalog
+- **Vision reuse** — provider models with image capability can be detected and reused by the Vision feature alongside local vision models
+
+### 🎨 Designer & Streaming Reliability
+
+- **Detached stream cleanup** — long Designer/browser sessions now clear terminal active-generation bookkeeping when the graph finishes, even if the browser client disconnects during streaming
+- **Final-response hydration** — detached completions reload active thread messages from LangGraph checkpoints before rebuilding the UI, so final assistant prose appears after reconnect instead of being hidden behind stale in-memory state
+- **Stored HTML normalization** — Designer project HTML no longer persists render-time `data:image/...base64` payloads; stored projects keep canonical `asset://...` references while preview/export resolves assets at render time
+- **Preview timer cleanup** — Designer preview polling timers deactivate on client disconnect or deleted-parent errors instead of continuing to touch removed NiceGUI clients
+- **Stale-run recovery** — sending a new Designer/chat message can drop stale terminal generation entries while still blocking truly live runs
+
+### 🧪 Tests & Release Checks
+
+- **Focused provider suites** — new provider tests cover config normalization/masking, keyring namespace storage and chunking, provider catalog inference, model selection refs, media model filtering, custom endpoints, runtime construction, and ChatGPT / Codex OAuth/catalog/transport behavior
+- **Designer regressions** — `test_suite.py` covers detached finalization cleanup, stale terminal generation recovery, deleted-client detach detection, Designer asset canonicalization, preview timer cleanup, and checkpoint hydration for detached final answers
+- **Release smoke** — `test_suite.py` validates v3.19.0 version consistency across `version.py`, Windows installer, macOS app plist, CI release workflow, bug report template, and install dependencies
+- **Packaging smoke** — Windows installer coverage includes recursive `providers/` plus `ui/model_catalog.py` and `ui/provider_settings.py`; macOS app packaging includes `providers` and the full `ui` package
+- **Clean first-run smoke** — a temporary `THOTH_DATA_DIR` import/config check confirms setup wizard and provider config load cleanly before any provider state exists
+- **Final validation** — direct `test_suite.py` passes with the release-smoke checks, and full `pytest -q` passes with `159 passed, 1 skipped`
+
+### ⚠️ Release Notes & Risk Notes
+
+- **Codex runtime sign-in** — ChatGPT / Codex models only run after an in-app ChatGPT sign-in stores Thoth-owned OAuth tokens in the local OS credential store
+- **Subscription backend risk** — ChatGPT / Codex uses ChatGPT's subscription/internal Codex backend rather than the public OpenAI API. The endpoint, catalog shape, auth requirements, rate limits, and model availability may change upstream without the same stability guarantees as the public API
+- **Privacy** — when a ChatGPT / Codex model is selected, the current conversation plus model-visible tool context and tool results are sent to ChatGPT / Codex for that turn. Durable Thoth data such as memories, documents, files, and other conversations stay local unless explicitly included in the active conversation or exposed through a tool result
+- **Manual smoke still required** — before publishing installers, run clean-machine Windows/macOS smoke for first launch, Settings → Providers, Settings → Models catalog/pinning/defaults, ChatGPT / Codex sign-in/status, shared model pickers, and a long Designer/browser task with reconnect
+
+### 📁 Files Changed
+
+| File | Change |
+|------|--------|
+| **`providers/`** | **New** — provider definitions, config, auth store, catalog normalization, runtime facade, status summaries, Quick Choices, custom endpoints, media helpers, Ollama catalog integration, Codex OAuth/catalog/runtime support, and transport adapters |
+| **`providers/transports/codex_responses.py`** | **New** — ChatGPT / Codex Responses transport with SSE streaming, tool-call chunks, tool-call replay, and auth-refresh retry support |
+| **`ui/provider_settings.py`** | **New** — Settings → Providers connection, credential, ChatGPT sign-in, health, refresh, setup, and custom endpoint UI |
+| **`ui/model_catalog.py`** | **New** — consolidated Settings → Models catalog UI for provider/local rows, pinning, defaults, downloads, and surface filtering |
+| `models.py` | Provider-aware model refs, runtime/provider/context resolution, Quick Choice compatibility, legacy selection handling, and local/provider facade updates |
+| `ui/settings.py` | Providers/Models split, polished model defaults panel, catalog embedding, media defaults, and provider-aware picker wiring |
+| `ui/chat.py`, `ui/chat_components.py`, `ui/task_dialog.py` | Shared provider-aware model picker options and dynamic provider labels for chat, Designer, and workflow/background overrides |
+| `channels/telegram.py` | `/model` command uses provider Quick Choices instead of legacy starred cloud models |
+| `tools/image_gen_tool.py`, `tools/video_gen_tool.py`, `tools/thoth_status_tool.py` | Media model provider selection, image/video status reporting, and model-setting updates through shared provider selection helpers |
+| `agent.py` | Current-turn-only checkpoint fallback for empty streaming turns so stale prior answers are not replayed |
+| `designer/editor.py`, `designer/preview.py`, `ui/streaming.py` | Designer asset canonicalization, deleted-client detection, detached completion hydration, active-generation cleanup, and preview timer disconnect handling |
+| `ui/setup_wizard.py` | Provider path copy and Quick Choice seeding aligned with Settings → Models ownership |
+| `installer/thoth_setup.iss`, `installer/build_mac_app.sh`, `installer/README.md` | Provider runtime/UI packaging, v3.19.0 installer docs, clean first-run and Codex credential-boundary notes |
+| `README.md`, `docs/ARCHITECTURE.md`, `docs/RELEASING.md`, `docs/index.html` | User-facing provider/Codex docs, architecture notes, release checklist updates, and v3.19.0 download/version references |
+| `test_provider_*.py`, `test_thoth_status_media.py`, `test_suite.py`, `pytest.ini`, `scripts/dummy_openai_endpoint.py` | Focused provider/media/runtime/Codex tests, release smoke checks, pytest ignore config, and local OpenAI-compatible dummy endpoint for manual custom-provider testing |
 
 ---
 

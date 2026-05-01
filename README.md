@@ -86,7 +86,7 @@ Plugins add tools and skills through a sandboxed marketplace; MCP servers add ex
 | | Thoth | OpenClaw |
 |---|---|---|
 | **Getting started** | **One-click installer** (`.exe` / `.dmg`) — download, run, done. Built-in setup wizard, no terminal required | `npm install -g openclaw@latest` → CLI onboarding. Requires Node.js 24. Windows needs WSL2 (no native Windows support) |
-| **Local AI (offline)** | **Local-first** — Ollama with 39 curated models out of the box. Works fully offline. Cloud is opt-in | Cloud-first design — requires an API key to start. Local model support through provider config |
+| **Local AI (offline)** | **Local-first** — Ollama with 39 curated models out of the box. Works fully offline. Provider models are opt-in | Cloud-first design — requires an API key to start. Local model support through provider config |
 | **Memory** | **Personal knowledge graph** — 10 entity types, typed directional relations, visual explorer, FAISS semantic search + 1-hop graph expansion, memory decay, orphan repair | Flat markdown files (`MEMORY.md` + daily notes) with semantic search. No structured graph |
 | **Knowledge refinement** | **Dream Cycle** — 5-phase nightly engine: duplicate merging (≥0.93 similarity), description enrichment, stale-confidence decay, relationship inference with hub diversity caps and rejection cache, and actionable insight generation. 3-layer anti-contamination system, dream journal | Dreaming (experimental) — Light/Deep/REM phases that promote short-term signals to long-term memory via scoring thresholds |
 | **Document intelligence** | **Map-reduce LLM pipeline** — extracts structured entities and relations into the knowledge graph with source provenance. Curated 67-type relation vocabulary, entity caps, self-loop rejection. Supports PDF, DOCX, EPUB, HTML, Markdown | File read/write/edit operations in the workspace |
@@ -100,7 +100,7 @@ Plugins add tools and skills through a sandboxed marketplace; MCP servers add ex
 | **Designer / Canvas** | Designer Studio for decks, one-pagers, reports, published links, plus Mermaid diagrams and Plotly charts rendered inline | A2UI — agent-driven interactive visual workspace |
 | **Plugins** | Sandboxed plugin marketplace with hot-reload and security scanning | npm plugin ecosystem + ClawHub skill registry. Large community catalog |
 | **Privacy** | All data local. No account, no server, no telemetry. API keys use the OS credential store when available — Thoth has no servers | Self-hosted gateway. Data stays on your machine. Some channel integrations require external services |
-| **Cost** | **Free** with local models. Cloud: pay-per-token (pennies/conversation) | Free + open source. Requires a cloud API key to function |
+| **Cost** | **Free** with local models. Provider models use upstream API billing or ChatGPT subscription access only when you opt in | Free + open source. Requires a cloud API key to function |
 
 > **In short:** OpenClaw is a powerful gateway for developers who want their AI assistant on every messaging platform. Thoth is built for people who want **personal AI sovereignty** — local-first intelligence, a structured knowledge graph that grows with you, one-click setup, and tools that work without touching a terminal. Different philosophies, both open source.
 
@@ -278,7 +278,7 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
 
 > **Prefer a manual install?** A few commands from source:
 
-1. **Install [Ollama](https://ollama.com/)** *(required for local models — skip if using cloud models only)*
+1. **Install [Ollama](https://ollama.com/)** *(required for local models — skip if using provider models only)*
 
 2. **Clone the repository**
    ```bash
@@ -322,7 +322,7 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
 
 ## 🔑 API Key Setup (Optional)
 
-Most tools work without any API keys. For cloud models and enhanced functionality:
+Most tools work without any API keys. For provider models and enhanced functionality:
 
 ### LLM Providers
 

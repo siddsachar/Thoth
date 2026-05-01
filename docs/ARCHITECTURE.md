@@ -158,7 +158,7 @@ Codex runtime uses ChatGPT's subscription/internal Codex backend rather than the
 - **Dynamic model switching** — change the brain model from Settings; choose from pinned local/provider Quick Choices managed in the Models catalog
 - **Per-thread & per-workflow model override** — conversations and workflows can each run on a different model, with overrides persisted locally
 - **Quick Choices** — models pinned from the consolidated Models catalog appear in chat, workflow, channel, Designer, and status-tool pickers
-- **Cost-efficient context management** — smart context trimming compresses older conversation turns and shrinks oversized tool outputs, reducing token usage and API costs for cloud models
+- **Cost-efficient context management** — smart context trimming compresses older conversation turns and shrinks oversized tool outputs, reducing token usage and API costs for provider models
 - **Curated local models** — only tool-calling-capable local models are surfaced prominently
 - **Tool-support validation** — unsupported local models are warned about and can be auto-reverted if they fail a live tool-call check
 - **Download buttons** — local models not yet present show download actions with progress
@@ -216,10 +216,10 @@ Codex runtime uses ChatGPT's subscription/internal Codex backend rather than the
 - **Camera analysis** — capture and analyze images from your webcam in real-time
 - **Screen capture** — take screenshots and ask questions about what is on your screen
 - **Image file analysis** — analyze workspace image files by path without needing a camera or live capture
-- **Configurable vision model** — choose from local or cloud-capable vision models
+- **Configurable vision model** — choose from local or provider-capable vision models
 - **Camera selection** — pick which camera to use when multiple devices are present
 - **Inline image display** — captured and workspace images are shown inline in chat
-- **Cloud vision support** — cloud models with image capability are auto-detected and work alongside local vision models
+- **Provider vision support** — provider models with image capability are auto-detected and work alongside local vision models
 
 ---
 
@@ -470,7 +470,7 @@ Tool guides are lightweight `SKILL.md` packages that attach contextual instructi
 
 ## Image Generation
 
-Thoth can generate and edit images through multiple cloud providers, render them inline, persist them to disk, and reuse them in designer workflows or channel delivery.
+Thoth can generate and edit images through multiple external providers, render them inline, persist them to disk, and reuse them in designer workflows or channel delivery.
 
 - **Provider support** — OpenAI image models, xAI Grok Imagine, Google Imagen 4, and Gemini image-capable models
 - **Generate and edit flows** — prompts can generate a new image or edit the most recent image, an attached image, or an on-disk file
@@ -722,10 +722,10 @@ Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual ski
 | **`documents.py`** | Document ingestion, chunking, embedding, vector-store persistence, and per-document cleanup |
 | **`voice.py`** | Faster-whisper-based speech input pipeline and voice-state management |
 | **`tts.py`** | Kokoro text-to-speech integration, voice catalog, and streaming playback |
-| **`vision.py`** | Camera capture, screen capture, and workspace image analysis via local or cloud vision models |
+| **`vision.py`** | Camera capture, screen capture, and workspace image analysis via local or provider vision models |
 | **`data_reader.py`** | Shared structured-data loader for CSV, TSV, Excel, JSON, and JSONL |
 | **`launcher.py`** | Desktop launcher, system tray, splash screen, app lifecycle, and logging bootstrap |
-| **`api_keys.py`** + **`secret_store.py`** | API key storage and retrieval for tools and cloud providers, backed by OS keyring with metadata-only local files and legacy plaintext migration |
+| **`api_keys.py`** + **`secret_store.py`** | API key storage and retrieval for tools and API-key providers, backed by OS keyring with metadata-only local files and legacy plaintext migration |
 | **`identity.py`** | Assistant name, personality, and self-improvement preference storage with sanitization |
 | **`self_knowledge.py`** | Capability manifest, identity-line builder, live runtime state builder, and prompt-time self-knowledge assembly |
 | **`insights.py`** | Structured insight store with dedup, pruning, pin/dismiss/apply state, and last-analysis tracking |
@@ -818,16 +818,16 @@ Most open-source AI assistants are still **developer tools disguised as products
 
 | | ChatGPT / Claude / Gemini | Thoth |
 |---|---|---|
-| **Your data** | Stored on provider servers, subject to their privacy policies | Stays on your machine. With opt-in cloud models, only the current conversation goes to the provider; memories, files, designer projects, and history remain local |
+| **Your data** | Stored on provider servers, subject to their privacy policies | Stays on your machine. With opt-in provider models, only the current conversation and model-visible tool context go to the selected provider; memories, files, designer projects, and history remain local unless explicitly included |
 | **Conversations** | Provider-owned chat history | Local SQLite-backed threads, exportable anytime |
-| **Cost** | Subscription or provider billing | Free with local models; cloud usage is pay-per-token only when you opt in |
+| **Cost** | Subscription or provider billing | Free with local models; provider usage is upstream API billing or ChatGPT subscription access only when you opt in |
 | **Memory** | Limited, opaque, provider-controlled | Personal knowledge graph with entities, relations, visualization, wiki export, and background refinement |
 | **Tools** | Limited app integrations and provider-defined plug-ins | 30 core tools plus auto-generated channel tools: shell, browser, filesystem, Gmail, Calendar, memory graph, Designer Studio, Thoth Status, MCP external tools, image generation, video generation, research tools, and more |
 | **Customization** | Pick a model and maybe a custom instruction | Swap models per thread or workflow, configure name and personality, build workflows, toggle tools and skills, and enable self-improvement features |
 | **Voice** | Usually cloud-processed | Local faster-whisper STT plus Kokoro TTS |
-| **Availability** | Internet required | Local models work offline; cloud models are optional |
+| **Availability** | Internet required | Local models work offline; provider models are optional |
 
-> **Bottom line:** cloud assistants rent you access to someone else's system. Thoth gives you **personal AI sovereignty** — local-first by default, cloud when you choose it, and all of your durable data under your own control.
+> **Bottom line:** cloud assistants rent you access to someone else's system. Thoth gives you **personal AI sovereignty** — local-first by default, providers when you choose them, and all of your durable data under your own control.
 
 ### How is Thoth different from OpenClaw?
 
