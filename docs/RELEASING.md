@@ -42,7 +42,8 @@ Thoth uses semantic versioning:
 5. Update `RELEASE_NOTES.md` with human-readable notes.
 6. Confirm new shipped runtime files are covered by platform packaging:
    Windows `installer/thoth_setup.iss`, macOS `installer/build_mac_app.sh`,
-   Linux `installer/build_linux_app.sh`, and the installer payload notes in
+   Linux `installer/build_linux_app.sh`, the Linux bootstrapper
+   `installer/install-linux.sh`, and the installer payload notes in
    `installer/README.md`.
 7. Smoke-test first-run behavior against a clean data directory before building
    artifacts, especially setup wizard imports, provider config defaults, and
@@ -87,11 +88,22 @@ Thoth uses semantic versioning:
 
 ## Linux Release Notes
 
-Linux is shipped as a self-contained XDG user-install tarball, not as a root
-package. The supported baseline launches Thoth in the system browser and avoids
-requiring pywebview, GTK/Qt, AppIndicator, or tray backends. Native window and
-tray mode can still be tested manually with `thoth --native` or `thoth --tray`
-on desktops with the required libraries.
+Linux is shipped as a one-line installer backed by a self-contained XDG
+user-install tarball, not as a root package. The supported baseline launches
+Thoth in the system browser and avoids requiring pywebview, GTK/Qt,
+AppIndicator, or tray backends. Native window and tray mode can still be tested
+manually with `thoth --native` or `thoth --tray` on desktops with the required
+libraries.
+
+The user-facing install command is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash
+```
+
+The bootstrapper resolves the latest GitHub Release, downloads the matching
+`Thoth-X.Y.Z-Linux-ARCH.tar.gz`, verifies its SHA256 from the release manifest,
+and then runs the tarball's bundled `install.sh`.
 
 The tarball installs under `~/.local/share/thoth/releases/<version>`, updates
 `~/.local/share/thoth/current`, creates `~/.local/bin/thoth`, and installs a
@@ -110,6 +122,7 @@ Manual Linux smoke matrix before publishing:
 Minimum smoke checks:
 
 - Fresh tarball install and desktop launcher
+- One-line installer after the GitHub Release is published
 - `thoth --server --no-open --port 8092` plus `/api/launcher-ping`
 - First-run setup with Providers and Custom/Self-hosted paths
 - Ollama local model when `ollama` is installed and in `PATH`

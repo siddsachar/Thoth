@@ -124,6 +124,21 @@ def test_linux_build_script_declares_expected_package_contract():
         assert package in script
 
 
+def test_linux_one_line_installer_declares_verified_release_contract():
+    script = Path("installer/install-linux.sh").read_text(encoding="utf-8")
+
+    assert "api.github.com/repos/${REPO}" in script
+    assert "releases/latest" in script
+    assert "releases/tags/v${REQUESTED_VERSION#v}" in script
+    assert "Thoth-{re.escape(tag)}-Linux-{re.escape(arch)}" in script
+    assert "thoth-update-manifest" in script
+    assert "sha256sum -c" in script
+    assert "bash \"$PACKAGE_ROOT/install.sh\"" in script
+    assert "META_FILE" in script
+    assert "x86_64" in script
+    assert "aarch64" in script
+
+
 def test_thread_list_initializes_missing_thread_meta(monkeypatch, tmp_path):
     import sqlite3
     import threads
@@ -160,10 +175,15 @@ def test_launcher_linux_default_is_direct_browser(monkeypatch):
 def test_release_workflows_reference_linux_artifact():
     release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     manifest = Path(".github/workflows/update-manifest.yml").read_text(encoding="utf-8")
+    ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    installer_docs = Path("installer/README.md").read_text(encoding="utf-8")
 
     assert "build-linux" in release
     assert "installer/build_linux_app.sh" in release
+    assert "installer/install-linux.sh" in release
+    assert "installer/install-linux.sh" in ci
     assert "Thoth-*-Linux-*.tar.gz" in release
     linux_smoke = release[release.index("Smoke Linux package"):]
     assert "--no-root-check" not in linux_smoke
     assert "Thoth-*-Linux-*.tar.gz" in manifest
+    assert "curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash" in installer_docs

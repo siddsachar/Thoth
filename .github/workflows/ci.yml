@@ -47,6 +47,10 @@ jobs:
         if: runner.os == 'Linux'
         run: python scripts/smoke_app.py --port 8090 --timeout 120
 
+      - name: Validate Linux installer scripts
+        if: runner.os == 'Linux'
+        run: bash -n installer/build_linux_app.sh installer/install-linux.sh
+
   full-test:
     name: Full regression suite
     runs-on: macos-latest

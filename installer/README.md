@@ -8,7 +8,22 @@ covers the installer payload and local build flow.
 
 ## Linux Tarball
 
-Linux releases are built with `installer/build_linux_app.sh`. The script mirrors
+Linux users should normally install with the one-line bootstrapper:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash
+```
+
+The bootstrapper resolves the latest GitHub Release, downloads the matching
+Linux tarball for the current architecture, verifies its SHA256 from the release
+manifest, and then runs the tarball's bundled `install.sh`. For a pinned
+version, pass it as an argument:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.20.0
+```
+
+Linux release tarballs are built with `installer/build_linux_app.sh`. The script mirrors
 the macOS python-build-standalone approach, but emits a user-installable XDG
 tarball instead of a native app bundle:
 
@@ -22,7 +37,7 @@ contains bundled Python, installed Python packages, app source, `bin/thoth`, an
 `install.sh`, an `uninstall.sh`, a freedesktop `.desktop` file, icon files, and
 `install_info.json` for updater/dev-install detection.
 
-End-user install flow:
+Manual tarball install flow:
 
 ```bash
 tar -xzf Thoth-X.Y.Z-Linux-x86_64.tar.gz

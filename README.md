@@ -274,8 +274,22 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
 
 ### Linux
 
+Run the one-line installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash
+```
+
+The installer downloads the latest `Thoth-X.Y.Z-Linux-x86_64.tar.gz` release asset, verifies its SHA256 from the GitHub Release manifest, and installs it into your user account. To install a specific version, pass it after `bash -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.20.0
+```
+
+Manual tarball flow:
+
 1. Download the latest **Linux tarball** from [GitHub Releases](https://github.com/siddsachar/Thoth/releases/latest), named like `Thoth-X.Y.Z-Linux-x86_64.tar.gz`
-2. Extract it and run the user installer:
+2. Extract it and run the bundled user installer:
    ```bash
    tar -xzf Thoth-X.Y.Z-Linux-x86_64.tar.gz
    cd Thoth-X.Y.Z-Linux-x86_64
@@ -286,7 +300,7 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
    thoth
    ```
 
-Linux installs under `~/.local/share/thoth`, creates `~/.local/bin/thoth`, and leaves user data in `~/.thoth`. The supported Linux baseline opens Thoth in your system browser and does not require a system tray or pywebview backend. Optional native window/tray mode depends on your desktop having the relevant GTK/Qt/AppIndicator libraries. Saved provider secrets use Linux Secret Service/KWallet when a desktop keyring is available; WSL and headless servers without a keyring still run, but new secrets are kept session-only until secure storage is configured.
+Linux installs under `~/.local/share/thoth`, creates `~/.local/bin/thoth`, and leaves user data in `~/.thoth`. The supported Linux baseline opens Thoth in your system browser and does not require a system tray or pywebview backend. Optional native window/tray mode depends on your desktop having the relevant GTK/Qt/AppIndicator libraries. In-app auto-update uses the same verified tarball format, installs the new version into the XDG release tree, and flips `~/.local/share/thoth/current`. Saved provider secrets use Linux Secret Service/KWallet when a desktop keyring is available; WSL and headless servers without a keyring still run, but new secrets are kept session-only until secure storage is configured.
 
 For browser automation tools on Linux, Chromium may require distro packages the tarball cannot install automatically. If Playwright reports missing dependencies, run the command it prints, or use `python -m playwright install --with-deps chromium` from a source checkout.
 

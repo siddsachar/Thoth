@@ -9,6 +9,7 @@ This release extends the provider runtime work with **MiniMax** as a first-class
 ### 🐧 Linux Support
 
 - **Self-contained Linux tarball** — releases now include `Thoth-X.Y.Z-Linux-x86_64.tar.gz`, built with python-build-standalone and the same source-copy contract as the macOS app bundle
+- **One-line Linux install** — `installer/install-linux.sh` lets users install with a single `curl ... | bash` command while still verifying the release tarball SHA256 before running the bundled installer
 - **XDG user install** — `install.sh` installs under `~/.local/share/thoth/releases/<version>`, updates `~/.local/share/thoth/current`, creates `~/.local/bin/thoth`, and installs a freedesktop desktop entry plus icon
 - **Browser-first baseline** — Linux opens in the system browser by default and does not require pywebview, GTK/Qt, AppIndicator, or tray libraries to run
 - **Optional native/tray modes** — `launcher.py --native` and `launcher.py --tray` remain available for Linux desktops with the relevant system libraries
@@ -56,7 +57,7 @@ This release extends the provider runtime work with **MiniMax** as a first-class
 | `ui/setup_wizard.py`, `ui/settings.py` | MiniMax key entry plus Custom/Self-hosted setup and settings alignment |
 | `vision.py`, `dream_cycle.py` | Local Ollama vision and busy-check calls now use the normalized client endpoint |
 | `app_port.py`, `launcher.py`, `app.py` | Dynamic app-port selection, `THOTH_PORT` propagation, Thoth identity probing, and active-port NiceGUI startup |
-| `installer/build_linux_app.sh`, `.github/workflows/release.yml`, `.github/workflows/update-manifest.yml` | Linux tarball packaging, release artifact upload, packaged smoke, and SHA256 manifest inclusion |
+| `installer/build_linux_app.sh`, `installer/install-linux.sh`, `.github/workflows/release.yml`, `.github/workflows/update-manifest.yml` | Linux tarball packaging, one-line installer bootstrap, release artifact upload, packaged smoke, and SHA256 manifest inclusion |
 | `channels/sms.py`, `designer/publish.py`, `ui/settings.py` | Main-app tunnel, SMS webhook, Designer published-link, and Settings tunnel controls now follow the active app port |
 | `test_provider_*.py`, `test_app_port.py`, `test_linux_support.py`, `test_suite.py` | MiniMax, custom setup, Ollama endpoint, Linux packaging/updater/launcher, and app-port regression coverage |
 
