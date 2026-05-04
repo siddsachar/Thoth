@@ -2,7 +2,7 @@
 # update-manifest.yml — Append a SHA256 manifest to a GitHub release body
 #
 # When a release is published (or this workflow is dispatched), this job
-# downloads the release's installer + DMG assets, computes their SHA256
+# downloads the release's installer, DMG, and Linux tarball assets, computes their SHA256
 # hashes, and PATCHes the release body with a `<!-- thoth-update-manifest -->`
 # fenced block. Thoth's in-app updater requires this manifest to verify
 # downloads.
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v3.19.0)"
+        description: "Release tag (e.g. v3.20.0)"
         required: true
         type: string
 
@@ -66,9 +66,10 @@ jobs:
               --repo "$repo" \
               --dir artifacts \
               --pattern "ThothSetup_*.exe" \
-              --pattern "Thoth-*-macOS-*.dmg" || true
+              --pattern "Thoth-*-macOS-*.dmg" \
+              --pattern "Thoth-*-Linux-*.tar.gz" || true
             shopt -s nullglob
-            files=(artifacts/ThothSetup_*.exe artifacts/Thoth-*-macOS-*.dmg)
+            files=(artifacts/ThothSetup_*.exe artifacts/Thoth-*-macOS-*.dmg artifacts/Thoth-*-Linux-*.tar.gz)
             if [ ${#files[@]} -gt 0 ]; then
               echo "Found ${#files[@]} asset(s) on attempt $i"
               break
@@ -84,7 +85,7 @@ jobs:
         run: |
           # Collect every artifact we downloaded
           shopt -s nullglob
-          files=(artifacts/ThothSetup_*.exe artifacts/Thoth-*-macOS-*.dmg)
+          files=(artifacts/ThothSetup_*.exe artifacts/Thoth-*-macOS-*.dmg artifacts/Thoth-*-Linux-*.tar.gz)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No installer artifacts found for ${{ steps.tag.outputs.value }} — skipping manifest"
             exit 0

@@ -31,11 +31,25 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libegl1 libglib2.0-0
+
       - name: Install Python packages
         run: python -m pip install -r requirements.txt
 
       - name: Compile Python files
         run: python -m compileall -q -x "(\\.git|\\.venv|dist|build|__pycache__)" .
+
+      - name: Runtime smoke on Linux
+        if: runner.os == 'Linux'
+        run: python scripts/smoke_app.py --port 8090 --timeout 120
+
+      - name: Validate Linux installer scripts
+        if: runner.os == 'Linux'
+        run: bash -n installer/build_linux_app.sh installer/install-linux.sh
 
   full-test:
     name: Full regression suite

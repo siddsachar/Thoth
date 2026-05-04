@@ -1,3 +1,3 @@
 """Single source of truth for the Thoth version number."""
 
-__version__ = "3.19.0"
+__version__ = "3.20.0"

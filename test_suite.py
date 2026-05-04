@@ -756,66 +756,16 @@ def _port_open(port: int, timeout: float = 1.0) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-# Make sure port is free first
-if _port_open(8080):
-    record("WARN", "live launch: port 8080 already in use — skipping")
-else:
-    proc = None
-    port_ok = False
-    try:
-        python = sys.executable
-        proc = subprocess.Popen(
-            [python, "app.py"],
-            cwd=str(PROJECT_ROOT),
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        record("PASS", f"app started (PID {proc.pid})")
+try:
+    from scripts.smoke_app import run_app_smoke
 
-        # Wait up to 60s for port 8080 to open
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            if _port_open(8080):
-                port_ok = True
-                break
-            # Check process hasn't crashed
-            if proc.poll() is not None:
-                record("FAIL", "app crashed during startup", f"exit code: {proc.returncode}")
-                break
-            time.sleep(1)
-
-        if port_ok:
-            record("PASS", "port 8080 responding")
-
-            # Try HTTP GET
-            try:
-                import urllib.request
-                resp = urllib.request.urlopen("http://127.0.0.1:8080", timeout=10)
-                status = resp.status
-                if status == 200:
-                    record("PASS", f"HTTP GET / → {status}")
-                else:
-                    record("WARN", f"HTTP GET / → {status}")
-            except Exception as e:
-                record("WARN", f"HTTP GET / failed: {e}")
-
-        elif proc.poll() is None:
-            record("FAIL", "port 8080 not open after 60s")
-
-    except Exception as e:
-        record("FAIL", "live launch test", str(e))
-    finally:
-        if proc and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            if port_ok:
-                record("PASS", "app shut down cleanly")
-            else:
-                record("WARN", "app process terminated (port never opened)")
+    smoke = run_app_smoke(cwd=PROJECT_ROOT, port=8080, timeout=60.0)
+    for status, message in smoke.messages:
+        record(status, f"live launch: {message}")
+    if not smoke.ok:
+        record("FAIL", "live launch test", "shared smoke helper returned failure")
+except Exception as e:
+    record("FAIL", "live launch test", str(e))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -13960,6 +13910,7 @@ try:
         "test_suite.py",
         "test_api_key_storage.py",
         "test_app_port.py",
+        "test_linux_support.py",
         "test_migration_apply.py",
         "test_migration_detection.py",
         "test_migration_core.py",

@@ -98,6 +98,14 @@ class ApiKeyStorageTests(unittest.TestCase):
         self.assertFalse(Path(self.api_keys.KEYS_PATH).exists())
         self.assertIn("session only", self.api_keys.get_storage_warning())
 
+    def test_missing_keyring_backend_does_not_log_traceback_on_read(self) -> None:
+        self.secret_store._set_backend_for_tests(FakeKeyring(fail=True))
+
+        with self.assertNoLogs("secret_store", level="WARNING"):
+            self.assertEqual(self.api_keys.get_key("OPENAI_API_KEY"), "")
+
+        self.assertIn("Secure API key storage is unavailable", self.api_keys.get_storage_warning())
+
     def test_delete_key_removes_keyring_metadata_and_environment(self) -> None:
         self.api_keys.set_key("OPENAI_API_KEY", "sk-delete-me")
         self.api_keys.delete_key("OPENAI_API_KEY")

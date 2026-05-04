@@ -13,6 +13,7 @@ Responsibilities:
 from __future__ import annotations
 
 import atexit
+import argparse
 import logging
 import os
 import shutil
@@ -26,7 +27,7 @@ import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from app_port import DEFAULT_APP_PORT, THOTH_PORT_ENV
+from app_port import DEFAULT_APP_PORT, THOTH_HOST_ENV, THOTH_PORT_ENV, parse_app_port
 
 if TYPE_CHECKING:
     from PIL import Image as _PILImage
@@ -40,6 +41,7 @@ _PORT = DEFAULT_APP_PORT
 _OLLAMA_PORT = 11434          # Ollama default API port
 _STARTUP_GRACE = 15           # seconds to wait for NiceGUI before opening browser
 _ICON_SIZE = 64               # px for generated tray icons
+_ACTIVE_TRAY: "ThothTray | None" = None
 
 
 # ── Ollama auto-start ────────────────────────────────────────────────────────
@@ -153,7 +155,14 @@ def _url_for_port(port: int) -> str:
     return f"http://localhost:{port}"
 
 
-def _is_thoth_server(port: int, timeout: float = 0.75) -> bool:
+def _has_display_server() -> bool:
+    """Return True when a Linux/Unix GUI display appears available."""
+    if sys.platform in ("win32", "darwin"):
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def _is_thoth_server(port: int, timeout: float = 0.25) -> bool:
     """Return True if *port* is serving this Thoth app."""
     url = f"http://127.0.0.1:{port}/api/launcher-ping"
     try:
@@ -184,12 +193,16 @@ def _find_free_port(start: int = _PORT, max_tries: int = 50) -> int:
 
 def _select_app_port(preferred: int = _PORT, max_tries: int = 50) -> tuple[int, bool]:
     """Choose the app port and whether it belongs to an existing Thoth."""
-    existing = _find_existing_thoth_port(preferred, max_tries=max_tries)
-    if existing is not None:
-        return existing, True
     if not _is_port_in_use(preferred):
         return preferred, False
-    return _find_free_port(preferred + 1, max_tries=max(1, max_tries - 1)), False
+    if _is_thoth_server(preferred):
+        return preferred, True
+    for port in range(preferred + 1, preferred + max_tries):
+        if not _is_port_in_use(port):
+            return port, False
+        if _is_thoth_server(port):
+            return port, True
+    raise RuntimeError(f"No free Thoth app port found in {preferred}-{preferred + max_tries - 1}")
 
 
 # ── NiceGUI subprocess management ───────────────────────────────────────────
@@ -197,12 +210,13 @@ def _select_app_port(preferred: int = _PORT, max_tries: int = 50) -> tuple[int, 
 class _ThothProcess:
     """Wraps the NiceGUI app subprocess."""
 
-    def __init__(self, port: int = _PORT) -> None:
+    def __init__(self, port: int = _PORT, host: str | None = None) -> None:
         self._proc: subprocess.Popen | None = None
         self._log_file: Path | None = None
         self.port = port
+        self.host = host
 
-    def start(self, port: int | None = None) -> None:
+    def start(self, port: int | None = None, host: str | None = None) -> None:
         """Launch ``python app.py`` as a headless server.
 
         The server runs without ``--native`` so it stays alive
@@ -213,6 +227,8 @@ class _ThothProcess:
         app_py = app_dir / "app.py"
         if port is not None:
             self.port = port
+        if host is not None:
+            self.host = host
 
         # Use the same Python that's running this launcher
         python = sys.executable
@@ -247,6 +263,8 @@ class _ThothProcess:
             "THOTH_NATIVE": "1",
             THOTH_PORT_ENV: str(self.port),
         }
+        if self.host:
+            env[THOTH_HOST_ENV] = self.host
 
         self._proc = subprocess.Popen(
             cmd,
@@ -487,7 +505,12 @@ class _JsApi:
                 )
                 return r.decode("utf-8", errors="replace").rstrip("\r\n")
             else:
-                return _sp.check_output(["xclip", "-selection", "clipboard", "-o"], timeout=2).decode("utf-8", errors="replace")
+                for cmd in (["wl-paste", "--no-newline"], ["xclip", "-selection", "clipboard", "-o"]):
+                    try:
+                        return _sp.check_output(cmd, timeout=2).decode("utf-8", errors="replace")
+                    except Exception:
+                        pass
+                return None
         except Exception:
             return None
 
@@ -683,12 +706,21 @@ def _open_window(port: int = _PORT) -> subprocess.Popen | None:
     The window is a standalone process — closing it does NOT
     affect the server.
     """
+    if not _has_display_server():
+        logger.warning("No display server detected; opening browser instead of native window")
+        webbrowser.open(_url_for_port(port))
+        return None
     try:
         proc = subprocess.Popen(
             [sys.executable, "-c", _WINDOW_SCRIPT,
              _url_for_port(port), "Thoth", "1280", "900"],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+        time.sleep(0.5)
+        if proc.poll() is not None:
+            logger.warning("Native window exited during startup; falling back to browser")
+            webbrowser.open(_url_for_port(port))
+            return None
         logger.info("Native window opened (PID %s, port %s)", proc.pid, port)
         return proc
     except Exception as exc:
@@ -712,11 +744,18 @@ def _wait_for_server(port: int = _PORT, timeout: float = 60.0) -> bool:
 class ThothTray:
     """System-tray icon that manages the NiceGUI server and native window."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, preferred_port: int = _PORT, host: str | None = None,
+                 preferred_mode: str | None = None, no_splash: bool = False,
+                 no_ollama: bool = False) -> None:
         import pystray
 
-        self._port = _PORT
-        self._server = _ThothProcess(self._port)
+        self._preferred_port = preferred_port
+        self._port = preferred_port
+        self._host = host
+        self._preferred_mode = preferred_mode
+        self._no_splash = no_splash
+        self._no_ollama = no_ollama
+        self._server = _ThothProcess(self._port, host=host)
         self._owns_server = False          # True if *we* started it
         self._window_proc: subprocess.Popen | None = None
         self._stop_event = threading.Event()
@@ -893,21 +932,23 @@ class ThothTray:
     def run(self) -> None:
         """Start the tray icon, the NiceGUI server, and a native window."""
         # Ensure Ollama is running before we start the app
-        _start_ollama()
+        if not self._no_ollama:
+            _start_ollama()
 
-        self._port, already_running = _select_app_port()
+        self._port, already_running = _select_app_port(self._preferred_port)
         self._server.port = self._port
 
         if already_running:
             logger.info("Thoth already running on port %s", self._port)
         else:
-            self._server.start(self._port)
+            self._server.start(self._port, self._host)
             self._owns_server = True
             # Register cleanup in case launcher crashes
             atexit.register(self._server.stop)
 
             # Show splash screen while the server starts up
-            _show_splash(self._port)
+            if not self._no_splash and _has_display_server():
+                _show_splash(self._port)
 
         # Start the status-polling thread
         poller = threading.Thread(target=self._poll_loop, daemon=True, name="tray-poll")
@@ -915,9 +956,9 @@ class ThothTray:
 
         # Wait for server to be ready, then open UI in the preferred mode
         if _wait_for_server(self._port):
-            mode = _load_window_mode()
+            mode = self._preferred_mode or _load_window_mode()
             if mode == "ask":
-                mode = _ask_window_mode()
+                mode = _ask_window_mode() if _has_display_server() else "browser"
             if mode == "browser":
                 _open_in_browser(self._port)
             else:
@@ -931,12 +972,114 @@ class ThothTray:
         self._icon.run()
 
 
+# ── Direct / headless launcher mode ─────────────────────────────────────────
+
+def _block_until_interrupted(server: _ThothProcess | None, owns_server: bool) -> None:
+    try:
+        while True:
+            if owns_server and server is not None and not server.is_alive:
+                raise RuntimeError("Thoth server exited unexpectedly")
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Interrupted — shutting down")
+    finally:
+        if owns_server and server is not None:
+            server.stop()
+
+
+def _run_direct(args: argparse.Namespace) -> None:
+    """Run Thoth without a tray icon, for Linux/browser/server modes."""
+    if not args.no_ollama:
+        _start_ollama()
+
+    preferred = parse_app_port(args.port, default=_PORT)
+    port, already_running = _select_app_port(preferred)
+    server = _ThothProcess(port, host=args.host)
+    owns_server = False
+
+    if already_running:
+        logger.info("Thoth already running on port %s", port)
+    else:
+        server.start(port, args.host)
+        owns_server = True
+        atexit.register(server.stop)
+        if not args.no_splash and _has_display_server() and not args.server:
+            _show_splash(port)
+
+    if not _wait_for_server(port):
+        raise RuntimeError(f"Thoth server did not become ready on port {port}")
+
+    if not args.no_open:
+        if args.native and _has_display_server():
+            _open_window(port)
+        elif _has_display_server() or not args.server:
+            _open_in_browser(port)
+        else:
+            logger.info("Thoth is running at %s", _url_for_port(port))
+    else:
+        logger.info("Thoth is running at %s", _url_for_port(port))
+
+    if owns_server:
+        _block_until_interrupted(server, owns_server=True)
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Launch Thoth")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--browser", action="store_true", help="Open Thoth in the system browser")
+    mode.add_argument("--native", action="store_true", help="Open Thoth in a pywebview native window")
+    parser.add_argument("--tray", action="store_true", help="Force the system tray launcher")
+    parser.add_argument("--no-tray", action="store_true", help="Run without a system tray icon")
+    parser.add_argument("--server", action="store_true", help="Run the server without tray integration")
+    parser.add_argument("--no-open", action="store_true", help="Do not open a browser or native window")
+    parser.add_argument("--no-splash", action="store_true", help="Skip the launcher splash screen")
+    parser.add_argument("--no-ollama", action="store_true", help="Do not try to auto-start Ollama")
+    parser.add_argument("--port", type=int, default=_PORT, help=f"Preferred app port (default: {_PORT})")
+    parser.add_argument("--host", default=None, help="Host/interface for the NiceGUI server")
+    return parser
+
+
+def quit_for_update() -> None:
+    """Best-effort shutdown hook used by updater.install_and_restart."""
+    global _ACTIVE_TRAY
+    if _ACTIVE_TRAY is not None:
+        try:
+            _ACTIVE_TRAY._on_quit()
+            return
+        except Exception:
+            pass
+    os._exit(0)
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    global _ACTIVE_TRAY
+    args = _build_arg_parser().parse_args(argv)
+    preferred_mode = "browser" if args.browser else "native" if args.native else None
+    linux_default_direct = sys.platform.startswith("linux") and not args.tray
+    direct = args.server or args.no_tray or linux_default_direct
+
     try:
-        tray = ThothTray()
+        if direct:
+            if sys.platform.startswith("linux") and preferred_mode is None:
+                args.browser = True
+            _run_direct(args)
+            return
+        tray = ThothTray(
+            preferred_port=parse_app_port(args.port, default=_PORT),
+            host=args.host,
+            preferred_mode=preferred_mode,
+            no_splash=args.no_splash,
+            no_ollama=args.no_ollama,
+        )
+        _ACTIVE_TRAY = tray
         tray.run()
+    except ImportError as exc:
+        logger.warning("System tray unavailable (%s); falling back to browser mode", exc)
+        args.browser = True
+        args.no_tray = True
+        _run_direct(args)
     except KeyboardInterrupt:
         logger.info("Interrupted — shutting down")
 

@@ -48,9 +48,10 @@ if _app_dir not in sys.path:
     sys.path.insert(0, _app_dir)
 
 from nicegui import ui, app, run
-from app_port import get_app_port
+from app_port import THOTH_HOST_ENV, get_app_port
 
 _APP_PORT = get_app_port()
+_APP_HOST = os.environ.get(THOTH_HOST_ENV) or None
 
 
 # ── Patch NiceGUI JSON serializer for surrogate safety ───────────────────────
@@ -851,13 +852,17 @@ if __name__ in {"__main__", "__mp_main__"}:
     _native = "--native" in sys.argv
     _show = "--show" in sys.argv and not _native
 
-    ui.run(
-        title="Thoth",
-        port=_APP_PORT,
-        dark=True,
-        favicon="𓁟",
-        reload=False,
-        show=_show,
-        native=_native,
-        window_size=(1280, 900) if _native else None,
-    )
+    _run_kwargs = {
+        "title": "Thoth",
+        "port": _APP_PORT,
+        "dark": True,
+        "favicon": "𓁟",
+        "reload": False,
+        "show": _show,
+        "native": _native,
+        "window_size": (1280, 900) if _native else None,
+    }
+    if _APP_HOST:
+        _run_kwargs["host"] = _APP_HOST
+
+    ui.run(**_run_kwargs)

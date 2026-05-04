@@ -21,33 +21,41 @@ _MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = str(DATA_DIR / "threads.db")
 
-def _init_thread_db():
-    """Create a metadata table to store thread names/timestamps."""
+_THREAD_META_COLUMNS = {
+    "model_override": "TEXT DEFAULT ''",
+    "skills_override": "TEXT DEFAULT ''",
+    "summary": "TEXT DEFAULT ''",
+    "summary_msg_count": "INTEGER DEFAULT 0",
+    "project_id": "TEXT DEFAULT ''",
+}
+
+
+def _init_thread_db(*, raise_on_error: bool = False):
+    """Create and migrate the thread metadata table."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS thread_meta "
-            "(thread_id TEXT PRIMARY KEY, name TEXT, created_at TEXT, updated_at TEXT)"
-        )
-        # Migration: add model_override column if missing
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(thread_meta)").fetchall()}
-        if "model_override" not in cols:
-            conn.execute("ALTER TABLE thread_meta ADD COLUMN model_override TEXT DEFAULT ''")
-        if "skills_override" not in cols:
-            conn.execute("ALTER TABLE thread_meta ADD COLUMN skills_override TEXT DEFAULT ''")
-        if "summary" not in cols:
-            conn.execute("ALTER TABLE thread_meta ADD COLUMN summary TEXT DEFAULT ''")
-        if "summary_msg_count" not in cols:
-            conn.execute("ALTER TABLE thread_meta ADD COLUMN summary_msg_count INTEGER DEFAULT 0")
-        if "project_id" not in cols:
-            conn.execute("ALTER TABLE thread_meta ADD COLUMN project_id TEXT DEFAULT ''")
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS thread_meta "
+                "(thread_id TEXT PRIMARY KEY, name TEXT, created_at TEXT, updated_at TEXT)"
+            )
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(thread_meta)").fetchall()}
+            for column, definition in _THREAD_META_COLUMNS.items():
+                if column not in cols:
+                    conn.execute(f"ALTER TABLE thread_meta ADD COLUMN {column} {definition}")
+                    cols.add(column)
+            conn.commit()
         logger.debug("Thread database initialised at %s", DB_PATH)
     except Exception:
         logger.error("Failed to initialise thread database at %s", DB_PATH, exc_info=True)
+        if raise_on_error:
+            raise
+
+
+def _ensure_thread_db() -> None:
+    _init_thread_db(raise_on_error=True)
 
 def _list_threads():
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute(
         "SELECT thread_id, name, created_at, updated_at, COALESCE(model_override, ''), "
@@ -59,6 +67,7 @@ def _list_threads():
 
 def _set_thread_project_id(thread_id: str, project_id: str) -> None:
     """Link a thread to a designer project."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "UPDATE thread_meta SET project_id = ? WHERE thread_id = ?",
@@ -70,6 +79,7 @@ def _set_thread_project_id(thread_id: str, project_id: str) -> None:
 
 def _get_thread_project_id(thread_id: str) -> str:
     """Return the project_id for a thread (empty string if none)."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
         "SELECT COALESCE(project_id, '') FROM thread_meta WHERE thread_id = ?",
@@ -81,6 +91,7 @@ def _get_thread_project_id(thread_id: str) -> str:
 
 def _thread_exists(thread_id: str) -> bool:
     """Return True if a thread_meta row exists for *thread_id*."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
         "SELECT 1 FROM thread_meta WHERE thread_id = ?", (thread_id,)
@@ -89,6 +100,7 @@ def _thread_exists(thread_id: str) -> bool:
     return row is not None
 
 def _save_thread_meta(thread_id: str, name: str):
+    _ensure_thread_db()
     now = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
@@ -180,6 +192,7 @@ _init_thread_db()
 
 def _delete_thread(thread_id: str):
     """Remove a thread's metadata, checkpoints, and writes from the database."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     conn.execute("DELETE FROM thread_meta WHERE thread_id = ?", (thread_id,))
     # Purge LangGraph checkpoint data to prevent zombie threads
@@ -377,6 +390,7 @@ def sweep_orphan_project_ids() -> int:
         return 0
     removed = 0
     try:
+        _ensure_thread_db()
         conn = sqlite3.connect(DB_PATH)
         rows = conn.execute(
             "SELECT thread_id, COALESCE(project_id, '') FROM thread_meta "
@@ -401,6 +415,7 @@ def sweep_orphan_project_ids() -> int:
 
 def _get_thread_model_override(thread_id: str) -> str:
     """Return the model override for a thread (empty string if none)."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
         "SELECT COALESCE(model_override, '') FROM thread_meta WHERE thread_id = ?",
@@ -412,6 +427,7 @@ def _get_thread_model_override(thread_id: str) -> str:
 
 def _set_thread_model_override(thread_id: str, model_name: str) -> None:
     """Set or clear the model override for a thread."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "UPDATE thread_meta SET model_override = ? WHERE thread_id = ?",
@@ -423,6 +439,7 @@ def _set_thread_model_override(thread_id: str, model_name: str) -> None:
 
 def get_thread_skills_override(thread_id: str) -> list[str] | None:
     """Return per-thread skills override as a list of skill names, or None (use global)."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
         "SELECT COALESCE(skills_override, '') FROM thread_meta WHERE thread_id = ?",
@@ -440,6 +457,7 @@ def get_thread_skills_override(thread_id: str) -> list[str] | None:
 
 def set_thread_skills_override(thread_id: str, skill_names: list[str] | None) -> None:
     """Set or clear the per-thread skills override. Pass None to revert to global."""
+    _ensure_thread_db()
     import json
     value = json.dumps(skill_names) if skill_names is not None else ""
     conn = sqlite3.connect(DB_PATH)
@@ -453,6 +471,7 @@ def set_thread_skills_override(thread_id: str, skill_names: list[str] | None) ->
 
 def save_thread_summary(thread_id: str, summary: str, msg_count: int) -> None:
     """Persist the context summary for a thread to the database."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "UPDATE thread_meta SET summary = ?, summary_msg_count = ? WHERE thread_id = ?",
@@ -464,6 +483,7 @@ def save_thread_summary(thread_id: str, summary: str, msg_count: int) -> None:
 
 def load_thread_summary(thread_id: str) -> dict | None:
     """Load the persisted summary for a thread, or None if none exists."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
         "SELECT COALESCE(summary, ''), COALESCE(summary_msg_count, 0) "
@@ -478,6 +498,7 @@ def load_thread_summary(thread_id: str) -> dict | None:
 
 def clear_thread_summary(thread_id: str) -> None:
     """Clear the persisted summary for a thread."""
+    _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "UPDATE thread_meta SET summary = '', summary_msg_count = 0 WHERE thread_id = ?",

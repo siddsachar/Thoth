@@ -44,7 +44,10 @@ import os
 import pathlib
 import platform
 import re
+import shutil
+import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -91,6 +94,8 @@ _CHECK_DEBOUNCE_SEC = 24 * 60 * 60     # min 24h between actual network calls
 _WIN_ASSET_RE = re.compile(r"^ThothSetup_[\d.]+\.exe$")
 _MAC_ARM_ASSET_RE = re.compile(r"^Thoth-[\d.]+-macOS-arm64\.dmg$")
 _MAC_X86_ASSET_RE = re.compile(r"^Thoth-[\d.]+-macOS-x86_64\.dmg$")
+_LINUX_X64_ASSET_RE = re.compile(r"^Thoth-[\d.]+-Linux-x86_64\.tar\.gz$")
+_LINUX_ARM64_ASSET_RE = re.compile(r"^Thoth-[\d.]+-Linux-aarch64\.tar\.gz$")
 
 # Manifest fenced-block parser
 _MANIFEST_BLOCK_RE = re.compile(
@@ -291,9 +296,34 @@ def is_dev_install() -> bool:
             # Running from a .app bundle → app_root ends in
             # Thoth.app/Contents/Resources or similar.
             return ".app" not in str(app_root)
+        if platform.system() == "Linux":
+            return _linux_install_root(app_root) is None
     except Exception:
         pass
     return False
+
+
+def _linux_install_root(app_root: pathlib.Path | None = None) -> pathlib.Path | None:
+    """Return the Linux XDG tarball install root, if this is one."""
+    if platform.system() != "Linux":
+        return None
+    env_root = os.environ.get("THOTH_INSTALL_ROOT")
+    candidates: list[pathlib.Path] = []
+    if env_root:
+        candidates.append(pathlib.Path(env_root))
+    resolved_app_root = app_root or pathlib.Path(__file__).resolve().parent
+    candidates.extend([resolved_app_root.parent, resolved_app_root])
+    for candidate in candidates:
+        try:
+            marker = candidate / "install_info.json"
+            if not marker.exists():
+                continue
+            data = json.loads(marker.read_text(encoding="utf-8"))
+            if data.get("platform") == "linux" and data.get("install_kind") == "xdg-user-tarball":
+                return candidate
+        except Exception:
+            continue
+    return None
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -309,7 +339,100 @@ def _platform_asset_re() -> Optional[re.Pattern[str]]:
         if mach in ("arm64", "aarch64"):
             return _MAC_ARM_ASSET_RE
         return _MAC_X86_ASSET_RE
+    if sys_name == "Linux":
+        mach = platform.machine().lower()
+        if mach in ("arm64", "aarch64"):
+            return _LINUX_ARM64_ASSET_RE
+        return _LINUX_X64_ASSET_RE
     return None
+
+
+def _safe_extract_tar(archive: pathlib.Path, destination: pathlib.Path) -> pathlib.Path:
+    destination.mkdir(parents=True, exist_ok=True)
+    destination_root = destination.resolve()
+    with tarfile.open(archive, "r:gz") as handle:
+        for member in handle.getmembers():
+            target = (destination / member.name).resolve()
+            if target != destination_root and destination_root not in target.parents:
+                raise UpdateError(f"Archive contains unsafe path: {member.name}")
+        handle.extractall(destination)
+    children = [child for child in destination.iterdir() if child.is_dir()]
+    if len(children) == 1:
+        return children[0]
+    return destination
+
+
+def _install_linux_tarball(installer_path: pathlib.Path) -> pathlib.Path:
+    """Install a verified Linux tarball into the user's XDG app directory."""
+    install_home = pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local" / "share")) / "thoth"
+    releases_dir = install_home / "releases"
+    bin_dir = pathlib.Path.home() / ".local" / "bin"
+    desktop_dir = pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local" / "share")) / "applications"
+    icon_dir = pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local" / "share")) / "icons" / "hicolor" / "256x256" / "apps"
+
+    with tempfile.TemporaryDirectory(prefix="thoth_linux_update_") as tmp:
+        extracted = _safe_extract_tar(installer_path, pathlib.Path(tmp))
+        marker = extracted / "install_info.json"
+        wrapper = extracted / "bin" / "thoth"
+        app_dir = extracted / "app"
+        python_bin = extracted / "python" / "bin" / "python3"
+        if not marker.exists() or not wrapper.exists() or not app_dir.exists() or not python_bin.exists():
+            raise UpdateError("Linux update archive is missing required package files")
+        try:
+            metadata = json.loads(marker.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise UpdateError("Linux update archive has invalid install_info.json") from exc
+        if metadata.get("platform") != "linux" or metadata.get("install_kind") != "xdg-user-tarball":
+            raise UpdateError("Linux update archive is not a Thoth XDG tarball install")
+        version = str(metadata.get("version") or "").strip()
+        if not version:
+            raise UpdateError("Linux update archive is missing a version")
+
+        releases_dir.mkdir(parents=True, exist_ok=True)
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        desktop_dir.mkdir(parents=True, exist_ok=True)
+        icon_dir.mkdir(parents=True, exist_ok=True)
+
+        target = releases_dir / version
+        staging = releases_dir / f".installing-{version}-{os.getpid()}"
+        if staging.exists():
+            shutil.rmtree(staging)
+        shutil.copytree(extracted, staging, symlinks=True)
+        if target.exists():
+            shutil.rmtree(target)
+        staging.replace(target)
+
+    current = install_home / "current"
+    tmp_link = install_home / f".current-{os.getpid()}"
+    if tmp_link.exists() or tmp_link.is_symlink():
+        tmp_link.unlink()
+    os.symlink(pathlib.Path("releases") / version, tmp_link, target_is_directory=True)
+    tmp_link.replace(current)
+
+    launcher = bin_dir / "thoth"
+    if launcher.exists() or launcher.is_symlink():
+        launcher.unlink()
+    os.symlink(current / "bin" / "thoth", launcher)
+
+    desktop_src = current / "share" / "applications" / "com.thoth.Thoth.desktop"
+    if desktop_src.exists():
+        desktop_target = desktop_dir / "com.thoth.Thoth.desktop"
+        text = desktop_src.read_text(encoding="utf-8")
+        text = re.sub(r"^Exec=.*$", f"Exec={launcher}", text, flags=re.MULTILINE)
+        desktop_target.write_text(text, encoding="utf-8")
+    icon_src = current / "share" / "icons" / "hicolor" / "256x256" / "apps" / "thoth.png"
+    if icon_src.exists():
+        shutil.copy2(icon_src, icon_dir / "thoth.png")
+
+    for cmd, arg in (("update-desktop-database", desktop_dir), ("gtk-update-icon-cache", icon_dir.parents[1])):
+        tool = shutil.which(cmd)
+        if tool:
+            try:
+                subprocess.run([tool, str(arg)], capture_output=True, timeout=20)
+            except Exception:
+                logger.debug("Linux desktop cache refresh failed for %s", cmd, exc_info=True)
+
+    return launcher
 
 
 def parse_manifest(body: str) -> dict[str, str]:
@@ -679,6 +802,9 @@ def install_and_restart(installer_path: pathlib.Path) -> None:
             )
         elif sys_name == "Darwin":
             subprocess.Popen(["open", str(installer_path)], close_fds=True)
+        elif sys_name == "Linux":
+            launcher = _install_linux_tarball(installer_path)
+            subprocess.Popen([str(launcher)], close_fds=True)
         else:
             raise UpdateError(f"Unsupported platform: {sys_name}")
     except OSError as exc:

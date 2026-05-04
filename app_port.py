@@ -7,6 +7,7 @@ from collections.abc import Mapping
 
 DEFAULT_APP_PORT = 8080
 THOTH_PORT_ENV = "THOTH_PORT"
+THOTH_HOST_ENV = "THOTH_HOST"
 
 
 def parse_app_port(value: object, default: int = DEFAULT_APP_PORT) -> int:

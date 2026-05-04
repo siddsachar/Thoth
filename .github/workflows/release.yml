@@ -9,6 +9,7 @@
 #   test           → run test_suite.py before any installer build
 #   build-windows  → self-contained unsigned .exe (Inno Setup)
 #   build-macos    → signed .app/.pkg/.dmg (manual notarization later)
+#   build-linux    → self-contained XDG user-install tarball
 #
 # Notarization is handled by two separate manual workflows:
 #   notarize-submit.yml  — submit DMG to Apple (after testing)
@@ -41,7 +42,7 @@ concurrency:
 # Tracks the version this workflow is currently shipping. Kept in sync with
 # `installer/thoth_setup.iss` (#define MyAppVersion) and `version.py`.
 env:
-  THOTH_VERSION: "3.19.0"
+  THOTH_VERSION: "3.20.0"
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
@@ -105,6 +106,58 @@ jobs:
         with:
           name: ThothSetup-Windows
           path: dist/ThothSetup_*.exe
+          retention-days: 90
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  Build Linux tarball — self-contained, browser/no-tray baseline
+  # ════════════════════════════════════════════════════════════════════════════
+  build-linux:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux build/runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rsync libgl1 libegl1 libglib2.0-0
+
+      - name: Validate Linux installer scripts
+        run: bash -n installer/build_linux_app.sh installer/install-linux.sh
+
+      - name: Build Linux package
+        run: |
+          chmod +x installer/build_linux_app.sh
+          ./installer/build_linux_app.sh "$THOTH_VERSION"
+
+      - name: Smoke Linux package
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/thoth-linux-smoke"
+          tar -xzf dist/Thoth-*-Linux-*.tar.gz -C "$RUNNER_TEMP/thoth-linux-smoke"
+          PACKAGE_ROOT="$(find "$RUNNER_TEMP/thoth-linux-smoke" -maxdepth 1 -type d -name 'Thoth-*-Linux-*' | head -n 1)"
+          if [ -z "$PACKAGE_ROOT" ]; then
+            echo "::error::Linux package root not found after extraction"
+            exit 1
+          fi
+          chmod +x "$PACKAGE_ROOT/bin/thoth"
+          python scripts/smoke_app.py \
+            --port 8091 \
+            --timeout 120 \
+            --cwd "$PACKAGE_ROOT/app" \
+            -- "$PACKAGE_ROOT/bin/thoth" --server --no-open --port 8091 --no-ollama
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v7
+        with:
+          name: Thoth-Linux
+          path: dist/Thoth-*-Linux-*.tar.gz
           retention-days: 90
 
   # ════════════════════════════════════════════════════════════════════════════

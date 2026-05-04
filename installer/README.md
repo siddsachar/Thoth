@@ -1,10 +1,66 @@
-# Building the Thoth Windows Installer
+# Building Thoth Installers
 
-This guide explains how to build a distributable Windows installer for Thoth v3.19.0.
+This guide explains how to build distributable Thoth installers and packages.
 
 For version bumps, CI release workflow expectations, signing, tagging, and publish
 order, use the canonical [release process](../docs/RELEASING.md). This file only
-covers the Windows installer payload and local build flow.
+covers the installer payload and local build flow.
+
+## Linux Tarball
+
+Linux users should normally install with the one-line bootstrapper:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash
+```
+
+The bootstrapper resolves the latest GitHub Release, downloads the matching
+Linux tarball for the current architecture, verifies its SHA256 from the release
+manifest, and then runs the tarball's bundled `install.sh`. For a pinned
+version, pass it as an argument:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.20.0
+```
+
+Linux release tarballs are built with `installer/build_linux_app.sh`. The script mirrors
+the macOS python-build-standalone approach, but emits a user-installable XDG
+tarball instead of a native app bundle:
+
+```bash
+./installer/build_linux_app.sh
+./installer/build_linux_app.sh 3.20.0
+```
+
+The output is `dist/Thoth-X.Y.Z-Linux-x86_64.tar.gz` on x86_64 runners. It
+contains bundled Python, installed Python packages, app source, `bin/thoth`, an
+`install.sh`, an `uninstall.sh`, a freedesktop `.desktop` file, icon files, and
+`install_info.json` for updater/dev-install detection.
+
+Manual tarball install flow:
+
+```bash
+tar -xzf Thoth-X.Y.Z-Linux-x86_64.tar.gz
+cd Thoth-X.Y.Z-Linux-x86_64
+./install.sh
+thoth
+```
+
+Linux installs to `~/.local/share/thoth/releases/<version>`, updates
+`~/.local/share/thoth/current`, creates `~/.local/bin/thoth`, and installs the
+desktop entry/icon into user XDG locations. It launches in browser/no-tray mode
+by default. Native window and system tray support remain optional because Linux
+desktop environments require distro-specific GTK/Qt/AppIndicator dependencies.
+
+Provider secrets use the system keyring when Linux Secret Service/KWallet is
+available. Headless Linux and WSL installs without a keyring still start cleanly;
+new secrets fall back to session-only storage rather than plaintext files.
+
+Browser automation uses Playwright's normal Linux dependency flow. The tarball
+does not install system packages; users should follow Playwright's printed
+dependency command if Chromium reports missing libraries.
+
+## Windows Installer
 
 ## Architecture
 
@@ -37,7 +93,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 This will:
 1. Download Python 3.13 embeddable package (~15 MB)
 2. Download `get-pip.py` (~2.5 MB)
-3. Compile everything into `dist\ThothSetup_3.19.0.exe`
+3. Compile everything into `dist\ThothSetup_3.20.0.exe`
 
 ### Options
 
@@ -169,7 +225,7 @@ The Inno Setup installer runs these steps:
 
 ## End-User Experience
 
-1. Run `ThothSetup_3.19.0.exe`
+1. Run `ThothSetup_3.20.0.exe`
 2. Follow the wizard — dependencies download and install automatically (5-15 min)
 3. Launch Thoth from Start Menu or Desktop shortcut
 4. The system tray icon appears; the app opens on the first available local port, normally `http://localhost:8080`

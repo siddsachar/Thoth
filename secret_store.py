@@ -33,6 +33,26 @@ class SecretStoreError(RuntimeError):
     """Raised when the platform secret store cannot complete an operation."""
 
 
+def _is_unavailable_error(exc: BaseException) -> bool:
+    """Return True for expected missing/disabled keyring backend failures."""
+    name = exc.__class__.__name__.lower()
+    module = exc.__class__.__module__.lower()
+    message = str(exc).lower()
+    return (
+        "nokeyring" in name
+        or "keyring.errors" in module and "backend" in message and "available" in message
+        or "no recommended backend" in message
+        or "keyring is unavailable" in message
+        or "keyring unavailable" in message
+    )
+
+
+def _raise_secret_error(action: str, name: str, exc: BaseException) -> None:
+    if not _is_unavailable_error(exc):
+        logger.warning("Failed to %s secret %s from keyring", action, name, exc_info=True)
+    raise SecretStoreError(str(exc)) from exc
+
+
 def _backend() -> Any:
     if _backend_override is not None:
         return _backend_override
@@ -67,8 +87,7 @@ def get_secret(name: str, *, namespace: str = "api_keys", service: str | None = 
     try:
         value = _backend().get_password(service or SERVICE_NAME, _account(name, namespace=namespace))
     except Exception as exc:
-        logger.warning("Failed to read secret %s from keyring", name, exc_info=True)
-        raise SecretStoreError(str(exc)) from exc
+        _raise_secret_error("read", name, exc)
     return value if isinstance(value, str) and value else None
 
 
@@ -80,8 +99,7 @@ def set_secret(name: str, value: str, *, namespace: str = "api_keys", service: s
     try:
         _backend().set_password(service or SERVICE_NAME, _account(name, namespace=namespace), str(value))
     except Exception as exc:
-        logger.warning("Failed to write secret %s to keyring", name, exc_info=True)
-        raise SecretStoreError(str(exc)) from exc
+        _raise_secret_error("write", name, exc)
 
 
 def delete_secret(name: str, *, namespace: str = "api_keys", service: str | None = None) -> None:
@@ -92,8 +110,7 @@ def delete_secret(name: str, *, namespace: str = "api_keys", service: str | None
         message = str(exc).lower()
         if "not found" in message or "not exist" in message or "no such" in message:
             return
-        logger.warning("Failed to delete secret %s from keyring", name, exc_info=True)
-        raise SecretStoreError(str(exc)) from exc
+        _raise_secret_error("delete", name, exc)
 
 
 def fingerprint(value: str) -> str:

@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.venv-linux/
 
 # Node.js (WhatsApp bridge)
 channels/whatsapp_bridge/node_modules/

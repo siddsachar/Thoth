@@ -7,9 +7,9 @@ This is the end-to-end release checklist for Thoth.
 Thoth uses semantic versioning:
 
 - Patch: `3.17.1` for bug fixes
-- Minor: `3.19.0` for new backwards-compatible features
+- Minor: `3.20.0` for new backwards-compatible features
 - Major: `4.0.0` for breaking changes
-- Beta/RC: `3.19.0-beta.1`, `3.19.0-rc.1`
+- Beta/RC: `3.20.0-beta.1`, `3.20.0-rc.1`
 
 ## Before release
 
@@ -36,12 +36,15 @@ Thoth uses semantic versioning:
 
    This updates `version.py`, `installer/thoth_setup.iss`,
    `.github/workflows/release.yml`, the macOS app `Info.plist`, and the bug
-   report version placeholder.
+   report version placeholder. The Linux package script derives its version
+   from `version.py` or the workflow `THOTH_VERSION` argument.
 
 5. Update `RELEASE_NOTES.md` with human-readable notes.
 6. Confirm new shipped runtime files are covered by platform packaging:
    Windows `installer/thoth_setup.iss`, macOS `installer/build_mac_app.sh`,
-   and the installer payload notes in `installer/README.md`.
+   Linux `installer/build_linux_app.sh`, the Linux bootstrapper
+   `installer/install-linux.sh`, and the installer payload notes in
+   `installer/README.md`.
 7. Smoke-test first-run behavior against a clean data directory before building
    artifacts, especially setup wizard imports, provider config defaults, and
    Custom/Self-hosted endpoint setup.
@@ -59,8 +62,8 @@ Thoth uses semantic versioning:
    ```
 
 2. Run GitHub Actions -> `Release - Build & Sign Installers` manually. This
-   produces workflow artifacts; final release assets are uploaded manually after
-   signing and smoke testing.
+   produces Windows, macOS, and Linux workflow artifacts; final release assets
+   are uploaded manually after signing and smoke testing.
 3. Download the Windows setup exe from the workflow artifact.
 4. Sign it locally with the Certum certificate. Windows signing is intentionally
    not done in CI:
@@ -74,11 +77,58 @@ Thoth uses semantic versioning:
 
 5. Upload the signed exe to the draft GitHub Release.
 6. Run notarization workflows for macOS when needed and upload the stapled DMG.
-7. Smoke-test the final Windows and macOS artifacts.
-8. Publish the GitHub Release.
-9. Confirm `.github/workflows/update-manifest.yml` patches SHA256 hashes into
+7. Download the Linux `Thoth-X.Y.Z-Linux-x86_64.tar.gz` artifact, extract it on
+   a clean Linux VM, run `./install.sh`, and confirm `thoth` opens the browser
+   UI and `thoth --server --no-open --port 8092` answers `/api/launcher-ping`.
+8. Smoke-test the final Windows, macOS, and Linux artifacts.
+9. Publish the GitHub Release.
+10. Confirm `.github/workflows/update-manifest.yml` patches SHA256 hashes into
    the release body.
-10. Test the packaged updater from the previous stable version.
+11. Test the packaged updater from the previous stable version on each platform.
+
+## Linux Release Notes
+
+Linux is shipped as a one-line installer backed by a self-contained XDG
+user-install tarball, not as a root package. The supported baseline launches
+Thoth in the system browser and avoids requiring pywebview, GTK/Qt,
+AppIndicator, or tray backends. Native window and tray mode can still be tested
+manually with `thoth --native` or `thoth --tray` on desktops with the required
+libraries.
+
+The user-facing install command is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash
+```
+
+The bootstrapper resolves the latest GitHub Release, downloads the matching
+`Thoth-X.Y.Z-Linux-ARCH.tar.gz`, verifies its SHA256 from the release manifest,
+and then runs the tarball's bundled `install.sh`.
+
+The tarball installs under `~/.local/share/thoth/releases/<version>`, updates
+`~/.local/share/thoth/current`, creates `~/.local/bin/thoth`, and installs a
+freedesktop `.desktop` file plus icon into user XDG locations. In-app updates
+download the next Linux tarball, verify SHA256 through the release manifest,
+install the new release under the same user-owned tree, flip the `current`
+symlink, and restart through `~/.local/bin/thoth`.
+
+Manual Linux smoke matrix before publishing:
+
+- Ubuntu 22.04 or 24.04 GNOME Wayland
+- Debian 12
+- Fedora current
+- Headless Ubuntu server mode
+
+Minimum smoke checks:
+
+- Fresh tarball install and desktop launcher
+- One-line installer after the GitHub Release is published
+- `thoth --server --no-open --port 8092` plus `/api/launcher-ping`
+- First-run setup with Providers and Custom/Self-hosted paths
+- Ollama local model when `ollama` is installed and in `PATH`
+- Browser tool after Playwright browser/dependency install
+- Designer export and vault/open-folder actions
+- Update from the previous Linux tarball to the new tarball
 
 ## Post-release
 

@@ -5,18 +5,18 @@
 <h1 align="center">𓁟 Thoth — Personal AI Sovereignty</h1>
 
 <p align="center">
-  <a href="https://github.com/siddsachar/Thoth/releases"><img src="https://img.shields.io/github/v/release/siddsachar/Thoth?style=flat&label=release&color=c9a227" alt="Release"></a>
+   <a href="https://github.com/siddsachar/Thoth/releases"><img src="https://img.shields.io/github/v/release/siddsachar/Thoth?style=flat&label=release&color=c9a227" alt="Release"></a>
    <a href="https://github.com/siddsachar/Thoth/actions/workflows/ci.yml"><img src="https://github.com/siddsachar/Thoth/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/siddsachar/Thoth?style=flat" alt="License"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-c9a227?style=flat" alt="Platform">
-  <img src="https://img.shields.io/badge/tests-All%20Pass-brightgreen?style=flat" alt="Tests">
+   <a href="LICENSE"><img src="https://img.shields.io/github/license/siddsachar/Thoth?style=flat" alt="License"></a>
+   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-c9a227?style=flat" alt="Platform">
+   <img src="https://img.shields.io/badge/tests-All%20Pass-brightgreen?style=flat" alt="Tests">
 </p>
 
 Thoth is a **local-first AI assistant for personal AI sovereignty**: a desktop agent with memory, tools, workflows, design creation, messaging, plugins, and optional cloud models while your durable data stays on your machine.
 
 It runs fully local through [Ollama](https://ollama.com/) with 39 curated tool-calling models, or you can opt into OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, and ChatGPT / Codex when you want frontier reasoning or do not have a GPU. API keys and in-app subscription tokens are stored in the OS credential store when available; Thoth has no account system, server, or telemetry pipeline.
 
-> **🖥️ One-click install on Windows & macOS** — download, run, done. No terminal, Docker, or config files required. [Get it here.](https://github.com/siddsachar/Thoth/releases)
+> **🖥️ One-click install on Windows & macOS; one-line install on Linux** — download, run, done. No Docker required. [Get it here.](https://github.com/siddsachar/Thoth/releases)
 
 <table align="center">
   <tr>
@@ -57,7 +57,7 @@ Advanced workflows add schedules, webhook triggers, condition branches, approval
 
 ### Native, Multi-Channel, Local-First
 
-Thoth ships as a desktop app for Windows and macOS with one-click installers, tray integration, setup wizard, voice input, local Kokoro TTS, desktop notifications, and 5 bundled messaging channels: Telegram, WhatsApp, Discord, Slack, and SMS. Channels share media handling, streaming, approvals, health checks, and optional tunnel support.
+Thoth ships as a desktop app for Windows and macOS with one-click installers, tray integration, setup wizard, voice input, local Kokoro TTS, desktop notifications, and 5 bundled messaging channels: Telegram, WhatsApp, Discord, Slack, and SMS. Linux ships through a one-line installer backed by a verified self-contained XDG user-install tarball that opens in the system browser by default, with native window and tray support available when the required desktop libraries are installed. Channels share media handling, streaming, approvals, health checks, and optional tunnel support.
 
 ### Extensible Without Giving Up Control
 
@@ -73,7 +73,7 @@ Plugins add tools and skills through a sandboxed marketplace; MCP servers add ex
 | **Tools** | 30 core tools covering search, browser, shell, filesystem, documents, Gmail, Calendar, X, memory, workflows, tracker, image/video, vision, status, MCP, updates, computation, weather, charts, and system info |
 | **Automation** | Scheduled workflows, step pipelines, conditions, approvals, subtasks, webhooks, task-completion triggers, notifications, channel delivery, run history, and safety modes |
 | **Channels & Voice** | Telegram, WhatsApp, Discord, Slack, SMS, local faster-whisper STT, Kokoro TTS, media intake, reactions, streaming, approval routing, and tunnel manager |
-| **Platform & Extensibility** | Native desktop app, one-click installers, auto-updates, plugin marketplace, MCP client, migration wizard, configurable identity, secure API-key storage, 13 manual skills including Claude Code Delegation, and 18 tool guides |
+| **Platform & Extensibility** | Native desktop app, one-click Windows/macOS installers, one-line Linux installer, auto-updates, plugin marketplace, MCP client, migration wizard, configurable identity, secure API-key storage, 13 manual skills including Claude Code Delegation, and 18 tool guides |
 
 [Detailed architecture and subsystem reference →](docs/ARCHITECTURE.md)
 
@@ -85,7 +85,7 @@ Plugins add tools and skills through a sandboxed marketplace; MCP servers add ex
 
 | | Thoth | OpenClaw |
 |---|---|---|
-| **Getting started** | **One-click installer** (`.exe` / `.dmg`) — download, run, done. Built-in setup wizard, no terminal required | `npm install -g openclaw@latest` → CLI onboarding. Requires Node.js 24. Windows needs WSL2 (no native Windows support) |
+| **Getting started** | **One-click installer** (`.exe` / `.dmg`) plus a one-line Linux installer backed by a verified XDG `.tar.gz`. Built-in setup wizard | `npm install -g openclaw@latest` → CLI onboarding. Requires Node.js 24. Windows needs WSL2 (no native Windows support) |
 | **Local AI (offline)** | **Local-first** — Ollama with 39 curated models out of the box. Works fully offline. Provider models are opt-in | Cloud-first design — requires an API key to start. Local model support through provider config |
 | **Memory** | **Personal knowledge graph** — 10 entity types, typed directional relations, visual explorer, FAISS semantic search + 1-hop graph expansion, memory decay, orphan repair | Flat markdown files (`MEMORY.md` + daily notes) with semantic search. No structured graph |
 | **Knowledge refinement** | **Dream Cycle** — 5-phase nightly engine: duplicate merging (≥0.93 similarity), description enrichment, stale-confidence decay, relationship inference with hub diversity caps and rejection cache, and actionable insight generation. 3-layer anti-contamination system, dream journal | Dreaming (experimental) — Light/Deep/REM phases that promote short-term signals to long-term memory via scoring thresholds |
@@ -96,7 +96,7 @@ Plugins add tools and skills through a sandboxed marketplace; MCP servers add ex
 | **Tools** | 30 core tools plus auto-generated channel send tools — shell, browser, filesystem, Gmail, Calendar, Designer Studio, Thoth Status, memory graph, MCP external tools, image + video generation, and research tools | ~20 built-in tools — exec, browser, web search, canvas, cron, image/music/video generation |
 | **Messaging channels** | **5 channels** — Telegram, WhatsApp, Discord, Slack, SMS — all with streaming, reactions, media, and approval routing. Auto-generated per-channel tools. Tunnel manager for webhooks | **23+ channels** — WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams, Matrix, IRC, and many more |
 | **Autonomous agents** | **Advanced workflows** — step-based pipelines with conditions, approval gates, webhook triggers, concurrency groups, and per-workflow safety mode. Multiple run in parallel with their own persistent threads | Multi-agent routing with isolated sessions per sender/channel |
-| **Desktop app** | Native window (pywebview) + system tray on **Windows & macOS**. One-click installers for both | macOS menu bar app. No native Windows app (WSL2 required). iOS & Android companion apps |
+| **Desktop app** | Native window (pywebview) + system tray on **Windows & macOS**; Linux one-line install with browser-first launch and optional native window/tray when desktop deps exist | macOS menu bar app. No native Windows app (WSL2 required). iOS & Android companion apps |
 | **Designer / Canvas** | Designer Studio for decks, one-pagers, reports, published links, plus Mermaid diagrams and Plotly charts rendered inline | A2UI — agent-driven interactive visual workspace |
 | **Plugins** | Sandboxed plugin marketplace with hot-reload and security scanning | npm plugin ecosystem + ClawHub skill registry. Large community catalog |
 | **Privacy** | All data local. No account, no server, no telemetry. API keys use the OS credential store when available — Thoth has no servers | Self-hosted gateway. Data stays on your machine. Some channel integrations require external services |
@@ -227,7 +227,7 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
 
 | | Minimum | Recommended |
 |--|---------|-------------|
-| **OS** | Windows 10/11 (64-bit) or macOS 12+ (Apple Silicon & Intel) | Same |
+| **OS** | Windows 10/11 (64-bit), macOS 12+ (Apple Silicon & Intel), or glibc-based Linux x86_64 | Same |
 | **Python** | 3.11+ | 3.11+ |
 | **RAM** | 8 GB (for 8B models) | 16–32 GB (for 14B–30B models) |
 | **GPU** | Not required — Ollama runs on CPU | NVIDIA 8+ GB VRAM (CUDA) or Apple Silicon — dramatically faster |
@@ -240,7 +240,7 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
 
 | Requirement | Details |
 |-------------|---------|
-| **OS** | Windows 10/11 (64-bit) or macOS 12+ (Apple Silicon & Intel) |
+| **OS** | Windows 10/11 (64-bit), macOS 12+ (Apple Silicon & Intel), or glibc-based Linux x86_64 |
 | **Python** | 3.11+ |
 | **RAM** | 4 GB |
 | **Disk** | ~1 GB (app + packages, no model downloads) |
@@ -271,6 +271,38 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
 > **Works on Apple Silicon (M1/M2/M3/M4) and Intel Macs** (macOS 12+). No terminal, no manual setup — just double-click and go.
 
 > **Using provider or custom endpoint models only?** The installer still sets up Ollama by default, but you can skip model downloads. On first launch, choose **Providers** for API-key models or **Custom/Self-hosted** for an OpenAI-compatible endpoint such as LM Studio.
+
+### Linux
+
+Run the one-line installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash
+```
+
+The installer downloads the latest `Thoth-X.Y.Z-Linux-x86_64.tar.gz` release asset, verifies its SHA256 from the GitHub Release manifest, and installs it into your user account. To install a specific version, pass it after `bash -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.20.0
+```
+
+Manual tarball flow:
+
+1. Download the latest **Linux tarball** from [GitHub Releases](https://github.com/siddsachar/Thoth/releases/latest), named like `Thoth-X.Y.Z-Linux-x86_64.tar.gz`
+2. Extract it and run the bundled user installer:
+   ```bash
+   tar -xzf Thoth-X.Y.Z-Linux-x86_64.tar.gz
+   cd Thoth-X.Y.Z-Linux-x86_64
+   ./install.sh
+   ```
+3. Launch **Thoth** from your application menu, or run:
+   ```bash
+   thoth
+   ```
+
+Linux installs under `~/.local/share/thoth`, creates `~/.local/bin/thoth`, and leaves user data in `~/.thoth`. The supported Linux baseline opens Thoth in your system browser and does not require a system tray or pywebview backend. Optional native window/tray mode depends on your desktop having the relevant GTK/Qt/AppIndicator libraries. In-app auto-update uses the same verified tarball format, installs the new version into the XDG release tree, and flips `~/.local/share/thoth/current`. Saved provider secrets use Linux Secret Service/KWallet when a desktop keyring is available; WSL and headless servers without a keyring still run, but new secrets are kept session-only until secure storage is configured.
+
+For browser automation tools on Linux, Chromium may require distro packages the tarball cannot install automatically. If Playwright reports missing dependencies, run the command it prints, or use `python -m playwright install --with-deps chromium` from a source checkout.
 
 ---
 
@@ -309,7 +341,12 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
    ```bash
    python launcher.py
    ```
-   This starts the system tray icon and opens the app on the first available local port, normally `http://localhost:8080`. If another service is already using 8080, Thoth automatically picks the next free port.
+   On Windows and macOS this starts the system tray icon and opens the app on the first available local port, normally `http://localhost:8080`. On Linux it opens in the browser without a tray by default. If another service is already using 8080, Thoth automatically picks the next free port.
+
+   Linux server/headless mode:
+   ```bash
+   python launcher.py --server --no-open --port 8080
+   ```
 
    Alternatively, run directly without the tray:
    ```bash

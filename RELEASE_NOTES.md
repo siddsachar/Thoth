@@ -2,9 +2,20 @@
 
 ---
 
-## v3.20.0 — MiniMax, Custom Setup & Ollama Reliability
+## v3.20.0 — MiniMax, Custom Setup, Linux & Ollama Reliability
 
-This release extends the provider runtime work with **MiniMax** as a first-class API-key provider, a cleaner first-run path for custom OpenAI-compatible endpoints, and stronger local Ollama connection handling for Windows and custom host setups.
+This release extends the provider runtime work with **MiniMax** as a first-class API-key provider, a cleaner first-run path for custom OpenAI-compatible endpoints, real Linux packaging, and stronger local Ollama connection handling for Windows and custom host setups.
+
+### 🐧 Linux Support
+
+- **Self-contained Linux tarball** — releases now include `Thoth-X.Y.Z-Linux-x86_64.tar.gz`, built with python-build-standalone and the same source-copy contract as the macOS app bundle
+- **One-line Linux install** — `installer/install-linux.sh` lets users install with a single `curl ... | bash` command while still verifying the release tarball SHA256 before running the bundled installer
+- **XDG user install** — `install.sh` installs under `~/.local/share/thoth/releases/<version>`, updates `~/.local/share/thoth/current`, creates `~/.local/bin/thoth`, and installs a freedesktop desktop entry plus icon
+- **Browser-first baseline** — Linux opens in the system browser by default and does not require pywebview, GTK/Qt, AppIndicator, or tray libraries to run
+- **Optional native/tray modes** — `launcher.py --native` and `launcher.py --tray` remain available for Linux desktops with the relevant system libraries
+- **Server mode** — `launcher.py --server --no-open --port <port>` supports headless Linux smoke and server-style launches
+- **Linux updater path** — the updater can select Linux tarball assets, verify the SHA256 release manifest, install into the user-owned release tree, flip the `current` symlink, and restart through `~/.local/bin/thoth`
+- **Headless keyring handling** — WSL and server Linux environments without Secret Service/KWallet now treat secure storage as unavailable without traceback spam; new secrets remain session-only rather than falling back to plaintext files
 
 ### 🧠 Providers & Setup
 
@@ -21,6 +32,8 @@ This release extends the provider runtime work with **MiniMax** as a first-class
 - **Free-port launcher startup** — the desktop launcher now verifies that a listener on `8080` is actually Thoth before reusing it; if another local service owns the port, Thoth starts on the next available local port instead of opening the foreign service
 - **Session port source of truth** — the launcher passes the selected port through `THOTH_PORT`, and the NiceGUI app, main-app tunnel, SMS webhook registration, workflow webhook route, Settings tunnel toggle, and Designer published-link fallback all use that active app port
 - **Launcher identity probe** — `/api/launcher-ping` lets the tray distinguish an existing Thoth instance from unrelated services while preserving direct `python app.py` launches on port `8080` by default
+- **Linux-safe launcher modes** — the launcher now has explicit `--browser`, `--native`, `--tray`, `--no-tray`, `--server`, `--no-open`, `--port`, and `--host` flags; Windows and macOS keep their existing tray-first behavior while Linux defaults to browser/no-tray
+- **Wayland clipboard fallback** — native-window clipboard access tries `wl-paste` before the existing `xclip` fallback on Linux
 
 ### 🧪 Tests & Release Checks
 
@@ -28,7 +41,8 @@ This release extends the provider runtime work with **MiniMax** as a first-class
 - **Ollama endpoint regressions** — provider runtime tests cover `OLLAMA_HOST` variants including custom ports, URL forms, `0.0.0.0`, and IPv6 wildcard binds
 - **Vision catalog regressions** — provider catalog tests cover installed/recommended Ollama vision rows plus LM Studio-style custom endpoint models with sparse OpenAI-compatible metadata
 - **Launcher/app-port coverage** — app-port tests validate dynamic port selection, Thoth identity probing, and active-port propagation
-- **Final validation** — direct `test_suite.py` passes, and full `pytest -q` passes with `184 passed, 1 skipped`
+- **Linux smoke coverage** — Ubuntu CI now launches the app and checks `/api/launcher-ping`; release CI builds the Linux tarball, unpacks it, runs the packaged launcher in server mode, and checks both `/api/launcher-ping` and the root UI page
+- **Current validation** — focused Linux/app-port/secret-storage regression tests pass locally; full `test_suite.py` and `pytest -q` remain final release-gate checks before publishing artifacts
 
 ### ⚠️ Release Notes & Risk Notes
 
@@ -43,8 +57,9 @@ This release extends the provider runtime work with **MiniMax** as a first-class
 | `ui/setup_wizard.py`, `ui/settings.py` | MiniMax key entry plus Custom/Self-hosted setup and settings alignment |
 | `vision.py`, `dream_cycle.py` | Local Ollama vision and busy-check calls now use the normalized client endpoint |
 | `app_port.py`, `launcher.py`, `app.py` | Dynamic app-port selection, `THOTH_PORT` propagation, Thoth identity probing, and active-port NiceGUI startup |
+| `installer/build_linux_app.sh`, `installer/install-linux.sh`, `.github/workflows/release.yml`, `.github/workflows/update-manifest.yml` | Linux tarball packaging, one-line installer bootstrap, release artifact upload, packaged smoke, and SHA256 manifest inclusion |
 | `channels/sms.py`, `designer/publish.py`, `ui/settings.py` | Main-app tunnel, SMS webhook, Designer published-link, and Settings tunnel controls now follow the active app port |
-| `test_provider_*.py`, `test_app_port.py`, `test_suite.py` | MiniMax, custom setup, Ollama endpoint, and app-port regression coverage |
+| `test_provider_*.py`, `test_app_port.py`, `test_linux_support.py`, `test_suite.py` | MiniMax, custom setup, Ollama endpoint, Linux packaging/updater/launcher, and app-port regression coverage |
 
 ---
 
