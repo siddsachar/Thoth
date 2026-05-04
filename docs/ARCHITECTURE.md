@@ -616,12 +616,12 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 `updater.py` polls the GitHub Releases API for the official Thoth repo on a background thread (30-second startup delay, then every 6 hours, with a 24-hour debounce on actual network calls). Checking is on by default; if there is no internet the call fails silently and the next tick retries.
 
 - **Channel** — `stable` (default) hits `/releases/latest`; `beta` walks the top 10 releases and includes pre-releases. Persisted in `~/.thoth/update_config.json`.
-- **Manifest verification** — every release body must contain a fenced `<!-- thoth-update-manifest -->` block with SHA256 hashes for each platform asset. Without a manifest entry, `download_update` refuses to install. The CI workflow `.github/workflows/update-manifest.yml` calls `scripts/append_sha_manifest.py` to PATCH the release body once artifacts are uploaded.
-- **OS code signature** — Windows installs invoke `signtool.exe verify /pa`; macOS installs invoke `codesign --verify --deep --strict`. Failures abort the install with a visible error.
-- **Hand-off** — Windows: `ThothSetup_x.y.z.exe /SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS`. The `.iss` was extended with `CloseApplications=yes` / `RestartApplications=yes` so Inno Setup can swap files while Thoth is running. macOS: `open <dmg>` and exit; the user drags the new app to `/Applications`.
+- **Manifest verification** — every release body must contain a fenced `<!-- thoth-update-manifest -->` block with SHA256 hashes for each platform asset. Without a manifest entry, `download_update` refuses to install. The CI workflow `.github/workflows/update-manifest.yml` calls `scripts/append_sha_manifest.py` to PATCH the release body once artifacts are uploaded. The Linux one-line installer uses the same manifest before running the bundled tarball installer.
+- **OS code signature** — Windows installs invoke `signtool.exe verify /pa`; macOS installs invoke `codesign --verify --deep --strict`. Linux tarball installs do not have a universal OS-level signing verifier, so Thoth relies on GitHub HTTPS plus the required SHA256 release manifest.
+- **Hand-off** — Windows: `ThothSetup_x.y.z.exe /SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS`. The `.iss` was extended with `CloseApplications=yes` / `RestartApplications=yes` so Inno Setup can swap files while Thoth is running. macOS: `open <dmg>` and exit; the user drags the new app to `/Applications`. Linux: install the verified `Thoth-X.Y.Z-Linux-ARCH.tar.gz` into the user XDG release tree, atomically flip `~/.local/share/thoth/current`, refresh the desktop entry/icon, and restart through `~/.local/bin/thoth`.
 - **UI** — a green "⬆ vX.Y.Z" status-bar pill appears when a newer release is detected; clicking opens the What's-New dialog (rendered release notes plus Install / Skip / Later buttons). Settings → Preferences → Updates exposes channel selection, "Check for updates", and a list of skipped versions.
 - **Agent surface** — `tools/updater_tool.py` registers `thoth_check_for_updates` (read-only) and `thoth_install_update` (interrupt-gated). The dynamic self-knowledge block surfaces "Update available: …" when applicable, and `thoth_status` adds an `updates` category.
-- **Dev installs** — when a `.git/` directory sits next to the app source (i.e. running from a checkout), the scheduler is disabled and `thoth_install_update` refuses, so working copies are never overwritten.
+- **Dev installs** — when a `.git/` directory sits next to the app source (i.e. running from a checkout), the scheduler is disabled and `thoth_install_update` refuses, so working copies are never overwritten. On Linux, packaged installs are recognized by `install_info.json` with `platform: linux` and `install_kind: xdg-user-tarball`.
 
 ---
 
@@ -639,11 +639,12 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 
 ## Desktop App
 
-- **Native window** — runs in a desktop window via pywebview rather than depending on a browser tab
-- **System tray** — `launcher.py` exposes open and quit controls plus running-state feedback
+- **Native window** — runs in a desktop window via pywebview on Windows and macOS; Linux defaults to browser mode and can opt into `--native` when the desktop has the required GTK/Qt backend
+- **System tray** — `launcher.py` exposes open and quit controls plus running-state feedback on Windows and macOS; Linux defaults to no tray and can opt into `--tray` when AppIndicator/desktop support is available
 - **Splash screen** — Tk-based splash with console fallback during startup
 - **First-launch setup wizard** — guides the user through migration, Local, Providers, or Custom/Self-hosted setup paths without touching config files
-- **Self-contained installers** — Windows and macOS releases bundle dependencies for one-click setup
+- **Self-contained installers** — Windows and macOS releases bundle dependencies for one-click setup; Linux uses a one-line bootstrapper that verifies and installs the self-contained XDG tarball into user-owned paths
+- **Launcher identity and ports** — the launcher probes `/api/launcher-ping` before reusing port 8080, passes the chosen port through `THOTH_PORT`, and supports explicit `--browser`, `--native`, `--tray`, `--no-tray`, `--server`, `--no-open`, `--port`, and `--host` modes
 - **Auto-restart flow** — closing the native window does not kill the tray-managed app process; reopen is fast
 - **Release pipeline** — build, sign, notarize, and publish automation lives in CI
 
@@ -813,7 +814,7 @@ All user data is stored under `~/.thoth/` (or `%USERPROFILE%\\.thoth\\` on Windo
 
 Most open-source AI assistants are still **developer tools disguised as products** — CLI-first, config-file-driven, and built around Docker, YAML, and environment variables. Getting started often means cloning repos, editing configs, wiring databases, and debugging dependencies before you can ask a single useful question.
 
-**Thoth is different.** It is packaged as a native desktop experience with one-click installers for Windows and macOS, local-first defaults, and a GUI that exposes models, tools, workflows, channels, Designer Studio, and memory without requiring terminal fluency.
+**Thoth is different.** It is packaged as a native desktop experience with one-click installers for Windows and macOS, a one-line Linux installer backed by a verified XDG tarball, local-first defaults, and a GUI that exposes models, tools, workflows, channels, Designer Studio, and memory without requiring terminal fluency.
 
 ### Why not just use ChatGPT?
 
@@ -836,7 +837,7 @@ Most open-source AI assistants are still **developer tools disguised as products
 
 | | Thoth | OpenClaw |
 |---|---|---|
-| **Getting started** | One-click installers and GUI-first setup on Windows and macOS | CLI-oriented install flow and heavier terminal expectations |
+| **Getting started** | One-click installers and GUI-first setup on Windows and macOS, plus one-line Linux install with browser-first launch | CLI-oriented install flow and heavier terminal expectations |
 | **Local AI** | Local-first with Ollama as the default path | More cloud-first in typical setups |
 | **Memory** | Typed personal knowledge graph with visualization, wiki export, and structured relations | Simpler text-centric memory patterns |
 | **Knowledge refinement** | 5-phase Dream Cycle with merge, enrich, decay, infer, and insight passes | Experimental dreaming-style memory promotion flows |
@@ -845,7 +846,7 @@ Most open-source AI assistants are still **developer tools disguised as products
 | **Tools** | 30 core tools plus auto-generated channel send tools, including Designer Studio, Thoth Status, and MCP external tools | Broad built-in toolset with different emphasis |
 | **Messaging channels** | 5 bundled channels with streaming, media handling, approvals, and a sidebar monitor | Wider channel catalog and gateway focus |
 | **Autonomous workflows** | Step-based workflows with approvals, conditions, triggers, concurrency groups, and safety modes | Strong channel routing and automation, different orchestration model |
-| **Desktop experience** | Native Windows and macOS desktop app with tray, splash, and setup wizard | More developer-first and channel-first in practice |
+| **Desktop experience** | Native Windows and macOS desktop app with tray, splash, and setup wizard; Linux browser-first package with optional native/tray modes | More developer-first and channel-first in practice |
 | **Privacy posture** | All durable state local; no Thoth servers | Self-hostable and privacy-conscious, but with a different operational model |
 
 > **In short:** OpenClaw is an excellent multi-channel gateway for developer-heavy setups. Thoth is optimized for **personal AI sovereignty** — local-first memory, structured knowledge, integrated design tools, configurable self-knowledge, and a native desktop experience that does not require living in a terminal.

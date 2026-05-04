@@ -16,7 +16,7 @@ Thoth is a **local-first AI assistant for personal AI sovereignty**: a desktop a
 
 It runs fully local through [Ollama](https://ollama.com/) with 39 curated tool-calling models, or you can opt into OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, and ChatGPT / Codex when you want frontier reasoning or do not have a GPU. API keys and in-app subscription tokens are stored in the OS credential store when available; Thoth has no account system, server, or telemetry pipeline.
 
-> **🖥️ One-click install on Windows & macOS; browser-first tarball on Linux** — download, run, done. No Docker required. [Get it here.](https://github.com/siddsachar/Thoth/releases)
+> **🖥️ One-click install on Windows & macOS; one-line install on Linux** — download, run, done. No Docker required. [Get it here.](https://github.com/siddsachar/Thoth/releases)
 
 <table align="center">
   <tr>
@@ -57,7 +57,7 @@ Advanced workflows add schedules, webhook triggers, condition branches, approval
 
 ### Native, Multi-Channel, Local-First
 
-Thoth ships as a desktop app for Windows and macOS with one-click installers, tray integration, setup wizard, voice input, local Kokoro TTS, desktop notifications, and 5 bundled messaging channels: Telegram, WhatsApp, Discord, Slack, and SMS. Linux ships as a self-contained XDG user-install tarball that opens in the system browser by default, with native window and tray support available when the required desktop libraries are installed. Channels share media handling, streaming, approvals, health checks, and optional tunnel support.
+Thoth ships as a desktop app for Windows and macOS with one-click installers, tray integration, setup wizard, voice input, local Kokoro TTS, desktop notifications, and 5 bundled messaging channels: Telegram, WhatsApp, Discord, Slack, and SMS. Linux ships through a one-line installer backed by a verified self-contained XDG user-install tarball that opens in the system browser by default, with native window and tray support available when the required desktop libraries are installed. Channels share media handling, streaming, approvals, health checks, and optional tunnel support.
 
 ### Extensible Without Giving Up Control
 
@@ -73,7 +73,7 @@ Plugins add tools and skills through a sandboxed marketplace; MCP servers add ex
 | **Tools** | 30 core tools covering search, browser, shell, filesystem, documents, Gmail, Calendar, X, memory, workflows, tracker, image/video, vision, status, MCP, updates, computation, weather, charts, and system info |
 | **Automation** | Scheduled workflows, step pipelines, conditions, approvals, subtasks, webhooks, task-completion triggers, notifications, channel delivery, run history, and safety modes |
 | **Channels & Voice** | Telegram, WhatsApp, Discord, Slack, SMS, local faster-whisper STT, Kokoro TTS, media intake, reactions, streaming, approval routing, and tunnel manager |
-| **Platform & Extensibility** | Native desktop app, one-click installers, auto-updates, plugin marketplace, MCP client, migration wizard, configurable identity, secure API-key storage, 13 manual skills including Claude Code Delegation, and 18 tool guides |
+| **Platform & Extensibility** | Native desktop app, one-click Windows/macOS installers, one-line Linux installer, auto-updates, plugin marketplace, MCP client, migration wizard, configurable identity, secure API-key storage, 13 manual skills including Claude Code Delegation, and 18 tool guides |
 
 [Detailed architecture and subsystem reference →](docs/ARCHITECTURE.md)
 
@@ -85,7 +85,7 @@ Plugins add tools and skills through a sandboxed marketplace; MCP servers add ex
 
 | | Thoth | OpenClaw |
 |---|---|---|
-| **Getting started** | **One-click installer** (`.exe` / `.dmg`) plus Linux `.tar.gz` with XDG user install. Built-in setup wizard | `npm install -g openclaw@latest` → CLI onboarding. Requires Node.js 24. Windows needs WSL2 (no native Windows support) |
+| **Getting started** | **One-click installer** (`.exe` / `.dmg`) plus a one-line Linux installer backed by a verified XDG `.tar.gz`. Built-in setup wizard | `npm install -g openclaw@latest` → CLI onboarding. Requires Node.js 24. Windows needs WSL2 (no native Windows support) |
 | **Local AI (offline)** | **Local-first** — Ollama with 39 curated models out of the box. Works fully offline. Provider models are opt-in | Cloud-first design — requires an API key to start. Local model support through provider config |
 | **Memory** | **Personal knowledge graph** — 10 entity types, typed directional relations, visual explorer, FAISS semantic search + 1-hop graph expansion, memory decay, orphan repair | Flat markdown files (`MEMORY.md` + daily notes) with semantic search. No structured graph |
 | **Knowledge refinement** | **Dream Cycle** — 5-phase nightly engine: duplicate merging (≥0.93 similarity), description enrichment, stale-confidence decay, relationship inference with hub diversity caps and rejection cache, and actionable insight generation. 3-layer anti-contamination system, dream journal | Dreaming (experimental) — Light/Deep/REM phases that promote short-term signals to long-term memory via scoring thresholds |
@@ -96,7 +96,7 @@ Plugins add tools and skills through a sandboxed marketplace; MCP servers add ex
 | **Tools** | 30 core tools plus auto-generated channel send tools — shell, browser, filesystem, Gmail, Calendar, Designer Studio, Thoth Status, memory graph, MCP external tools, image + video generation, and research tools | ~20 built-in tools — exec, browser, web search, canvas, cron, image/music/video generation |
 | **Messaging channels** | **5 channels** — Telegram, WhatsApp, Discord, Slack, SMS — all with streaming, reactions, media, and approval routing. Auto-generated per-channel tools. Tunnel manager for webhooks | **23+ channels** — WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams, Matrix, IRC, and many more |
 | **Autonomous agents** | **Advanced workflows** — step-based pipelines with conditions, approval gates, webhook triggers, concurrency groups, and per-workflow safety mode. Multiple run in parallel with their own persistent threads | Multi-agent routing with isolated sessions per sender/channel |
-| **Desktop app** | Native window (pywebview) + system tray on **Windows & macOS**; Linux browser-first package with optional native window/tray when desktop deps exist | macOS menu bar app. No native Windows app (WSL2 required). iOS & Android companion apps |
+| **Desktop app** | Native window (pywebview) + system tray on **Windows & macOS**; Linux one-line install with browser-first launch and optional native window/tray when desktop deps exist | macOS menu bar app. No native Windows app (WSL2 required). iOS & Android companion apps |
 | **Designer / Canvas** | Designer Studio for decks, one-pagers, reports, published links, plus Mermaid diagrams and Plotly charts rendered inline | A2UI — agent-driven interactive visual workspace |
 | **Plugins** | Sandboxed plugin marketplace with hot-reload and security scanning | npm plugin ecosystem + ClawHub skill registry. Large community catalog |
 | **Privacy** | All data local. No account, no server, no telemetry. API keys use the OS credential store when available — Thoth has no servers | Self-hosted gateway. Data stays on your machine. Some channel integrations require external services |
