@@ -441,11 +441,24 @@ def get_current_model() -> str:
     return _current_model
 
 
+def _ollama_host_port() -> tuple[str, int]:
+    """Return the TCP host/port configured for the local Ollama daemon."""
+    from urllib.parse import urlparse
+
+    raw = (os.environ.get("OLLAMA_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    parsed = urlparse(raw if "://" in raw else f"//{raw}")
+    host = parsed.hostname or raw
+    try:
+        port = parsed.port or 11434
+    except ValueError:
+        port = 11434
+    return host, port
+
+
 def _ollama_reachable(timeout: float = 1.0) -> bool:
     """Fast TCP probe to check if the Ollama server is listening."""
     import socket
-    host = os.environ.get("OLLAMA_HOST", "127.0.0.1")
-    port = 11434
+    host, port = _ollama_host_port()
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True

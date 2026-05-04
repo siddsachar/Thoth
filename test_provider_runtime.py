@@ -1,4 +1,5 @@
 import sys
+import socket
 from types import ModuleType
 
 import providers.runtime as runtime
@@ -149,6 +150,42 @@ def test_ollama_provider_runtime_constructs_chat_ollama(monkeypatch):
     model = runtime.create_chat_model("qwen3:14b", provider_id="ollama")
 
     assert model.kwargs == {"model": "qwen3:14b", "reasoning": True}
+
+
+def test_ollama_reachable_parses_ollama_host_variants(monkeypatch):
+    import models
+
+    calls = []
+
+    class _FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _fake_create_connection(address, timeout=None):
+        calls.append((address, timeout))
+        return _FakeConnection()
+
+    monkeypatch.setattr(socket, "create_connection", _fake_create_connection)
+
+    cases = [
+        (None, ("127.0.0.1", 11434)),
+        ("127.0.0.1", ("127.0.0.1", 11434)),
+        ("127.0.0.1:11435", ("127.0.0.1", 11435)),
+        ("http://127.0.0.1:11436", ("127.0.0.1", 11436)),
+        ("localhost:notaport", ("localhost", 11434)),
+        ("[::1]:11437", ("::1", 11437)),
+    ]
+    for value, expected_address in cases:
+        if value is None:
+            monkeypatch.delenv("OLLAMA_HOST", raising=False)
+        else:
+            monkeypatch.setenv("OLLAMA_HOST", value)
+        calls.clear()
+        assert models._ollama_reachable(timeout=0.25) is True
+        assert calls == [(expected_address, 0.25)]
 
 
 def test_provider_errors_normalize_unsupported_capability():
