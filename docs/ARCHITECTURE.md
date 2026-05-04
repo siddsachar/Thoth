@@ -147,7 +147,7 @@ The brain model is Thoth's default LLM — the model used for conversations, mem
 
 Thoth is built and tested for local models first. Every feature supports local models, and that remains the priority. Local models already handle tool calling, multi-step reasoning, memory extraction, and long conversations well with a 14B+ model.
 
-Provider models are supported for users without a dedicated GPU, for frontier reasoning on demand, or for trying many providers without downloading large local weights. Thoth supports opt-in provider models through **OpenAI** (direct API), **Anthropic** (Claude), **Google AI** (Gemini), **xAI** (Grok), **OpenRouter** (many third-party models), and **ChatGPT / Codex** (subscription-backed Codex models). Provider connections, health, and credential sources are configured from Settings -> Providers; model catalog browsing, pinning, and defaults live in Settings -> Models.
+Provider models are supported for users without a dedicated GPU, for frontier reasoning on demand, or for trying many providers without downloading large local weights. Thoth supports opt-in provider models through **OpenAI** (direct API), **Anthropic** (Claude), **Google AI** (Gemini), **xAI** (Grok), **OpenRouter** (many third-party models), **ChatGPT / Codex** (subscription-backed Codex models), and Custom/Self-hosted OpenAI-compatible endpoints such as LM Studio, vLLM, LocalAI, or private gateways. Provider connections, health, and credential sources are configured from Settings -> Providers; model catalog browsing, pinning, and defaults live in Settings -> Models.
 
 The `providers/` subsystem now owns provider config, auth metadata, model catalog normalization, runtime construction, display-safe status, and Quick Choices. Existing public functions in `models.py` remain as compatibility facades while provider-backed selection is rolled through the app.
 
@@ -642,7 +642,7 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 - **Native window** — runs in a desktop window via pywebview rather than depending on a browser tab
 - **System tray** — `launcher.py` exposes open and quit controls plus running-state feedback
 - **Splash screen** — Tk-based splash with console fallback during startup
-- **First-launch setup wizard** — guides the user through migration, Local, or Providers setup paths without touching config files
+- **First-launch setup wizard** — guides the user through migration, Local, Providers, or Custom/Self-hosted setup paths without touching config files
 - **Self-contained installers** — Windows and macOS releases bundle dependencies for one-click setup
 - **Auto-restart flow** — closing the native window does not kill the tray-managed app process; reopen is fast
 - **Release pipeline** — build, sign, notarize, and publish automation lives in CI

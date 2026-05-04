@@ -173,12 +173,13 @@ The Inno Setup installer runs these steps:
 2. Follow the wizard — dependencies download and install automatically (5-15 min)
 3. Launch Thoth from Start Menu or Desktop shortcut
 4. The system tray icon appears; the app opens at `http://localhost:8080`
-5. First launch shows a setup wizard — choose **Local** (download an Ollama model) or **Providers** (enter an API key and pick a provider model)
+5. First launch shows a setup wizard — choose **Local** (download an Ollama model), **Providers** (enter an API key and pick a provider model), or **Custom/Self-hosted** (enter an OpenAI-compatible endpoint such as LM Studio, fetch models, and pick a default)
 
 ## Notes
 
 - **CPU-only PyTorch**: `requirements.txt` uses CPU-only torch. Users with NVIDIA GPUs can upgrade to CUDA torch after install.
 - **Ollama is optional**: `install_deps.bat` offers to install Ollama, but it can be skipped for provider-only setups. Thoth works with API-key provider models (OpenAI, Anthropic, Google AI, xAI, OpenRouter) and ChatGPT / Codex subscription models after in-app ChatGPT sign-in.
+- **Custom/self-hosted endpoints**: first-run setup can connect to OpenAI-compatible endpoints such as LM Studio, vLLM, LocalAI, or private gateways. LM Studio's local server commonly uses `http://127.0.0.1:1234/v1`; load the selected model with a larger context window, such as `32768`, so Thoth's agent prompt and enabled tools fit.
 - **Codex credential boundary**: external Codex CLI auth files are metadata/reference only. Direct ChatGPT / Codex runtime in the packaged app requires the in-app ChatGPT sign-in and stores Thoth-owned tokens in the OS credential store.
 - **Launcher**: Uses `launcher.py` (system tray icon + native window + splash screen) instead of running NiceGUI directly. The tray icon shows app status (running/stopped) and provides graceful shutdown.
 - **Uninstall**: Registered with Windows Add/Remove Programs. The uninstaller removes the installation directory but does **not** delete user data in `~/.thoth/` — users can remove it manually if desired.

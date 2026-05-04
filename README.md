@@ -270,7 +270,7 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
 
 > **Works on Apple Silicon (M1/M2/M3/M4) and Intel Macs** (macOS 12+). No terminal, no manual setup — just double-click and go.
 
-> **Using provider models only?** The installer still sets up Ollama by default, but you can skip model downloads. On first launch, choose the **Providers** setup path, enter your API key, and start chatting — no GPU required.
+> **Using provider or custom endpoint models only?** The installer still sets up Ollama by default, but you can skip model downloads. On first launch, choose **Providers** for API-key models or **Custom/Self-hosted** for an OpenAI-compatible endpoint such as LM Studio.
 
 ---
 
@@ -316,7 +316,7 @@ Thoth's agent has access to 30 core tool modules. Many of them expose multiple o
    python app.py
    ```
 
-> **First launch:** A setup wizard lets you choose between **Local** (Ollama) and **Providers** (API key) setup paths. For local, the default brain model (`qwen3:14b`, ~9 GB) is recommended. For Providers, enter your API key (OpenAI, Anthropic, Google AI, xAI, or OpenRouter), pick a default model, and seed Quick Choices for everyday pickers. ChatGPT / Codex sign-in is available after launch in **Settings → Providers**.
+> **First launch:** A setup wizard lets you choose between **Local** (Ollama), **Providers** (API key), and **Custom/Self-hosted** setup paths. For local, the default brain model (`qwen3:14b`, ~9 GB) is recommended. For Providers, enter your API key (OpenAI, Anthropic, Google AI, xAI, or OpenRouter), pick a default model, and seed Quick Choices for everyday pickers. For Custom/Self-hosted, enter an OpenAI-compatible base URL such as LM Studio's `http://127.0.0.1:1234/v1`, leave the API key blank for no-auth local servers, fetch models, and pick a default. ChatGPT / Codex sign-in is available after launch in **Settings → Providers**.
 
 ---
 
@@ -392,13 +392,23 @@ For **Gmail** and **Google Calendar**, you'll need a Google Cloud OAuth `credent
 4. Optional: open **Settings → Providers** to sign in to ChatGPT / Codex for subscription-backed Codex models
 5. Switch models per conversation anytime from the chat header dropdown; raw provider catalogs and pinning live in **Settings → Models**
 
+### Custom/Self-hosted Models
+
+1. Start your OpenAI-compatible server, such as LM Studio, vLLM, LocalAI, or a private gateway
+2. On the setup wizard, choose **Custom/Self-hosted**
+3. Enter the base URL, for example `http://127.0.0.1:1234/v1` for LM Studio's local server
+4. Leave the API key blank for no-auth local servers, or enter the key required by your gateway
+5. Click **Connect & Fetch Models**, choose the model Thoth should use by default, then finish setup
+
+For LM Studio, load the model with a context window large enough for Thoth's agent prompt and enabled tool schemas. A `4096` context can fail before the first chat turn with a misleading prompt-template error such as `No user query found in messages`; `32768` is a practical starting point for normal agent use.
+
 ---
 
 ## 🔒 Privacy & Security — Personal AI Sovereignty
 
 **Local models (default):** All LLM inference runs on your machine via Ollama. Documents, memories, and conversations stored locally in `~/.thoth/`. External network calls only when using online tools (web search, Gmail, Calendar) — each individually disableable. No telemetry, no tracking.
 
-**Provider models (opt-in):** The current conversation plus model-visible tool context and tool results are sent to the selected LLM provider (OpenAI, Anthropic, Google AI, xAI, OpenRouter, or ChatGPT / Codex). Memories, knowledge graph, documents, files, and other conversations never leave your machine unless you explicitly include them in the active conversation or expose them through a tool result. API-key providers connect directly to the provider; ChatGPT / Codex uses your in-app ChatGPT sign-in and ChatGPT subscription/internal Codex backend. Thoth has no servers and no middleman.
+**Provider and custom models (opt-in):** The current conversation plus model-visible tool context and tool results are sent to the selected model endpoint (OpenAI, Anthropic, Google AI, xAI, OpenRouter, ChatGPT / Codex, or your configured OpenAI-compatible custom endpoint). Memories, knowledge graph, documents, files, and other conversations never leave your machine unless you explicitly include them in the active conversation or expose them through a tool result. API-key providers connect directly to the provider; ChatGPT / Codex uses your in-app ChatGPT sign-in and ChatGPT subscription/internal Codex backend; custom endpoints connect directly to the base URL you configure. Thoth has no servers and no middleman.
 
 **Always:** Core and plugin API keys are stored locally in your OS credential store when available, with only masked metadata in Thoth's data folder. No Thoth account required; no sign-up; no server to phone home to. Tools can be individually disabled to control what the agent can access.
 

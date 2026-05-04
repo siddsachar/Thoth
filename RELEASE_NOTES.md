@@ -24,7 +24,7 @@ This release also adds **ChatGPT / Codex** as a distinct subscription-backed pro
 - **Models tab ownership** — model browsing, raw provider catalogs, local Ollama catalog rows, pin/unpin actions, defaults, and Quick Choices now live in **Settings → Models**
 - **Consolidated Model Catalog** — a category-first catalog groups Brain, Vision, Image, and Video-capable rows by provider, with inline actions for pinning, setting defaults, downloading local models, and clearing disabled reasons
 - **Polished Defaults panel** — Brain, Vision, Image, and Video defaults use compact provider/local badges, context controls, enable switches, and empty states that point users to the catalog instead of scattering model controls across tabs
-- **First-run setup alignment** — setup now offers migration before model setup, supports the Providers path for API-key users, and points users to Settings → Models for exact model pinning after launch
+- **First-run setup alignment** — setup now offers migration before model setup, supports Providers for API-key users plus Custom/Self-hosted OpenAI-compatible endpoints such as LM Studio, and points users to Settings → Models for exact model pinning after launch
 
 ### 💬 Picker Unification
 
@@ -81,6 +81,7 @@ This release also adds **ChatGPT / Codex** as a distinct subscription-backed pro
 - **Subscription backend risk** — ChatGPT / Codex uses ChatGPT's subscription/internal Codex backend rather than the public OpenAI API. The endpoint, catalog shape, auth requirements, rate limits, and model availability may change upstream without the same stability guarantees as the public API
 - **Privacy** — when a ChatGPT / Codex model is selected, the current conversation plus model-visible tool context and tool results are sent to ChatGPT / Codex for that turn. Durable Thoth data such as memories, documents, files, and other conversations stay local unless explicitly included in the active conversation or exposed through a tool result
 - **Manual smoke still required** — before publishing installers, run clean-machine Windows/macOS smoke for first launch, Settings → Providers, Settings → Models catalog/pinning/defaults, ChatGPT / Codex sign-in/status, shared model pickers, and a long Designer/browser task with reconnect
+- **LM Studio custom endpoint smoke** — when testing LM Studio through the Custom/Self-hosted setup path, load the selected model with enough context for Thoth's agent prompt and enabled tool schemas. A `4096` context can fail with a misleading prompt-template error such as `No user query found in messages`; `32768` is a practical smoke-test baseline.
 
 ### 📁 Files Changed
 
