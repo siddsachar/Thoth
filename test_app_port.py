@@ -13,10 +13,20 @@ def test_get_app_port_defaults_and_validates_env():
 
 
 def test_launcher_selects_default_port_when_free(monkeypatch):
-    monkeypatch.setattr(launcher, "_is_port_in_use", lambda port: False)
-    monkeypatch.setattr(launcher, "_is_thoth_server", lambda port: False)
+    checked_ports = []
+
+    def fake_port_in_use(port):
+        checked_ports.append(port)
+        return False
+
+    def fake_thoth_server(port):
+        raise AssertionError(f"should not probe Thoth identity when preferred port is free: {port}")
+
+    monkeypatch.setattr(launcher, "_is_port_in_use", fake_port_in_use)
+    monkeypatch.setattr(launcher, "_is_thoth_server", fake_thoth_server)
 
     assert launcher._select_app_port(preferred=8080, max_tries=3) == (8080, False)
+    assert checked_ports == [8080]
 
 
 def test_launcher_reuses_existing_thoth_on_default_port(monkeypatch):
@@ -38,6 +48,13 @@ def test_launcher_skips_foreign_ports_and_picks_next_free(monkeypatch):
     monkeypatch.setattr(launcher, "_is_thoth_server", lambda port: False)
 
     assert launcher._select_app_port(preferred=8080, max_tries=4) == (8082, False)
+
+
+def test_launcher_reuses_existing_thoth_before_next_free(monkeypatch):
+    monkeypatch.setattr(launcher, "_is_port_in_use", lambda port: port in {8080, 8081})
+    monkeypatch.setattr(launcher, "_is_thoth_server", lambda port: port == 8081)
+
+    assert launcher._select_app_port(preferred=8080, max_tries=4) == (8081, True)
 
 
 def test_thoth_process_passes_selected_port_to_app(monkeypatch, tmp_path):

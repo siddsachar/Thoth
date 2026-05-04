@@ -162,7 +162,7 @@ def _has_display_server() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
-def _is_thoth_server(port: int, timeout: float = 0.75) -> bool:
+def _is_thoth_server(port: int, timeout: float = 0.25) -> bool:
     """Return True if *port* is serving this Thoth app."""
     url = f"http://127.0.0.1:{port}/api/launcher-ping"
     try:
@@ -193,12 +193,16 @@ def _find_free_port(start: int = _PORT, max_tries: int = 50) -> int:
 
 def _select_app_port(preferred: int = _PORT, max_tries: int = 50) -> tuple[int, bool]:
     """Choose the app port and whether it belongs to an existing Thoth."""
-    existing = _find_existing_thoth_port(preferred, max_tries=max_tries)
-    if existing is not None:
-        return existing, True
     if not _is_port_in_use(preferred):
         return preferred, False
-    return _find_free_port(preferred + 1, max_tries=max(1, max_tries - 1)), False
+    if _is_thoth_server(preferred):
+        return preferred, True
+    for port in range(preferred + 1, preferred + max_tries):
+        if not _is_port_in_use(port):
+            return port, False
+        if _is_thoth_server(port):
+            return port, True
+    raise RuntimeError(f"No free Thoth app port found in {preferred}-{preferred + max_tries - 1}")
 
 
 # ── NiceGUI subprocess management ───────────────────────────────────────────
