@@ -568,6 +568,40 @@ def test_buddy_hatch_motion_specs_use_provider_supported_duration():
     assert all(spec.duration_seconds >= 5 for spec in hatch_mod.MOTION_CLIP_SPECS)
 
 
+def test_buddy_hatch_motion_prompt_keeps_avatar_framing_stable():
+    import buddy.hatch as hatch_mod
+
+    prompt = hatch_mod._buddy_motion_prompt("A tiny dog named Honey", "idle")
+
+    assert "single identity and framing reference" in prompt
+    assert "Lock the virtual camera" in prompt
+    assert "no zooming" in prompt
+    assert "fit inside a rounded avatar border" in prompt
+    assert "at least 18 percent empty margin" in prompt
+    assert "no flicker" in prompt
+    assert "no background pulsing" in prompt
+    assert "no size changes" in prompt
+
+
+def test_buddy_hatch_can_switch_user_pack_back_to_still_only(monkeypatch, tmp_path):
+    import buddy.assets as assets_mod
+    import buddy.hatch as hatch_mod
+
+    monkeypatch.setattr(assets_mod, "_BUDDY_STATIC_DIR", tmp_path / "buddy_static")
+    monkeypatch.setattr(assets_mod, "_USER_PACKS_DIR", tmp_path / "buddy_static" / "packs")
+
+    preview = tmp_path / "preview.png"
+    preview.write_bytes(b"PNG")
+    pack_id = hatch_mod.use_hatch_still_only("hatch-123", preview, prompt="A tiny dog named Honey")
+
+    assert pack_id == "hatch-123"
+    pack = assets_mod.load_buddy_pack(pack_id)
+    assert pack.runtime == "generated_still"
+    assert pack.status == "available"
+    assert pack.name == "Honey"
+    assert not pack.motion_clips
+
+
 def test_buddy_brain_decays_stale_event_to_idle(monkeypatch):
     import buddy.brain as brain_mod
     from buddy.brain import BuddyBrain

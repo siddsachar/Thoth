@@ -22,6 +22,7 @@ from buddy.hatch import (
     generate_hatch_buddy,
     generate_hatch_motion_pack,
     motion_clip_specs,
+    use_hatch_still_only,
 )
 
 _BUDDY_HEAD = """
@@ -1278,8 +1279,50 @@ def build_buddy_settings_tab(_reopen=None) -> None:
         finally:
             retry_motion_button.props(remove="loading")
 
+    def _use_still_only() -> None:
+        latest_cfg = get_buddy_config()
+        pack_id = str(latest_cfg.get("pack_id") or selected_pack_id.get("value") or "")
+        preview_path = str(latest_cfg.get("latest_hatch_preview") or latest_cfg.get("active_hatch_preview") or "")
+        if not preview_path:
+            try:
+                pack = load_buddy_pack(pack_id)
+                if pack.id.startswith("hatch-") and pack.preview_path.exists():
+                    preview_path = str(pack.preview_path)
+            except Exception:
+                preview_path = ""
+        if not pack_id.startswith("hatch-") or not preview_path:
+            ui.notify("Still-only mode is available for generated Hatch looks", type="warning")
+            return
+        try:
+            still_pack_id = use_hatch_still_only(
+                pack_id,
+                preview_path,
+                prompt=str(latest_cfg.get("hatch_generation_prompt") or latest_cfg.get("hatch_prompt") or prompt.value or ""),
+            )
+        except Exception as exc:
+            ui.notify(str(exc), type="negative")
+            return
+        latest_cfg["pack_id"] = still_pack_id
+        for key in (
+            "active_hatch_motion",
+            "active_hatch_motion_pack",
+            "active_hatch_motion_clips",
+            "latest_hatch_motion",
+            "latest_hatch_motion_pack",
+            "latest_hatch_motion_error",
+        ):
+            latest_cfg.pop(key, None)
+        save_buddy_config(latest_cfg)
+        selected_pack_id["value"] = still_pack_id
+        hatch_motion.set_content("")
+        hatch_status.set_text("Using current Buddy art as a still image")
+        _refresh_existing_buddy_surfaces()
+        _apply_buddy_surface_settings(latest_cfg)
+        ui.notify("Using still image only", type="positive")
+
     with ui.row().classes("items-center justify-end gap-2 w-full q-mt-md"):
         ui.button("Save", icon="save", on_click=_save).props("unelevated no-caps color=primary")
+        ui.button("Use still only", icon="image", on_click=_use_still_only).props("outline no-caps")
         retry_motion_button = ui.button("Retry motion", icon="movie", on_click=_retry_motion).props("outline no-caps")
         hatch_button = ui.button("Generate full Buddy", icon="auto_fix_high", on_click=_hatch).props("outline no-caps")
 

@@ -193,15 +193,20 @@ def _buddy_motion_prompt(prompt: str, clip_id: str = "idle") -> str:
     spec = _motion_clip_spec(clip_id)
     return (
         f"Animate this exact Buddy character as the {spec.label} state in a seamless app companion loop. "
-        "Keep the same character identity and centered composition from the source image. "
+        "Use the source image as the single identity and framing reference for the whole clip. "
+        "Keep the same character identity, proportions, silhouette, costume details, centered composition, "
+        "and apparent scale from the source image. Lock the virtual camera: no zooming, cropping, panning, "
+        "reframing, lens breathing, or scale pulsing. "
         f"Action direction: {spec.cue}. "
         "Keep the source image's theme, palette, materials, and personality; do not add ancient, mystical, ink, gold, teal, glyph, or Thoth-like motifs unless they are already part of the source design. "
-        "Keep the character compact enough to read at sidebar size. "
+        "Keep the character compact enough to read at sidebar size and fit inside a rounded avatar border. "
         "Keep at least 18 percent empty margin around the full character for the entire clip, "
         "with no body, robe, feet, glow, or shadow touching the frame edge. Preserve a flat solid "
         "keyable background that is clearly distinct from the character, and keep a readable rim "
-        "light or outline around dark body edges. No scene cuts, no text, no logo, no extra "
-        "characters, no dramatic camera movement, no background clutter. "
+        "light or outline around dark body edges. Use only small, controlled character motion; no flicker, "
+        "no warping, no morphing, no identity drift, no jitter, no background pulsing, no exposure flashing, "
+        "and no size changes. "
+        "No scene cuts, no text, no logo, no extra characters, no dramatic camera movement, no background clutter. "
         "The motion should feel alive, loopable, and suitable for a small sidebar avatar. User concept: "
         f"{prompt}"
     )
@@ -346,6 +351,28 @@ def _install_hatch_motion_pack(
         pack_manifest["clips"][str(clip_id)] = pack_entry
     (pack_dir / "manifest.json").write_text(json.dumps(pack_manifest, indent=2, sort_keys=True), encoding="utf-8")
     return safe_pack_id
+
+
+def use_hatch_still_only(
+    pack_id: str,
+    preview_path: str | pathlib.Path,
+    *,
+    prompt: str = "",
+) -> str:
+    """Keep a generated Hatch pack selectable, but render it as a still image only."""
+
+    safe_pack_id = _safe_pack_id(pack_id, "")
+    if not safe_pack_id.startswith("hatch-"):
+        raise ValueError("Only generated Hatch packs can be switched to still-only mode")
+    source_preview = pathlib.Path(preview_path).expanduser().resolve()
+    if not source_preview.exists() or source_preview.stat().st_size == 0:
+        raise ValueError("Buddy art preview is missing or empty")
+    return _install_hatch_still_pack(
+        source_preview,
+        pack_id=safe_pack_id,
+        prompt=prompt,
+        created_at=time.time(),
+    )
 
 
 def activate_hatch_art(preview_path: str | pathlib.Path) -> pathlib.Path:
