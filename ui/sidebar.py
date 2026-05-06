@@ -23,6 +23,22 @@ logger = logging.getLogger(__name__)
 # Module-level so filter choice survives rebuild_main() re-renders.
 _SIDEBAR_FILTER: str = "all"  # one of: "all", "chat", "designer", "workflow"
 _MODAL_FILTER: str = "all"
+_SIDEBAR_AVATAR_CSS = """
+.sb-avatar { position: relative; }
+.sb-idle { color: #64748b; }
+.sb-streaming { color: #2563eb; }
+.sb-error { color: #dc2626; }
+.sb-voice { color: #0f766e; }
+.sb-task { color: #7c3aed; }
+.sb-approval { color: #d97706; }
+.sb-done { color: #16a34a; }
+.sb-tts { color: #0891b2; }
+.sb-state-label { font-size: 11px; }
+.sb-ring-spin { animation: sb-ring-spin 1.1s linear infinite; }
+@keyframes sb-ring-spin { to { transform: rotate(360deg); } }
+"""
+
+
 def build_sidebar(
     state: AppState,
     p: P,

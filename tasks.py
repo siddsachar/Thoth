@@ -1276,6 +1276,11 @@ def run_task_background(
         safety_mode = get_task_safety_mode(task)
         effective_tool_names = enabled_tool_names
 
+        # Skills override — set on thread so the pre-model hook picks it up
+        if task.get("skills_override") is not None:
+            from threads import set_thread_skills_override
+            set_thread_skills_override(thread_id, task["skills_override"])
+
         # Apply tools_override (explicit selection from UI)
         if task.get("tools_override"):
             override_set = set(task["tools_override"])
@@ -1299,6 +1304,47 @@ def run_task_background(
                 "recursion_limit": RECURSION_LIMIT_TASK,
             }
 
+            def _format_interrupt_details(interrupts: list[dict]) -> list[str]:
+                details = []
+                for intr in interrupts:
+                    tool_name = intr.get("tool", "unknown tool")
+                    desc = intr.get("description", "")
+                    details.append(desc or f"Tool '{tool_name}' needs approval")
+                return details
+
+            def _create_graph_interrupt_approval(step_id: str, approval_msg: str) -> tuple[str, str]:
+                return create_approval_request(
+                    run_id=run_id, task_id=task_id,
+                    step_id=step_id, message=approval_msg,
+                )
+
+            def _save_graph_interrupt_state(
+                current_step_index: int,
+                current_step_outputs: dict,
+                current_config: dict,
+                resume_token: str,
+            ) -> None:
+                _save_pipeline_state(
+                    run_id=run_id,
+                    task_id=task_id,
+                    thread_id=thread_id,
+                    current_step_index=current_step_index,
+                    step_outputs=current_step_outputs,
+                    config=current_config,
+                    resume_token=resume_token,
+                    status="paused",
+                    graph_interrupted=True,
+                )
+
+            def _notify_approval_channels(
+                approval_id: str,
+                resume_token: str,
+                approval_msg: str,
+            ) -> None:
+                _push_approval_to_channels(
+                    task, approval_id, resume_token, approval_msg,
+                )
+
             # Model override
             if task.get("model_override"):
                 config["configurable"]["model_override"] = task["model_override"]
@@ -1306,11 +1352,6 @@ def run_task_background(
                 # while the task is still running.
                 from threads import _set_thread_model_override
                 _set_thread_model_override(thread_id, task["model_override"])
-
-            # Skills override — set on thread so the pre-model hook picks it up
-            if task.get("skills_override") is not None:
-                from threads import set_thread_skills_override
-                set_thread_skills_override(thread_id, task["skills_override"])
 
             step_index = start_step
             while step_index < total:
@@ -1451,31 +1492,16 @@ def run_task_background(
                                     break
 
                                 # Build approval message from actual tool details
-                                details = []
-                                for intr in interrupts:
-                                    tool_name = intr.get("tool", "unknown tool")
-                                    desc = intr.get("description", "")
-                                    details.append(desc or f"Tool '{tool_name}' needs approval")
+                                details = _format_interrupt_details(interrupts)
                                 approval_msg = (
                                     f"Step {step_index + 1}/{total}: "
                                     + "; ".join(details)
                                 )
-                                resume_token, approval_req_id = create_approval_request(
-                                    run_id=run_id,
-                                    task_id=task_id,
-                                    step_id=step_id,
-                                    message=approval_msg,
+                                resume_token, approval_req_id = _create_graph_interrupt_approval(
+                                    step_id, approval_msg,
                                 )
-                                _save_pipeline_state(
-                                    run_id=run_id,
-                                    task_id=task_id,
-                                    thread_id=thread_id,
-                                    current_step_index=step_index,
-                                    step_outputs=step_outputs,
-                                    config=config,
-                                    resume_token=resume_token,
-                                    status="paused",
-                                    graph_interrupted=True,
+                                _save_graph_interrupt_state(
+                                    step_index, step_outputs, config, resume_token,
                                 )
                                 paused = True
                                 logger.info(
@@ -1578,31 +1604,16 @@ def run_task_background(
                                             step_succeeded = True
                                             break
 
-                                        details = []
-                                        for intr in interrupts:
-                                            tool_name = intr.get("tool", "unknown tool")
-                                            desc = intr.get("description", "")
-                                            details.append(desc or f"Tool '{tool_name}' needs approval")
+                                        details = _format_interrupt_details(interrupts)
                                         approval_msg = (
                                             f"Step {step_index + 1}/{total}: "
                                             + "; ".join(details)
                                         )
-                                        resume_token, approval_req_id = create_approval_request(
-                                            run_id=run_id,
-                                            task_id=task_id,
-                                            step_id=step_id,
-                                            message=approval_msg,
+                                        resume_token, approval_req_id = _create_graph_interrupt_approval(
+                                            step_id, approval_msg,
                                         )
-                                        _save_pipeline_state(
-                                            run_id=run_id,
-                                            task_id=task_id,
-                                            thread_id=thread_id,
-                                            current_step_index=step_index,
-                                            step_outputs=step_outputs,
-                                            config=config,
-                                            resume_token=resume_token,
-                                            status="paused",
-                                            graph_interrupted=True,
+                                        _save_graph_interrupt_state(
+                                            step_index, step_outputs, config, resume_token,
                                         )
                                         paused = True
                                         logger.info(
@@ -1700,8 +1711,8 @@ def run_task_background(
                         "Task '%s' paused at step %d/%d for approval (token=%s…)",
                         task["name"], step_index + 1, total, resume_token[:8],
                     )
-                    _push_approval_to_channels(
-                        task, approval_req_id, resume_token, approval_msg,
+                    _notify_approval_channels(
+                        approval_req_id, resume_token, approval_msg,
                     )
                     # Notify user an approval is pending
                     if notification:
@@ -2710,6 +2721,7 @@ def respond_to_approval(resume_token: str, approved: bool,
                          note: str = "",
                          source: str = "web") -> bool:
     """Approve or deny a pending request. Returns True if found and processed."""
+    resume_pipeline = _resume_pipeline
     conn = _get_conn()
     row = conn.execute(
         "SELECT * FROM approval_requests WHERE resume_token = ? AND status = 'pending'",
@@ -2769,7 +2781,7 @@ def respond_to_approval(resume_token: str, approved: bool,
     # Resume the pipeline — for graph-interrupted steps, denial resumes
     # the graph with approved=False so the tool returns "cancelled" and
     # the step (and subsequent steps) can still complete.
-    _resume_pipeline(resume_token, approved=approved)
+    resume_pipeline(resume_token, approved=approved)
     return True
 
 
@@ -3056,6 +3068,18 @@ def _resume_pipeline(resume_token: str, approved: bool = True) -> None:
     paused_step = steps[paused_step_index] if paused_step_index < len(steps) else {}
     paused_step_type = paused_step.get("type", "prompt")
 
+    if state.get("graph_interrupted") == "true":
+        _update_pipeline_status(state["run_id"], "running")
+        _resume_graph_interrupted(
+            state=state,
+            task=task,
+            thread_id=thread_id,
+            enabled_tool_names=enabled,
+            paused_step_index=paused_step_index,
+            approved=approved,
+        )
+        return
+
     # For explicit approval steps, denial stops the pipeline
     # unless an if_denied jump target is configured.
     if paused_step_type == "approval" and not approved:
@@ -3127,18 +3151,6 @@ def _resume_pipeline(resume_token: str, approved: bool = True) -> None:
         step_outputs = state.get("step_outputs", {})
         step_outputs[paused_step.get("id", f"step_{paused_step_index+1}")] = "approved"
         resume_run = state["run_id"]
-    elif state.get("graph_interrupted") == "true":
-        # Graph is paused mid-step by an interrupt() call.
-        # Resume the LangGraph graph in a background thread.
-        _resume_graph_interrupted(
-            state=state,
-            task=task,
-            thread_id=thread_id,
-            enabled_tool_names=enabled,
-            paused_step_index=paused_step_index,
-            approved=approved,
-        )
-        return
     else:
         next_step = paused_step_index
         step_outputs = state.get("step_outputs", {})
