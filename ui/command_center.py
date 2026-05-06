@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from nicegui import ui
-from ui.timer_utils import safe_timer
+from ui.timer_utils import defer_ui, safe_timer
 
 from ui.state import AppState, P, _active_generations
 
@@ -449,7 +449,7 @@ def build_command_center(
                         )
                         rebuild_thread_list()
                         _refresh_task_options()
-                        ui.timer(0.5, _rebuild_live, once=True)
+                        defer_ui(_rebuild_live, delay=0.5)
 
                     ui.button(
                         "▶ Run", on_click=_run_selected
@@ -553,8 +553,8 @@ def build_command_center(
                                 )
                                 ui.notify("🔄 Retrying…", type="positive")
                                 rebuild_thread_list()
-                                ui.timer(0.5, _rebuild_live, once=True)
-                                ui.timer(1.0, _rebuild_recent, once=True)
+                                defer_ui(_rebuild_live, delay=0.5)
+                                defer_ui(_rebuild_recent, delay=1.0)
 
                             ui.button(
                                 icon="refresh", on_click=_retry

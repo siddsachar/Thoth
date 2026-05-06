@@ -1552,6 +1552,7 @@ class WhatsAppChannel(Channel):
     def build_custom_ui(self, container) -> None:
         """Show live QR code in the settings panel when authenticating."""
         from nicegui import ui
+        from ui.timer_utils import safe_timer
 
         with container:
             qr_container = ui.column().classes(
@@ -1626,7 +1627,7 @@ class WhatsAppChannel(Channel):
         ).props("flat dense size=sm").classes("text-grey-5")
 
         _refresh_qr()
-        ui.timer(2.0, _refresh_qr)
+        safe_timer(2.0, _refresh_qr)
 
 
 # ──────────────────────────────────────────────────────────────────────

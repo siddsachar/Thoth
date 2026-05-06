@@ -8,6 +8,8 @@ from typing import Any, Callable
 
 from nicegui import run, ui
 
+from ui.timer_utils import defer_ui
+
 from mcp_client import config as mcp_config
 from mcp_client.conflicts import conflicts_for_entry, conflicts_for_server, requires_manual_tool_selection, unique_server_name
 from mcp_client.marketplace import MarketplaceEntry, MarketplaceSearchResult, entry_to_server_config, search_marketplace_with_status
@@ -199,7 +201,7 @@ def build_mcp_settings_tab(reopen: Callable[[str], None] | None = None) -> None:
 
     def _refresh_soon(delay: float = 1.0):
         if reopen:
-            ui.timer(delay, lambda: reopen("MCP"), once=True)
+            defer_ui(lambda: reopen("MCP"), delay=delay)
 
     cfg = mcp_config.get_config()
     status = get_status_summary()

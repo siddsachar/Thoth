@@ -15,6 +15,7 @@ from nicegui import run, ui
 
 from ui.state import AppState, P
 from ui.constants import welcome_message, EXAMPLE_PROMPTS
+from ui.timer_utils import defer_ui
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +296,7 @@ def build_home(
                                             type="positive",
                                         )
                                         rebuild_thread_list()
-                                        ui.timer(0.3, _refresh_home_tiles, once=True)
+                                        defer_ui(_refresh_home_tiles, delay=0.3)
 
                                     _running_tid = get_running_task_thread(tk["id"])
                                     if _running_tid:

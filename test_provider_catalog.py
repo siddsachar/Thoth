@@ -1,6 +1,6 @@
 from providers.capabilities import model_supports_surface
 from providers.catalog import classify_model_capabilities, get_provider_definition, infer_provider_id, legacy_cache_to_model_infos, model_info_to_cache_entry
-from providers.model_catalog import build_model_catalog_rows, rows_for_surface
+from providers.model_catalog import CatalogModelRow, build_model_catalog_rows, rows_for_surface
 from providers.models import ModelInfo, TransportMode
 from providers.ollama import (
     extract_ollama_library_family_ids,
@@ -204,6 +204,38 @@ def test_model_catalog_splits_media_from_chat_and_preserves_pins(monkeypatch):
     assert "image" in by_id["gpt-image-1"].pinned_surfaces
     assert "chat" in by_id["gpt-4o"].default_surfaces
     assert "image" in by_id["gpt-image-1"].default_surfaces
+
+
+def test_model_catalog_ui_filters_and_bounds_large_provider_groups():
+    from ui.model_catalog import CATALOG_PROVIDER_ROW_LIMIT, _filter_catalog_rows, _visible_provider_rows
+
+    rows = [
+        CatalogModelRow(
+            provider_id="openai",
+            provider_display_name="OpenAI API",
+            model_id=f"gpt-large-{idx}",
+            display_name=f"GPT Large {idx}",
+            categories=("chat",),
+        )
+        for idx in range(CATALOG_PROVIDER_ROW_LIMIT + 5)
+    ]
+    rows.append(
+        CatalogModelRow(
+            provider_id="google",
+            provider_display_name="Google AI",
+            model_id="gemini-vision-special",
+            display_name="Gemini Vision Special",
+            categories=("vision",),
+        )
+    )
+
+    openai_chat_rows = _filter_catalog_rows(rows, surface="chat", provider="openai")
+    special_vision_rows = _filter_catalog_rows(rows, surface="vision", query="special")
+
+    assert len(openai_chat_rows) == CATALOG_PROVIDER_ROW_LIMIT + 5
+    assert len(_visible_provider_rows(openai_chat_rows, CATALOG_PROVIDER_ROW_LIMIT)) == CATALOG_PROVIDER_ROW_LIMIT
+    assert _visible_provider_rows(openai_chat_rows, -1) == []
+    assert [row.model_id for row in special_vision_rows] == ["gemini-vision-special"]
 
 
 def test_model_catalog_includes_downloadable_ollama_rows(monkeypatch):

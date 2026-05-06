@@ -20,6 +20,8 @@ import logging
 
 from nicegui import ui
 
+from ui.timer_utils import safe_timer
+
 logger = logging.getLogger(__name__)
 
 
@@ -232,7 +234,7 @@ def build_terminal_panel(p, state, tool_registry) -> None:
         except Exception:
             pass
 
-    ui.timer(5.0, _update_status_pill)
+    safe_timer(5.0, _update_status_pill)
 
 
 def _wire_pty(p) -> None:

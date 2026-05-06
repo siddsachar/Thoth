@@ -49,6 +49,7 @@ if _app_dir not in sys.path:
 
 from nicegui import ui, app, run
 from app_port import THOTH_HOST_ENV, get_app_port
+from ui.timer_utils import deactivate_on_disconnect, defer_ui, safe_timer
 
 _APP_PORT = get_app_port()
 _APP_HOST = os.environ.get(THOTH_HOST_ENV) or None
@@ -514,7 +515,7 @@ async def index():
                 _poll_timer.deactivate()
                 ui.navigate.to("/")
 
-        _poll_timer = ui.timer(0.3, _poll_ready)
+        _poll_timer = safe_timer(0.3, _poll_ready)
         return
 
     # ── Startup warnings ─────────────────────────────────────────────────
@@ -744,13 +745,10 @@ async def index():
                 logger.exception("_rebuild_main hydration failed")
 
         # 0.01 s is short enough to feel instant but long enough to let
-        # the browser paint the skeleton frame.  The timer must be
-        # created inside a live slot — when this is called from a click
-        # handler whose own element is being torn down (e.g. a gallery
-        # card invoking ``_rebuild_main``), the ambient slot is already
-        # gone.  Anchor the timer to ``p.main_col`` which is stable.
-        with p.main_col:
-            ui.timer(0.01, _hydrate, once=True)
+        # the browser paint the skeleton frame. Use a deferred task
+        # instead of a one-shot NiceGUI timer so a stale rebuild cannot
+        # leave a timer bound to a deleted parent slot.
+        defer_ui(_hydrate)
 
     # ── Interrupt dialog ─────────────────────────────────────────────────
     show_interrupt = build_interrupt_dialog(state, p, cb)
@@ -842,9 +840,10 @@ async def index():
         if p.token_bar:
             p.token_bar.value = pct
 
-    ui.timer(1.0, _poll_notifications)
-    ui.timer(0.3, _poll_voice)
-    ui.timer(5.0, _update_token_counter)
+    _notification_timer = safe_timer(1.0, _poll_notifications)
+    _voice_timer = safe_timer(0.3, _poll_voice)
+    _token_timer = safe_timer(5.0, _update_token_counter)
+    deactivate_on_disconnect(_notification_timer, _voice_timer, _token_timer)
 
     # ── Build initial view ───────────────────────────────────────────────
     _rebuild_main()

@@ -18,6 +18,7 @@ from nicegui import events, run, ui
 from ui.state import AppState, P, _active_generations
 from ui.constants import ALLOWED_UPLOAD_SUFFIXES, welcome_message, EXAMPLE_PROMPTS
 from ui.render import render_image_with_save
+from ui.timer_utils import defer_ui
 
 logger = logging.getLogger(__name__)
 
@@ -400,8 +401,10 @@ def build_chat(
             }})()""")
 
     # If there are leftover messages, stream them into the container
-    # in small chunks via chained ui.timer(once=True).  Each timer
-    # yields to the event loop so the UI stays responsive.  Finalize
+    # in small deferred chunks. Each deferred task yields to the event
+    # loop so the UI stays responsive without leaving NiceGUI timer
+    # elements attached to containers that can be deleted on navigation.
+    # Finalize
     # runs after the last chunk so reattach / onboarding land at the
     # bottom of the chat.
     if _remaining_msgs:
@@ -419,10 +422,10 @@ def build_chat(
                 return
             _chunk_state["idx"] = end
             if end < len(_remaining_msgs):
-                ui.timer(0.01, _render_next_chunk, once=True)
+                defer_ui(_render_next_chunk)
             else:
                 _finalize_after_messages()
-        ui.timer(0.01, _render_next_chunk, once=True)
+        defer_ui(_render_next_chunk)
     else:
         _finalize_after_messages()
 

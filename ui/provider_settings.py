@@ -4,6 +4,8 @@ import json
 
 from nicegui import run, ui
 
+from ui.timer_utils import defer_ui
+
 
 def _source_label(source: str) -> str:
     labels = {
@@ -84,7 +86,7 @@ def build_provider_summary_cards() -> None:
             ui.notify("Referenced existing Codex login", type="positive")
         else:
             ui.notify("No Codex auth cache found to reference", type="warning")
-        ui.timer(0.01, _load, once=True)
+        defer_ui(_load)
 
     async def _connect_codex_login() -> None:
         from providers.codex import start_codex_device_flow
@@ -142,7 +144,7 @@ def build_provider_summary_cards() -> None:
                     check_note.dismiss()
                     dialog.close()
                     ui.notify("ChatGPT / Codex connected", type="positive")
-                    ui.timer(0.01, _load, once=True)
+                    defer_ui(_load)
 
                 with ui.row().classes("w-full items-center justify-end gap-2"):
                     ui.button("Cancel", icon="close", on_click=dialog.close).props("flat dense")
@@ -154,7 +156,7 @@ def build_provider_summary_cards() -> None:
 
         disconnect_codex_metadata()
         ui.notify("Disconnected Thoth Codex metadata", type="info")
-        ui.timer(0.01, _load, once=True)
+        defer_ui(_load)
 
     def _render_row(card: dict) -> None:
         source = str(card.get("source") or "")
@@ -186,7 +188,7 @@ def build_provider_summary_cards() -> None:
                     ui.button(icon="link", on_click=_reference_codex_login).props("flat dense round size=sm").tooltip("Reference existing Codex CLI login")
                 if codex_actions.get("can_disconnect"):
                     ui.button(icon="link_off", on_click=_disconnect_codex).props("flat dense round size=sm color=negative").tooltip("Disconnect Thoth Codex metadata")
-                ui.button(icon="refresh", on_click=lambda: ui.timer(0.01, _load, once=True)).props("flat dense round size=sm").tooltip("Refresh status")
+                ui.button(icon="refresh", on_click=lambda: defer_ui(_load)).props("flat dense round size=sm").tooltip("Refresh status")
 
     def _render(cards: list[dict]) -> None:
         container.clear()
@@ -226,13 +228,13 @@ def build_provider_summary_cards() -> None:
             container.clear()
             with container:
                 ui.label(f"Could not load provider status: {exc}").classes("text-warning text-sm")
-                ui.button(icon="refresh", on_click=lambda: ui.timer(0.01, _load, once=True)).props("flat dense round size=sm").tooltip("Retry")
+                ui.button(icon="refresh", on_click=lambda: defer_ui(_load)).props("flat dense round size=sm").tooltip("Retry")
 
     with container:
         with ui.row().classes("items-center gap-2 text-grey-6 text-sm"):
             ui.spinner(size="sm")
             ui.label("Preparing provider status...")
-    ui.timer(0.01, _load, once=True)
+    defer_ui(_load)
 
 
 def build_custom_endpoints_section(on_change=None) -> None:

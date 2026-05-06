@@ -18,6 +18,7 @@ from nicegui import events, run, ui
 from ui.state import AppState, P
 from ui.constants import ICON_OPTIONS
 from ui.helpers import browse_folder, browse_file
+from ui.timer_utils import defer_ui
 
 logger = logging.getLogger(__name__)
 
@@ -887,14 +888,14 @@ def open_settings(
                 container.clear()
                 with container:
                     ui.label(f"Could not load model settings: {exc}").classes("text-warning text-sm")
-                    ui.button(icon="refresh", on_click=lambda: ui.timer(0.01, _load, once=True)).props("flat dense round size=sm").tooltip("Retry")
+                    ui.button(icon="refresh", on_click=lambda: defer_ui(_load)).props("flat dense round size=sm").tooltip("Retry")
 
         with container:
             ui.label("🤖 Models").classes("text-h6")
             with ui.row().classes("items-center gap-2 text-grey-6 text-sm"):
                 ui.spinner(size="sm")
                 ui.label("Preparing model settings...")
-        ui.timer(0.01, _load, once=True)
+        defer_ui(_load)
 
     # ── Providers Tab ────────────────────────────────────────────────
 

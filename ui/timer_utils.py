@@ -92,6 +92,66 @@ def safe_timer(
                 logger.exception("safe_timer callback raised")
 
     wrapper = _async_wrapper if asyncio.iscoroutinefunction(callback) else _sync_wrapper
-    t = ui.timer(interval, wrapper, once=once, active=active)
+    try:
+        client = ui.context.client
+    except Exception:
+        client = None
+    if client is not None:
+        with client:
+            t = ui.timer(interval, wrapper, once=once, active=active)
+    else:
+        t = ui.timer(interval, wrapper, once=once, active=active)
     timer_ref["t"] = t
+    deactivate_on_disconnect(t)
     return t
+
+
+def defer_ui(callback: Callable[..., Any], *, delay: float = 0.01) -> asyncio.Task | None:
+    """Run UI work shortly without creating a NiceGUI timer element.
+
+    This is useful for one-shot rebuild/load work inside dialogs or
+    containers that may be closed before a ``ui.timer(..., once=True)``
+    would fire. NiceGUI resolves a timer's parent slot before invoking
+    its callback; if that parent slot has been deleted, the callback
+    wrapper never gets a chance to catch the benign error.
+    """
+
+    async def _runner() -> None:
+        if delay > 0:
+            await asyncio.sleep(delay)
+        try:
+            result = callback()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:
+            if _is_benign_dead_ui_error(exc):
+                logger.debug("defer_ui: skipped after dead-UI error: %s", exc)
+            else:
+                logger.exception("defer_ui callback raised")
+
+    try:
+        return asyncio.create_task(_runner())
+    except RuntimeError:
+        return None
+
+
+def deactivate_on_disconnect(*timers: ui.timer) -> None:
+    """Deactivate timers when the current NiceGUI client disconnects."""
+
+    if not timers:
+        return
+
+    def _cleanup() -> None:
+        for timer in timers:
+            try:
+                timer.deactivate()
+            except Exception:
+                try:
+                    timer.cancel(with_current_invocation=True)
+                except Exception:
+                    pass
+
+    try:
+        ui.context.client.on_disconnect(_cleanup)
+    except Exception:
+        pass

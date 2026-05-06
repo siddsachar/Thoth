@@ -14,6 +14,8 @@ SURFACE_LABELS = {
     "video": "Video",
 }
 
+CATALOG_PROVIDER_ROW_LIMIT = 80
+
 
 def build_model_catalog_section(
     rows: list[CatalogModelRow],
@@ -22,14 +24,16 @@ def build_model_catalog_section(
     on_download: Callable[[CatalogModelRow], object] | None = None,
     on_change: Callable[[], None] | None = None,
 ) -> None:
-    state = {"surface": "chat", "query": "", "provider": ""}
+    state = {"surface": "chat", "query": "", "provider": "", "catalog_open": False}
     pinned_by_ref = {row.selection_ref: set(row.pinned_surfaces) for row in rows}
     defaults_by_ref = {row.selection_ref: set(row.default_surfaces) for row in rows}
+    visible_limits: dict[tuple[str, str, str, str], int] = {}
     provider_options = {"": "All providers"}
     for row in rows:
         provider_options.setdefault(row.provider_id, row.provider_display_name or row.provider_id)
 
-    with ui.expansion("Model Catalog", icon="view_list", value=False).classes("w-full"):
+    catalog_expansion = ui.expansion("Model Catalog", icon="view_list", value=False).classes("w-full")
+    with catalog_expansion:
         ui.label("Browse every discovered model by category, then provider. Pin models here to make them available in everyday pickers.").classes("text-grey-6 text-sm")
         with ui.row().classes("items-center gap-2 w-full"):
             category = ui.toggle(SURFACE_LABELS, value="chat").props("dense unelevated toggle-color=primary")
@@ -39,40 +43,81 @@ def build_model_catalog_section(
 
         def _refresh() -> None:
             container.clear()
+            if not state["catalog_open"]:
+                return
             surface = str(state["surface"] or "chat")
             query = str(state["query"] or "").strip().lower()
             provider = str(state["provider"] or "")
-            surface_rows = rows_for_surface(rows, surface)
-            if provider:
-                surface_rows = [row for row in surface_rows if row.provider_id == provider]
-            if query:
-                surface_rows = [
-                    row for row in surface_rows
-                    if query in " ".join([row.display_name, row.model_id, row.provider_display_name, row.provider_id]).lower()
-                ]
+            surface_rows = _filter_catalog_rows(rows, surface=surface, query=query, provider=provider)
             with container:
                 if not surface_rows:
                     ui.label("No models match this catalog view.").classes("text-grey-6 text-sm")
                     return
+                auto_expand_results = bool(provider) or (bool(query) and len(surface_rows) <= CATALOG_PROVIDER_ROW_LIMIT)
                 for provider_id, provider_rows in group_rows_by_provider(surface_rows).items():
-                    provider_label = provider_rows[0].provider_display_name or provider_id
-                    with ui.expansion(f"{provider_label} ({len(provider_rows)})", value=not provider).classes("w-full"):
-                        with ui.column().classes("w-full gap-1"):
-                            for row in provider_rows:
-                                _render_row(row, surface)
+                    _render_provider_group(provider_id, provider_rows, surface, query, provider, auto_expand_results)
+
+        def _render_provider_group(
+            provider_id: str,
+            provider_rows: list[CatalogModelRow],
+            surface: str,
+            query: str,
+            provider: str,
+            auto_expand: bool,
+        ) -> None:
+            provider_label = provider_rows[0].provider_display_name or provider_id
+            state_key = (surface, query, provider, provider_id)
+            row_container: ui.column | None = None
+
+            def _render_rows() -> None:
+                if row_container is None:
+                    return
+                row_container.clear()
+                limit = visible_limits.setdefault(state_key, CATALOG_PROVIDER_ROW_LIMIT)
+                visible_rows = _visible_provider_rows(provider_rows, limit)
+                with row_container:
+                    ui.label(f"Showing {len(visible_rows)} of {len(provider_rows)} models").classes("text-grey-6 text-xs")
+                    for row in visible_rows:
+                        _render_row(row, surface)
+                    if len(visible_rows) < len(provider_rows):
+                        remaining = min(CATALOG_PROVIDER_ROW_LIMIT, len(provider_rows) - len(visible_rows))
+                        ui.button(
+                            f"Show {remaining} more",
+                            icon="expand_more",
+                            on_click=lambda: _show_more(),
+                        ).props("flat dense color=primary").classes("self-start")
+
+            def _show_more() -> None:
+                visible_limits[state_key] = visible_limits.get(state_key, CATALOG_PROVIDER_ROW_LIMIT) + CATALOG_PROVIDER_ROW_LIMIT
+                _render_rows()
+
+            provider_expansion = ui.expansion(f"{provider_label} ({len(provider_rows)})", value=auto_expand).classes("w-full")
+            with provider_expansion:
+                row_container = ui.column().classes("w-full gap-1")
+            provider_expansion.on_value_change(lambda e: _render_rows() if e.value else None)
+            if auto_expand:
+                _render_rows()
+
+        def _on_catalog_toggle(e) -> None:
+            state["catalog_open"] = bool(e.value)
+            _refresh()
 
         def _on_category(e) -> None:
             state["surface"] = e.value or "chat"
+            visible_limits.clear()
             _refresh()
 
         def _on_provider(e) -> None:
             state["provider"] = e.value or ""
+            visible_limits.clear()
             _refresh()
 
         def _on_search(e) -> None:
             state["query"] = e.value or ""
+            visible_limits.clear()
             _refresh()
 
+        catalog_expansion.on_value_change(_on_catalog_toggle)
         category.on_value_change(_on_category)
         provider_filter.on_value_change(_on_provider)
         search.on_value_change(_on_search)
@@ -170,6 +215,29 @@ def build_model_catalog_section(
                 ui.notify(f"Download failed: {exc}", type="negative")
 
         _refresh()
+
+
+def _filter_catalog_rows(
+    rows: list[CatalogModelRow],
+    *,
+    surface: str,
+    query: str = "",
+    provider: str = "",
+) -> list[CatalogModelRow]:
+    surface_rows = rows_for_surface(rows, surface)
+    if provider:
+        surface_rows = [row for row in surface_rows if row.provider_id == provider]
+    normalized_query = query.strip().lower()
+    if normalized_query:
+        surface_rows = [
+            row for row in surface_rows
+            if normalized_query in " ".join([row.display_name, row.model_id, row.provider_display_name, row.provider_id]).lower()
+        ]
+    return surface_rows
+
+
+def _visible_provider_rows(provider_rows: list[CatalogModelRow], limit: int) -> list[CatalogModelRow]:
+    return provider_rows[:max(0, limit)]
 
 
 def _ctx_label(ctx: int) -> str:
