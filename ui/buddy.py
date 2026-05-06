@@ -10,7 +10,7 @@ import uuid
 
 from nicegui import run, ui
 
-from buddy.assets import list_buddy_packs, load_buddy_pack, static_url_for_path
+from buddy.assets import delete_generated_buddy_pack, list_buddy_packs, load_buddy_pack, static_url_for_path
 from buddy.brain import get_buddy_snapshot
 from buddy.config import get_buddy_config, save_buddy_config, set_buddy_config
 from buddy.events import BuddyEventType, emit_buddy_event
@@ -24,6 +24,7 @@ from buddy.hatch import (
     motion_clip_specs,
     use_hatch_still_only,
 )
+from ui.confirm import confirm_destructive
 
 _BUDDY_HEAD = """
 <script>
@@ -1036,6 +1037,21 @@ def build_buddy_settings_tab(_reopen=None) -> None:
         def _pack_preview_url(pack) -> str:
             return static_url_for_path(pack.preview_path) if pack.preview_path and pack.preview_path.exists() else ""
 
+        def _selected_generated_pack_preview(latest_cfg: dict | None = None) -> tuple[str, str]:
+            current_cfg = latest_cfg or get_buddy_config()
+            pack_id = str(selected_pack_id.get("value") or current_cfg.get("pack_id") or "")
+            if pack_id.startswith("hatch-"):
+                try:
+                    pack = load_buddy_pack(pack_id)
+                    if pack.runtime in {"generated_motion_pack", "generated_still"} and pack.preview_path.exists():
+                        return pack_id, str(pack.preview_path)
+                except Exception:
+                    pass
+            preview_path = str(current_cfg.get("latest_hatch_preview") or current_cfg.get("active_hatch_preview") or "")
+            if preview_path and pathlib.Path(preview_path).expanduser().exists():
+                return pathlib.Path(preview_path).expanduser().resolve().parent.name, preview_path
+            return pack_id, ""
+
         def _select_pack(pack_id: str) -> None:
             pack = packs_by_id.get(pack_id)
             if not pack or pack.status != "available":
@@ -1062,9 +1078,51 @@ def build_buddy_settings_tab(_reopen=None) -> None:
             _apply_buddy_surface_settings(latest_cfg)
             ui.notify(f"{pack_label} selected", type="positive")
 
+        def _delete_selected_generated_pack() -> None:
+            pack_id = str(selected_pack_id.get("value") or get_buddy_config().get("pack_id") or "")
+            try:
+                pack = load_buddy_pack(pack_id)
+            except Exception:
+                pack = None
+            if not pack_id.startswith("hatch-") or not pack or pack.runtime not in {"generated_motion_pack", "generated_still"}:
+                ui.notify("Delete is available for generated Hatch looks", type="warning")
+                return
+            pack_label = _display_pack_name(pack.name)
+
+            def _confirm_delete() -> None:
+                try:
+                    deleted_pack_id = delete_generated_buddy_pack(pack_id)
+                except Exception as exc:
+                    ui.notify(str(exc), type="negative")
+                    return
+                remaining_packs = [candidate for candidate in list_buddy_packs() if candidate.id != deleted_pack_id and candidate.status == "available"]
+                fallback_pack_id = "glyph" if any(candidate.id == "glyph" for candidate in remaining_packs) else (remaining_packs[0].id if remaining_packs else "glyph")
+                latest_cfg = get_buddy_config()
+                latest_cfg["pack_id"] = fallback_pack_id
+                _clear_hatch_media_overrides(latest_cfg)
+                save_buddy_config(latest_cfg)
+                selected_pack_id["value"] = fallback_pack_id
+                hatch_motion.set_content("")
+                hatch_status.set_text(f"Deleted generated Buddy look {pack_label}")
+                emit_buddy_event(BuddyEventType.APP_READY, source="buddy.settings", payload={"label": "Generated Buddy look deleted"})
+                _refresh_existing_buddy_surfaces()
+                _apply_buddy_surface_settings(latest_cfg)
+                ui.notify(f"Deleted {pack_label}", type="positive")
+                if _reopen:
+                    _reopen("Buddy")
+
+            confirm_destructive(
+                f"Delete {pack_label}?",
+                "This removes the generated look from the Buddy picker. Bundled looks are not affected.",
+                confirm_label="Delete generated look",
+                on_confirm=_confirm_delete,
+            )
+
         with ui.row().classes("items-center justify-between w-full"):
             ui.label("Look").classes("text-sm text-weight-medium")
-            ui.button(icon="refresh", on_click=lambda: _reopen("Buddy") if _reopen else None).props("flat dense round size=sm").tooltip("Refresh packs")
+            with ui.row().classes("items-center gap-1 no-wrap"):
+                ui.button(icon="delete", on_click=_delete_selected_generated_pack).props("flat dense round size=sm color=negative").tooltip("Delete generated look")
+                ui.button(icon="refresh", on_click=lambda: _reopen("Buddy") if _reopen else None).props("flat dense round size=sm").tooltip("Refresh packs")
         with ui.element("div").classes("thoth-buddy-pack-grid"):
             for pack in packs:
                 is_selected = pack.id == selected_pack_id["value"]
@@ -1219,9 +1277,9 @@ def build_buddy_settings_tab(_reopen=None) -> None:
             ui.notify("Some companion personality text was removed", type="warning")
             return
         latest_cfg = get_buddy_config()
-        preview_path = str(latest_cfg.get("latest_hatch_preview") or latest_cfg.get("active_hatch_preview") or "")
+        target_pack_id, preview_path = _selected_generated_pack_preview(latest_cfg)
         if not preview_path or not pathlib.Path(preview_path).expanduser().exists():
-            ui.notify("Generate Buddy art before retrying motion", type="warning")
+            ui.notify("Select or generate a Hatch look before retrying motion", type="warning")
             return
         concept_prompt = str(prompt.value or latest_cfg.get("hatch_prompt") or "")
         composed_prompt = str(latest_cfg.get("hatch_generation_prompt") or "") or _compose_hatch_prompt(
@@ -1236,7 +1294,7 @@ def build_buddy_settings_tab(_reopen=None) -> None:
                 generate_hatch_motion_pack,
                 composed_prompt,
                 preview_path,
-                pack_id=pathlib.Path(preview_path).expanduser().resolve().parent.name,
+                pack_id=target_pack_id,
                 reuse_existing=False,
             )
             labels = {spec.id: spec.label for spec in motion_clip_specs()}

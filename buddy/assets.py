@@ -159,6 +159,33 @@ def list_buddy_packs() -> list[BuddyPack]:
     return packs
 
 
+def delete_generated_buddy_pack(pack_id: str) -> str:
+    """Delete a user-generated Hatch pack from the Buddy picker."""
+
+    safe_pack_id = "".join(ch for ch in str(pack_id or "") if ch.isalnum() or ch in {"-", "_"}).strip("-_")
+    if not safe_pack_id.startswith("hatch-"):
+        raise ValueError("Only generated Hatch packs can be deleted")
+
+    user_root = _USER_PACKS_DIR.resolve()
+    pack_dir = (_USER_PACKS_DIR / safe_pack_id).resolve()
+    try:
+        pack_dir.relative_to(user_root)
+    except ValueError as exc:
+        raise ValueError("Generated Buddy pack path is invalid") from exc
+
+    manifest_path = pack_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError("Generated Buddy pack was not found")
+
+    manifest = _load_manifest(manifest_path)
+    runtime = str(manifest.get("runtime") or "")
+    if runtime not in {"generated_motion_pack", "generated_still"}:
+        raise ValueError("Only generated Hatch packs can be deleted")
+
+    shutil.rmtree(pack_dir)
+    return safe_pack_id
+
+
 def install_buddy_rive_asset(source_path: str | pathlib.Path, pack_id: str = "glyph") -> BuddyPack:
     """Install a local Rive export as the active asset for a Buddy pack."""
 

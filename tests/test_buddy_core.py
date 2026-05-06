@@ -602,6 +602,34 @@ def test_buddy_hatch_can_switch_user_pack_back_to_still_only(monkeypatch, tmp_pa
     assert not pack.motion_clips
 
 
+def test_buddy_can_delete_generated_hatch_pack(monkeypatch, tmp_path):
+    import buddy.assets as assets_mod
+    import buddy.hatch as hatch_mod
+
+    monkeypatch.setattr(assets_mod, "_BUDDY_STATIC_DIR", tmp_path / "buddy_static")
+    monkeypatch.setattr(assets_mod, "_USER_PACKS_DIR", tmp_path / "buddy_static" / "packs")
+
+    preview = tmp_path / "preview.png"
+    preview.write_bytes(b"PNG")
+    pack_id = hatch_mod.use_hatch_still_only("hatch-123", preview, prompt="A tiny dog named Honey")
+    pack_dir = assets_mod._USER_PACKS_DIR / pack_id
+
+    assert pack_dir.exists()
+    assert assets_mod.delete_generated_buddy_pack(pack_id) == pack_id
+    assert not pack_dir.exists()
+
+
+def test_buddy_delete_generated_pack_rejects_bundled_pack_ids():
+    import buddy.assets as assets_mod
+
+    try:
+        assets_mod.delete_generated_buddy_pack("glyph")
+    except ValueError as exc:
+        assert "Only generated Hatch packs" in str(exc)
+    else:
+        raise AssertionError("delete_generated_buddy_pack accepted a bundled pack id")
+
+
 def test_buddy_brain_decays_stale_event_to_idle(monkeypatch):
     import buddy.brain as brain_mod
     from buddy.brain import BuddyBrain

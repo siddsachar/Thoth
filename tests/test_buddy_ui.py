@@ -219,12 +219,24 @@ def test_buddy_settings_can_retry_motion_for_existing_hatch_art():
     buddy_ui_src = _read("ui/buddy.py")
     retry_section = buddy_ui_src.split("async def _retry_motion()", 1)[1].split("with ui.row().classes", 1)[0]
 
-    assert 'latest_cfg.get("latest_hatch_preview") or latest_cfg.get("active_hatch_preview")' in retry_section
+    assert "_selected_generated_pack_preview(latest_cfg)" in retry_section
     assert "generate_hatch_motion_pack" in retry_section
-    assert "parent.name" in retry_section
+    assert "pack_id=target_pack_id" in retry_section
     assert "reuse_existing=False" in retry_section
     assert "_refresh_existing_buddy_surfaces()" in retry_section
     assert "Buddy motion pack generated" in retry_section
+
+
+def test_buddy_settings_can_retry_motion_for_selected_generated_pack():
+    buddy_ui_src = _read("ui/buddy.py")
+    preview_section = buddy_ui_src.split("def _selected_generated_pack_preview", 1)[1].split("def _select_pack", 1)[0]
+
+    assert "selected_pack_id" in preview_section
+    assert "pack_id.startswith(\"hatch-\")" in preview_section
+    assert "load_buddy_pack(pack_id)" in preview_section
+    assert "pack.preview_path.exists()" in preview_section
+    assert "latest_hatch_preview" in preview_section
+    assert "active_hatch_preview" in preview_section
 
 
 def test_buddy_settings_can_switch_generated_pack_to_still_only():
@@ -236,6 +248,20 @@ def test_buddy_settings_can_switch_generated_pack_to_still_only():
     assert 'latest_cfg.pop(key, None)' in still_section
     assert "hatch_motion.set_content(\"\")" in still_section
     assert "Using still image only" in still_section
+
+
+def test_buddy_settings_can_delete_generated_pack_from_picker():
+    buddy_ui_src = _read("ui/buddy.py")
+    delete_section = buddy_ui_src.split("def _delete_selected_generated_pack()", 1)[1].split("with ui.row().classes", 1)[0]
+
+    assert "delete_generated_buddy_pack" in buddy_ui_src
+    assert "confirm_destructive" in delete_section
+    assert "pack_id.startswith(\"hatch-\")" in delete_section
+    assert 'pack.runtime not in {"generated_motion_pack", "generated_still"}' in delete_section
+    assert "_clear_hatch_media_overrides(latest_cfg)" in delete_section
+    assert "hatch_motion.set_content(\"\")" in delete_section
+    assert "Delete generated look" in buddy_ui_src
+    assert "Deleted generated Buddy look" in delete_section
 
 
 def test_buddy_settings_visibility_controls_are_not_redundant():
