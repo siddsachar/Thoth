@@ -20,6 +20,7 @@ from buddy.hatch import (
     activate_hatch_motion_pack,
     create_hatch_draft,
     generate_hatch_buddy,
+    generate_hatch_motion_pack,
     motion_clip_specs,
 )
 
@@ -1209,8 +1210,74 @@ def build_buddy_settings_tab(_reopen=None) -> None:
         finally:
             hatch_button.props(remove="loading")
 
+    async def _retry_motion() -> None:
+        buddy_notes = sanitize_personality(str(buddy_description.value or ""))
+        if buddy_notes != str(buddy_description.value or ""):
+            buddy_description.set_value(buddy_notes)
+            ui.notify("Some companion personality text was removed", type="warning")
+            return
+        latest_cfg = get_buddy_config()
+        preview_path = str(latest_cfg.get("latest_hatch_preview") or latest_cfg.get("active_hatch_preview") or "")
+        if not preview_path or not pathlib.Path(preview_path).expanduser().exists():
+            ui.notify("Generate Buddy art before retrying motion", type="warning")
+            return
+        concept_prompt = str(prompt.value or latest_cfg.get("hatch_prompt") or "")
+        composed_prompt = str(latest_cfg.get("hatch_generation_prompt") or "") or _compose_hatch_prompt(
+            concept_prompt,
+            str(buddy_personality.value or "warm_mystical"),
+            buddy_notes,
+        )
+        hatch_status.set_text("Generating motion pack for current Buddy art...")
+        retry_motion_button.props(add="loading")
+        try:
+            draft = await run.io_bound(
+                generate_hatch_motion_pack,
+                composed_prompt,
+                preview_path,
+                pack_id=str(selected_pack_id.get("value") or latest_cfg.get("pack_id") or "glyph"),
+                reuse_existing=False,
+            )
+            labels = {spec.id: spec.label for spec in motion_clip_specs()}
+            videos = []
+            for clip_id, clip_path in draft.motion_clips.items():
+                motion_url = static_url_for_path(clip_path)
+                label = html.escape(labels.get(clip_id, clip_id.title()))
+                videos.append(
+                    '<div style="display:flex;flex-direction:column;gap:4px;width:118px;">'
+                    f'<video src="{html.escape(motion_url)}" autoplay loop muted playsinline controls '
+                    'style="width:118px;height:118px;object-fit:cover;border-radius:8px;background:#070a0e;"></video>'
+                    f'<span style="font-size:10px;color:#8f9baa;text-align:center;">{label}</span>'
+                    '</div>'
+                )
+            if videos:
+                hatch_motion.set_content(
+                    '<div style="display:flex;flex-wrap:wrap;gap:8px;max-width:390px;">'
+                    + "".join(videos)
+                    + '</div>'
+                )
+            latest_cfg = get_buddy_config()
+            latest_cfg.update({
+                "hatch_prompt": concept_prompt,
+                "hatch_generation_prompt": composed_prompt,
+                "personality": str(buddy_personality.value or "warm_mystical"),
+                "personality_description": buddy_notes,
+                "bubble_verbosity": str(buddy_bubbles.value or "normal"),
+            })
+            save_buddy_config(latest_cfg)
+            hatch_status.set_text(f"Generated motion pack for current Buddy art {draft.id}")
+            emit_buddy_event(BuddyEventType.NOTIFICATION, source="buddy.hatch", payload={"label": "Buddy motion pack generated"})
+            _refresh_existing_buddy_surfaces()
+            _apply_buddy_surface_settings(latest_cfg)
+            ui.notify("Buddy motion pack generated", type="positive")
+        except Exception as exc:
+            hatch_status.set_text("Buddy motion generation failed")
+            ui.notify(str(exc), type="negative")
+        finally:
+            retry_motion_button.props(remove="loading")
+
     with ui.row().classes("items-center justify-end gap-2 w-full q-mt-md"):
         ui.button("Save", icon="save", on_click=_save).props("unelevated no-caps color=primary")
+        retry_motion_button = ui.button("Retry motion", icon="movie", on_click=_retry_motion).props("outline no-caps")
         hatch_button = ui.button("Generate full Buddy", icon="auto_fix_high", on_click=_hatch).props("outline no-caps")
 
 

@@ -155,6 +155,8 @@ def test_buddy_settings_keeps_rive_import_out_of_normal_ux():
     assert "Open Preferences" not in buddy_ui_src
     assert "Generate full Buddy" in buddy_ui_src
     assert "generate_hatch_buddy" in buddy_ui_src
+    assert "generate_hatch_motion_pack" in buddy_ui_src
+    assert "Retry motion" in buddy_ui_src
     assert 'ui.tab("Preferences"' in settings_src
     assert "Save Buddy preferences" not in settings_src
     assert "Companion personality" in buddy_ui_src
@@ -209,6 +211,17 @@ def test_buddy_settings_save_preserves_latest_hatch_media():
     assert "_clear_hatch_media_overrides(latest_cfg)" in save_section
     assert "save_buddy_config(latest_cfg)" in save_section
     assert "_apply_buddy_surface_settings(latest_cfg)" in save_section
+
+
+def test_buddy_settings_can_retry_motion_for_existing_hatch_art():
+    buddy_ui_src = _read("ui/buddy.py")
+    retry_section = buddy_ui_src.split("async def _retry_motion()", 1)[1].split("with ui.row().classes", 1)[0]
+
+    assert 'latest_cfg.get("latest_hatch_preview") or latest_cfg.get("active_hatch_preview")' in retry_section
+    assert "generate_hatch_motion_pack" in retry_section
+    assert "reuse_existing=False" in retry_section
+    assert "_refresh_existing_buddy_surfaces()" in retry_section
+    assert "Buddy motion pack generated" in retry_section
 
 
 def test_buddy_settings_visibility_controls_are_not_redundant():
