@@ -34,7 +34,7 @@ def build_model_catalog_section(
 
     catalog_expansion = ui.expansion("Model Catalog", icon="view_list", value=False).classes("w-full")
     with catalog_expansion:
-        ui.label("Browse every discovered model by category, then provider. Pin models here to make them available in everyday pickers.").classes("text-grey-6 text-sm")
+        ui.label("Browse discovered models by surface and provider. Use the pin button to add a model to that surface's picker.").classes("text-grey-6 text-sm")
         with ui.row().classes("items-center gap-2 w-full"):
             category = ui.toggle(SURFACE_LABELS, value="chat").props("dense unelevated toggle-color=primary")
             provider_filter = ui.select(provider_options, value="", label="Provider").props("dense outlined").classes("min-w-[180px]")
@@ -150,7 +150,7 @@ def build_model_catalog_section(
                     ui.icon("info", size="xs").tooltip(row.status_reason)
                 if row.downloadable and on_download:
                     ui.button(icon="download", on_click=lambda _, r=row: _download(r)).props("flat dense round size=sm color=primary").tooltip("Download model")
-                pin_button = ui.button(icon="push_pin", on_click=lambda _, r=row, s=surface: _toggle_pin(r, s)).props(f"flat dense round size=sm color={'primary' if pinned else 'grey'}").tooltip("Remove from picker" if pinned else "Pin to picker")
+                pin_button = ui.button(icon="push_pin", on_click=lambda _, r=row, s=surface: _toggle_pin(r, s)).props(f"flat dense round size=sm color={'primary' if pinned else 'grey'}").tooltip("Remove from this picker" if pinned else "Pin to this picker")
                 if not can_use:
                     pin_button.disable()
                 default_button = ui.button(icon="check", on_click=lambda _, r=row, s=surface: _set_default(r, s)).props("flat dense round size=sm").tooltip("Set default")

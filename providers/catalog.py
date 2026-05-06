@@ -252,10 +252,14 @@ def classify_model_capabilities(
         default_transport = TransportMode.OPENAI_RESPONSES
         tasks = {ModelTask.RESPONSES.value}
         endpoint_compatibility = {TransportMode.OPENAI_RESPONSES}
+    if provider_id == "codex":
+        default_transport = TransportMode.OPENAI_RESPONSES
+        tasks = {ModelTask.RESPONSES.value}
+        endpoint_compatibility = {TransportMode.OPENAI_RESPONSES}
 
     inferred_vision = (
         bool(metadata.get("vision"))
-        or (provider_id == "openai" and bare.startswith(_OPENAI_VISION_PREFIXES))
+        or (provider_id in {"openai", "codex"} and bare.startswith(_OPENAI_VISION_PREFIXES))
         or (provider_id == "google" and bare.startswith("gemini"))
         or (provider_id == "anthropic" and bare.startswith(_ANTHROPIC_VISION_PREFIXES))
         or (provider_id.startswith("custom_openai_") and _name_suggests_vision_model(model_id))

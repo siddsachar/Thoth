@@ -285,6 +285,11 @@ def _inferred_capability_snapshot(choice: dict[str, Any]) -> dict[str, Any]:
         if provider_id == "ollama":
             from providers.ollama import ollama_model_info
             return ollama_model_info(model_id).capability_snapshot()
+        if provider_id == "codex":
+            from providers.codex import list_codex_model_infos
+            for model_info in list_codex_model_infos():
+                if model_info.model_id == model_id:
+                    return model_info.capability_snapshot()
         from providers.catalog import model_info_from_metadata
         return model_info_from_metadata(provider_id, model_id).capability_snapshot()
     except Exception:

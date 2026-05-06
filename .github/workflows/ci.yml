@@ -46,6 +46,9 @@ jobs:
       - name: Focused startup hardening tests
         run: python -m pytest test_startup_hardening.py test_app_port.py
 
+      - name: Focused provider model selection tests
+        run: python -m pytest test_provider_catalog.py test_provider_selection.py test_thoth_status_media.py test_provider_subscription_auth.py
+
       - name: Runtime smoke on Linux
         if: runner.os == 'Linux'
         run: python scripts/smoke_app.py --port 8090 --timeout 120

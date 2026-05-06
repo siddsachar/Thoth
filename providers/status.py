@@ -74,7 +74,8 @@ def summarize_providers() -> str:
     for card in provider_status_cards():
         state = "configured" if card["configured"] else "not set"
         source = f" ({card['source']})" if card.get("source") else ""
-        count = f", {card['model_count']} local model(s)" if card.get("model_count") is not None else ""
+        count_label = "local model(s)" if card.get("provider_id") == "ollama" else "catalog model(s)"
+        count = f", {card['model_count']} {count_label}" if card.get("model_count") is not None else ""
         lines.append(f"- {card['display_name']}: {state}{source}{count}")
     quick_count = len([c for c in list_quick_choices("status_tool") if c.get("kind") == "model"])
     lines.append(f"- Quick Choices: {quick_count} model(s)")

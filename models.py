@@ -713,7 +713,18 @@ def list_cloud_models(provider: str | None = None) -> list[str]:
     """Return cached cloud model IDs, optionally filtered by provider."""
     _sync_custom_model_cache()
     if provider:
-        return [m for m, info in _cloud_model_cache.items() if info["provider"] == provider]
+        models = [m for m, info in _cloud_model_cache.items() if info["provider"] == provider]
+        if provider == "codex":
+            try:
+                from providers.codex import list_codex_model_infos
+                seen = set(models)
+                for model_info in list_codex_model_infos():
+                    if model_info.model_id not in seen:
+                        models.append(model_info.model_id)
+                        seen.add(model_info.model_id)
+            except Exception:
+                pass
+        return models
     return list(_cloud_model_cache.keys())
 
 
@@ -794,17 +805,39 @@ def get_cloud_model_context(model_name: str) -> int:
 def list_cloud_vision_models() -> list[str]:
     """Return cloud model IDs that support vision / image input."""
     from providers.capabilities import snapshot_supports_surface
-    return [
+    vision_models = [
         m for m, info in _cloud_model_cache.items()
         if info.get("vision")
         or (isinstance(info.get("capabilities_snapshot"), dict) and bool(info.get("capabilities_snapshot"))
             and snapshot_supports_surface(info.get("capabilities_snapshot"), "vision"))
     ]
+    try:
+        from providers.codex import list_codex_model_infos
+        seen = set(vision_models)
+        for model_info in list_codex_model_infos():
+            if model_info.model_id not in seen and snapshot_supports_surface(model_info.capability_snapshot(), "vision"):
+                vision_models.append(model_info.model_id)
+                seen.add(model_info.model_id)
+    except Exception:
+        pass
+    return vision_models
 
 
 def is_cloud_vision_model(model_name: str) -> bool:
     """Return True if *model_name* is a cloud model with vision support."""
+    parsed = _parse_provider_model_ref(model_name)
     runtime_model = _runtime_model_name(model_name)
+    if parsed and parsed[0] == "codex":
+        try:
+            from providers.capabilities import snapshot_supports_surface
+            from providers.codex import list_codex_model_infos
+            return any(
+                model_info.model_id == runtime_model
+                and snapshot_supports_surface(model_info.capability_snapshot(), "vision")
+                for model_info in list_codex_model_infos()
+            )
+        except Exception:
+            return False
     info = _cloud_model_cache.get(runtime_model)
     if not info:
         return False

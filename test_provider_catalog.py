@@ -5,6 +5,7 @@ from providers.models import ModelInfo, TransportMode
 from providers.ollama import (
     extract_ollama_library_family_ids,
     extract_ollama_library_model_ids,
+    is_ollama_chat_candidate,
     ollama_catalog_rows,
     ollama_model_info,
     ollama_provider_catalog_model_ids,
@@ -273,6 +274,31 @@ def test_ollama_embedding_model_is_not_chat_surface():
 
     assert model_supports_surface(info, "chat") is False
     assert model_supports_surface(info, "embeddings") is True
+
+
+def test_ollama_catalog_includes_installed_unknown_chat_models(monkeypatch):
+    import providers.model_catalog as catalog_view
+
+    monkeypatch.setattr(catalog_view, "_provider_status_by_id", lambda: {"ollama": {"configured": True, "source": "local_daemon"}})
+    monkeypatch.setattr(catalog_view, "_custom_model_infos", lambda: [])
+    monkeypatch.setattr(catalog_view, "_codex_model_infos", lambda: [])
+    monkeypatch.setattr(catalog_view, "_curated_media_entries", lambda surface: {})
+
+    assert is_ollama_chat_candidate("gemma4:e4b") is True
+    rows = build_model_catalog_rows(
+        cloud_cache={},
+        ollama_rows=ollama_catalog_rows(["gemma4:e4b", "nomic-embed-text:latest"], []),
+        defaults={},
+        quick_choices=[],
+    )
+
+    by_id = {row.model_id: row for row in rows}
+    assert "gemma4:e4b" in by_id
+    assert "nomic-embed-text:latest" not in by_id
+    assert "gemma4:e4b" in {row.model_id for row in rows_for_surface(rows, "chat")}
+    assert "gemma4:e4b" not in {row.model_id for row in rows_for_surface(rows, "vision")}
+    assert by_id["gemma4:e4b"].installed is True
+    assert by_id["gemma4:e4b"].downloadable is False
 
 
 def test_ollama_catalog_rows_merge_installed_and_recommended():

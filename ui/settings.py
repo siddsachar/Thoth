@@ -365,6 +365,9 @@ def open_settings(
         if vision_value and vision_value not in vision_opts:
             vision_opts.update(model_choice_options_map("vision", include_values=[vsvc.model]))
 
+        def _has_pinned_picker_choice(options: list[dict]) -> bool:
+            return any(str(option.get("source") or "") != "included_value" for option in options)
+
         from tools.image_gen_tool import get_available_image_models, DEFAULT_MODEL
         from providers.selection import list_quick_choices, seed_configured_media_quick_choices
         _ig_tool = tool_registry.get_tool("image_gen")
@@ -413,7 +416,7 @@ def open_settings(
 
         ui.label("Models").classes("text-h6 q-mb-xs")
         with ui.row().classes("items-center justify-between w-full q-mb-sm"):
-            ui.label("Defaults and pinned model choices").classes("text-grey-6 text-sm")
+            ui.label("Defaults and pinned picker choices").classes("text-grey-6 text-sm")
             with ui.row().classes("items-center gap-1"):
                 ui.button(icon="refresh", on_click=lambda: _reopen("Models")).props("flat dense round size=sm").tooltip("Refresh model settings")
                 ui.button(icon="hub", on_click=lambda: _reopen("Providers")).props("flat dense round size=sm").tooltip("Provider connections")
@@ -427,6 +430,7 @@ def open_settings(
                     ui.icon("tune", size="sm")
                     ui.label("Defaults").classes("text-subtitle2")
                 ui.badge("Catalog-backed", color="blue-grey").props("outline dense")
+            ui.label("Pickers show pinned catalog choices plus the current default. Pin models in the catalog below before looking for them here.").classes("text-grey-6 text-xs")
 
             brain_actions, brain_controls = _surface_row("psychology", "Brain", "Conversation, tool use, memory, and workflows")
             with brain_actions:
@@ -459,6 +463,8 @@ def open_settings(
                 ctx_select.visible = not _is_cloud_ctx
                 brain_dl_btn = ui.button(icon="download").props("flat dense round size=sm color=primary").tooltip("Download selected model")
                 brain_dl_btn.visible = _ollama_up and not is_cloud_model(current) and current not in local
+                brain_empty = ui.label("No pinned Brain choices yet. Pin Chat models in the catalog below.").classes("text-grey-6 text-xs q-pb-sm")
+                brain_empty.visible = not _has_pinned_picker_choice(chat_options)
             ctx_note = ui.label("").classes("text-xs text-grey-6 q-ml-lg")
             ctx_note.visible = False
 
@@ -479,6 +485,10 @@ def open_settings(
                     ui.label("No cameras detected").classes("text-grey-6 text-xs q-pb-sm")
                 vision_dl_btn = ui.button(icon="download").props("flat dense round size=sm color=primary").tooltip("Download selected model")
                 vision_dl_btn.visible = _ollama_up and not is_cloud_model(vsvc.model) and vsvc.model not in local
+                vision_empty = ui.label("No pinned Vision choices yet. Pin Vision models in the catalog below.").classes("text-grey-6 text-xs q-pb-sm")
+                vision_empty.visible = not _has_pinned_picker_choice(vision_options)
+                vision_missing = ui.label("Current Vision model is not installed. Download it or pin another Vision model below.").classes("text-warning text-xs q-pb-sm")
+                vision_missing.visible = bool(vsvc.model) and not is_cloud_model(vsvc.model) and not is_model_local(vsvc.model)
 
             image_actions, image_controls = _surface_row("palette", "Image", "Image generation and editing")
             with image_actions:
@@ -720,20 +730,28 @@ def open_settings(
         with ui.row().classes("items-center justify-between w-full q-mt-md q-mb-xs"):
             with ui.column().classes("gap-0"):
                 ui.label("Catalog").classes("text-subtitle2")
-                ui.label("Browse, pin, set defaults, and download compatible models.").classes("text-grey-6 text-xs")
+                ui.label("Browse by surface, then pin models so they appear in the pickers above.").classes("text-grey-6 text-xs")
 
         def _refresh_top_picker_options() -> None:
             current_chat = state.current_model
-            model_select.options = model_choice_options_map("chat", include_values=[current_chat])
+            refreshed_chat_options = list_model_choice_options("chat", include_values=[current_chat])
+            model_select.options = {str(option["value"]): str(option["label"]) for option in refreshed_chat_options}
             if model_select.value not in model_select.options:
                 model_select.value = model_choice_value(current_chat)
             model_select.update()
+            brain_empty.visible = not _has_pinned_picker_choice(refreshed_chat_options)
+            brain_empty.update()
 
             current_vision = vsvc.model
-            vision_select.options = model_choice_options_map("vision", include_values=[current_vision])
+            refreshed_vision_options = list_model_choice_options("vision", include_values=[current_vision])
+            vision_select.options = {str(option["value"]): str(option["label"]) for option in refreshed_vision_options}
             if vision_select.value not in vision_select.options:
                 vision_select.value = model_choice_value(current_vision)
             vision_select.update()
+            vision_empty.visible = not _has_pinned_picker_choice(refreshed_vision_options)
+            vision_empty.update()
+            vision_missing.visible = bool(current_vision) and not is_cloud_model(current_vision) and not is_model_local(current_vision)
+            vision_missing.update()
 
             image_select = image_select_ref[0]
             if image_select is not None:

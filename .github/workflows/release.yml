@@ -73,6 +73,9 @@ jobs:
       - name: Run focused startup hardening tests
         run: python -m pytest test_startup_hardening.py test_app_port.py test_linux_support.py
 
+      - name: Run focused provider model selection tests
+        run: python -m pytest test_provider_catalog.py test_provider_selection.py test_thoth_status_media.py test_provider_subscription_auth.py
+
       - name: Run test suite
         run: python test_suite.py
 

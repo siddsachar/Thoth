@@ -587,6 +587,8 @@ def test_codex_fallback_model_infos_use_documented_subscription_catalog(tmp_path
     assert all(info.provider_id == "codex" for info in infos)
     assert by_id["gpt-5.5"].selection_ref == "model:codex:gpt-5.5"
     assert by_id["gpt-5.2"].selection_ref == "model:codex:gpt-5.2"
+    assert "image" in by_id["gpt-5.5"].input_modalities
+    assert "vision" in by_id["gpt-5.5"].capabilities
     assert all(info.transport == TransportMode.OPENAI_RESPONSES for info in infos)
     assert all(info.risk_label == "subscription" for info in infos)
     assert all(info.capability_snapshot()["tasks"] == ["responses"] for info in infos)

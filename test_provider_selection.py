@@ -1,3 +1,5 @@
+import pathlib
+
 import api_keys
 import providers.config as provider_config
 from providers.selection import (
@@ -210,6 +212,35 @@ def test_model_choice_options_disambiguate_same_model_id_by_provider(tmp_path, m
     assert resolved.model_id == "gpt-5.5"
 
 
+def test_codex_vision_quick_choice_survives_capability_refresh(tmp_path, monkeypatch):
+    import providers.runtime as provider_runtime
+    from providers.codex import fallback_codex_model_infos
+
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    monkeypatch.setattr(api_keys, "get_cloud_config", lambda: {"starred_models": []})
+    monkeypatch.setattr(
+        provider_runtime,
+        "provider_status",
+        lambda provider_id: {"runtime_enabled": True} if provider_id == "codex" else {},
+    )
+
+    model_info = next(info for info in fallback_codex_model_infos() if info.model_id == "gpt-5.5")
+    add_quick_choice_for_model(
+        "gpt-5.5",
+        provider_id="codex",
+        display_name="GPT-5.5",
+        capabilities_snapshot=model_info.capability_snapshot(),
+        surface="vision",
+    )
+
+    options = list_model_choice_options("vision")
+    stored = provider_config.load_provider_config()["quick_choices"][0]
+
+    assert options[0]["value"] == "model:codex:gpt-5.5"
+    assert "ChatGPT / Codex" in options[0]["label"]
+    assert "image" in stored["capabilities_snapshot"]["input_modalities"]
+
+
 def test_provider_display_label_uses_dynamic_provider_metadata():
     assert provider_display_label("codex") == "ChatGPT / Codex"
     assert provider_display_label("custom_openai_local_vllm") == "Custom Local Vllm"
@@ -276,3 +307,10 @@ def test_grouped_quick_choices_refreshes_stale_capability_snapshots(tmp_path, mo
     stored = {choice["model_id"]: choice for choice in provider_config.load_provider_config()["quick_choices"]}
     assert "image" not in stored["qwen3.6:27b"]["capabilities_snapshot"]["input_modalities"]
     assert "image" in stored["gpt-5.4"]["capabilities_snapshot"]["input_modalities"]
+
+
+def test_models_tab_copy_explains_catalog_pinning_before_picker():
+    source = pathlib.Path("ui/settings.py").read_text(encoding="utf-8")
+
+    assert "Pin models in the catalog below before looking for them here." in source
+    assert "No pinned Vision choices yet. Pin Vision models in the catalog below." in source

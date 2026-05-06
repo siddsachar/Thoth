@@ -42,6 +42,7 @@ TOOL_CAPABLE_FAMILIES = {
 
 VISION_FAMILIES = {"bakllava", "gemma3", "llama3.2-vision", "minicpm-v", "moondream", "qwen3-vl"}
 VISION_FAMILY_PREFIXES = ("llava", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl")
+NON_CHAT_FAMILY_MARKERS = ("embed", "embedding")
 
 
 def normalize_ollama_family(model_or_family: str) -> str:
@@ -56,6 +57,13 @@ def is_ollama_tool_capable(model_id: str) -> bool:
 def is_ollama_vision_capable(model_id: str) -> bool:
     family = normalize_ollama_family(model_id)
     return family in VISION_FAMILIES or family.startswith(VISION_FAMILY_PREFIXES)
+
+
+def is_ollama_chat_candidate(model_id: str) -> bool:
+    family = normalize_ollama_family(model_id)
+    if not family:
+        return False
+    return not any(marker in family for marker in NON_CHAT_FAMILY_MARKERS)
 
 
 def is_preferred_ollama_tag(model_id: str) -> bool:
@@ -162,7 +170,7 @@ def ollama_provider_catalog_model_ids(
     represented_families = {
         normalize_ollama_family(model_id)
         for model_id in [*installed_models, *curated_models, *preferred_tags]
-        if is_ollama_tool_capable(model_id) or is_ollama_vision_capable(model_id)
+        if is_ollama_tool_capable(model_id) or is_ollama_vision_capable(model_id) or model_id in installed_models
     }
     library_choices = [
         family
@@ -178,7 +186,9 @@ def ollama_provider_catalog_model_ids(
         *library_choices,
         *preferred_tags,
     ]:
-        if not (is_ollama_tool_capable(model_id) or is_ollama_vision_capable(model_id)) or model_id in seen:
+        known_catalog_candidate = is_ollama_tool_capable(model_id) or is_ollama_vision_capable(model_id)
+        installed_chat_candidate = model_id in installed_models and is_ollama_chat_candidate(model_id)
+        if not (known_catalog_candidate or installed_chat_candidate) or model_id in seen:
             continue
         seen.add(model_id)
         ordered.append(model_id)
@@ -197,6 +207,8 @@ def ollama_model_info(
     family = str(model_id or "").split(":", 1)[0]
     metadata.setdefault("tool_calling", is_ollama_tool_capable(model_id))
     metadata.setdefault("vision", is_ollama_vision_capable(model_id))
+    if not is_ollama_chat_candidate(model_id):
+        metadata.setdefault("embedding", True)
     metadata.setdefault("installed", installed)
     return model_info_from_metadata(
         "ollama",
@@ -237,7 +249,7 @@ def ollama_catalog_rows(
     installed = set(installed_models)
     recommended = {model_id for model_id in recommended_models if is_ollama_tool_capable(model_id) or is_ollama_vision_capable(model_id)}
     seen = set(installed)
-    ordered = sorted(model_id for model_id in installed if is_ollama_tool_capable(model_id) or is_ollama_vision_capable(model_id))
+    ordered = sorted(model_id for model_id in installed if is_ollama_chat_candidate(model_id))
     for model_id in recommended_models:
         if (is_ollama_tool_capable(model_id) or is_ollama_vision_capable(model_id)) and model_id not in seen:
             seen.add(model_id)

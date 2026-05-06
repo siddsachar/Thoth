@@ -67,6 +67,7 @@ class _SettingUpdateInput(BaseModel):
         description=(
             "The setting to change. One of: "
             "'model' (switch active model; value may be a local model, provider model, or Quick Choice), "
+            "'vision_model' (switch Vision model; value may be an installed local vision model, provider vision model, or Vision Quick Choice), "
             "'name' (change assistant name), "
             "'personality' (change personality text), "
             "'context_size' (local model context window — value is token count e.g. '65536'), "
@@ -135,6 +136,74 @@ def _normalize_lookup_token(value: str) -> str:
     if token.endswith("_tool"):
         token = token[:-5]
     return token
+
+
+def _model_setting_supported_message() -> str:
+    return (
+        "model, vision_model, name, personality, context_size, cloud_context_size, "
+        "dream_cycle, dream_window, skill_toggle, tool_toggle, image_gen_model, "
+        "video_gen_model, run_dream_cycle, self_improvement"
+    )
+
+
+def _surface_label(surface: str) -> str:
+    return {"chat": "Brain", "vision": "Vision"}.get(surface, surface.replace("_", " ").title())
+
+
+def _resolve_model_update_value(value: str, *, surface: str) -> tuple[str | None, str | None]:
+    """Resolve a status-tool model update to a runnable model id or an error."""
+    from models import is_model_local, list_cloud_models, list_cloud_vision_models
+    from providers.capabilities import snapshot_supports_surface
+    from providers.selection import list_quick_choices, model_ref, resolve_selection
+
+    raw = (value or "").strip()
+    if not raw:
+        return None, f"No {_surface_label(surface)} model was provided."
+
+    resolved = resolve_selection(raw)
+    if not resolved:
+        return None, f"Model '{raw}' not found. Pin it in Settings → Models first."
+    if resolved.kind == "route":
+        return None, f"Route '{raw}' is configured but runtime routing is not enabled yet. Choose a direct model Quick Choice."
+    if resolved.active is False:
+        reason = f" {resolved.reason}" if resolved.reason else ""
+        return None, f"Model '{raw}' is inactive.{reason}"
+
+    provider_id = resolved.provider_id or "local"
+    model_id = resolved.model_id
+    quick_choices = {
+        str(choice.get("id")): choice
+        for choice in list_quick_choices(surface, include_inactive=True)
+        if isinstance(choice, dict)
+    }
+    quick_choice = quick_choices.get(resolved.ref)
+    if quick_choice:
+        if quick_choice.get("active") is False:
+            reason = str(quick_choice.get("inactive_reason") or "This Quick Choice is inactive.")
+            return None, f"Model '{raw}' is not active for {_surface_label(surface)}. {reason}"
+        snapshot = quick_choice.get("capabilities_snapshot") if isinstance(quick_choice.get("capabilities_snapshot"), dict) else {}
+        if snapshot and not snapshot_supports_surface(snapshot, surface):
+            return None, f"Model '{raw}' is not compatible with {_surface_label(surface)}."
+        return model_id, None
+
+    if provider_id in {"local", "ollama"}:
+        if not is_model_local(model_id):
+            return None, f"Local model '{raw}' is not installed. Install it with Ollama or pin an installed model in Settings → Models."
+        if surface == "vision":
+            from providers.ollama import is_ollama_vision_capable
+            if not is_ollama_vision_capable(model_id):
+                return None, f"Local model '{raw}' is installed, but Thoth does not have Vision capability metadata for it. Choose a Vision model from Settings → Models."
+        return model_id, None
+
+    known_provider_models = set(list_cloud_models(provider_id))
+    if model_id not in known_provider_models:
+        return None, f"Provider model '{raw}' is not in the current catalog. Refresh Providers or pin it from Settings → Models first."
+    if surface == "vision" and model_id not in set(list_cloud_vision_models()):
+        provider_ref = model_ref(provider_id, model_id)
+        from models import is_cloud_vision_model
+        if not is_cloud_vision_model(provider_ref):
+            return None, f"Provider model '{raw}' is not marked as Vision-capable in the catalog."
+    return model_id, None
 
 
 def _tool_display_label(tool) -> str:
@@ -707,23 +776,42 @@ def _update_setting(setting: str, value: str) -> str:
         if not approval:
             return "Model change cancelled."
         try:
-            from models import set_model, list_all_models, list_cloud_models
-            from providers.selection import resolve_selection
+            from models import set_model
             from agent import clear_agent_cache
-            resolved = resolve_selection(value)
-            if not resolved:
-                return f"Model '{value}' not found. Use Settings → Providers to add it to Quick Choices."
-            if resolved.kind == "route":
-                return f"Route '{value}' is configured but runtime routing is not enabled yet. Choose a direct model Quick Choice."
-            model_value = resolved.model_id
-            available = set(list_all_models()) | set(list_cloud_models())
-            if model_value not in available and resolved.provider_id == "local":
-                return f"Model '{value}' not found. Use Settings → Models or Providers to add it to Quick Choices."
+            model_value, error = _resolve_model_update_value(value, surface="chat")
+            if error:
+                return error
+            if not model_value:
+                return f"Model '{value}' not found. Pin it in Settings → Models first."
             set_model(model_value)
             clear_agent_cache()
             return f"Active model changed to: {model_value}"
         except Exception as exc:
             return f"Failed to change model: {exc}"
+
+    elif setting == "vision_model":
+        approval = interrupt({
+            "tool": "thoth_update_setting",
+            "label": "Change Vision model",
+            "description": f"Switch the Vision model to: {value}",
+            "args": {"setting": "vision_model", "value": value},
+        })
+        if not approval:
+            return "Vision model change cancelled."
+        try:
+            from agent import clear_agent_cache
+            from tools.vision_tool import _get_vision_service
+
+            model_value, error = _resolve_model_update_value(value, surface="vision")
+            if error:
+                return error
+            if not model_value:
+                return f"Vision model '{value}' not found. Pin a Vision model in Settings → Models first."
+            _get_vision_service().model = model_value
+            clear_agent_cache()
+            return f"Vision model changed to: {model_value}"
+        except Exception as exc:
+            return f"Failed to change Vision model: {exc}"
 
     elif setting == "name":
         approval = interrupt({
@@ -1013,10 +1101,7 @@ def _update_setting(setting: str, value: str) -> str:
 
     else:
         return (
-            f"Unknown setting '{setting}'. Supported: model, name, personality, "
-            "context_size, cloud_context_size, dream_cycle, dream_window, "
-            "skill_toggle, tool_toggle, image_gen_model, video_gen_model, "
-            "run_dream_cycle, self_improvement."
+            f"Unknown setting '{setting}'. Supported: {_model_setting_supported_message()}."
         )
 
 

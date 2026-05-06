@@ -149,17 +149,17 @@ Thoth is built and tested for local models first. Every feature supports local m
 
 Provider models are supported for users without a dedicated GPU, for frontier reasoning on demand, or for trying many providers without downloading large local weights. Thoth supports opt-in provider models through **OpenAI** (direct API), **Anthropic** (Claude), **Google AI** (Gemini), **xAI** (Grok), **MiniMax** (M2 models through the Anthropic-compatible API), **OpenRouter** (many third-party models), **ChatGPT / Codex** (subscription-backed Codex models), and Custom/Self-hosted OpenAI-compatible endpoints such as LM Studio, vLLM, LocalAI, or private gateways. Provider connections, health, and credential sources are configured from Settings -> Providers; model catalog browsing, pinning, and defaults live in Settings -> Models.
 
-The `providers/` subsystem now owns provider config, auth metadata, model catalog normalization, runtime construction, display-safe status, and Quick Choices. Existing public functions in `models.py` remain as compatibility facades while provider-backed selection is rolled through the app.
+The `providers/` subsystem now owns provider config, auth metadata, model catalog normalization, runtime construction, display-safe status, and Quick Choices. Existing public functions in `models.py` remain as compatibility facades while provider-backed selection is rolled through the app. Settings -> Models pickers are intentionally Quick Choice surfaces: catalog rows must be pinned before they become everyday Brain, Vision, Image, or Video choices, while the current default can still appear as a fallback value.
 
 ChatGPT / Codex is deliberately modeled as a subscription provider, not as another OpenAI API-key route. Direct Codex runtime requires Thoth's in-app ChatGPT device-flow sign-in so Thoth stores its own runnable OAuth tokens in the local OS credential store. Existing Codex CLI auth files can be referenced only as display-safe metadata: Thoth records that the external login exists, path/fingerprint metadata, and broad auth-file shape, but it does not copy runnable tokens from `~/.codex/auth.json`.
 
 Codex runtime uses ChatGPT's subscription/internal Codex backend rather than the public OpenAI API. That means endpoint behavior, catalog shape, auth requirements, rate limits, and model availability may change upstream. When a ChatGPT / Codex model is selected, the current conversation plus model-visible tool context and tool results are sent to ChatGPT / Codex for that turn. Durable Thoth data such as memories, documents, files, and other conversations remain local unless explicitly included in the active conversation or surfaced by a tool result.
 
-- **Dynamic model switching** — change the brain model from Settings; choose from pinned local/provider Quick Choices managed in the Models catalog
+- **Dynamic model switching** — change the brain model from Settings or approved `thoth_update_setting` calls; choices are validated against pinned local/provider Quick Choices, installed local models, and provider catalogs before saving
 - **Per-thread & per-workflow model override** — conversations and workflows can each run on a different model, with overrides persisted locally
-- **Quick Choices** — models pinned from the consolidated Models catalog appear in chat, workflow, channel, Designer, and status-tool pickers
+- **Quick Choices** — models pinned from the consolidated Models catalog appear in chat, workflow, channel, Designer, status-tool, and Vision pickers when their capability snapshot supports that surface
 - **Cost-efficient context management** — smart context trimming compresses older conversation turns and shrinks oversized tool outputs, reducing token usage and API costs for provider models
-- **Curated local models** — only tool-calling-capable local models are surfaced prominently
+- **Local catalog accuracy** — installed Ollama chat models remain visible even when their family is newer than Thoth's curated tool/vision heuristics, while embedding-like local models are kept out of chat choices and Vision support is only inferred from known metadata/families
 - **Tool-support validation** — unsupported local models are warned about and can be auto-reverted if they fail a live tool-call check
 - **Download buttons** — local models not yet present show download actions with progress
 - **Configurable context window** — local and provider context caps can be set independently; actual model limits are still respected
@@ -216,10 +216,10 @@ Codex runtime uses ChatGPT's subscription/internal Codex backend rather than the
 - **Camera analysis** — capture and analyze images from your webcam in real-time
 - **Screen capture** — take screenshots and ask questions about what is on your screen
 - **Image file analysis** — analyze workspace image files by path without needing a camera or live capture
-- **Configurable vision model** — choose from local or provider-capable vision models
+- **Configurable vision model** — choose from pinned local or provider-capable Vision Quick Choices, including ChatGPT / Codex rows whose catalog metadata reports image input support
 - **Camera selection** — pick which camera to use when multiple devices are present
 - **Inline image display** — captured and workspace images are shown inline in chat
-- **Provider vision support** — provider models with image capability are auto-detected and work alongside local vision models
+- **Provider vision support** — provider models with image capability are auto-detected and work alongside local vision models; Quick Choice refresh preserves provider-specific Vision metadata instead of downgrading rows through generic text-only heuristics
 
 ---
 
@@ -359,7 +359,7 @@ Thoth now has a formal self-inspection and self-management surface: a tool for q
 
 ### Controlled Self-Management
 
-- **`thoth_update_setting`** — approved mutations for model switching, assistant name, personality, context caps, dream-cycle controls, skill toggles, tool toggles, image-generation model, manual dream-cycle trigger, and self-improvement toggle
+- **`thoth_update_setting`** — approved mutations for Brain and Vision model switching, assistant name, personality, context caps, dream-cycle controls, skill toggles, tool toggles, image-generation model, video-generation model, manual dream-cycle trigger, and self-improvement toggle
 - **Interrupt-gated writes** — all state-changing operations route through explicit user confirmation before they are applied
 - **Optional self-improvement toolchain** — when self-improvement is enabled, `thoth_create_skill` and `thoth_patch_skill` become available
 - **Skill patch safety** — bundled skills are patched via user-space overrides, not in-place mutation; old versions are backed up under `~/.thoth/skill_versions/`
