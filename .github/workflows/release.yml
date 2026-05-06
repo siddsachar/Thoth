@@ -147,11 +147,15 @@ jobs:
             exit 1
           fi
           chmod +x "$PACKAGE_ROOT/bin/thoth"
+          export HOME="$RUNNER_TEMP/thoth-linux-home"
+          export XDG_DATA_HOME="$RUNNER_TEMP/thoth-linux-xdg"
+          mkdir -p "$HOME" "$XDG_DATA_HOME"
+          bash "$PACKAGE_ROOT/install.sh"
           python scripts/smoke_app.py \
             --port 8091 \
             --timeout 120 \
-            --cwd "$PACKAGE_ROOT/app" \
-            -- "$PACKAGE_ROOT/bin/thoth" --server --no-open --port 8091 --no-ollama
+            --cwd "$XDG_DATA_HOME/thoth/current/app" \
+            -- "$HOME/.local/bin/thoth" --server --no-open --port 8091 --no-ollama
 
       - name: Upload Linux package
         uses: actions/upload-artifact@v7

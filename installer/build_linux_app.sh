@@ -139,7 +139,16 @@ cat > "$PACKAGE_ROOT/bin/thoth" <<'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    TARGET="$(readlink "$SOURCE")"
+    case "$TARGET" in
+        /*) SOURCE="$TARGET" ;;
+        *) SOURCE="$DIR/$TARGET" ;;
+    esac
+done
+ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
 PYTHON="$ROOT/python/bin/python3"
 APP_DIR="$ROOT/app"
 DATA_DIR="${THOTH_DATA_DIR:-$HOME/.thoth}"

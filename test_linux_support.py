@@ -1,11 +1,21 @@
 import json
 import os
+import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 
 import launcher
 import pytest
 import updater
+
+
+def _linux_launcher_template() -> str:
+    script = Path("installer/build_linux_app.sh").read_text(encoding="utf-8")
+    start = script.index("cat > \"$PACKAGE_ROOT/bin/thoth\" <<'LAUNCHER'")
+    launcher_start = script.index("#!/usr/bin/env bash", start)
+    launcher_end = script.index("\nLAUNCHER", launcher_start)
+    return script[launcher_start:launcher_end]
 
 
 def test_linux_asset_selection(monkeypatch):
@@ -117,11 +127,64 @@ def test_linux_build_script_declares_expected_package_contract():
     assert "unknown-linux-gnu-install_only" in script
     assert 'PACKAGE_NAME="Thoth-${VERSION}-Linux-${PACKAGE_ARCH}"' in script
     assert 'TARBALL="$DIST_DIR/${PACKAGE_NAME}.tar.gz"' in script
+    assert 'while [ -L "$SOURCE" ]; do' in script
+    assert 'TARGET="$(readlink "$SOURCE")"' in script
+    assert 'ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"' in script
     assert "--browser --no-tray" in script
     assert "share/applications/com.thoth.Thoth.desktop" in script
     assert "install_kind\": \"xdg-user-tarball" in script
     for package in ("tools", "channels", "bundled_skills", "providers", "mcp_client", "migration"):
         assert package in script
+
+
+def test_linux_launcher_resolves_installed_symlink_chain(tmp_path):
+    if os.name == "nt":
+        pytest.skip("POSIX symlink execution is covered by Linux CI")
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("bash is required to execute the generated launcher")
+
+    home = tmp_path / "home"
+    release_root = home / ".local" / "share" / "thoth" / "releases" / "3.20.0"
+    bin_home = home / ".local" / "bin"
+    app_dir = release_root / "app"
+    python_dir = release_root / "python" / "bin"
+    (release_root / "bin").mkdir(parents=True)
+    app_dir.mkdir(parents=True)
+    python_dir.mkdir(parents=True)
+    bin_home.mkdir(parents=True)
+
+    launcher = release_root / "bin" / "thoth"
+    launcher.write_text(_linux_launcher_template(), encoding="utf-8")
+    launcher.chmod(0o755)
+    fake_python = python_dir / "python3"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'cwd=%s\\n' \"$PWD\"\n"
+        "printf 'install_root=%s\\n' \"${THOTH_INSTALL_ROOT:-}\"\n"
+        "printf 'args=%s\\n' \"$*\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    (app_dir / "launcher.py").write_text("# fake launcher\n", encoding="utf-8")
+
+    current = home / ".local" / "share" / "thoth" / "current"
+    current.symlink_to(Path("releases") / "3.20.0", target_is_directory=True)
+    user_launcher = bin_home / "thoth"
+    user_launcher.symlink_to(current / "bin" / "thoth")
+
+    result = subprocess.run(
+        [str(user_launcher), "--server", "--no-open"],
+        env={**os.environ, "HOME": str(home), "THOTH_DATA_DIR": str(home / ".thoth")},
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    assert f"cwd={app_dir}" in result.stdout
+    assert f"install_root={release_root}" in result.stdout
+    assert "args=launcher.py --server --no-open" in result.stdout
 
 
 def test_linux_one_line_installer_declares_verified_release_contract():
@@ -185,5 +248,8 @@ def test_release_workflows_reference_linux_artifact():
     assert "Thoth-*-Linux-*.tar.gz" in release
     linux_smoke = release[release.index("Smoke Linux package"):]
     assert "--no-root-check" not in linux_smoke
+    assert "HOME=\"$RUNNER_TEMP/thoth-linux-home\"" in linux_smoke
+    assert "bash \"$PACKAGE_ROOT/install.sh\"" in linux_smoke
+    assert "\"$HOME/.local/bin/thoth\" --server --no-open --port 8091 --no-ollama" in linux_smoke
     assert "Thoth-*-Linux-*.tar.gz" in manifest
     assert "curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash" in installer_docs
