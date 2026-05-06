@@ -514,6 +514,7 @@ def _show_splash(port: int = _PORT, timeout: float = 60.0) -> subprocess.Popen |
 _WINDOW_SCRIPT = r'''
 import sys
 import time
+import os
 
 # macOS: ensure the subprocess registers as a full GUI app so it can
 # receive mouse/keyboard events.  Without this, a window re-opened from
@@ -555,6 +556,62 @@ class _JsApi:
     def open_url(self, url):
         if isinstance(url, str) and url.lower().startswith(("https://", "http://")):
             webbrowser.open(url)
+
+    def _dialog_window(self):
+        try:
+            windows = list(getattr(webview, "windows", []) or [])
+            return windows[0] if windows else None
+        except Exception:
+            return None
+
+    def _dialog_directory(self, initial_dir):
+        path = str(initial_dir or "")
+        return path if path and os.path.isdir(path) else ""
+
+    def _dialog_file_types(self, file_types):
+        filters = []
+        if isinstance(file_types, (list, tuple)):
+            for item in file_types:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    label = str(item[0] or "Files")
+                    pattern = str(item[1] or "*.*")
+                    filters.append(label if "(" in label else f"{label} ({pattern})")
+                elif isinstance(item, str) and item.strip():
+                    filters.append(item.strip())
+        return tuple(filters)
+
+    def choose_file(self, title="Select file", initial_dir="", file_types=None):
+        window = self._dialog_window()
+        if window is None:
+            return None
+        try:
+            result = window.create_file_dialog(
+                webview.OPEN_DIALOG,
+                directory=self._dialog_directory(initial_dir),
+                allow_multiple=False,
+                file_types=self._dialog_file_types(file_types),
+            )
+        except Exception:
+            return None
+        if isinstance(result, (list, tuple)):
+            return result[0] if result else None
+        return result
+
+    def choose_folder(self, title="Select folder", initial_dir="", file_types=None):
+        window = self._dialog_window()
+        if window is None:
+            return None
+        try:
+            result = window.create_file_dialog(
+                webview.FOLDER_DIALOG,
+                directory=self._dialog_directory(initial_dir),
+                allow_multiple=False,
+            )
+        except Exception:
+            return None
+        if isinstance(result, (list, tuple)):
+            return result[0] if result else None
+        return result
 
     def open_window(self, name, url, title=None, width=1600, height=900):
         if not isinstance(url, str) or not url.lower().startswith(("https://", "http://")):

@@ -256,14 +256,12 @@ def open_settings(
             local_models = list_local_models()
             chat_options = list_model_choice_options("chat", include_values=[get_current_model()])
             vision_options = list_model_choice_options("vision", include_values=[state.vision_service.model])
-            catalog_rows = []
         else:
             _ollama_up = bool(preloaded.get("ollama_up"))
             trending = list(preloaded.get("trending") or [])
             local_models = list(preloaded.get("local") or [])
             chat_options = list(preloaded.get("chat_options") or [])
             vision_options = list(preloaded.get("vision_options") or [])
-            catalog_rows = list(preloaded.get("catalog_rows") or [])
 
         local = local_models
         current = state.current_model
@@ -475,14 +473,43 @@ def open_settings(
                 ).props("dense")
             with vision_controls:
                 vision_select = ui.select(label="Vision model", options=vision_opts, value=vision_value).classes("col-grow").props('use-input input-debounce=300 dense outlined')
-                from vision import list_cameras
-                cameras = list_cameras()
-                if cameras:
-                    cam_opts = {i: f"Camera {i}" for i in cameras}
-                    ui.select(label="Camera", options=cam_opts, value=vsvc.camera_index,
-                              on_change=lambda e: setattr(vsvc, "camera_index", e.value)).classes("min-w-[150px]").props("dense outlined")
-                else:
-                    ui.label("No cameras detected").classes("text-grey-6 text-xs q-pb-sm")
+                camera_controls = ui.row().classes("items-end gap-2")
+                with camera_controls:
+                    camera_select = ui.select(
+                        label="Camera",
+                        options={vsvc.camera_index: f"Camera {vsvc.camera_index}"},
+                        value=vsvc.camera_index,
+                        on_change=lambda e: setattr(vsvc, "camera_index", e.value),
+                    ).classes("min-w-[150px]").props("dense outlined")
+                    camera_status = ui.label("Camera list not loaded").classes("text-grey-6 text-xs q-pb-sm")
+                    refresh_cameras_btn = ui.button(icon="refresh").props("flat dense round size=sm").tooltip("Refresh camera list")
+
+                async def _refresh_cameras() -> None:
+                    from vision import list_cameras
+
+                    refresh_cameras_btn.disable()
+                    camera_status.text = "Checking cameras..."
+                    camera_status.update()
+                    try:
+                        cameras = await run.io_bound(list_cameras)
+                    except Exception as exc:
+                        logger.warning("Camera list refresh failed: %s", exc, exc_info=True)
+                        cameras = []
+                    if cameras:
+                        camera_select.options = {i: f"Camera {i}" for i in cameras}
+                        if vsvc.camera_index not in cameras:
+                            camera_select.value = cameras[0]
+                            vsvc.camera_index = cameras[0]
+                        camera_status.text = f"{len(cameras)} camera(s) detected"
+                    else:
+                        camera_select.options = {vsvc.camera_index: f"Camera {vsvc.camera_index}"}
+                        camera_select.value = vsvc.camera_index
+                        camera_status.text = "No cameras detected"
+                    camera_select.update()
+                    camera_status.update()
+                    refresh_cameras_btn.enable()
+
+                refresh_cameras_btn.on_click(_refresh_cameras)
                 vision_dl_btn = ui.button(icon="download").props("flat dense round size=sm color=primary").tooltip("Download selected model")
                 vision_dl_btn.visible = _ollama_up and not is_cloud_model(vsvc.model) and vsvc.model not in local
                 vision_empty = ui.label("No pinned Vision choices yet. Pin Vision models in the catalog below.").classes("text-grey-6 text-xs q-pb-sm")
@@ -725,7 +752,7 @@ def open_settings(
 
         vision_select.on_value_change(_on_vision_change)
 
-        from ui.model_catalog import build_model_catalog_section
+        from ui.model_catalog import build_lazy_model_catalog_section
 
         with ui.row().classes("items-center justify-between w-full q-mt-md q-mb-xs"):
             with ui.column().classes("gap-0"):
@@ -841,16 +868,44 @@ def open_settings(
         def _download_catalog_model(row) -> None:
             list(pull_model(row.model_id))
 
-        build_model_catalog_section(
-            catalog_rows,
+        def _load_catalog_rows():
+            from providers.model_catalog import build_model_catalog_rows, load_ollama_catalog_rows
+            from providers.selection import list_quick_choices
+
+            try:
+                from tools.image_gen_tool import DEFAULT_MODEL as _IMAGE_DEFAULT
+                image_tool = tool_registry.get_tool("image_gen")
+                image_model = image_tool.get_config("model", _IMAGE_DEFAULT) if image_tool else _IMAGE_DEFAULT
+            except Exception:
+                image_model = ""
+            try:
+                from tools.video_gen_tool import DEFAULT_MODEL as _VIDEO_DEFAULT
+                video_tool = tool_registry.get_tool("video_gen")
+                video_model = video_tool.get_config("model", _VIDEO_DEFAULT) if video_tool else _VIDEO_DEFAULT
+            except Exception:
+                video_model = ""
+            ollama_catalog_rows = load_ollama_catalog_rows() if _ollama_up else []
+            return build_model_catalog_rows(
+                cloud_cache=_cloud_model_cache,
+                ollama_rows=ollama_catalog_rows,
+                defaults={
+                    "chat": get_current_model(),
+                    "vision": state.vision_service.model,
+                    "image": image_model,
+                    "video": video_model,
+                },
+                quick_choices=list_quick_choices("", include_inactive=True),
+            )
+
+        build_lazy_model_catalog_section(
+            _load_catalog_rows,
             on_set_default=_set_catalog_default,
             on_download=_download_catalog_model,
             on_change=_refresh_top_picker_options,
         )
 
     def _collect_models_tab_data() -> dict:
-        from providers.model_catalog import build_model_catalog_rows, load_ollama_catalog_rows
-        from providers.selection import list_model_choice_options, list_quick_choices
+        from providers.selection import list_model_choice_options
 
         ollama_up = _ollama_reachable()
         fetch_trending_ollama_models()
@@ -867,25 +922,14 @@ def open_settings(
             video_model = video_tool.get_config("model", _VIDEO_DEFAULT) if video_tool else _VIDEO_DEFAULT
         except Exception:
             video_model = ""
-        ollama_catalog_rows = load_ollama_catalog_rows() if ollama_up else []
-        defaults = {
-            "chat": get_current_model(),
-            "vision": state.vision_service.model,
-            "image": image_model,
-            "video": video_model,
-        }
         return {
             "ollama_up": ollama_up,
             "trending": get_trending_models(),
             "local": local_models,
             "chat_options": list_model_choice_options("chat", include_values=[get_current_model()]),
             "vision_options": list_model_choice_options("vision", include_values=[state.vision_service.model]),
-            "catalog_rows": build_model_catalog_rows(
-                cloud_cache=_cloud_model_cache,
-                ollama_rows=ollama_catalog_rows,
-                defaults=defaults,
-                quick_choices=list_quick_choices("", include_inactive=True),
-            ),
+            "image_model": image_model,
+            "video_model": video_model,
         }
 
     def _build_models_tab() -> None:
@@ -910,10 +954,8 @@ def open_settings(
 
         with container:
             ui.label("🤖 Models").classes("text-h6")
-            with ui.row().classes("items-center gap-2 text-grey-6 text-sm"):
-                ui.spinner(size="sm")
-                ui.label("Preparing model settings...")
-        defer_ui(_load)
+            ui.label("Load model settings when you need to change defaults, downloads, or catalog pins.").classes("text-grey-6 text-sm")
+            ui.button("Load model settings", icon="tune", on_click=lambda: defer_ui(_load)).props("flat dense color=primary")
 
     # ── Providers Tab ────────────────────────────────────────────────
 

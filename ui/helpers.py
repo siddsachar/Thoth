@@ -885,6 +885,60 @@ def _render_pdf_fpdf2(thread_name: str, messages: list[dict]) -> bytes:
 # CROSS-PLATFORM NATIVE FILE PICKERS
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _is_pywebview_native_window() -> bool:
+    return os.environ.get("THOTH_NATIVE") == "1"
+
+
+async def _pick_with_pywebview(
+    method: str,
+    title: str,
+    initial_dir: str,
+    filetypes: list[tuple[str, str]] | None = None,
+) -> str | None:
+    if not _is_pywebview_native_window():
+        return None
+    try:
+        from nicegui import ui
+
+        script = f"""
+        (async () => {{
+            const api = window.pywebview && window.pywebview.api ? window.pywebview.api : null;
+            if (!api || !api.{method}) return null;
+            try {{
+                return await api.{method}(
+                    {json.dumps(title)},
+                    {json.dumps(initial_dir or "")},
+                    {json.dumps(filetypes or [])}
+                );
+            }} catch (err) {{
+                console.warn('Thoth native file dialog failed', err);
+                return null;
+            }}
+        }})()
+        """
+        result = await ui.run_javascript(script, timeout=180)
+    except Exception:
+        logger.debug("pywebview native file dialog unavailable", exc_info=True)
+        return None
+    if isinstance(result, (list, tuple)):
+        result = result[0] if result else None
+    if isinstance(result, str) and result.strip():
+        return result.strip()
+    return None
+
+
+async def _pick_file_pywebview(
+    title: str,
+    initial_dir: str,
+    filetypes: list[tuple[str, str]] | None,
+) -> str | None:
+    return await _pick_with_pywebview("choose_file", title, initial_dir, filetypes)
+
+
+async def _pick_folder_pywebview(title: str, initial_dir: str) -> str | None:
+    return await _pick_with_pywebview("choose_folder", title, initial_dir)
+
+
 def _pick_folder_native(title: str, initial_dir: str) -> str | None:
     """Platform-native folder picker (no tkinter dependency on macOS/Linux)."""
     if sys.platform == "darwin":
@@ -1001,6 +1055,9 @@ def _pick_file_native(
 
 async def browse_folder(title: str = "Select folder",
                         initial_dir: str = "") -> str | None:
+    path = await _pick_folder_pywebview(title, initial_dir)
+    if path:
+        return path
     return await asyncio.to_thread(_pick_folder_native, title, initial_dir)
 
 
@@ -1009,5 +1066,8 @@ async def browse_file(
     initial_dir: str = "",
     filetypes: list[tuple[str, str]] | None = None,
 ) -> str | None:
+    path = await _pick_file_pywebview(title, initial_dir, filetypes)
+    if path:
+        return path
     return await asyncio.to_thread(_pick_file_native, title, initial_dir,
                                    filetypes)

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from providers.capabilities import model_supports_surface
 from providers.catalog import classify_model_capabilities, get_provider_definition, infer_provider_id, legacy_cache_to_model_infos, model_info_to_cache_entry
 from providers.model_catalog import CatalogModelRow, build_model_catalog_rows, rows_for_surface
@@ -11,6 +13,9 @@ from providers.ollama import (
     ollama_provider_catalog_model_ids,
     preferred_ollama_tag_models,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_provider_catalog_infers_existing_api_key_providers():
@@ -28,6 +33,25 @@ def test_minimax_provider_definition_and_model_inference():
     assert definition.default_transport == TransportMode.ANTHROPIC_MESSAGES
     assert definition.base_url == "https://api.minimax.io/anthropic"
     assert definition.auth_methods[0].value == "api_key"
+
+
+def test_settings_models_tab_does_not_auto_load_heavy_work():
+    source = (ROOT / "ui" / "settings.py").read_text(encoding="utf-8")
+
+    assert "Load model settings" in source
+    assert "Preparing model settings" not in source
+    assert "\n        defer_ui(_load)" not in source
+
+
+def test_settings_models_defers_catalog_and_camera_probe():
+    source = (ROOT / "ui" / "settings.py").read_text(encoding="utf-8")
+    render_section = source.split("def _render_models_tab_content", 1)[1].split("def _collect_models_tab_data", 1)[0]
+    collect_section = source.split("def _collect_models_tab_data", 1)[1].split("def _build_models_tab", 1)[0]
+
+    assert "build_lazy_model_catalog_section" in render_section
+    assert "build_model_catalog_rows" not in collect_section
+    assert "cameras = list_cameras()" not in render_section
+    assert "await run.io_bound(list_cameras)" in render_section
 
 
 def test_minimax_model_ids_infer_to_minimax_provider():

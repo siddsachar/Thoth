@@ -23,8 +23,9 @@ def build_model_catalog_section(
     on_set_default: Callable[[str, CatalogModelRow], None] | None = None,
     on_download: Callable[[CatalogModelRow], object] | None = None,
     on_change: Callable[[], None] | None = None,
+    initial_open: bool = False,
 ) -> None:
-    state = {"surface": "chat", "query": "", "provider": "", "catalog_open": False}
+    state = {"surface": "chat", "query": "", "provider": "", "catalog_open": initial_open}
     pinned_by_ref = {row.selection_ref: set(row.pinned_surfaces) for row in rows}
     defaults_by_ref = {row.selection_ref: set(row.default_surfaces) for row in rows}
     visible_limits: dict[tuple[str, str, str, str], int] = {}
@@ -32,7 +33,7 @@ def build_model_catalog_section(
     for row in rows:
         provider_options.setdefault(row.provider_id, row.provider_display_name or row.provider_id)
 
-    catalog_expansion = ui.expansion("Model Catalog", icon="view_list", value=False).classes("w-full")
+    catalog_expansion = ui.expansion("Model Catalog", icon="view_list", value=initial_open).classes("w-full")
     with catalog_expansion:
         ui.label("Browse discovered models by surface and provider. Use the pin button to add a model to that surface's picker.").classes("text-grey-6 text-sm")
         with ui.row().classes("items-center gap-2 w-full"):
@@ -215,6 +216,59 @@ def build_model_catalog_section(
                 ui.notify(f"Download failed: {exc}", type="negative")
 
         _refresh()
+
+
+def build_lazy_model_catalog_section(
+    load_rows: Callable[[], list[CatalogModelRow]],
+    *,
+    on_set_default: Callable[[str, CatalogModelRow], None] | None = None,
+    on_download: Callable[[CatalogModelRow], object] | None = None,
+    on_change: Callable[[], None] | None = None,
+) -> None:
+    container = ui.column().classes("w-full")
+    state = {"loaded": False, "loading": False}
+
+    async def _load() -> None:
+        if state["loaded"] or state["loading"]:
+            return
+        state["loading"] = True
+        container.clear()
+        with container:
+            with ui.expansion("Model Catalog", icon="view_list", value=True).classes("w-full"):
+                with ui.row().classes("items-center gap-2 text-grey-6 text-sm"):
+                    ui.spinner(size="sm")
+                    ui.label("Loading catalog...")
+        try:
+            rows = await run.io_bound(load_rows)
+            state["loaded"] = True
+            container.clear()
+            with container:
+                build_model_catalog_section(
+                    rows,
+                    on_set_default=on_set_default,
+                    on_download=on_download,
+                    on_change=on_change,
+                    initial_open=True,
+                )
+        except Exception as exc:
+            container.clear()
+            with container:
+                with ui.expansion("Model Catalog", icon="view_list", value=True).classes("w-full"):
+                    ui.label(f"Could not load catalog: {exc}").classes("text-warning text-sm")
+                    ui.button("Retry", icon="refresh", on_click=_load).props("flat dense")
+        finally:
+            state["loading"] = False
+
+    async def _on_catalog_toggle(e) -> None:
+        if e.value:
+            await _load()
+
+    with container:
+        with ui.expansion("Model Catalog", icon="view_list", value=False).classes("w-full") as catalog_expansion:
+            with ui.column().classes("gap-2"):
+                ui.label("The catalog loads only when opened to keep Settings responsive on large provider/model catalogs.").classes("text-grey-6 text-sm")
+                ui.button("Load catalog", icon="view_list", on_click=_load).props("flat dense color=primary")
+        catalog_expansion.on_value_change(_on_catalog_toggle)
 
 
 def _filter_catalog_rows(
