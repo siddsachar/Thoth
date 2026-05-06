@@ -712,6 +712,37 @@ def test_codex_runtime_builds_official_responses_request_shape(tmp_path, monkeyp
     assert body["client_metadata"] == {"x-codex-installation-id": "install-123"}
 
 
+def test_codex_runtime_preserves_multimodal_human_image_blocks(tmp_path, monkeypatch):
+    from langchain_core.messages import HumanMessage
+    from providers.transports.codex_responses import ChatCodexResponses
+
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    _set_backend_for_tests(_MemoryKeyring())
+    _save_runtime_tokens()
+    client = _HttpClient([_Response(body=_sse(_assistant_message("I can see the screenshot."), _completed()))])
+    model = ChatCodexResponses(model_name="gpt-5.5", http_client=client)
+    message = HumanMessage(content=[
+        {"type": "text", "text": "What do you see on my screen?"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA", "detail": "low"}},
+    ])
+
+    try:
+        result = model.invoke([message])
+    finally:
+        _set_backend_for_tests(None)
+
+    assert result.content == "I can see the screenshot."
+    body = client.calls[0][1]["json"]
+    assert body["input"] == [{
+        "type": "message",
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "What do you see on my screen?"},
+            {"type": "input_image", "image_url": "data:image/jpeg;base64,AAAA", "detail": "low"},
+        ],
+    }]
+
+
 def test_codex_runtime_streams_text_deltas(tmp_path, monkeypatch):
     from langchain_core.messages import HumanMessage
     from providers.transports.codex_responses import ChatCodexResponses

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import app_port
 import launcher
@@ -41,6 +42,26 @@ def test_launcher_reuses_existing_thoth_on_dynamic_port(monkeypatch):
     monkeypatch.setattr(launcher, "_is_thoth_server", lambda port: port == 8081)
 
     assert launcher._select_app_port(preferred=8080, max_tries=4) == (8081, True)
+
+
+def test_run_direct_reuses_existing_server_without_child_exit_check(monkeypatch):
+    captured = {}
+    args = SimpleNamespace(
+        no_ollama=True,
+        port=8080,
+        host=None,
+        no_splash=True,
+        server=True,
+        no_open=True,
+        native=False,
+    )
+
+    monkeypatch.setattr(launcher, "_select_app_port", lambda preferred: (preferred, True))
+    monkeypatch.setattr(launcher, "_wait_for_server", lambda port, server=None: captured.setdefault("server", server) is None)
+
+    launcher._run_direct(args)
+
+    assert captured["server"] is None
 
 
 def test_launcher_skips_foreign_ports_and_picks_next_free(monkeypatch):

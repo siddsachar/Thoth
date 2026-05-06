@@ -132,7 +132,7 @@ jobs:
       - name: Install Linux build/runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends rsync libgl1 libegl1 libglib2.0-0
+          sudo apt-get install -y --no-install-recommends rsync libgl1 libegl1 libglib2.0-0 libxcb-cursor0
 
       - name: Validate Linux installer scripts
         run: bash -n build_linux_app.sh installer/build_linux_app.sh installer/install-linux.sh
@@ -157,6 +157,11 @@ jobs:
           export XDG_DATA_HOME="$RUNNER_TEMP/thoth-linux-xdg"
           mkdir -p "$HOME" "$XDG_DATA_HOME"
           bash "$PACKAGE_ROOT/install.sh"
+          python scripts/smoke_app.py \
+            --port 8080 \
+            --timeout 180 \
+            --cwd "$XDG_DATA_HOME/thoth/current/app" \
+            -- "$HOME/.local/bin/thoth"
           python scripts/smoke_app.py \
             --port 8091 \
             --timeout 120 \

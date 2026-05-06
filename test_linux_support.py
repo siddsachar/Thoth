@@ -197,6 +197,17 @@ def test_linux_launcher_resolves_installed_symlink_chain(tmp_path):
     assert f"install_root={release_root}" in result.stdout
     assert "args=launcher.py --server --no-open" in result.stdout
 
+    default_result = subprocess.run(
+        [str(user_launcher)],
+        env={**os.environ, "HOME": str(home), "THOTH_DATA_DIR": str(home / ".thoth")},
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    assert "args=launcher.py --browser --no-tray" in default_result.stdout
+
 
 def test_linux_one_line_installer_declares_verified_release_contract():
     script = Path("installer/install-linux.sh").read_text(encoding="utf-8")
@@ -263,10 +274,12 @@ def test_release_workflows_reference_linux_artifact():
     assert "installer/install-linux.sh" in release
     assert "installer/install-linux.sh" in ci
     assert "Thoth-*-Linux-*.tar.gz" in release
+    assert "libxcb-cursor0" in release
     linux_smoke = release[release.index("Smoke Linux package"):]
     assert "--no-root-check" not in linux_smoke
     assert "HOME=\"$RUNNER_TEMP/thoth-linux-home\"" in linux_smoke
     assert "bash \"$PACKAGE_ROOT/install.sh\"" in linux_smoke
+    assert '"$HOME/.local/bin/thoth"\n' in linux_smoke
     assert "\"$HOME/.local/bin/thoth\" --server --no-open --port 8091 --no-ollama" in linux_smoke
     assert "Thoth-*-Linux-*.tar.gz" in manifest
     assert "curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash" in installer_docs

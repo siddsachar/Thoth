@@ -20,10 +20,8 @@ import os
 import pathlib
 import sys
 import threading
+from types import ModuleType
 from typing import Optional
-
-import cv2
-import mss
 
 try:
     import ollama as _ollama_mod
@@ -34,11 +32,62 @@ logger = logging.getLogger(__name__)
 
 # ── Platform-specific camera backend ─────────────────────────────────────────
 if sys.platform == "win32":
-    _CV_BACKEND = cv2.CAP_DSHOW           # DirectShow (Windows)
+    _CV_BACKEND = 700                     # cv2.CAP_DSHOW / DirectShow (Windows)
 elif sys.platform == "darwin":
-    _CV_BACKEND = cv2.CAP_AVFOUNDATION    # AVFoundation (macOS)
+    _CV_BACKEND = 1200                    # cv2.CAP_AVFOUNDATION / AVFoundation (macOS)
 else:
-    _CV_BACKEND = cv2.CAP_V4L2            # Video4Linux (Linux)
+    _CV_BACKEND = 200                     # cv2.CAP_V4L2 / Video4Linux (Linux)
+
+_cv2_mod: ModuleType | None = None
+_cv2_error: BaseException | None = None
+_mss_mod: ModuleType | None = None
+_mss_error: BaseException | None = None
+
+
+def _load_cv2() -> ModuleType | None:
+    """Return OpenCV if importable; keep startup alive if native libs are missing."""
+    global _cv2_mod, _cv2_error
+    if _cv2_mod is not None:
+        return _cv2_mod
+    if _cv2_error is not None:
+        return None
+    try:
+        import cv2 as loaded_cv2
+    except BaseException as exc:  # OpenCV can raise OSError for missing native libs.
+        _cv2_error = exc
+        logger.warning("OpenCV unavailable; camera/screenshot capture disabled: %s", exc)
+        return None
+    _cv2_mod = loaded_cv2
+    return _cv2_mod
+
+
+def _load_mss() -> ModuleType | None:
+    """Return mss if importable; keep startup alive if screen capture deps are missing."""
+    global _mss_mod, _mss_error
+    if _mss_mod is not None:
+        return _mss_mod
+    if _mss_error is not None:
+        return None
+    try:
+        import mss as loaded_mss
+    except BaseException as exc:
+        _mss_error = exc
+        logger.warning("MSS unavailable; screenshot capture disabled: %s", exc)
+        return None
+    _mss_mod = loaded_mss
+    return _mss_mod
+
+
+def native_backend_status() -> dict[str, str | bool]:
+    """Return display-safe status for optional native capture backends."""
+    cv2_available = _load_cv2() is not None
+    mss_available = _load_mss() is not None
+    return {
+        "opencv_available": cv2_available,
+        "opencv_error": "" if cv2_available else str(_cv2_error or "OpenCV is not available."),
+        "mss_available": mss_available,
+        "mss_error": "" if mss_available else str(_mss_error or "MSS is not available."),
+    }
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 DEFAULT_VISION_MODEL = "gemma3:4b"
@@ -104,6 +153,9 @@ def _suppress_stderr():
 
 def list_cameras(max_check: int = 5) -> list[int]:
     """Return indices of available camera devices (checks 0..max_check-1)."""
+    cv2 = _load_cv2()
+    if cv2 is None:
+        return []
     available = []
     with _suppress_stderr():
         for idx in range(max_check):
@@ -119,6 +171,10 @@ def capture_frame(camera_index: int = 0) -> Optional[bytes]:
 
     Returns JPEG bytes or ``None`` if the camera is unavailable.
     """
+    cv2 = _load_cv2()
+    if cv2 is None:
+        logger.warning("Camera capture unavailable because OpenCV could not be imported: %s", _cv2_error)
+        return None
     cap = cv2.VideoCapture(camera_index, _CV_BACKEND)
     if not cap.isOpened():
         logger.warning("Camera %d not available", camera_index)
@@ -145,6 +201,11 @@ def capture_frame(camera_index: int = 0) -> Optional[bytes]:
 def capture_screenshot() -> Optional[bytes]:
     """Capture the primary monitor as JPEG bytes."""
     try:
+        cv2 = _load_cv2()
+        mss = _load_mss()
+        if cv2 is None or mss is None:
+            logger.warning("Screenshot capture unavailable: OpenCV=%s MSS=%s", cv2 is not None, mss is not None)
+            return None
         with mss.mss() as sct:
             # monitor 1 = primary display (0 = all monitors combined)
             shot = sct.grab(sct.monitors[1])

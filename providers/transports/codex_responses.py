@@ -202,6 +202,74 @@ def _content_item(text: str, *, output: bool = False) -> dict[str, str]:
     return {"type": "output_text" if output else "input_text", "text": text}
 
 
+def _image_url_from_block(block: dict[str, Any]) -> str:
+    image_url = block.get("image_url")
+    if isinstance(image_url, str):
+        return image_url
+    if isinstance(image_url, dict):
+        return str(image_url.get("url") or "")
+    image = block.get("image")
+    if isinstance(image, dict):
+        return str(image.get("url") or "")
+    return ""
+
+
+def _input_image_item(block: dict[str, Any]) -> dict[str, Any] | None:
+    url = _image_url_from_block(block)
+    file_id = str(block.get("file_id") or "").strip()
+    if not url and not file_id:
+        return None
+    item: dict[str, Any] = {"type": "input_image"}
+    if url:
+        item["image_url"] = url
+    if file_id:
+        item["file_id"] = file_id
+    detail = block.get("detail")
+    if detail is None and isinstance(block.get("image_url"), dict):
+        detail = block["image_url"].get("detail")
+    if detail:
+        item["detail"] = detail
+    return item
+
+
+def _message_content_items(message: BaseMessage, *, output: bool = False) -> list[dict[str, Any]]:
+    content = message.content
+    if isinstance(content, str):
+        return [_content_item(content, output=output)] if content else []
+    if not isinstance(content, list):
+        text = str(content or "")
+        return [_content_item(text, output=output)] if text else []
+
+    items: list[dict[str, Any]] = []
+    for block in content:
+        if isinstance(block, str):
+            if block:
+                items.append(_content_item(block, output=output))
+            continue
+        if not isinstance(block, dict):
+            text = str(block or "")
+            if text:
+                items.append(_content_item(text, output=output))
+            continue
+
+        block_type = str(block.get("type") or "")
+        if block_type in {"text", "input_text", "output_text"}:
+            text = block.get("text") or block.get("input") or block.get("content")
+            if isinstance(text, str) and text:
+                items.append(_content_item(text, output=output))
+            continue
+        if block_type in {"image_url", "input_image"} or isinstance(block.get("image"), dict):
+            image_item = _input_image_item(block)
+            if image_item:
+                items.append(image_item)
+            continue
+
+        text = block.get("text") or block.get("input") or block.get("content")
+        if isinstance(text, str) and text:
+            items.append(_content_item(text, output=output))
+    return items
+
+
 def _messages_to_responses_input(messages: list[BaseMessage]) -> tuple[str, list[dict[str, Any]]]:
     instructions: list[str] = []
     input_items: list[dict[str, Any]] = []
@@ -233,10 +301,13 @@ def _messages_to_responses_input(messages: list[BaseMessage]) -> tuple[str, list
         else:
             role = getattr(message, "type", "user") or "user"
             output = role == "assistant"
+        content = _message_content_items(message, output=output)
+        if not content:
+            content = [_content_item(text, output=output)]
         input_items.append({
             "type": "message",
             "role": role,
-            "content": [_content_item(text, output=output)],
+            "content": content,
         })
     return "\n\n".join(instructions), input_items
 
