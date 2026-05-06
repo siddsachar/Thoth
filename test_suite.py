@@ -13928,6 +13928,7 @@ try:
         "test_provider_selection.py",
         "test_provider_subscription_auth.py",
         "test_setup_wizard_custom.py",
+        "test_startup_hardening.py",
         "test_thoth_status_media.py",
         "integration_tests.py",
     }

@@ -64,7 +64,7 @@ dependency command if Chromium reports missing libraries.
 
 ## Architecture
 
-The installer bundles the embedded Python runtime, pre-installed Python packages, and app source code. Kokoro TTS model files are auto-downloaded on first use. Ollama and Playwright Chromium are handled by the build/runtime flow, and Ollama is optional because Thoth can run entirely with provider models.
+The installer bundles the embedded Python runtime, pre-installed Python packages, and app source code. Repair and upgrade installs replace the embedded Python directory before copying the new payload so manually installed or corrupted packages cannot linger inside Thoth's bundled runtime. Kokoro TTS model files are auto-downloaded on first use. Ollama and Playwright Chromium are handled by the build/runtime flow, and Ollama is optional because Thoth can run entirely with provider models.
 
 | Bundled in .exe | Downloaded or created outside install |
 |----------------|--------------------------------------|
@@ -134,6 +134,7 @@ C:\Program Files\Thoth\            # Installation directory
     ├── secret_store.py             # OS credential-store wrapper
     ├── voice.py                    # Speech-to-text (toggle-based, CPU Whisper)
     ├── tts.py                      # Text-to-speech (Kokoro TTS)
+    ├── startup_diagnostics.py      # Optional native dependency startup probes
     ├── vision.py                   # Camera/screen capture
     ├── data_reader.py              # Pandas-based structured data reader
     ├── tasks.py                    # Task engine + APScheduler
@@ -223,6 +224,8 @@ The Inno Setup installer runs these steps:
 2. **Create shortcuts** — Start Menu and optionally Desktop
 3. **Optionally launch Thoth**
 
+On repair/upgrade, Inno Setup deletes `{app}\python` before extraction. User data in `%USERPROFILE%\.thoth` is not touched.
+
 ## End-User Experience
 
 1. Run `ThothSetup_3.20.0.exe`
@@ -237,5 +240,6 @@ The Inno Setup installer runs these steps:
 - **Ollama is optional**: `install_deps.bat` offers to install Ollama, but it can be skipped for provider-only setups. Thoth works with API-key provider models (OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter) and ChatGPT / Codex subscription models after in-app ChatGPT sign-in.
 - **Custom/self-hosted endpoints**: first-run setup can connect to OpenAI-compatible endpoints such as LM Studio, vLLM, LocalAI, or private gateways. LM Studio's local server commonly uses `http://127.0.0.1:1234/v1`; load the selected model with a larger context window, such as `32768`, so Thoth's agent prompt and enabled tools fit.
 - **Codex credential boundary**: external Codex CLI auth files are metadata/reference only. Direct ChatGPT / Codex runtime in the packaged app requires the in-app ChatGPT sign-in and stores Thoth-owned tokens in the OS credential store.
+- **Optional native package recovery**: built-in TTS uses Kokoro ONNX and does not require TorchCodec. If a user-approved shell command installs a broken optional native package into the embedded Python runtime, startup diagnostics and the launcher log emit recovery hints, and repair/upgrade replaces the embedded runtime.
 - **Launcher**: Uses `launcher.py` (system tray icon + native window + splash screen) instead of running NiceGUI directly. The tray icon shows app status (running/stopped) and provides graceful shutdown.
 - **Uninstall**: Registered with Windows Add/Remove Programs. The uninstaller removes the installation directory but does **not** delete user data in `~/.thoth/` — users can remove it manually if desired.

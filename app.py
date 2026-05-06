@@ -42,6 +42,13 @@ os.environ.setdefault("USER_AGENT", f"Thoth/{_thoth_version}")
 
 logger = logging.getLogger(__name__)
 
+try:
+    from startup_diagnostics import preflight_optional_native_packages
+
+    preflight_optional_native_packages(logger)
+except Exception:
+    logger.debug("Startup diagnostics failed", exc_info=True)
+
 # Ensure app directory is on sys.path
 _app_dir = os.path.dirname(os.path.abspath(__file__))
 if _app_dir not in sys.path:

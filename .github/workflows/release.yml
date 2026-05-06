@@ -68,7 +68,10 @@ jobs:
           ollama pull qwen3:1.7b
 
       - name: Install Python packages
-        run: pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt pytest
+
+      - name: Run focused startup hardening tests
+        run: python -m pytest test_startup_hardening.py test_app_port.py test_linux_support.py
 
       - name: Run test suite
         run: python test_suite.py

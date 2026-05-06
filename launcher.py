@@ -191,6 +191,42 @@ def _find_free_port(start: int = _PORT, max_tries: int = 50) -> int:
     raise RuntimeError(f"No free Thoth app port found in {start}-{start + max_tries - 1}")
 
 
+def _startup_failure_hints(log_text: str, python_executable: str | None = None) -> list[str]:
+    """Return user-actionable recovery hints for known startup crashes."""
+    text = (log_text or "").lower()
+    python = python_executable or sys.executable
+    hints: list[str] = []
+    if "torchcodec" in text and (
+        "libtorchcodec" in text
+        or "could not load this library" in text
+        or "could not find module" in text
+    ):
+        site_packages = Path(python).resolve().parent / "Lib" / "site-packages"
+        hints.extend([
+            "Detected a broken optional TorchCodec install in Thoth's embedded Python.",
+            "Thoth does not require TorchCodec for built-in TTS.",
+            f'Recovery: close Thoth and run "{python}" -m pip uninstall -y torchcodec',
+            f"If pip cannot remove it, delete torchcodec and torchcodec-*.dist-info from {site_packages}.",
+        ])
+    return hints
+
+
+def _log_startup_failure_hints(log_path: Path | None, python_executable: str | None = None) -> None:
+    if not log_path or not log_path.exists():
+        return
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return
+    hints = _startup_failure_hints(text, python_executable=python_executable)
+    if not hints:
+        return
+    logger.error("--- startup recovery hints ---")
+    for hint in hints:
+        logger.error("  %s", hint)
+    logger.error("--- end recovery hints ---")
+
+
 def _select_app_port(preferred: int = _PORT, max_tries: int = 50) -> tuple[int, bool]:
     """Choose the app port and whether it belongs to an existing Thoth."""
     if not _is_port_in_use(preferred):
@@ -1207,9 +1243,10 @@ class ThothTray:
                         "Check %s for details.", rc, log_path)
                     if self._server._log_file and self._server._log_file.exists():
                         try:
-                            tail = self._server._log_file.read_text(
+                            log_text = self._server._log_file.read_text(
                                 encoding="utf-8", errors="replace"
-                            ).strip().splitlines()[-10:]
+                            )
+                            tail = log_text.strip().splitlines()[-10:]
                             if tail:
                                 logger.error("--- last lines of log ---")
                                 for line in tail:
@@ -1217,6 +1254,7 @@ class ThothTray:
                                 logger.error("--- end of log ---")
                         except Exception:
                             pass
+                        _log_startup_failure_hints(self._server._log_file)
 
             self._stop_event.wait(_POLL_INTERVAL)
 
@@ -1300,6 +1338,7 @@ def _run_direct(args: argparse.Namespace) -> None:
             _show_splash(port)
 
     if not _wait_for_server(port):
+        _log_startup_failure_hints(server._log_file)
         raise RuntimeError(f"Thoth server did not become ready on port {port}")
 
     if not args.no_open:

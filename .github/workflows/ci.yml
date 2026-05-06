@@ -38,10 +38,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends libgl1 libegl1 libglib2.0-0
 
       - name: Install Python packages
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt pytest
 
       - name: Compile Python files
         run: python -m compileall -q -x "(\\.git|\\.venv|dist|build|__pycache__)" .
+
+      - name: Focused startup hardening tests
+        run: python -m pytest test_startup_hardening.py test_app_port.py
 
       - name: Runtime smoke on Linux
         if: runner.os == 'Linux'
@@ -73,7 +76,7 @@ jobs:
           ollama pull qwen3:1.7b
 
       - name: Install Python packages
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt pytest
 
       - name: Run test suite
         run: python test_suite.py
