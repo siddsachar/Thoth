@@ -41,6 +41,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
+[InstallDelete]
+; The Windows build is self-contained. Replace the embedded Python on repair
+; and upgrade so user-installed or broken optional packages cannot survive.
+Type: filesandordirs; Name: "{app}\python"
+
 [Files]
 ; ── App source code ──────────────────────────────────────────────────────────
 Source: "..\app.py";                  DestDir: "{app}\app"; Flags: ignoreversion
@@ -74,6 +79,7 @@ Source: "..\terminal_pty.py";           DestDir: "{app}\app"; Flags: ignoreversi
 Source: "..\tunnel.py";                DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\identity.py";              DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\self_knowledge.py";        DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\startup_diagnostics.py";   DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\version.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\updater.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\test_buddy_core.py";        DestDir: "{app}\app"; Flags: ignoreversion

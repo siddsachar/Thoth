@@ -242,6 +242,8 @@ Thoth is organized as a local-first desktop agent with clear boundaries between 
 2. Run the installer — it installs Python, Ollama, and all dependencies automatically
 3. Launch **Thoth** from the Start Menu or Desktop shortcut
 
+The Windows installer owns Thoth's embedded Python runtime. Repairing or upgrading Thoth replaces that bundled runtime while preserving user data in `%USERPROFILE%\.thoth`. If startup fails after experimenting with manually installed local audio/TTS packages, check `%USERPROFILE%\.thoth\thoth_app.log`; Thoth logs recovery hints for known broken optional native packages such as TorchCodec, which is not required for the built-in Kokoro TTS path.
+
 ### macOS
 
 1. Download the latest **[macOS DMG](https://github.com/siddsachar/Thoth/releases/latest)**

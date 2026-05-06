@@ -43,6 +43,9 @@ jobs:
       - name: Compile Python files
         run: python -m compileall -q -x "(\\.git|\\.venv|dist|build|__pycache__)" .
 
+      - name: Focused startup hardening tests
+        run: python -m pytest test_startup_hardening.py test_app_port.py
+
       - name: Runtime smoke on Linux
         if: runner.os == 'Linux'
         run: python scripts/smoke_app.py --port 8090 --timeout 120

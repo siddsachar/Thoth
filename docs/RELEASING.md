@@ -48,7 +48,13 @@ Thoth uses semantic versioning:
 7. Smoke-test first-run behavior against a clean data directory before building
    artifacts, especially setup wizard imports, provider config defaults, and
    Custom/Self-hosted endpoint setup.
-8. Open and merge the release-prep PR.
+8. Run focused startup and packaging hardening tests:
+
+   ```bash
+   python -m pytest test_startup_hardening.py test_app_port.py test_linux_support.py
+   ```
+
+9. Open and merge the release-prep PR.
 
 ## Build artifacts
 
@@ -80,7 +86,11 @@ Thoth uses semantic versioning:
 7. Download the Linux `Thoth-X.Y.Z-Linux-x86_64.tar.gz` artifact, extract it on
    a clean Linux VM, run `./install.sh`, and confirm `thoth` opens the browser
    UI and `thoth --server --no-open --port 8092` answers `/api/launcher-ping`.
-8. Smoke-test the final Windows, macOS, and Linux artifacts.
+8. Smoke-test the final Windows, macOS, and Linux artifacts. For Windows, include
+   repair/upgrade over an existing install and confirm the bundled `python\`
+   directory is replaced while `%USERPROFILE%\.thoth` is preserved. If a broken
+   optional package such as TorchCodec was present in the old embedded runtime,
+   confirm it is removed or the startup log contains a clear recovery hint.
 9. Publish the GitHub Release.
 10. Confirm `.github/workflows/update-manifest.yml` patches SHA256 hashes into
    the release body.
