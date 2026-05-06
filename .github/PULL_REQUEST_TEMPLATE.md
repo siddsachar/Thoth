@@ -23,7 +23,7 @@ Describe what changed and why.
 
 ## Testing
 
-- [ ] I ran `python test_suite.py`
+- [ ] I ran `python tests/test_suite.py`
 - [ ] I added or updated tests
 - [ ] I manually tested the affected user flow
 - [ ] Not applicable, docs-only change

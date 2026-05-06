@@ -7,9 +7,9 @@ This is the end-to-end release checklist for Thoth.
 Thoth uses semantic versioning:
 
 - Patch: `3.17.1` for bug fixes
-- Minor: `3.20.0` for new backwards-compatible features
+- Minor: `3.21.0` for new backwards-compatible features
 - Major: `4.0.0` for breaking changes
-- Beta/RC: `3.20.0-beta.1`, `3.20.0-rc.1`
+- Beta/RC: `3.21.0-beta.1`, `3.21.0-rc.1`
 
 ## Before release
 
@@ -17,7 +17,7 @@ Thoth uses semantic versioning:
 2. Run the full suite locally:
 
    ```bash
-   python test_suite.py
+   python tests/test_suite.py
    ```
 
 3. Cut a release-prep branch:
@@ -51,7 +51,7 @@ Thoth uses semantic versioning:
 8. Run focused startup and packaging hardening tests:
 
    ```bash
-   python -m pytest test_startup_hardening.py test_app_port.py test_linux_support.py
+   python -m pytest tests/test_startup_hardening.py tests/test_app_port.py tests/test_linux_support.py
    ```
 
 9. Open and merge the release-prep PR.
@@ -121,9 +121,9 @@ not the one-line bootstrapper. The bootstrapper always resolves published
 GitHub Release assets. From the repository root:
 
 ```bash
-bash installer/build_linux_app.sh 3.20.0
-tar -xzf dist/Thoth-3.20.0-Linux-*.tar.gz
-cd Thoth-3.20.0-Linux-*
+bash installer/build_linux_app.sh 3.21.0
+tar -xzf dist/Thoth-3.21.0-Linux-*.tar.gz
+cd Thoth-3.21.0-Linux-*
 ./install.sh
 ~/.local/bin/thoth
 ```

@@ -546,8 +546,8 @@ Thoth includes a guarded Model Context Protocol client that can connect external
 
 ### Testing & Release Checks
 
-- **Offline regression suite** — `test_mcp_client.py` covers config fallback, secret masking, safety classification, marketplace fallback/filtering, conflict policy, runtime requirement handling, managed environment injection, settings rows, stdio discovery/call, global disable, bad server failure, display names, background safety, and browser-loop handling
-- **Opt-in live E2E** — `scripts/mcp_real_world_e2e.py` and `test_mcp_real_world_e2e.py` connect to public MCP servers outside normal CI to validate import, probe, manual tool enablement, dynamic wrapper invocation, and read-only approval classification
+- **Offline regression suite** — `tests/test_mcp_client.py` covers config fallback, secret masking, safety classification, marketplace fallback/filtering, conflict policy, runtime requirement handling, managed environment injection, settings rows, stdio discovery/call, global disable, bad server failure, display names, background safety, and browser-loop handling
+- **Opt-in live E2E** — `scripts/mcp_real_world_e2e.py` and `tests/test_mcp_real_world_e2e.py` connect to public MCP servers outside normal CI to validate import, probe, manual tool enablement, dynamic wrapper invocation, and read-only approval classification
 - **Maintainer workflow** — MCP-heavy releases run the offline suite first, then the live public E2E check from the repo root
 
 ---
@@ -582,7 +582,7 @@ Thoth includes a one-time migration wizard for moving selected data from Hermes 
 
 ### Testing
 
-- **Focused suites** — `test_migration_core.py`, `test_migration_detection.py`, `test_migration_planner.py`, `test_migration_apply.py`, and `test_migration_wizard_ui.py` cover model invariants, source detection, dry-run planning, wrong-provider rejection, conflict behavior, backups, reports, redaction, daily memory import, and UI helper logic
+- **Focused suites** — `tests/test_migration_core.py`, `tests/test_migration_detection.py`, `tests/test_migration_planner.py`, `tests/test_migration_apply.py`, and `tests/test_migration_wizard_ui.py` cover model invariants, source detection, dry-run planning, wrong-provider rejection, conflict behavior, backups, reports, redaction, daily memory import, and UI helper logic
 - **Realistic fixtures** — `migration/fixtures.py` builds multi-month Hermes and OpenClaw homes with fake secrets, memories, skills, channels, MCP servers, approvals, cron/hooks, plugins, sessions, logs, and archive-only state
 - **Manual E2E path** — disposable targets under `.tmp/migration-fixtures/` are used for click-through validation before release; the fixture root is ignored by git
 
@@ -713,6 +713,7 @@ Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual ski
 | File | Purpose |
 |------|---------|
 | **`app.py`** + **`ui/`** | NiceGUI application shell, chat surfaces, home tabs, status monitor, workflow console, settings dialog, and native-webview integration points |
+| **`buddy/`** + **`ui/buddy.py`** | Buddy companion event bus, behavior brain, config, asset validation, Hatch generation, in-app docked/undocked presence, and optional desktop overlay helpers |
 | **`designer/`** | Designer Studio subsystem: gallery, editor, tooling, storage, exports, presentation mode, publishing, and asset hydration |
 | **`ui/chat_components.py`** | Shared chat input, upload, and message-area components reused by main chat and Designer Studio |
 | **`agent.py`** | LangGraph ReAct agent, prompt assembly, streaming event generation, tool routing, interrupt handling, cache clearing, and background execution integration |
@@ -748,7 +749,7 @@ Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual ski
 | **`plugins/`** | Plugin runtime, marketplace client, manifest validation, security scanner, and settings integration |
 | **`mcp_client/`** | External Model Context Protocol client: config, runtime sessions, marketplace search, requirements, safety classification, diagnostics, and result normalization |
 | **`migration/`** | Hermes/OpenClaw migration models, redaction, source detection, dry-run planning, realistic fixtures, and guarded apply/report generation |
-| **`static/`** | Bundled frontend assets such as Mermaid and graph/visualization helpers |
+| **`static/`** | Bundled frontend assets such as Mermaid, graph/visualization helpers, and Buddy runtime/motion assets |
 | **`version.py`** | Single source of truth for the current Thoth version |
 
 ---

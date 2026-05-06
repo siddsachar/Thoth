@@ -268,7 +268,7 @@ curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/ins
 The installer downloads the latest `Thoth-X.Y.Z-Linux-x86_64.tar.gz` release asset, verifies its SHA256 from the GitHub Release manifest, and installs it into your user account. To install a specific version, pass it after `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.20.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.21.0
 ```
 
 Manual tarball flow:

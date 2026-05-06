@@ -4,7 +4,7 @@ Validates that all modules import cleanly, key functions exist,
 config round-trips work, DB connectivity works, and the NiceGUI
 app can start and serve HTTP on port 8080.
 
-Usage:  python test_suite.py
+Usage:  python tests/test_suite.py
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import uuid
 from pathlib import Path
 
 # ── Ensure project root is on sys.path ──────────────────────────────────────
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -9262,7 +9262,7 @@ try:
     record("PASS", "video_gen: status tool has video_gen query handler")
 
     # ── 52½n. Video tool guide exists ────────────────────────────────
-    _vg_guide_path = _Path52v(__file__).parent / "tool_guides" / "video_guide" / "SKILL.md"
+    _vg_guide_path = PROJECT_ROOT / "tool_guides" / "video_guide" / "SKILL.md"
     assert _vg_guide_path.exists(), f"video guide not found at {_vg_guide_path}"
     _vg_guide_text = _vg_guide_path.read_text(encoding="utf-8")
     assert "video_gen" in _vg_guide_text, "video_gen not referenced in guide"
@@ -13905,33 +13905,7 @@ try:
     record("PASS", f"68p: all {len(_tool_files68)} tool .py files in thoth_setup.iss")
 
     # ── 68q. Top-level .py files in ISS ─────────────────────────────
-    _skip_top68 = {
-        "debug_tools.py",
-        "test_suite.py",
-        "test_api_key_storage.py",
-        "test_app_port.py",
-        "test_linux_support.py",
-        "test_migration_apply.py",
-        "test_migration_detection.py",
-        "test_migration_core.py",
-        "test_migration_planner.py",
-        "test_migration_wizard_ui.py",
-        "test_memory_e2e.py",
-        "test_mcp_client.py",
-        "test_mcp_real_world_e2e.py",
-        "test_provider_auth_store.py",
-        "test_provider_catalog.py",
-        "test_provider_config.py",
-        "test_provider_custom.py",
-        "test_provider_media.py",
-        "test_provider_runtime.py",
-        "test_provider_selection.py",
-        "test_provider_subscription_auth.py",
-        "test_setup_wizard_custom.py",
-        "test_startup_hardening.py",
-        "test_thoth_status_media.py",
-        "integration_tests.py",
-    }
+    _skip_top68 = {"debug_tools.py"}
     _top_files68 = [f.name for f in _P68(".").glob("*.py") if f.name not in _skip_top68]
     _missing_top68 = [f for f in _top_files68 if f not in _iss68]
     assert not _missing_top68, f"Top-level .py files missing from ISS: {_missing_top68}"
@@ -13981,7 +13955,7 @@ print("="*70)
 
 import pathlib as _P69_pathlib
 
-_APP_ROOT69 = _P69_pathlib.Path(__file__).resolve().parent
+_APP_ROOT69 = _P69_pathlib.Path(__file__).resolve().parents[1]
 
 
 # ── 69a. Every tool file has a matching import in tools/__init__.py ────────
@@ -18175,7 +18149,7 @@ except Exception as e:
 try:
     import pathlib as _P72n4
 
-    _editor_src72n4 = (_P72n4.Path(__file__).resolve().parent / "designer" / "editor.py").read_text(encoding="utf-8")
+    _editor_src72n4 = (PROJECT_ROOT / "designer" / "editor.py").read_text(encoding="utf-8")
     assert "Speaker Notes" in _editor_src72n4
     assert "Generate Notes" in _editor_src72n4
     assert "Notes are saved per page" in _editor_src72n4
@@ -18370,7 +18344,7 @@ except Exception as e:
 try:
     import pathlib as _P72n9
 
-    _root72n9 = _P72n9.Path(__file__).resolve().parent / "designer"
+    _root72n9 = PROJECT_ROOT / "designer"
     _editor_src72n9 = (_root72n9 / "editor.py").read_text(encoding="utf-8")
     _nav_src72n9 = (_root72n9 / "page_navigator.py").read_text(encoding="utf-8")
     _export_src72n9 = (_root72n9 / "export_dialog.py").read_text(encoding="utf-8")
@@ -18388,7 +18362,7 @@ except Exception as e:
 # ── 72o. No external CDN in designer .py (except allowed) ───────────────
 try:
     import pathlib as _P72
-    _des_dir72 = _P72.Path(__file__).resolve().parent / "designer"
+    _des_dir72 = PROJECT_ROOT / "designer"
     _cdn_hits72 = []
     for _f72 in _des_dir72.glob("*.py"):
         _c72 = _f72.read_text(encoding="utf-8")

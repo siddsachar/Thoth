@@ -8,7 +8,7 @@ Thoth is a personal-AI-sovereignty project. The priorities, in order, are:
 
 1. **Privacy** — local-first defaults, no telemetry, no surprise network calls
 2. **Reliability** — destructive actions confirm, errors degrade gracefully
-3. **Test coverage** — new behavior ships with new tests in `test_suite.py`
+3. **Test coverage** — new behavior ships with new tests in `tests/test_suite.py` or focused files under `tests/`
 4. **Cross-platform** — Windows and macOS are first-class; Linux is best-effort
 
 ---
@@ -53,7 +53,7 @@ python launcher.py
 ### Run the tests
 
 ```bash
-python test_suite.py
+python tests/test_suite.py
 ```
 
 The suite is the single source of truth. Section markers (e.g. `Section 73:
@@ -113,8 +113,8 @@ Keep commits focused. If a PR ends up with cleanup noise, squash on merge.
 ## 3. Pull requests
 
 1. Fork or create a feature branch off the latest `main`.
-2. Make your change. Add or update tests in `test_suite.py`.
-3. Run `python test_suite.py` locally and confirm it passes.
+2. Make your change. Add or update tests in `tests/test_suite.py` or focused files under `tests/`.
+3. Run `python tests/test_suite.py` locally and confirm it passes.
 4. Push and open a PR against `main`. The PR template will prompt for the
    relevant info; fill out every section.
 5. CI will run on Windows, macOS, and Linux. All checks must be green.
@@ -136,7 +136,7 @@ Keep commits focused. If a PR ends up with cleanup noise, squash on merge.
 
 - A linked issue describing the problem
 - A short rationale in the PR description
-- New tests next to existing ones in the right `test_suite.py` section
+- New tests next to existing ones in the right `tests/test_suite.py` section or focused `tests/test_*.py` file
 - Screenshots or a short clip for UI changes
 - Stays under ~500 lines of diff where possible
 
@@ -161,7 +161,7 @@ UI (NiceGUI):
 
 ## 5. Tests
 
-`test_suite.py` is one big runner. When you add a feature, add a new section
+`tests/test_suite.py` is one big runner. When you add a feature, add a new section
 or extend the most relevant existing section:
 
 ```python

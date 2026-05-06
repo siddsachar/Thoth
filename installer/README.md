@@ -20,7 +20,7 @@ manifest, and then runs the tarball's bundled `install.sh`. For a pinned
 version, pass it as an argument:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.20.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.21.0
 ```
 
 The bootstrapper installs published GitHub Release assets. It is not a way to
@@ -33,23 +33,23 @@ tarball instead of a native app bundle:
 
 ```bash
 ./installer/build_linux_app.sh
-./installer/build_linux_app.sh 3.20.0
+./installer/build_linux_app.sh 3.21.0
 ```
 
 From a source checkout, this root-level wrapper is also supported for support
 snippets and maintainer hotfixes:
 
 ```bash
-bash build_linux_app.sh 3.20.0
+bash build_linux_app.sh 3.21.0
 ```
 
 To test an unreleased Linux fix locally, build the tarball from the checkout and
 install the tarball it produced:
 
 ```bash
-bash installer/build_linux_app.sh 3.20.0
-tar -xzf dist/Thoth-3.20.0-Linux-*.tar.gz
-cd Thoth-3.20.0-Linux-*
+bash installer/build_linux_app.sh 3.21.0
+tar -xzf dist/Thoth-3.21.0-Linux-*.tar.gz
+cd Thoth-3.21.0-Linux-*
 ./install.sh
 ~/.local/bin/thoth
 ```
@@ -132,7 +132,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 This will:
 1. Download Python 3.13 embeddable package (~15 MB)
 2. Download `get-pip.py` (~2.5 MB)
-3. Compile everything into `dist\ThothSetup_3.20.0.exe`
+3. Compile everything into `dist\ThothSetup_3.21.0.exe`
 
 ### Options
 
@@ -267,7 +267,7 @@ On repair/upgrade, Inno Setup deletes `{app}\python` before extraction. User dat
 
 ## End-User Experience
 
-1. Run `ThothSetup_3.20.0.exe`
+1. Run `ThothSetup_3.21.0.exe`
 2. Follow the wizard — dependencies download and install automatically (5-15 min)
 3. Launch Thoth from Start Menu or Desktop shortcut
 4. The system tray icon appears; the app opens on the first available local port, normally `http://localhost:8080`

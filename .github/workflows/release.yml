@@ -6,7 +6,7 @@
 #                                  and sign the macOS outputs
 #
 # Jobs:
-#   test           → run test_suite.py before any installer build
+#   test           → run tests/test_suite.py before any installer build
 #   build-windows  → self-contained unsigned .exe (Inno Setup)
 #   build-macos    → signed .app/.pkg/.dmg (manual notarization later)
 #   build-linux    → self-contained XDG user-install tarball
@@ -42,7 +42,7 @@ concurrency:
 # Tracks the version this workflow is currently shipping. Kept in sync with
 # `installer/thoth_setup.iss` (#define MyAppVersion) and `version.py`.
 env:
-  THOTH_VERSION: "3.20.0"
+  THOTH_VERSION: "3.21.0"
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
@@ -71,13 +71,13 @@ jobs:
         run: python -m pip install -r requirements.txt pytest
 
       - name: Run focused startup hardening tests
-        run: python -m pytest test_startup_hardening.py test_app_port.py test_linux_support.py
+        run: python -m pytest tests/test_startup_hardening.py tests/test_app_port.py tests/test_linux_support.py
 
       - name: Run focused provider model selection tests
-        run: python -m pytest test_provider_catalog.py test_provider_selection.py test_thoth_status_media.py test_provider_subscription_auth.py
+        run: python -m pytest tests/test_provider_catalog.py tests/test_provider_selection.py tests/test_thoth_status_media.py tests/test_provider_subscription_auth.py
 
       - name: Run test suite
-        run: python test_suite.py
+        run: python tests/test_suite.py
 
   # ════════════════════════════════════════════════════════════════════════════
   #  Build Windows installer (.exe) — self-contained

@@ -24,26 +24,26 @@ def test_linux_asset_selection(monkeypatch):
     body = (
         "Notes\n\n<!-- thoth-update-manifest -->\n"
         "```manifest\nschema: 1\nfiles:\n"
-        "  Thoth-3.20.0-Linux-x86_64.tar.gz: sha256=" + "a" * 64 + "\n"
+        "  Thoth-3.21.0-Linux-x86_64.tar.gz: sha256=" + "a" * 64 + "\n"
         "```\n"
     )
     release = {
-        "tag_name": "v3.20.0",
+        "tag_name": "v3.21.0",
         "prerelease": False,
         "published_at": "2026-05-04T12:00:00Z",
-        "html_url": "https://github.com/siddsachar/Thoth/releases/tag/v3.20.0",
+        "html_url": "https://github.com/siddsachar/Thoth/releases/tag/v3.21.0",
         "body": body,
         "assets": [{
-            "name": "Thoth-3.20.0-Linux-x86_64.tar.gz",
+            "name": "Thoth-3.21.0-Linux-x86_64.tar.gz",
             "size": 123,
-            "browser_download_url": "https://github.com/siddsachar/Thoth/releases/download/v3.20.0/Thoth-3.20.0-Linux-x86_64.tar.gz",
+            "browser_download_url": "https://github.com/siddsachar/Thoth/releases/download/v3.21.0/Thoth-3.21.0-Linux-x86_64.tar.gz",
         }],
     }
 
     info = updater._parse_release(release, "stable")
 
     assert info is not None
-    assert info.asset_name == "Thoth-3.20.0-Linux-x86_64.tar.gz"
+    assert info.asset_name == "Thoth-3.21.0-Linux-x86_64.tar.gz"
     assert info.sha256 == "a" * 64
 
 
@@ -54,7 +54,7 @@ def test_linux_install_marker_is_not_dev_install(monkeypatch, tmp_path):
     marker.write_text(json.dumps({
         "platform": "linux",
         "install_kind": "xdg-user-tarball",
-        "version": "3.20.0",
+        "version": "3.21.0",
     }), encoding="utf-8")
 
     monkeypatch.setattr(updater.platform, "system", lambda: "Linux")
@@ -81,7 +81,7 @@ def test_linux_tarball_installs_into_xdg_tree(monkeypatch, tmp_path):
     if os.name == "nt":
         pytest.skip("Linux tarball installer uses POSIX symlinks")
 
-    package_root = tmp_path / "Thoth-3.20.0-Linux-x86_64"
+    package_root = tmp_path / "Thoth-3.21.0-Linux-x86_64"
     (package_root / "bin").mkdir(parents=True)
     (package_root / "app").mkdir()
     (package_root / "python" / "bin").mkdir(parents=True)
@@ -96,9 +96,9 @@ def test_linux_tarball_installs_into_xdg_tree(monkeypatch, tmp_path):
     (package_root / "install_info.json").write_text(json.dumps({
         "platform": "linux",
         "install_kind": "xdg-user-tarball",
-        "version": "3.20.0",
+        "version": "3.21.0",
     }), encoding="utf-8")
-    archive = tmp_path / "Thoth-3.20.0-Linux-x86_64.tar.gz"
+    archive = tmp_path / "Thoth-3.21.0-Linux-x86_64.tar.gz"
     with tarfile.open(archive, "w:gz") as handle:
         handle.add(package_root, arcname=package_root.name)
 
@@ -116,7 +116,7 @@ def test_linux_tarball_installs_into_xdg_tree(monkeypatch, tmp_path):
     assert launcher_path == home / ".local" / "bin" / "thoth"
     assert launcher_path.is_symlink()
     assert (xdg / "thoth" / "current").is_symlink()
-    assert (xdg / "thoth" / "releases" / "3.20.0" / "install_info.json").exists()
+    assert (xdg / "thoth" / "releases" / "3.21.0" / "install_info.json").exists()
     desktop_text = (xdg / "applications" / "com.thoth.Thoth.desktop").read_text(encoding="utf-8")
     assert f"Exec={launcher_path}" in desktop_text
 
@@ -156,7 +156,7 @@ def test_linux_launcher_resolves_installed_symlink_chain(tmp_path):
         pytest.skip("bash is required to execute the generated launcher")
 
     home = tmp_path / "home"
-    release_root = home / ".local" / "share" / "thoth" / "releases" / "3.20.0"
+    release_root = home / ".local" / "share" / "thoth" / "releases" / "3.21.0"
     bin_home = home / ".local" / "bin"
     app_dir = release_root / "app"
     python_dir = release_root / "python" / "bin"
@@ -180,7 +180,7 @@ def test_linux_launcher_resolves_installed_symlink_chain(tmp_path):
     (app_dir / "launcher.py").write_text("# fake launcher\n", encoding="utf-8")
 
     current = home / ".local" / "share" / "thoth" / "current"
-    current.symlink_to(Path("releases") / "3.20.0", target_is_directory=True)
+    current.symlink_to(Path("releases") / "3.21.0", target_is_directory=True)
     user_launcher = bin_home / "thoth"
     user_launcher.symlink_to(current / "bin" / "thoth")
 
@@ -271,6 +271,7 @@ def test_release_workflows_reference_linux_artifact():
     assert "installer/build_linux_app.sh" in release
     assert "bash -n build_linux_app.sh installer/build_linux_app.sh installer/install-linux.sh" in release
     assert "bash -n build_linux_app.sh installer/build_linux_app.sh installer/install-linux.sh" in ci
+    assert "libxcb-cursor0" in ci
     assert "installer/install-linux.sh" in release
     assert "installer/install-linux.sh" in ci
     assert "Thoth-*-Linux-*.tar.gz" in release
@@ -284,5 +285,17 @@ def test_release_workflows_reference_linux_artifact():
     assert "Thoth-*-Linux-*.tar.gz" in manifest
     assert "curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash" in installer_docs
     assert "published GitHub Release assets" in installer_docs
-    assert "bash installer/build_linux_app.sh 3.20.0" in installer_docs
-    assert "bash build_linux_app.sh 3.20.0" in installer_docs
+    assert "bash installer/build_linux_app.sh 3.21.0" in installer_docs
+    assert "bash build_linux_app.sh 3.21.0" in installer_docs
+
+
+def test_packagers_exclude_tests_directory():
+    windows_installer = Path("installer/thoth_setup.iss").read_text(encoding="utf-8")
+    linux_builder = Path("installer/build_linux_app.sh").read_text(encoding="utf-8")
+    mac_builder = Path("installer/build_mac_app.sh").read_text(encoding="utf-8")
+
+    assert "tests" not in windows_installer
+    assert " tests" not in linux_builder
+    assert " tests" not in mac_builder
+    assert "test_*.py|test_suite.py|test_memory_e2e.py|integration_tests.py" in linux_builder
+    assert "test_*.py|test_suite.py|test_memory_e2e.py|integration_tests.py" in mac_builder

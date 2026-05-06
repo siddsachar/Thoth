@@ -1,5 +1,5 @@
 ; =============================================================================
-; Thoth v3.20.0 - Inno Setup Script
+; Thoth v3.21.0 - Inno Setup Script
 ; Self-contained installer: bundles embedded Python with all pip packages
 ; pre-installed.  No internet downloads at install time.
 ; =============================================================================
@@ -10,7 +10,7 @@
 ; Compile with:  iscc installer\thoth_setup.iss
 
 #define MyAppName      "Thoth"
-#define MyAppVersion   "3.20.0"
+#define MyAppVersion   "3.21.0"
 #define MyAppPublisher "Thoth"
 #define MyAppURL       "https://github.com/siddsachar/Thoth"
 #define MyAppExeName   "launch_thoth.vbs"
@@ -82,8 +82,6 @@ Source: "..\self_knowledge.py";        DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\startup_diagnostics.py";   DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\version.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\updater.py";               DestDir: "{app}\app"; Flags: ignoreversion
-Source: "..\test_buddy_core.py";        DestDir: "{app}\app"; Flags: ignoreversion
-Source: "..\test_buddy_ui.py";          DestDir: "{app}\app"; Flags: ignoreversion
 ; ── Static assets (JS libraries) ──────────────────────────────────────────────
 Source: "..\static\*";                 DestDir: "{app}\app\static"; Flags: ignoreversion recursesubdirs createallsubdirs
 
