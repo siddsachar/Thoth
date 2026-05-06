@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 _PORT = DEFAULT_APP_PORT
 _OLLAMA_PORT = 11434          # Ollama default API port
 _STARTUP_GRACE = 15           # seconds to wait for NiceGUI before opening browser
+_STARTUP_TIMEOUT_ENV = "THOTH_STARTUP_TIMEOUT"
 _ICON_SIZE = 64               # px for generated tray icons
 _ACTIVE_TRAY: "ThothTray | None" = None
 
@@ -208,7 +209,69 @@ def _startup_failure_hints(log_text: str, python_executable: str | None = None) 
             f'Recovery: close Thoth and run "{python}" -m pip uninstall -y torchcodec',
             f"If pip cannot remove it, delete torchcodec and torchcodec-*.dist-info from {site_packages}.",
         ])
+    if "cv2" in text or "opencv" in text or "libgl.so" in text or "libglib" in text or "libgthread" in text or "xcb" in text:
+        hints.extend([
+            "Detected a likely OpenCV/Linux native dependency failure during startup.",
+            "Camera and screenshot capture are optional; Thoth should still start without them after the Linux startup hardening fix.",
+            "Recovery on Debian/Ubuntu: sudo apt-get install -y libgl1 libegl1 libglib2.0-0 libxcb-cursor0",
+            "Then restart Thoth and check ~/.thoth/thoth_app.log if startup still fails.",
+        ])
+    if "faiss" in text and ("importerror" in text or "oserror" in text or "could not" in text):
+        hints.extend([
+            "Detected a FAISS native import failure during startup.",
+            "Recovery: reinstall Thoth's packaged runtime or install the Linux libraries named in the traceback.",
+        ])
+    if "numpy.dtype size changed" in text or "numpy.core.multiarray failed to import" in text:
+        hints.extend([
+            "Detected a NumPy/native wheel ABI mismatch during startup.",
+            "Recovery: reinstall or repair Thoth so the embedded Python runtime and wheels are replaced together.",
+        ])
     return hints
+
+
+def _startup_timeout(default: float = 120.0) -> float:
+    raw = os.environ.get(_STARTUP_TIMEOUT_ENV, "")
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value >= 5 else default
+
+
+def _read_log_tail(log_path: Path | None, max_lines: int = 80) -> str:
+    if not log_path or not log_path.exists():
+        return ""
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+    return "\n".join(lines[-max(1, max_lines):])
+
+
+def _log_app_log_tail(log_path: Path | None, *, max_lines: int = 80) -> None:
+    tail = _read_log_tail(log_path, max_lines=max_lines)
+    if not tail:
+        logger.error("No app startup log tail available at %s", log_path)
+        return
+    logger.error("--- last %d line(s) of %s ---", max_lines, log_path)
+    for line in tail.splitlines():
+        logger.error("  %s", line)
+    logger.error("--- end app startup log tail ---")
+
+
+def _log_startup_failure_context(server: "_ThothProcess", port: int, reason: str) -> None:
+    exit_code = server.returncode
+    logger.error("Thoth server failed to become ready on port %s: %s", port, reason)
+    if exit_code is not None:
+        logger.error("Thoth app process exited with code %s", exit_code)
+    logger.error("Python executable: %s", sys.executable)
+    logger.error("App log: %s", server._log_file)
+    _log_app_log_tail(server._log_file)
+    tail = _read_log_tail(server._log_file, max_lines=200)
+    if tail:
+        _log_startup_failure_hints(server._log_file, python_executable=sys.executable)
 
 
 def _log_startup_failure_hints(log_path: Path | None, python_executable: str | None = None) -> None:
@@ -334,6 +397,12 @@ class _ThothProcess:
         if self._proc is None:
             return False
         return self._proc.poll() is None
+
+    @property
+    def returncode(self) -> int | None:
+        if self._proc is None:
+            return None
+        return self._proc.poll()
 
 
 # ── Splash screen (subprocess to avoid Tcl/pystray conflicts) ────────────────
@@ -1002,10 +1071,12 @@ def _open_window(port: int = _PORT, control_port: int | None = None) -> subproce
         return None
 
 
-def _wait_for_server(port: int = _PORT, timeout: float = 60.0) -> bool:
+def _wait_for_server(port: int = _PORT, timeout: float | None = None, server: _ThothProcess | None = None) -> bool:
     """Block until the NiceGUI server is reachable, or *timeout* expires."""
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + (timeout if timeout is not None else _startup_timeout())
     while time.monotonic() < deadline:
+        if server is not None and not server.is_alive:
+            return False
         if _is_thoth_server(port):
             return True
         time.sleep(0.3)
@@ -1337,8 +1408,10 @@ def _run_direct(args: argparse.Namespace) -> None:
         if not args.no_splash and _has_display_server() and not args.server:
             _show_splash(port)
 
-    if not _wait_for_server(port):
-        _log_startup_failure_hints(server._log_file)
+    wait_process = server if owns_server else None
+    if not _wait_for_server(port, server=wait_process):
+        reason = "app process exited before readiness" if owns_server and not server.is_alive else "readiness probe timed out"
+        _log_startup_failure_context(server, port, reason)
         raise RuntimeError(f"Thoth server did not become ready on port {port}")
 
     if not args.no_open:

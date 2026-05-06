@@ -54,6 +54,19 @@ cd Thoth-3.20.0-Linux-*
 ~/.local/bin/thoth
 ```
 
+Also smoke the server path explicitly:
+
+```bash
+~/.local/bin/thoth --server --no-open --port 8092 --no-ollama
+curl -fsS http://127.0.0.1:8092/api/launcher-ping
+```
+
+If the launcher starts a process but the app never becomes ready, inspect
+`~/.thoth/thoth_app.log` and `~/.thoth/thoth_app.log.prev`. The launcher prints
+the app log tail and targeted recovery hints for common native dependency
+failures, and `THOTH_STARTUP_TIMEOUT=180 ~/.local/bin/thoth` can be used on
+slow first-run systems.
+
 The output is `dist/Thoth-X.Y.Z-Linux-x86_64.tar.gz` on x86_64 runners. It
 contains bundled Python, installed Python packages, app source, `bin/thoth`, an
 `install.sh`, an `uninstall.sh`, a freedesktop `.desktop` file, icon files, and
@@ -81,6 +94,10 @@ new secrets fall back to session-only storage rather than plaintext files.
 Browser automation uses Playwright's normal Linux dependency flow. The tarball
 does not install system packages; users should follow Playwright's printed
 dependency command if Chromium reports missing libraries.
+
+Camera and screenshot capture are optional. If OpenCV or MSS cannot import due
+to missing Linux native libraries, Thoth should still start; those capture tools
+report unavailable until the platform libraries are installed.
 
 ## Windows Installer
 

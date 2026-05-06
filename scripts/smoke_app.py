@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,6 +34,22 @@ def _port_open(port: int, timeout: float = 1.0) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
         return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _tail_file(path: Path, max_lines: int = 80) -> str:
+    if not path.exists():
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+    return "\n".join(lines[-max(1, max_lines):])
+
+
+def _add_tail(result: SmokeResult, label: str, path: Path, max_lines: int = 80) -> None:
+    tail = _tail_file(path, max_lines=max_lines)
+    if tail:
+        result.add("INFO", f"{label} tail:\n{tail}")
 
 
 def run_app_smoke(
@@ -68,45 +85,64 @@ def run_app_smoke(
 
     try:
         cmd = command or [sys.executable, "app.py"]
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(cwd_path),
-            env=env,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        result.add("PASS", f"app process started (PID {proc.pid})")
+        with ExitStack() as stack:
+            stdout_fd, stdout_name = tempfile.mkstemp(prefix="thoth_smoke_stdout_", suffix=".log")
+            stderr_fd, stderr_name = tempfile.mkstemp(prefix="thoth_smoke_stderr_", suffix=".log")
+            os.close(stdout_fd)
+            os.close(stderr_fd)
+            stdout_path = Path(stdout_name)
+            stderr_path = Path(stderr_name)
+            stdout_file = stack.enter_context(stdout_path.open("w", encoding="utf-8"))
+            stderr_file = stack.enter_context(stderr_path.open("w", encoding="utf-8"))
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(cwd_path),
+                env=env,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                stdout=stdout_file,
+                stderr=stderr_file,
+            )
+            result.add("PASS", f"app process started (PID {proc.pid})")
 
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                result.add("FAIL", f"app exited during startup with code {proc.returncode}")
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:
+                    result.add("FAIL", f"app exited during startup with code {proc.returncode}")
+                    stdout_file.flush()
+                    stderr_file.flush()
+                    _add_tail(result, "stdout", stdout_path)
+                    _add_tail(result, "stderr", stderr_path)
+                    _add_tail(result, "launcher app log", Path.home() / ".thoth" / "thoth_app.log")
+                    return result
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/launcher-ping", timeout=2) as response:
+                        body = response.read(512).decode("utf-8", errors="replace")
+                    if response.status == 200 and '"app":"thoth"' in body.replace(" ", "").lower():
+                        result.add("PASS", f"/api/launcher-ping responded on port {port}")
+                        break
+                except Exception:
+                    time.sleep(1)
+            else:
+                result.add("FAIL", f"/api/launcher-ping did not respond within {timeout:.0f}s")
+                stdout_file.flush()
+                stderr_file.flush()
+                _add_tail(result, "stdout", stdout_path)
+                _add_tail(result, "stderr", stderr_path)
+                _add_tail(result, "launcher app log", Path.home() / ".thoth" / "thoth_app.log")
                 return result
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/launcher-ping", timeout=2) as response:
-                    body = response.read(512).decode("utf-8", errors="replace")
-                if response.status == 200 and '"app":"thoth"' in body.replace(" ", "").lower():
-                    result.add("PASS", f"/api/launcher-ping responded on port {port}")
-                    break
-            except Exception:
-                time.sleep(1)
-        else:
-            result.add("FAIL", f"/api/launcher-ping did not respond within {timeout:.0f}s")
+
+            if check_root:
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10) as response:
+                        if response.status == 200:
+                            result.add("PASS", "HTTP GET / returned 200")
+                        else:
+                            result.add("WARN", f"HTTP GET / returned {response.status}")
+                except Exception as exc:
+                    result.add("WARN", f"HTTP GET / failed: {exc}")
+
+            result.ok = True
             return result
-
-        if check_root:
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10) as response:
-                    if response.status == 200:
-                        result.add("PASS", "HTTP GET / returned 200")
-                    else:
-                        result.add("WARN", f"HTTP GET / returned {response.status}")
-            except Exception as exc:
-                result.add("WARN", f"HTTP GET / failed: {exc}")
-
-        result.ok = True
-        return result
     finally:
         if proc and proc.poll() is None:
             proc.terminate()

@@ -84,8 +84,9 @@ Thoth uses semantic versioning:
 5. Upload the signed exe to the draft GitHub Release.
 6. Run notarization workflows for macOS when needed and upload the stapled DMG.
 7. Download the Linux `Thoth-X.Y.Z-Linux-x86_64.tar.gz` artifact, extract it on
-   a clean Linux VM, run `./install.sh`, and confirm `thoth` opens the browser
-   UI and `thoth --server --no-open --port 8092` answers `/api/launcher-ping`.
+   a clean Linux VM, run `./install.sh`, and confirm `~/.local/bin/thoth` opens
+   the browser UI and `~/.local/bin/thoth --server --no-open --port 8092`
+   answers `/api/launcher-ping`.
 8. Smoke-test the final Windows, macOS, and Linux artifacts. For Windows, include
    repair/upgrade over an existing install and confirm the bundled `python\`
    directory is replaced while `%USERPROFILE%\.thoth` is preserved. If a broken
@@ -131,6 +132,21 @@ The root-level `build_linux_app.sh` wrapper delegates to
 `installer/build_linux_app.sh` so support snippets run from the checkout root do
 not fail with a missing-script error.
 
+If packaged Linux startup fails after printing `Thoth server started`, collect:
+
+```bash
+tail -200 ~/.thoth/thoth_app.log
+tail -200 ~/.thoth/thoth_app.log.prev
+uname -a
+cat /etc/os-release
+~/.local/bin/thoth --server --no-open --port 8092 --no-ollama
+```
+
+The launcher prints the selected port, child-process exit code when available,
+and the tail of `~/.thoth/thoth_app.log` on readiness failure. For slow machines
+or first-run package initialization, increase the wait with
+`THOTH_STARTUP_TIMEOUT=180 ~/.local/bin/thoth`.
+
 The tarball installs under `~/.local/share/thoth/releases/<version>`, updates
 `~/.local/share/thoth/current`, creates `~/.local/bin/thoth`, and installs a
 freedesktop `.desktop` file plus icon into user XDG locations. In-app updates
@@ -148,13 +164,18 @@ Manual Linux smoke matrix before publishing:
 Minimum smoke checks:
 
 - Fresh tarball install and desktop launcher
+- Default installed command: `~/.local/bin/thoth`
 - One-line installer after the GitHub Release is published
-- `thoth --server --no-open --port 8092` plus `/api/launcher-ping`
+- `~/.local/bin/thoth --server --no-open --port 8092` plus `/api/launcher-ping`
 - First-run setup with Providers and Custom/Self-hosted paths
 - Ollama local model when `ollama` is installed and in `PATH`
 - Browser tool after Playwright browser/dependency install
 - Designer export and vault/open-folder actions
 - Update from the previous Linux tarball to the new tarball
+
+Camera/screenshot capture is optional on Linux. Missing OpenCV/MSS native
+dependencies should disable those capture paths without preventing the app from
+serving `/api/launcher-ping`.
 
 ## Post-release
 
