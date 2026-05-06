@@ -408,6 +408,7 @@ def _show_splash(port: int = _PORT, timeout: float = 60.0) -> subprocess.Popen |
 
 _WINDOW_SCRIPT = r'''
 import sys
+import time
 
 # macOS: ensure the subprocess registers as a full GUI app so it can
 # receive mouse/keyboard events.  Without this, a window re-opened from
@@ -423,8 +424,26 @@ if sys.platform == "darwin":
 
 import webview
 import webbrowser
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 _NAMED_WINDOWS = {}
+_BUDDY_MANUALLY_HIDDEN = False
+_BUDDY_WINDOW_READY = False
+
+def _port_from_url(url):
+    try:
+        parsed = urlparse(url)
+        return int(parsed.port or (443 if parsed.scheme == "https" else 80))
+    except Exception:
+        return 8080
+
+def _buddy_overlay_url(port, cache_bust=False):
+    url = f"http://127.0.0.1:{int(port)}/buddy-overlay"
+    if cache_bust:
+        return f"{url}?buddy_refresh={int(time.time() * 1000)}"
+    return url
 
 class _JsApi:
     """Expose Python helpers to JavaScript via window.pywebview.api."""
@@ -493,6 +512,183 @@ class _JsApi:
         except Exception:
             return False
 
+    def open_buddy_window(self, port=None, width=260, height=260):
+        global _BUDDY_MANUALLY_HIDDEN, _BUDDY_WINDOW_READY
+        try:
+            buddy_port = int(port or _APP_PORT)
+            width = int(width or 260)
+            height = int(height or 260)
+        except Exception:
+            return False
+
+        _BUDDY_MANUALLY_HIDDEN = False
+        _BUDDY_WINDOW_READY = False
+        key = "buddy"
+        url = _buddy_overlay_url(buddy_port)
+        refresh_url = _buddy_overlay_url(buddy_port, cache_bust=True)
+        existing = _NAMED_WINDOWS.get(key)
+        if existing is not None:
+            try:
+                try:
+                    existing.hide()
+                except Exception:
+                    pass
+                existing.load_url(refresh_url)
+                try:
+                    existing.restore()
+                except Exception:
+                    pass
+                return True
+            except Exception:
+                try:
+                    existing.hide()
+                except Exception:
+                    pass
+                try:
+                    existing.load_url(url)
+                    try:
+                        existing.restore()
+                    except Exception:
+                        pass
+                    return True
+                except Exception:
+                    _NAMED_WINDOWS.pop(key, None)
+
+        kwargs = {
+            "title": "Buddy",
+            "url": url,
+            "width": width,
+            "height": height,
+            "js_api": _JS_API,
+            "resizable": False,
+            "frameless": True,
+            "shadow": False,
+            "focus": False,
+            "on_top": True,
+            "easy_drag": True,
+            "hidden": True,
+            "background_color": "#000000",
+            "transparent": True,
+        }
+        window = None
+        fallback_kwargs = dict(kwargs)
+        fallback_kwargs.pop("background_color", None)
+        minimal_kwargs = dict(fallback_kwargs)
+        for optional_key in ("transparent", "shadow", "focus", "on_top", "easy_drag", "hidden"):
+            minimal_kwargs.pop(optional_key, None)
+        plain_kwargs = {
+            "title": "Buddy",
+            "url": url,
+            "width": width,
+            "height": height,
+        }
+        for candidate in (kwargs, fallback_kwargs, minimal_kwargs, plain_kwargs):
+            try:
+                window = webview.create_window(**candidate)
+                break
+            except Exception as exc:
+                try:
+                    print(f"Buddy overlay create_window failed with keys {sorted(candidate.keys())}: {exc}", file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+                continue
+        if window is None:
+            try:
+                window = webview.create_window("Buddy", url, width=width, height=height)
+            except Exception as exc:
+                try:
+                    print(f"Buddy overlay plain create_window failed: {exc}", file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+        if window is None:
+            return False
+        _NAMED_WINDOWS[key] = window
+        try:
+            window.events.closed += lambda *_args: _NAMED_WINDOWS.pop(key, None)
+        except Exception:
+            pass
+        return True
+
+    def mark_buddy_window_ready(self):
+        global _BUDDY_WINDOW_READY
+        _BUDDY_WINDOW_READY = True
+        window = _NAMED_WINDOWS.get("buddy")
+        if window is None:
+            return False
+        if _BUDDY_MANUALLY_HIDDEN:
+            return True
+        try:
+            try:
+                window.restore()
+            except Exception:
+                pass
+            window.show()
+            return True
+        except Exception:
+            return False
+
+    def show_buddy_window(self, manual=True, port=None, width=260, height=260):
+        global _BUDDY_MANUALLY_HIDDEN
+        if bool(manual):
+            _BUDDY_MANUALLY_HIDDEN = False
+        elif _BUDDY_MANUALLY_HIDDEN:
+            return False
+        window = _NAMED_WINDOWS.get("buddy")
+        if window is None:
+            return self.open_buddy_window(port, width, height)
+        if not _BUDDY_WINDOW_READY:
+            return True
+        try:
+            try:
+                window.restore()
+            except Exception:
+                pass
+            window.show()
+            return True
+        except Exception:
+            return False
+
+    def hide_buddy_window(self, manual=True):
+        global _BUDDY_MANUALLY_HIDDEN
+        if bool(manual):
+            _BUDDY_MANUALLY_HIDDEN = True
+        window = _NAMED_WINDOWS.get("buddy")
+        if window is None:
+            return False
+        try:
+            window.hide()
+            return True
+        except Exception:
+            return False
+
+    def minimize_buddy_window(self, manual=True):
+        global _BUDDY_MANUALLY_HIDDEN
+        if bool(manual):
+            _BUDDY_MANUALLY_HIDDEN = True
+        window = _NAMED_WINDOWS.get("buddy")
+        if window is None:
+            return False
+        try:
+            window.minimize()
+            return True
+        except Exception:
+            return False
+
+    def close_buddy_window(self, manual=True):
+        global _BUDDY_MANUALLY_HIDDEN, _BUDDY_WINDOW_READY
+        if bool(manual):
+            _BUDDY_MANUALLY_HIDDEN = True
+        window = _NAMED_WINDOWS.get("buddy")
+        if window is None:
+            return False
+        try:
+            window.destroy()
+            _NAMED_WINDOWS.pop("buddy", None)
+            _BUDDY_WINDOW_READY = False
+            return True
+        except Exception:
+            return False
+
     def get_clipboard(self):
         import subprocess as _sp, sys as _sys
         try:
@@ -536,8 +732,47 @@ def _on_loaded(window):
 
 _JS_API = _JsApi()
 
+def _start_control_server(control_port):
+    try:
+        control_port = int(control_port or 0)
+    except Exception:
+        control_port = 0
+    if control_port <= 0:
+        return
+
+    class _ControlHandler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def _send(self, ok):
+            self.send_response(200 if ok else 409)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(("{\"ok\":true}" if ok else "{\"ok\":false}").encode("utf-8"))
+
+        def do_GET(self):
+            path = str(getattr(self, "path", ""))
+            if path.startswith("/buddy/show"):
+                self._send(_JS_API.show_buddy_window(True, _APP_PORT, 260, 260))
+            elif path.startswith("/buddy/hide"):
+                self._send(_JS_API.hide_buddy_window(True))
+            elif path.startswith("/buddy/close"):
+                self._send(_JS_API.close_buddy_window(True))
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", control_port), _ControlHandler)
+    except Exception:
+        return
+    threading.Thread(target=server.serve_forever, daemon=True, name="buddy-window-control").start()
+
 url, title = sys.argv[1], sys.argv[2]
+_APP_PORT = _port_from_url(url)
 w, h = int(sys.argv[3]), int(sys.argv[4])
+_CONTROL_PORT = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+_start_control_server(_CONTROL_PORT)
 webview.create_window(title, url, width=w, height=h, js_api=_JS_API)
 webview.start(func=_on_loaded)
 '''
@@ -699,7 +934,7 @@ def _open_in_browser(port: int = _PORT) -> None:
     logger.info("Opened Thoth in system browser on port %s", port)
 
 
-def _open_window(port: int = _PORT) -> subprocess.Popen | None:
+def _open_window(port: int = _PORT, control_port: int | None = None) -> subprocess.Popen | None:
     """Open a pywebview native window pointing at the running server.
 
     Returns the subprocess handle, or None on failure.
@@ -711,9 +946,11 @@ def _open_window(port: int = _PORT) -> subprocess.Popen | None:
         webbrowser.open(_url_for_port(port))
         return None
     try:
+        args = [sys.executable, "-c", _WINDOW_SCRIPT, _url_for_port(port), "Thoth", "1280", "900"]
+        if control_port:
+            args.append(str(int(control_port)))
         proc = subprocess.Popen(
-            [sys.executable, "-c", _WINDOW_SCRIPT,
-             _url_for_port(port), "Thoth", "1280", "900"],
+            args,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         time.sleep(0.5)
@@ -758,11 +995,16 @@ class ThothTray:
         self._server = _ThothProcess(self._port, host=host)
         self._owns_server = False          # True if *we* started it
         self._window_proc: subprocess.Popen | None = None
+        self._window_control_port: int | None = None
         self._stop_event = threading.Event()
 
         menu = pystray.Menu(
             pystray.MenuItem("Open Thoth", self._on_open, default=True),
             pystray.MenuItem("Open in Browser", self._on_open_browser),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Show Buddy", self._on_show_buddy),
+            pystray.MenuItem("Hide Buddy", self._on_hide_buddy),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._on_quit),
         )
         self._icon = pystray.Icon(
@@ -776,6 +1018,43 @@ class ThothTray:
 
     def _is_window_alive(self) -> bool:
         return self._window_proc is not None and self._window_proc.poll() is None
+
+    def _ensure_window_control_port(self) -> int:
+        if self._window_control_port is None:
+            self._window_control_port = _find_free_port(self._port + 10000, max_tries=50)
+        return self._window_control_port
+
+    def _send_window_command(self, action: str, timeout: float = 1.5) -> bool:
+        port = self._window_control_port
+        if not port:
+            return False
+        url = f"http://127.0.0.1:{int(port)}/buddy/{action}"
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                body = response.read(64).decode("utf-8", errors="replace").lower()
+                return getattr(response, "status", 200) == 200 and "true" in body
+        except (OSError, urllib.error.URLError, TimeoutError):
+            return False
+
+    def _ensure_native_window_for_buddy(self) -> bool:
+        if self._is_window_alive():
+            return True
+        if self._owns_server and not self._server.is_alive:
+            self._server.stop()
+            for _ in range(10):
+                if not _is_port_in_use(self._port):
+                    break
+                time.sleep(0.5)
+            self._server.start(self._port)
+            if not _wait_for_server(self._port):
+                return False
+        elif not _is_thoth_server(self._port):
+            return False
+        self._window_proc = _open_window(self._port, self._ensure_window_control_port())
+        if not self._is_window_alive():
+            return False
+        time.sleep(0.7)
+        return True
 
     # ── Menu callbacks ───────────────────────────────────────────────────
 
@@ -850,7 +1129,7 @@ class ThothTray:
             return
 
         logger.info("Opening Thoth window")
-        self._window_proc = _open_window(self._port)
+        self._window_proc = _open_window(self._port, self._ensure_window_control_port())
 
     def _on_open_browser(self, icon=None, item=None) -> None:   # noqa: ARG002
         """Open the Thoth UI in the default system browser."""
@@ -870,6 +1149,20 @@ class ThothTray:
                 logger.warning("Server did not restart — cannot open browser")
         else:
             _open_in_browser(self._port)
+
+    def _on_show_buddy(self, icon=None, item=None) -> None:   # noqa: ARG002
+        """Show the desktop Buddy overlay from the system tray."""
+        if self._ensure_native_window_for_buddy() and self._send_window_command("show"):
+            logger.info("Buddy overlay shown from tray")
+        else:
+            logger.warning("Could not show Buddy overlay from tray")
+
+    def _on_hide_buddy(self, icon=None, item=None) -> None:   # noqa: ARG002
+        """Hide the desktop Buddy overlay from the system tray."""
+        if self._send_window_command("hide"):
+            logger.info("Buddy overlay hidden from tray")
+        else:
+            logger.info("Buddy overlay was not open")
 
     def _on_quit(self, icon=None, item=None) -> None:    # noqa: ARG002
         logger.info("Quit requested")
@@ -962,7 +1255,7 @@ class ThothTray:
             if mode == "browser":
                 _open_in_browser(self._port)
             else:
-                self._window_proc = _open_window(self._port)
+                self._window_proc = _open_window(self._port, self._ensure_window_control_port())
         else:
             logger.warning("Server did not start in time — opening browser as fallback")
             webbrowser.open(_url_for_port(self._port))

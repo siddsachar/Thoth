@@ -31,10 +31,12 @@ xAI (grok-imagine-video):
 from __future__ import annotations
 
 import base64
+import contextvars
 import logging
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import httpx
 from langchain_core.tools import StructuredTool
@@ -126,6 +128,32 @@ def _normalize_xai_params(
 # ── Side-channel for generated videos ────────────────────────────────────
 # The streaming layer reads and clears this after generate/animate calls.
 _last_generated_video: dict | None = None  # {path, filename, provider, model, duration, mode}
+_video_output_dir_var: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "video_output_dir",
+    default=None,
+)
+_video_output_filename_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "video_output_filename",
+    default=None,
+)
+
+
+@contextmanager
+def video_output_override(directory: str | Path, filename: str | None = None) -> Iterator[None]:
+    """Temporarily save generated video output to a specific directory.
+
+    Normal chat/tool calls keep using per-thread media. In-app flows such as
+    Buddy Hatch do not always run inside an agent thread, so they need a narrow
+    way to persist generated motion directly into their own asset directory.
+    """
+
+    dir_token = _video_output_dir_var.set(Path(directory).expanduser())
+    name_token = _video_output_filename_var.set(filename)
+    try:
+        yield
+    finally:
+        _video_output_filename_var.reset(name_token)
+        _video_output_dir_var.reset(dir_token)
 
 
 def get_and_clear_last_video() -> dict | None:
@@ -278,6 +306,21 @@ def _save_video_to_disk(video_bytes: bytes, prefix: str = "vid") -> str | None:
 
     Returns the absolute path as a string, or None if saving fails.
     """
+    override_dir = _video_output_dir_var.get()
+    if override_dir is not None:
+        try:
+            override_dir.mkdir(parents=True, exist_ok=True)
+            filename = _video_output_filename_var.get() or f"{prefix}.mp4"
+            if not filename.lower().endswith(".mp4"):
+                filename = f"{filename}.mp4"
+            saved_path = override_dir / filename
+            saved_path.write_bytes(video_bytes)
+            logger.info("Saved generated video to %s", saved_path)
+            return str(saved_path)
+        except Exception:
+            logger.warning("Failed to save generated video to override directory", exc_info=True)
+            return None
+
     try:
         from agent import _current_thread_id_var
         from threads import save_media_file, _next_media_filename

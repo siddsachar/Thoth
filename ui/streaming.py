@@ -232,11 +232,23 @@ async def consume_generation(
     ready when the user switches back.
     """
     from agent import get_agent_graph, repair_orphaned_tool_calls
+    from buddy.events import BuddyEventType, emit_buddy_event
     from langchain_core.messages import AIMessage
     from ui.helpers import load_thread_messages, persist_detached_thread_media, persist_thread_media_state
 
     _stopped_shown = False
     _drain_deadline = 0.0
+    _last_buddy_token_at = 0.0
+
+    def _buddy(event_type: BuddyEventType, label: str = "", **payload: Any) -> None:
+        if label:
+            payload["label"] = label
+        try:
+            emit_buddy_event(event_type, source="ui.streaming", payload={"thread_id": gen.thread_id, **payload})
+        except Exception:
+            logger.debug("Buddy event emit failed", exc_info=True)
+
+    _buddy(BuddyEventType.GENERATION_STARTED, "Thinking")
 
     try:
       while True:
@@ -311,6 +323,7 @@ async def consume_generation(
                     logger.error("Error rendering thinking collapse", exc_info=True)
 
         if event_type == "error":
+            _buddy(BuddyEventType.GENERATION_ERROR, "Error", error=str(payload)[:500])
             gen.status = "error"
             gen.error = payload
             gen.accumulated = f"\u26a0\ufe0f An error occurred: {payload}"
@@ -339,6 +352,7 @@ async def consume_generation(
             _break_loop = True
 
         elif event_type == "tool_call":
+            _buddy(BuddyEventType.TOOL_STARTED, "Using a tool", tool=str(payload))
             if not gen.detached and gen.tool_col:
                 try:
                     with gen.tool_col:
@@ -354,9 +368,11 @@ async def consume_generation(
                     logger.debug("Tool-call expansion creation failed", exc_info=True)
 
         elif event_type == "tool_done":
+            _buddy(BuddyEventType.TOOL_FINISHED, "Tool finished")
             await _handle_tool_done(gen, state, p, payload, cb)
 
         elif event_type == "summarizing":
+            _buddy(BuddyEventType.THINKING, "Summarizing")
             if not gen.detached and gen.wrapper:
                 try:
                     if gen.thinking_label:
@@ -377,6 +393,7 @@ async def consume_generation(
             pass  # spinner already visible
 
         elif event_type == "thinking_token":
+            _buddy(BuddyEventType.THINKING, "Reasoning")
             gen.thinking_text += payload
             if not gen.detached:
                 try:
@@ -397,6 +414,10 @@ async def consume_generation(
                     logger.debug("Thinking-token rendering failed", exc_info=True)
 
         elif event_type == "token":
+            _now = asyncio.get_event_loop().time()
+            if _now - _last_buddy_token_at > 0.8:
+                _last_buddy_token_at = _now
+                _buddy(BuddyEventType.TOKEN, "Writing")
             gen.accumulated += payload
             if not gen.detached and gen.assistant_md:
                 try:
@@ -426,11 +447,13 @@ async def consume_generation(
                         gen.tts_buffer = sentences[-1]
 
         elif event_type == "interrupt":
+            _buddy(BuddyEventType.APPROVAL_NEEDED, "Approval pending")
             gen.interrupt_data = payload
             gen.status = "interrupted"
             _break_loop = True
 
         elif event_type == "done":
+            _buddy(BuddyEventType.GENERATION_DONE, "Done")
             gen.accumulated = payload
             if not gen.detached:
                 try:
@@ -1037,6 +1060,7 @@ async def resume_after_interrupt(
     cb: _Callbacks,
 ) -> None:
     from agent import resume_stream_agent, repair_orphaned_tool_calls, RECURSION_LIMIT_CHAT
+    from buddy.events import BuddyEventType, emit_buddy_event
     from tools import registry as tool_registry
 
     pending = state.pending_interrupt
@@ -1050,6 +1074,14 @@ async def resume_after_interrupt(
     state.pending_interrupt = None
 
     gen_thread_id = state.thread_id
+    try:
+        emit_buddy_event(
+            BuddyEventType.APPROVAL_APPROVED if approved else BuddyEventType.APPROVAL_DENIED,
+            source="ui.streaming",
+            payload={"thread_id": gen_thread_id, "label": "Approved" if approved else "Denied"},
+        )
+    except Exception:
+        logger.debug("Buddy approval resolution event failed", exc_info=True)
 
     _thread_mo = state.thread_model_override or ""
     config = {

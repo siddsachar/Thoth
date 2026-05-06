@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "id": "ember",
+  "name": "Buddy Ember",
+  "version": "1.0.0",
+  "runtime": "generated_motion_pack",
+  "preview": "preview.png",
+  "default_clip": "idle",
+  "animation_map": {
+    "celebrate_big": "success",
+    "celebrate_small": "success",
+    "idle_breathe": "idle",
+    "lean_in": "thinking",
+    "listen": "idle",
+    "nod": "working",
+    "pack_bag": "working",
+    "pause": "error",
+    "ping": "idle",
+    "sleep": "error",
+    "step_check": "working",
+    "tap_glass": "approval",
+    "think_loop": "thinking",
+    "tool_peek": "working",
+    "type_follow": "thinking",
+    "wake": "idle",
+    "worry": "error"
+  },
+  "clips": {
+    "idle": {
+      "id": "idle",
+      "label": "Idle",
+      "path": "motions/idle.mp4",
+      "duration_seconds": 4,
+      "animations": [
+        "idle_breathe",
+        "wake",
+        "ping",
+        "listen"
+      ]
+    },
+    "thinking": {
+      "id": "thinking",
+      "label": "Thinking",
+      "path": "motions/thinking.mp4",
+      "duration_seconds": 4,
+      "animations": [
+        "lean_in",
+        "think_loop",
+        "type_follow"
+      ]
+    },
+    "working": {
+      "id": "working",
+      "label": "Working",
+      "path": "motions/working.mp4",
+      "duration_seconds": 4,
+      "animations": [
+        "tool_peek",
+        "pack_bag",
+        "step_check",
+        "nod"
+      ]
+    },
+    "approval": {
+      "id": "approval",
+      "label": "Approval",
+      "path": "motions/approval.mp4",
+      "duration_seconds": 4,
+      "animations": [
+        "tap_glass"
+      ]
+    },
+    "success": {
+      "id": "success",
+      "label": "Success",
+      "path": "motions/success.mp4",
+      "duration_seconds": 4,
+      "animations": [
+        "celebrate_small",
+        "celebrate_big"
+      ]
+    },
+    "error": {
+      "id": "error",
+      "label": "Error",
+      "path": "motions/error.mp4",
+      "duration_seconds": 4,
+      "animations": [
+        "worry",
+        "sleep",
+        "pause"
+      ]
+    }
+  },
+  "prompt": "A compact forge-spark task-helper version of Buddy for Thoth: charcoal ink hood, copper-gold ember core, soft teal circuit accents, bright focused eyes, tiny practical mantle shape, energetic helpful posture, warm and capable without looking childish."
+}

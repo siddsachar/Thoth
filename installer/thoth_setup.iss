@@ -82,6 +82,9 @@ Source: "..\static\*";                 DestDir: "{app}\app\static"; Flags: ignor
 ; ── Sounds ──────────────────────────────────────────────────────────────────────
 Source: "..\sounds\*.wav";              DestDir: "{app}\app\sounds"; Flags: ignoreversion
 
+; ── Buddy package ───────────────────────────────────────────────────────────────
+Source: "..\buddy\*.py";                DestDir: "{app}\app\buddy"; Flags: ignoreversion
+
 ; ── Channels package ─────────────────────────────────────────────────────────
 Source: "..\channels\__init__.py";      DestDir: "{app}\app\channels"; Flags: ignoreversion
 Source: "..\channels\auth.py";          DestDir: "{app}\app\channels"; Flags: ignoreversion

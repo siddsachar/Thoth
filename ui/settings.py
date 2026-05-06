@@ -3260,6 +3260,7 @@ def open_settings(
                         tab_models = ui.tab("Models", icon="smart_toy")
                         tab_cloud = ui.tab("Providers", icon="cloud")
                         tab_knowledge = ui.tab("Knowledge", icon="psychology")
+                        tab_buddy = ui.tab("Buddy", icon="pets")
                         tab_voice = ui.tab("Voice", icon="mic")
                         tab_fs = ui.tab("System", icon="terminal")
                         tab_tracker = ui.tab("Tracker", icon="checklist")
@@ -3275,6 +3276,7 @@ def open_settings(
                         _tab_map = {
                             "Models": tab_models, "Cloud": tab_cloud, "Providers": tab_cloud,
                             "Knowledge": tab_knowledge,
+                            "Buddy": tab_buddy,
                             "Voice": tab_voice,
                             "System": tab_fs, "Tracker": tab_tracker,
                             "Documents": tab_docs, "Search": tab_tools,
@@ -3303,6 +3305,7 @@ def open_settings(
                     (tab_utils, "Utilities", _build_utilities_tab),
                     (tab_tracker, "Tracker", _build_tracker_tab),
                     (tab_knowledge, "Knowledge", _build_knowledge_tab),
+                    (tab_buddy, "Buddy", lambda: __import__("ui.buddy", fromlist=["build_buddy_settings_tab"]).build_buddy_settings_tab(_reopen)),
                     (tab_voice, "Voice", _build_voice_tab),
                     (tab_channels, "Channels", _build_channels_tab),
                     (tab_mcp, "MCP", lambda: __import__("ui.mcp_settings", fromlist=["build_mcp_settings_tab"]).build_mcp_settings_tab(_reopen)),

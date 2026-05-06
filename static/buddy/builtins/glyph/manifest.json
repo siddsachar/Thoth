@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "id": "glyph",
+  "name": "Buddy Glyph",
+  "version": "1.0.0",
+  "runtime": "generated_motion_pack",
+  "preview": "preview.png",
+  "default_clip": "idle",
+  "animation_map": {
+    "celebrate_big": "success",
+    "celebrate_small": "success",
+    "idle_breathe": "idle",
+    "lean_in": "thinking",
+    "listen": "idle",
+    "nod": "working",
+    "pack_bag": "working",
+    "pause": "error",
+    "ping": "idle",
+    "sleep": "error",
+    "step_check": "working",
+    "tap_glass": "approval",
+    "think_loop": "thinking",
+    "tool_peek": "working",
+    "type_follow": "thinking",
+    "wake": "idle",
+    "worry": "error"
+  },
+  "clips": {
+    "approval": {
+      "animations": [
+        "tap_glass"
+      ],
+      "duration_seconds": 4,
+      "id": "approval",
+      "label": "Approval",
+      "path": "motions/approval.mp4"
+    },
+    "error": {
+      "animations": [
+        "worry",
+        "sleep",
+        "pause"
+      ],
+      "duration_seconds": 4,
+      "id": "error",
+      "label": "Error",
+      "path": "motions/error.mp4"
+    },
+    "idle": {
+      "animations": [
+        "idle_breathe",
+        "wake",
+        "ping",
+        "listen"
+      ],
+      "duration_seconds": 4,
+      "id": "idle",
+      "label": "Idle",
+      "path": "motions/idle.mp4"
+    },
+    "success": {
+      "animations": [
+        "celebrate_small",
+        "celebrate_big"
+      ],
+      "duration_seconds": 4,
+      "id": "success",
+      "label": "Success",
+      "path": "motions/success.mp4"
+    },
+    "thinking": {
+      "animations": [
+        "lean_in",
+        "think_loop",
+        "type_follow"
+      ],
+      "duration_seconds": 4,
+      "id": "thinking",
+      "label": "Thinking",
+      "path": "motions/thinking.mp4"
+    },
+    "working": {
+      "animations": [
+        "tool_peek",
+        "pack_bag",
+        "step_check",
+        "nod"
+      ],
+      "duration_seconds": 4,
+      "id": "working",
+      "label": "Working",
+      "path": "motions/working.mp4"
+    }
+  },
+  "prompt": "A tiny mystical Thoth coding familiar named Buddy with a compact dark ink hood, soft teal glow, warm gold eyes, tiny cape-like wings, rounded silhouette, and friendly expressive face."
+}

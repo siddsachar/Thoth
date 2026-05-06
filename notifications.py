@@ -50,6 +50,15 @@ def notify(
     """
     from datetime import datetime
     timestamp = datetime.now().strftime("%I:%M %p")
+    try:
+        from buddy.events import BuddyEventType, emit_buddy_event
+        emit_buddy_event(
+            BuddyEventType.NOTIFICATION,
+            source="notifications",
+            payload={"title": title, "message": message, "label": title},
+        )
+    except Exception:
+        logger.debug("Buddy notification event failed", exc_info=True)
 
     # 1. Desktop notification (plyer) — immediate
     _desktop_notify(title, f"{message} ({timestamp})")

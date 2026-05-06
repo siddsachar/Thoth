@@ -549,7 +549,15 @@ async def index():
             return False, f"Model {current} is not downloaded. Open Settings → Models to download it."
         return True, ""
 
-    ok, err = await run.io_bound(_run_health_check)
+    try:
+        health_result = await run.io_bound(_run_health_check)
+    except Exception as exc:
+        logger.warning("Startup health check failed", exc_info=True)
+        health_result = (False, str(exc) or "Startup health check failed.")
+    if not isinstance(health_result, tuple) or len(health_result) != 2:
+        logger.warning("Startup health check returned invalid result: %r", health_result)
+        health_result = (True, "")
+    ok, err = health_result
     if not ok and is_setup_complete():
         ui.notify(err, type="negative", timeout=0, close_button=True)
 
@@ -614,6 +622,8 @@ async def index():
         show_task_dialog=_show_task_dialog,
         load_thread_messages=load_thread_messages,
     )
+    from ui.buddy import build_in_app_buddy
+    build_in_app_buddy()
     # Generation counter — every ``_rebuild_main`` bumps this. A
     # deferred hydration compares its captured id; if another rebuild
     # started in the meantime, the stale hydration aborts.
@@ -765,15 +775,30 @@ async def index():
             ui.notify(t["message"], **_tkw)
             rebuild_thread_list()
 
+    _last_buddy_voice_state = [""]
+
     def _poll_voice() -> None:
         if not state.voice_enabled:
             if p.voice_status_label:
                 p.voice_status_label.text = ""
+            _last_buddy_voice_state[0] = ""
             return
 
         svc = state.voice_service
         new_status = svc.get_status()
         st = svc.state
+        if st != _last_buddy_voice_state[0]:
+            _last_buddy_voice_state[0] = st
+            try:
+                from buddy.events import BuddyEventType, emit_buddy_event
+                if st in {"listening", "transcribing", "muted"}:
+                    emit_buddy_event(
+                        BuddyEventType.VOICE_LISTENING,
+                        source="app.voice",
+                        payload={"label": "Listening" if st == "listening" else "Voice active", "state": st},
+                    )
+            except Exception:
+                logger.debug("Buddy voice event failed", exc_info=True)
         if p.voice_status_label:
             if st == "listening":
                 p.voice_status_label.text = "🔴 Listening — speak now…"
@@ -826,6 +851,13 @@ async def index():
     _update_token_counter()
 
 
+@ui.page("/buddy-overlay")
+async def buddy_overlay():
+    ui.dark_mode(True)
+    from ui.buddy import build_buddy_overlay_page
+    build_buddy_overlay_page()
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ═════════════════════════════════════════════════════════════════════════════
@@ -834,6 +866,12 @@ if __name__ in {"__main__", "__mp_main__"}:
     _static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
     if os.path.isdir(_static_dir):
         app.add_static_files("/static", _static_dir)
+
+    from buddy.assets import buddy_static_dir
+
+    _buddy_static_dir = buddy_static_dir()
+    _buddy_static_dir.mkdir(parents=True, exist_ok=True)
+    app.add_static_files("/_buddy", str(_buddy_static_dir))
 
     from designer.publish import ensure_published_dir
 

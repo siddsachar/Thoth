@@ -690,6 +690,39 @@ def _finish_run(run_id: str, status: str = "completed",
     conn.close()
 
 
+def _emit_buddy_workflow_event(
+    status: str,
+    *,
+    task_id: str = "",
+    thread_id: str = "",
+    label: str = "",
+    error: str = "",
+) -> None:
+    try:
+        from buddy.events import BuddyEventType, emit_buddy_event
+        event_type = {
+            "done": BuddyEventType.WORKFLOW_DONE,
+            "error": BuddyEventType.WORKFLOW_ERROR,
+            "cancelled": BuddyEventType.WORKFLOW_CANCELLED,
+        }.get(status)
+        if event_type is None:
+            return
+        payload = {
+            "task_id": task_id,
+            "thread_id": thread_id,
+            "label": label or (
+                "Workflow error" if status == "error"
+                else "Workflow cancelled" if status == "cancelled"
+                else "Workflow done"
+            ),
+        }
+        if error:
+            payload["error"] = error
+        emit_buddy_event(event_type, source="tasks", payload=payload)
+    except Exception:
+        logger.debug("Buddy workflow event failed", exc_info=True)
+
+
 def _fire_completion_triggers(completed_task_id: str) -> None:
     """Check if any task has a trigger of type 'task_complete' matching this task.
     If so, fire those tasks in the background.
@@ -1114,6 +1147,19 @@ def run_task_background(
 
     logger.info("run_task_background: starting '%s' (id=%s, step=%d)",
                 task.get("name", "?"), task_id[:8], start_step)
+    try:
+        from buddy.events import BuddyEventType, emit_buddy_event
+        emit_buddy_event(
+            BuddyEventType.WORKFLOW_STARTED,
+            source="tasks",
+            payload={
+                "task_id": task_id,
+                "thread_id": thread_id,
+                "label": task.get("name", "Workflow running"),
+            },
+        )
+    except Exception:
+        logger.debug("Buddy workflow start event failed", exc_info=True)
 
     # ── Notify-only tasks (timer replacement) ────────────────────────
     if task.get("notify_only"):
@@ -1142,6 +1188,12 @@ def run_task_background(
                         if delivery_status == "delivery_failed"
                         else "completed")
         _finish_run(run_id, final_status, status_message=delivery_detail)
+        _emit_buddy_workflow_event(
+            "done",
+            task_id=task_id,
+            thread_id=thread_id,
+            label=task.get("name", "Workflow done"),
+        )
         # Fire any tasks triggered by this task's completion
         if final_status.startswith("completed"):
             try:
@@ -1164,6 +1216,12 @@ def run_task_background(
     prompts = task["prompts"]
     steps = task["steps"]
     if not steps and not prompts:
+        _emit_buddy_workflow_event(
+            "done",
+            task_id=task_id,
+            thread_id=thread_id,
+            label=task.get("name", "Workflow done"),
+        )
         return
     # Use steps as the authoritative step list
     if not steps:
@@ -1279,6 +1337,21 @@ def run_task_background(
                         if _ar:
                             _ar["step_label"] = _step_label
                     _task_log(f"▸ Step {step_index + 1}/{total}: {_step_label}")
+                    try:
+                        from buddy.events import BuddyEventType, emit_buddy_event
+                        emit_buddy_event(
+                            BuddyEventType.WORKFLOW_STEP,
+                            source="tasks",
+                            payload={
+                                "task_id": task_id,
+                                "thread_id": thread_id,
+                                "step": step_index + 1,
+                                "total": total,
+                                "label": _step_label,
+                            },
+                        )
+                    except Exception:
+                        logger.debug("Buddy workflow step event failed", exc_info=True)
                     # Apply per-step model override if present
                     step_model = step.get("model_override")
                     if step_model:
@@ -1769,6 +1842,12 @@ def run_task_background(
                 except Exception:
                     pass
                 _finish_run(run_id, "stopped")
+                _emit_buddy_workflow_event(
+                    "cancelled",
+                    task_id=task_id,
+                    thread_id=thread_id,
+                    label="Workflow stopped",
+                )
                 if _thread_exists(thread_id):
                     thread_name = (f"⚡ {task['name']} (stopped) — "
                                    f"{datetime.now().strftime('%b %d, %I:%M %p')}")
@@ -1785,6 +1864,15 @@ def run_task_background(
 
             # ── Handle paused task (waiting for approval) ─────────────
             if paused:
+                try:
+                    from buddy.events import BuddyEventType, emit_buddy_event
+                    emit_buddy_event(
+                        BuddyEventType.APPROVAL_NEEDED,
+                        source="tasks",
+                        payload={"task_id": task_id, "thread_id": thread_id, "label": "Needs approval"},
+                    )
+                except Exception:
+                    logger.debug("Buddy approval event failed", exc_info=True)
                 _finish_run(run_id, "paused",
                             status_message="Waiting for approval")
                 if _thread_exists(thread_id):
@@ -1806,6 +1894,12 @@ def run_task_background(
             update_task(task_id, last_run=datetime.now().isoformat())
             logger.info("run_task_background: '%s' finished with status=%s",
                         task.get("name", "?"), final_status)
+            _emit_buddy_workflow_event(
+                "done",
+                task_id=task_id,
+                thread_id=thread_id,
+                label=task.get("name", "Workflow done"),
+            )
 
             # Fire any tasks triggered by this task's completion
             if final_status.startswith("completed"):
@@ -1848,6 +1942,13 @@ def run_task_background(
 
         except Exception as exc:
             logger.error("Task %s crashed: %s", task["name"], exc)
+            _emit_buddy_workflow_event(
+                "error",
+                task_id=task_id,
+                thread_id=thread_id,
+                label="Workflow error",
+                error=str(exc),
+            )
             _finish_run(run_id, "failed", status_message=str(exc))
         finally:
             with _active_lock:
@@ -2543,7 +2644,52 @@ def create_approval_request(
     )
     conn.commit()
     conn.close()
+    _emit_buddy_approval_event(
+        "needed",
+        run_id=run_id,
+        task_id=task_id,
+        step_id=step_id,
+        approval_id=req_id,
+        label="Approval pending",
+        message=message,
+    )
     return resume_token, req_id
+
+
+def _emit_buddy_approval_event(
+    status: str,
+    *,
+    run_id: str = "",
+    task_id: str = "",
+    step_id: str = "",
+    approval_id: str = "",
+    label: str = "",
+    message: str = "",
+) -> None:
+    try:
+        from buddy.events import BuddyEventType, emit_buddy_event
+        event_type = {
+            "needed": BuddyEventType.APPROVAL_NEEDED,
+            "approved": BuddyEventType.APPROVAL_APPROVED,
+            "denied": BuddyEventType.APPROVAL_DENIED,
+            "timed_out": BuddyEventType.APPROVAL_TIMED_OUT,
+        }.get(status)
+        if event_type is None:
+            return
+        emit_buddy_event(
+            event_type,
+            source="tasks",
+            payload={
+                "run_id": run_id,
+                "task_id": task_id,
+                "step_id": step_id,
+                "approval_id": approval_id,
+                "label": label or message or status.replace("_", " ").title(),
+                "message": message,
+            },
+        )
+    except Exception:
+        logger.debug("Buddy approval event failed", exc_info=True)
 
 
 def get_pending_approvals() -> list[dict]:
@@ -2585,6 +2731,15 @@ def respond_to_approval(resume_token: str, approved: bool,
         conn.commit()
         conn.close()
         logger.info("Approval %s was already expired when user responded", r["id"])
+        _emit_buddy_approval_event(
+            "timed_out",
+            run_id=str(r.get("run_id") or ""),
+            task_id=str(r.get("task_id") or ""),
+            step_id=str(r.get("step_id") or ""),
+            approval_id=str(r.get("id") or ""),
+            label="Approval timed out",
+            message=str(r.get("message") or ""),
+        )
         return False
 
     new_status = "approved" if approved else "denied"
@@ -2597,6 +2752,16 @@ def respond_to_approval(resume_token: str, approved: bool,
 
     approval_id = dict(row)["id"]
     conn.close()
+
+    _emit_buddy_approval_event(
+        new_status,
+        run_id=str(r.get("run_id") or ""),
+        task_id=str(r.get("task_id") or ""),
+        step_id=str(r.get("step_id") or ""),
+        approval_id=approval_id,
+        label="Approved" if approved else "Denied",
+        message=str(r.get("message") or ""),
+    )
 
     # Update all channel messages (cross-channel resolution)
     _resolve_approval_on_channels(approval_id, new_status, source_channel=source)
@@ -2630,6 +2795,15 @@ def _check_approval_timeouts() -> None:
         # this stops the pipeline.
         _resolve_approval_on_channels(r["id"], "timed_out",
                                       source_channel="system")
+        _emit_buddy_approval_event(
+            "timed_out",
+            run_id=str(r.get("run_id") or ""),
+            task_id=str(r.get("task_id") or ""),
+            step_id=str(r.get("step_id") or ""),
+            approval_id=str(r.get("id") or ""),
+            label="Approval timed out",
+            message=str(r.get("message") or ""),
+        )
         _resume_pipeline(r["resume_token"], approved=False)
         logger.info("Approval request %s timed out for task %s",
                      r["id"], r["task_id"])
@@ -2692,6 +2866,12 @@ def _resume_graph_interrupted(
             _update_pipeline_status(run_id, "stopped")
             _finish_run(run_id, "stopped",
                         status_message="Stopped during graph resume")
+            _emit_buddy_workflow_event(
+                "cancelled",
+                task_id=task_id,
+                thread_id=thread_id,
+                label="Workflow stopped",
+            )
             return
         except Exception as exc:
             exc_str = str(exc).lower()
@@ -2704,6 +2884,13 @@ def _resume_graph_interrupted(
             _update_pipeline_status(run_id, "failed")
             _finish_run(run_id, "failed",
                         status_message=err_msg)
+            _emit_buddy_workflow_event(
+                "error",
+                task_id=task_id,
+                thread_id=thread_id,
+                label="Workflow error",
+                error=err_msg,
+            )
             return
 
         # ── Chained interrupt: agent hit another dangerous tool ─────
@@ -2811,6 +2998,12 @@ def _resume_graph_interrupted(
             _update_pipeline_status(run_id, final_status)
             _finish_run(run_id, final_status,
                         status_message=delivery_detail or "Completed after graph resume")
+            _emit_buddy_workflow_event(
+                "done",
+                task_id=task_id,
+                thread_id=thread_id,
+                label=task.get("name", "Workflow done"),
+            )
             update_task(task_id, last_run=datetime.now().isoformat())
             # Fire completion triggers
             try:
@@ -2890,6 +3083,12 @@ def _resume_pipeline(resume_token: str, approved: bool = True) -> None:
         _update_pipeline_status(state["run_id"], "stopped")
         _finish_run(state["run_id"], "stopped",
                     status_message="Approval denied by user")
+        _emit_buddy_workflow_event(
+            "cancelled",
+            task_id=state["task_id"],
+            thread_id=thread_id,
+            label="Workflow denied",
+        )
         if any(t[0] == thread_id for t in _list_threads()):
             thread_name = (f"⚡ {task['name']} (denied) — "
                            f"{datetime.now().strftime('%b %d, %I:%M %p')}")
@@ -2912,6 +3111,12 @@ def _resume_pipeline(resume_token: str, approved: bool = True) -> None:
             _update_pipeline_status(state["run_id"], "completed")
             _finish_run(state["run_id"], "completed",
                         status_message="Completed (approved → end)")
+            _emit_buddy_workflow_event(
+                "done",
+                task_id=state["task_id"],
+                thread_id=thread_id,
+                label=task.get("name", "Workflow done"),
+            )
             return
         if approved_target:
             resolved = _resolve_step_index(steps, approved_target)
@@ -2944,6 +3149,12 @@ def _resume_pipeline(resume_token: str, approved: bool = True) -> None:
         _update_pipeline_status(state["run_id"], "completed")
         _finish_run(state["run_id"], "completed",
                     status_message="Completed after approval")
+        _emit_buddy_workflow_event(
+            "done",
+            task_id=state["task_id"],
+            thread_id=thread_id,
+            label=task.get("name", "Workflow done"),
+        )
         return
 
     # Clear the "(paused)" suffix from the thread name
