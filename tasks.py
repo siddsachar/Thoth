@@ -851,6 +851,12 @@ def stop_task(thread_id: str) -> bool:
             info["stop_event"].set()
             logger.info("stop_task: signalled stop for thread %s (task %s)",
                         thread_id, info.get("name", "?"))
+            _emit_buddy_workflow_event(
+                "cancelled",
+                task_id=str(info.get("task_id") or ""),
+                thread_id=thread_id,
+                label=f"Stopping {info.get('name') or 'workflow'}",
+            )
             return True
     return False
 

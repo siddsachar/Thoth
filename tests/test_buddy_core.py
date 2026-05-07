@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import pathlib
+import threading
 
 
 def test_buddy_event_bus_assigns_ids_and_retains_recent_events():
@@ -597,6 +598,53 @@ def test_buddy_hatch_motion_prompt_keeps_avatar_framing_stable():
     assert "no background pulsing" in prompt
     assert "no size changes" in prompt
     assert "Do not create a sprite sheet" in prompt
+    assert "no transparent background" in prompt
+    assert "no alpha checkerboard" in prompt
+    assert "no white checkerboard pattern" in prompt
+
+
+def test_buddy_hatch_prepares_padded_solid_motion_source(tmp_path):
+    import buddy.hatch as hatch_mod
+    from PIL import Image
+
+    preview = tmp_path / "preview.png"
+    image = Image.new("RGBA", (300, 600), (0, 0, 0, 0))
+    image.paste((240, 120, 30, 255), (60, 80, 240, 560))
+    image.save(preview)
+
+    motion_source = hatch_mod._prepare_motion_source_image(preview)
+
+    assert motion_source.name == "motion_source.png"
+    with Image.open(motion_source) as prepared:
+        assert prepared.mode == "RGB"
+        assert prepared.size == (1024, 1024)
+        assert prepared.getpixel((0, 0)) == hatch_mod._MOTION_SOURCE_BACKGROUND[:3]
+
+
+def test_stop_task_emits_buddy_cancel_immediately(monkeypatch):
+    import tasks as tasks_mod
+
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def _fake_emit(status: str, **payload: str) -> None:
+        seen.append((status, payload))
+
+    stop_event = threading.Event()
+    monkeypatch.setattr(tasks_mod, "_emit_buddy_workflow_event", _fake_emit)
+    with tasks_mod._active_lock:
+        tasks_mod._active_runs["thread-1"] = {
+            "task_id": "task-1",
+            "name": "Daily Briefing",
+            "stop_event": stop_event,
+        }
+    try:
+        assert tasks_mod.stop_task("thread-1") is True
+    finally:
+        with tasks_mod._active_lock:
+            tasks_mod._active_runs.pop("thread-1", None)
+
+    assert stop_event.is_set()
+    assert seen == [("cancelled", {"task_id": "task-1", "thread_id": "thread-1", "label": "Stopping Daily Briefing"})]
 
 
 def test_buddy_hatch_background_job_starts_without_blocking(monkeypatch):

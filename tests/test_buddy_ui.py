@@ -104,6 +104,7 @@ def test_buddy_runtime_supports_generated_art_as_primary_path():
     assert "initGeneratedRoot" in runtime_src
     assert "drawGeneratedBuddy" in runtime_src
     assert "drawCoverSource" in runtime_src
+    assert "drawContainSource" in runtime_src
     assert "drawTransparentSource" in runtime_src
     assert "sampleBackgroundColor" in runtime_src
     assert "isVideoBackgroundPixel" in runtime_src
@@ -112,6 +113,8 @@ def test_buddy_runtime_supports_generated_art_as_primary_path():
     assert "BACKGROUND_LUMA_DELTA_THRESHOLD = 15" in runtime_src
     assert "BACKGROUND_SEED_RATIO = 0.05" in runtime_src
     assert "distance < BACKGROUND_COLOR_DISTANCE_THRESHOLD" in runtime_src
+    assert "drawContainSource(keyCtx" in runtime_src
+    assert "const imageSize = size * 0.76" in runtime_src
     assert "Generated motion ready" in runtime_src
     assert "Generated motion pack ready" in runtime_src
     assert "clipForSnapshot" in runtime_src
@@ -138,7 +141,12 @@ def test_buddy_hatch_prompts_request_keyable_motion_assets():
     assert "contact sheet" in hatch_src
     assert "multiple poses" in hatch_src
     assert "Create one video clip only" in hatch_src
-    assert "flat solid keyable" in hatch_src
+    assert "flat solid" in hatch_src
+    assert "keyable background" in hatch_src
+    assert "no transparent background" in hatch_src
+    assert "no alpha checkerboard" in hatch_src
+    assert "motion_source.png" in hatch_src
+    assert "_prepare_motion_source_image" in hatch_src
     assert "18 percent empty margin" in hatch_src
     assert "frame edge" in hatch_src
     assert "rim light or outline" in hatch_src

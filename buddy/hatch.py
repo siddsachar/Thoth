@@ -25,6 +25,8 @@ _DATA_DIR = pathlib.Path(os.environ.get("THOTH_DATA_DIR", pathlib.Path.home() / 
 _JOB_LOCK = threading.Lock()
 _CURRENT_JOB: dict[str, Any] = {}
 _RUNNING_JOB_STATES = {"queued", "running"}
+_MOTION_SOURCE_BACKGROUND = (10, 18, 20, 255)
+_MOTION_SOURCE_MAX_SCALE = 0.76
 
 
 @dataclass(frozen=True)
@@ -404,8 +406,9 @@ def _buddy_motion_prompt(prompt: str, clip_id: str = "idle") -> str:
         "Keep the source image's theme, palette, materials, and personality; do not add ancient, mystical, ink, gold, teal, glyph, or Thoth-like motifs unless they are already part of the source design. "
         "Keep the character compact enough to read at sidebar size and fit inside a rounded avatar border. "
         "Keep at least 18 percent empty margin around the full character for the entire clip, "
-        "with no body, robe, feet, glow, or shadow touching the frame edge. Preserve a flat solid "
-        "keyable background that is clearly distinct from the character, and keep a readable rim "
+        "with no body, robe, feet, glow, or shadow touching the frame edge. Preserve the source image's flat solid "
+        "deep charcoal-green keyable background for every frame; no transparent background, no alpha checkerboard, "
+        "no white checkerboard pattern, and no changing background pattern. Keep a readable rim "
         "light or outline around dark body edges. Use only small, controlled character motion; no flicker, "
         "no warping, no morphing, no identity drift, no jitter, no background pulsing, no exposure flashing, "
         "and no size changes. "
@@ -414,6 +417,31 @@ def _buddy_motion_prompt(prompt: str, clip_id: str = "idle") -> str:
         "The motion should feel alive, loopable, and suitable for a small sidebar avatar. User concept: "
         f"{prompt}"
     )
+
+
+def _prepare_motion_source_image(preview_path: str | pathlib.Path) -> pathlib.Path:
+    """Composite a generated still onto a stable padded background for video generation."""
+
+    source_preview = pathlib.Path(preview_path).expanduser().resolve()
+    target = source_preview.parent / "motion_source.png"
+    try:
+        from PIL import Image
+
+        with Image.open(source_preview) as image:
+            source = image.convert("RGBA")
+            canvas_size = max(1024, source.width, source.height)
+            max_sprite = max(1, int(canvas_size * _MOTION_SOURCE_MAX_SCALE))
+            scale = min(max_sprite / source.width, max_sprite / source.height, 1.0)
+            sprite_size = (max(1, int(source.width * scale)), max(1, int(source.height * scale)))
+            sprite = source.resize(sprite_size, Image.Resampling.LANCZOS)
+            canvas = Image.new("RGBA", (canvas_size, canvas_size), _MOTION_SOURCE_BACKGROUND)
+            x = (canvas_size - sprite.width) // 2
+            y = (canvas_size - sprite.height) // 2
+            canvas.alpha_composite(sprite, (x, y))
+            canvas.convert("RGB").save(target)
+    except Exception:
+        shutil.copy2(source_preview, target)
+    return target
 
 
 def _write_motion_pack_manifest(
@@ -729,6 +757,7 @@ def generate_hatch_motion(prompt: str, preview_path: str | pathlib.Path, *, pack
     preview = pathlib.Path(preview_path).expanduser().resolve()
     if not preview.exists() or not preview.is_file() or preview.stat().st_size == 0:
         raise ValueError("Buddy art preview is required before generating motion")
+    motion_source = _prepare_motion_source_image(preview)
 
     from tools.video_gen_tool import _animate_image, get_and_clear_last_video, video_output_override
 
@@ -736,7 +765,7 @@ def generate_hatch_motion(prompt: str, preview_path: str | pathlib.Path, *, pack
     with video_output_override(draft_dir, "motion.mp4"):
         result = _animate_image(
             _buddy_motion_prompt(safe_prompt, "idle"),
-            image_source=str(preview),
+            image_source=str(motion_source),
             duration_seconds=_motion_clip_spec("idle").duration_seconds,
             aspect_ratio="1:1",
             resolution="720p",
@@ -787,6 +816,7 @@ def generate_hatch_motion_pack(
     preview = pathlib.Path(preview_path).expanduser().resolve()
     if not preview.exists() or not preview.is_file() or preview.stat().st_size == 0:
         raise ValueError("Buddy art preview is required before generating a motion pack")
+    motion_source = _prepare_motion_source_image(preview)
 
     from tools.video_gen_tool import _animate_image, get_and_clear_last_video, video_output_override
 
@@ -815,7 +845,7 @@ def generate_hatch_motion_pack(
             with video_output_override(motion_dir, spec.filename):
                 result = _animate_image(
                     _buddy_motion_prompt(safe_prompt, spec.id),
-                    image_source=str(preview),
+                    image_source=str(motion_source),
                     duration_seconds=spec.duration_seconds,
                     aspect_ratio="1:1",
                     resolution="720p",

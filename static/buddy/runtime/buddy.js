@@ -130,6 +130,23 @@
     ctx.drawImage(source, sx, sy, sw, sh, x, y, width, height);
   }
 
+  function drawContainSource(ctx, source, x, y, width, height) {
+    const sourceWidth = source.videoWidth || source.naturalWidth || width;
+    const sourceHeight = source.videoHeight || source.naturalHeight || height;
+    const sourceRatio = sourceWidth / sourceHeight;
+    const targetRatio = width / height;
+    let dw = width;
+    let dh = height;
+    if (sourceRatio > targetRatio) {
+      dh = width / sourceRatio;
+    } else if (sourceRatio < targetRatio) {
+      dw = height * sourceRatio;
+    }
+    const dx = x + (width - dw) / 2;
+    const dy = y + (height - dh) / 2;
+    ctx.drawImage(source, dx, dy, dw, dh);
+  }
+
   function colorDistance(red, green, blue, color) {
     const dr = red - color.red;
     const dg = green - color.green;
@@ -224,12 +241,12 @@
     const outputHeight = Math.max(1, Math.round(height));
     const keyCtx = ensureKeyCanvas(state, outputWidth, outputHeight);
     keyCtx.clearRect(0, 0, outputWidth, outputHeight);
-    drawCoverSource(keyCtx, source, 0, 0, outputWidth, outputHeight);
+    drawContainSource(keyCtx, source, 0, 0, outputWidth, outputHeight);
     let frame;
     try {
       frame = keyCtx.getImageData(0, 0, outputWidth, outputHeight);
     } catch (error) {
-      drawCoverSource(ctx, source, x, y, width, height);
+      drawContainSource(ctx, source, x, y, width, height);
       return;
     }
     const data = frame.data;
@@ -489,7 +506,7 @@
     const idleStill = useIdleStill(state, snapshot);
     const bounce = idleStill ? 0 : Math.sin(phase * (1.4 + energy * 2.2));
     const shake = idleStill ? 0 : (isApproval ? Math.sin(phase * 2.1) * 0.7 : (alert > 0.55 ? Math.sin(phase * 16) * alert * 1.4 : 0));
-    const imageSize = size * 0.84;
+    const imageSize = size * 0.76;
     const x = (size - imageSize) / 2 + shake;
     const y = (size - imageSize) / 2;
 
