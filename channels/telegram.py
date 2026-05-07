@@ -346,6 +346,7 @@ async def _tg_edit_consumer(chat, sent_msg, event_queue: queue.Queue,
     tool_lines: list[str] = []
     last_edit = 0.0
     overflow = False  # set when text exceeds MAX_TG_MESSAGE_LEN
+    last_sent_display = ""
 
     while True:
         try:
@@ -375,9 +376,11 @@ async def _tg_edit_consumer(chat, sent_msg, event_queue: queue.Queue,
             try:
                 html = _md_to_html(display) if display else "⏳"
                 await sent_msg.edit_text(html, parse_mode="HTML")
+                last_sent_display = display
             except Exception:
                 try:
                     await sent_msg.edit_text(display or "⏳")
+                    last_sent_display = display
                 except Exception:
                     pass
             last_edit = now
@@ -388,12 +391,14 @@ async def _tg_edit_consumer(chat, sent_msg, event_queue: queue.Queue,
         try:
             html = _md_to_html(display)
             await sent_msg.edit_text(html, parse_mode="HTML")
+            last_sent_display = display
         except Exception:
             try:
                 await sent_msg.edit_text(display)
+                last_sent_display = display
             except Exception:
                 pass
-    return display if not overflow else None
+    return display if not overflow and last_sent_display == display else None
 
 
 def _build_stream_display(tool_lines: list[str], accumulated: str) -> str:

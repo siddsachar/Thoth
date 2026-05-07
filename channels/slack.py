@@ -296,6 +296,7 @@ async def _slack_edit_consumer(app_client, channel_id: str, msg_ts: str,
     tool_lines: list[str] = []
     last_edit = 0.0
     overflow = False
+    last_sent_display = ""
 
     while True:
         try:
@@ -326,6 +327,7 @@ async def _slack_edit_consumer(app_client, channel_id: str, msg_ts: str,
                     channel=channel_id, ts=msg_ts,
                     text=_md_to_mrkdwn(display) if display else "⏳",
                 )
+                last_sent_display = display
             except Exception:
                 pass
             last_edit = now
@@ -337,9 +339,10 @@ async def _slack_edit_consumer(app_client, channel_id: str, msg_ts: str,
                 channel=channel_id, ts=msg_ts,
                 text=_md_to_mrkdwn(display),
             )
+            last_sent_display = display
         except Exception:
             pass
-    return display if not overflow else None
+    return display if not overflow and last_sent_display == display else None
 
 
 def _build_stream_display(tool_lines: list[str], accumulated: str) -> str:

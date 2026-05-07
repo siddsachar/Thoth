@@ -2104,10 +2104,6 @@ def _stream_graph(agent, input_data, config: dict,
             if meta.get("langgraph_node") != "agent":
                 continue
 
-            # Skip chunks that are part of a tool-call decision
-            if getattr(msg, "tool_calls", []) or getattr(msg, "tool_call_chunks", []):
-                continue
-
             # Track finish_reason from streaming response_metadata
             _rm = getattr(msg, "response_metadata", None) or {}
             _fr = _rm.get("finish_reason")
@@ -2115,6 +2111,9 @@ def _stream_graph(agent, input_data, config: dict,
                 _finish_reason = _fr
 
             content = _content_to_str(msg.content)
+            has_tool_call_chunk = bool(
+                getattr(msg, "tool_calls", []) or getattr(msg, "tool_call_chunks", [])
+            )
 
             # ── Reasoning via additional_kwargs (LangChain standard) ─
             # All major providers (OpenAI, Ollama/DeepSeek, Groq, XAI)
@@ -2129,6 +2128,13 @@ def _stream_graph(agent, input_data, config: dict,
                 yield ("thinking_token", _reasoning)
 
             if not content:
+                # Tool-call chunks often carry only function-call deltas. Those
+                # should not be surfaced as user-visible text, but providers can
+                # also emit normal text in adjacent/mixed chunks before the tool
+                # decision. Preserve text when present instead of dropping the
+                # whole chunk just because tool-call metadata exists.
+                if has_tool_call_chunk:
+                    continue
                 # Empty content = thinking phase (signal spinner if no
                 # reasoning_content was yielded above)
                 if not thinking_signalled:
