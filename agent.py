@@ -115,6 +115,8 @@ def _content_to_str(content) -> str:
 def _friendly_api_error(exc_str: str) -> str:
     """Return a user-friendly description for an API / provider error."""
     s = exc_str.lower()
+    if _is_transient_stream_disconnect(exc_str):
+        return "⚠️ The AI provider closed the streaming connection before the reply finished. Please retry the message."
     if "recursion" in s or "recursion limit" in s:
         return "⚠️ I got stuck in a tool loop and had to stop. Try rephrasing your request or starting a new conversation."
     if "insufficient_quota" in s or "exceeded your current quota" in s:
@@ -139,6 +141,20 @@ def _friendly_api_error(exc_str: str) -> str:
         return f"⚠️ {get_current_model()} does not support tool calling — switch to a compatible model in Settings → Models."
     # Fallback — expose the raw error so nothing is silently swallowed
     return f"⚠️ API error: {exc_str}"
+
+
+def _is_transient_stream_disconnect(exc_str: str) -> bool:
+    """Return True for provider/network stream disconnects."""
+    s = str(exc_str or "").lower()
+    markers = (
+        "incomplete chunked read",
+        "peer closed connection without sending complete message body",
+        "connection reset by peer",
+        "existing connection was forcibly closed",
+        "remote protocol error",
+        "server disconnected without sending a response",
+    )
+    return any(marker in s for marker in markers)
 
 
 def _notify_api_error(friendly_msg: str) -> None:
@@ -1682,7 +1698,10 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
                         raise TaskStoppedError("Task stopped during retry")
             else:
                 _err_msg = _friendly_api_error(exc_str)
-                logger.error("invoke_agent API error: %s", exc_str)
+                if _is_transient_stream_disconnect(exc_str):
+                    logger.warning("invoke_agent provider stream disconnected: %s", exc_str)
+                else:
+                    logger.error("invoke_agent API error: %s", exc_str)
                 _notify_api_error(_err_msg)
                 return _err_msg
 
@@ -2252,7 +2271,10 @@ def _stream_graph(agent, input_data, config: dict,
             yield ("error", _err)
         else:
             _err = _friendly_api_error(exc_str)
-            logger.error("_stream_graph API error: %s", exc_str)
+            if _is_transient_stream_disconnect(exc_str):
+                logger.warning("_stream_graph provider stream disconnected: %s", exc_str)
+            else:
+                logger.error("_stream_graph API error: %s", exc_str)
             _notify_api_error(_err)
             yield ("error", _err)
         return

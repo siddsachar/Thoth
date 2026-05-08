@@ -886,8 +886,7 @@ def _on_loaded(window):
                 function check() {
                     if (retries >= 20) return;
                     var body = document.body;
-                    if (!body || body.innerHTML.trim() === ""
-                        || body.innerText.indexOf("trying to connect") !== -1) {
+                    if (!body || body.innerHTML.trim() === "") {
                         retries++;
                         setTimeout(function() { location.reload(); }, 1500);
                     }

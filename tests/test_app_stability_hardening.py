@@ -80,6 +80,7 @@ def test_stability_client_error_writes_local_report(data_dir, monkeypatch):
 
 def test_stability_source_contracts_are_wired():
     app_src = Path("app.py").read_text(encoding="utf-8")
+    agent_src = Path("agent.py").read_text(encoding="utf-8")
     head_src = Path("ui/head_html.py").read_text(encoding="utf-8")
     timer_src = Path("ui/timer_utils.py").read_text(encoding="utf-8")
     settings_src = Path("ui/settings.py").read_text(encoding="utf-8")
@@ -90,6 +91,8 @@ def test_stability_source_contracts_are_wired():
     assert "setup_stability_monitoring()" in app_src
     assert 'app.add_route("/api/client-error"' in app_src
     assert "window.__thothClientErrorReporterInstalled" in head_src
+    assert "thothReportClientEvent" in head_src
+    assert "connection_state" in head_src
     assert "def safe_ui_task(" in timer_src
     assert "safe_ui_task(_load, context=\"models settings load\")" in settings_src
     assert "_render_provider_summaries" in catalog_src
@@ -97,6 +100,11 @@ def test_stability_source_contracts_are_wired():
     assert "save_workflow_draft" in dialog_src
     assert "Recovered unsaved draft" in dialog_src
     assert "safe_timer(2.0, _autosave_draft)" in dialog_src
+    assert "_is_transient_stream_disconnect" in agent_src
+    assert "provider stream disconnected" in agent_src
+    assert "start_performance_monitor()" in app_src
+    assert "schedule_idle_extraction" in app_src
+    assert "cleanup_old_checkpoints" in app_src
     assert "stability.py" in installer_src
 
 
@@ -118,3 +126,73 @@ def test_provider_qualified_cloud_defaults_validate_after_refresh(monkeypatch):
 
     assert models._cloud_model_available_after_refresh("model:codex:gpt-5.5")
     assert not models._cloud_model_available_after_refresh("model:codex:not-present")
+
+
+def test_stability_suppresses_benign_windows_proactor_reset():
+    import stability
+
+    context = {
+        "handle": "<Handle _ProactorBasePipeTransport._call_connection_lost()>",
+    }
+    benign = ConnectionResetError(
+        10054,
+        "An existing connection was forcibly closed by the remote host",
+    )
+
+    assert stability._is_benign_asyncio_connection_reset(
+        "Exception in callback _ProactorBasePipeTransport._call_connection_lost()",
+        benign,
+        context,
+    )
+    assert not stability._is_benign_asyncio_connection_reset(
+        "Exception in callback something_else()",
+        ValueError("boom"),
+        {},
+    )
+
+
+def test_checkpoint_cleanup_keeps_latest_and_prunes_old(data_dir, monkeypatch):
+    import sqlite3
+    import threads
+
+    threads = importlib.reload(threads)
+    monkeypatch.setattr(threads, "DB_PATH", str(data_dir / "threads.db"))
+    threads._init_thread_db(raise_on_error=True)
+
+    with sqlite3.connect(threads.DB_PATH) as conn:
+        conn.execute(
+            "CREATE TABLE checkpoints (thread_id TEXT, checkpoint_ns TEXT, checkpoint_id TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE writes (thread_id TEXT, checkpoint_ns TEXT, checkpoint_id TEXT, value TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO thread_meta (thread_id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("old-thread", "Old", "2000-01-01T00:00:00", "2000-01-01T00:00:00"),
+        )
+        for idx in range(5):
+            cid = f"cp-{idx}"
+            conn.execute("INSERT INTO checkpoints VALUES (?, ?, ?)", ("old-thread", "", cid))
+            conn.execute("INSERT INTO writes VALUES (?, ?, ?, ?)", ("old-thread", "", cid, "x"))
+        conn.commit()
+
+    stats = threads.cleanup_old_checkpoints(keep_per_thread=2, min_age_minutes=0)
+
+    with sqlite3.connect(threads.DB_PATH) as conn:
+        checkpoint_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT checkpoint_id FROM checkpoints ORDER BY rowid"
+            ).fetchall()
+        ]
+        write_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT checkpoint_id FROM writes ORDER BY rowid"
+            ).fetchall()
+        ]
+
+    assert stats["checkpoints"] == 3
+    assert stats["writes"] == 3
+    assert checkpoint_ids == ["cp-3", "cp-4"]
+    assert write_ids == ["cp-3", "cp-4"]

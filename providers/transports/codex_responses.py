@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 import uuid
+from contextlib import nullcontext
 from typing import Any, Iterator, Sequence
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -16,6 +19,8 @@ CODEX_RESPONSES_BASE_URL = "https://chatgpt.com/backend-api/codex"
 CODEX_ORIGINATOR = "codex_cli_rs"
 CODEX_USER_AGENT = "codex_cli_rs/0.0.0 (thoth)"
 CODEX_INCLUDE = ["reasoning.encrypted_content"]
+
+logger = logging.getLogger(__name__)
 
 
 class ChatCodexResponses(BaseChatModel):
@@ -62,15 +67,21 @@ class ChatCodexResponses(BaseChatModel):
         run_manager: Any | None = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        events = self._request_events(messages, **kwargs)
+        body = self._request_body(messages, **kwargs)
         saw_text_delta = False
         tool_index = 0
-        for event in events:
+        started = time.perf_counter()
+        first_delta_logged = False
+        logger.info("codex_sse: stream start model=%s", self.model_name)
+        for event in self._iter_response_events(body):
             event_type = event.get("type")
             if event_type == "response.output_text.delta":
                 delta = str(event.get("delta") or "")
                 if not delta:
                     continue
+                if not first_delta_logged:
+                    first_delta_logged = True
+                    logger.info("codex_sse: first delta after %.3fs", time.perf_counter() - started)
                 saw_text_delta = True
                 chunk = ChatGenerationChunk(message=AIMessageChunk(content=delta))
                 if run_manager:
@@ -95,12 +106,12 @@ class ChatCodexResponses(BaseChatModel):
                     if run_manager:
                         run_manager.on_llm_new_token(text, chunk=chunk)
                     yield chunk
+        logger.info("codex_sse: stream complete after %.3fs", time.perf_counter() - started)
         yield ChatGenerationChunk(message=AIMessageChunk(content="", chunk_position="last"))
 
     def _request_events(self, messages: list[BaseMessage], **kwargs: Any) -> list[dict[str, Any]]:
         body = self._request_body(messages, **kwargs)
-        response = self._post(body)
-        return _parse_sse_response(response)
+        return list(self._iter_response_events(body))
 
     def _request_body(self, messages: list[BaseMessage], **kwargs: Any) -> dict[str, Any]:
         instructions, input_items = _messages_to_responses_input(messages)
@@ -132,6 +143,54 @@ class ChatCodexResponses(BaseChatModel):
         if status_code < 200 or status_code >= 300:
             raise RuntimeError(f"Codex Responses request failed with HTTP {status_code}: {_safe_response_text(response)}")
         return response
+
+    def _iter_response_events(self, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        client = self.http_client or _new_http_client(self.timeout)
+        owns_client = self.http_client is None
+        try:
+            retry_after_refresh = False
+            with self._stream_once(client, body) as response:
+                if int(getattr(response, "status_code", 0) or 0) == 401:
+                    retry_after_refresh = self._refresh_access_token_if_possible()
+                    if not retry_after_refresh:
+                        self._raise_for_status(response)
+                else:
+                    self._raise_for_status(response)
+                    yield from _iter_sse_events(response)
+            if retry_after_refresh:
+                with self._stream_once(client, body) as response:
+                    self._raise_for_status(response)
+                    yield from _iter_sse_events(response)
+        except Exception as exc:
+            logger.warning("codex_sse: stream failed: %s", exc)
+            raise
+        finally:
+            if owns_client:
+                client.close()
+
+    def _stream_once(self, client: Any, body: dict[str, Any]) -> Any:
+        kwargs = {
+            "json": body,
+            "headers": self._headers(),
+            "timeout": self.timeout,
+        }
+        url = _responses_url(self.base_url)
+        if hasattr(client, "stream"):
+            return client.stream("POST", url, **kwargs)
+        return nullcontext(client.post(url, **kwargs))
+
+    def _refresh_access_token_if_possible(self) -> bool:
+        credentials = codex_auth.codex_runtime_credentials(refresh_if_needed=False)
+        if not credentials.refresh_token:
+            return False
+        refreshed = codex_auth.refresh_codex_token(credentials.refresh_token)
+        codex_auth.save_codex_oauth_tokens(refreshed)
+        return True
+
+    def _raise_for_status(self, response: Any) -> None:
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        if status_code < 200 or status_code >= 300:
+            raise RuntimeError(f"Codex Responses request failed with HTTP {status_code}: {_safe_response_text(response)}")
 
     def _post_once(self, body: dict[str, Any]) -> Any:
         client = self.http_client or _new_http_client(self.timeout)
@@ -362,13 +421,18 @@ def _responses_tool(tool: Any) -> dict[str, Any]:
 
 
 def _parse_sse_response(response: Any) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
+    return list(_iter_sse_events(response))
+
+
+def _iter_sse_events(response: Any) -> Iterator[dict[str, Any]]:
     current_event = ""
     data_lines: list[str] = []
     for raw_line in response.iter_lines():
         line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else str(raw_line)
         if not line.strip():
-            _append_sse_event(events, current_event, data_lines)
+            event = _sse_event_from_lines(current_event, data_lines)
+            if event is not None:
+                yield event
             current_event = ""
             data_lines = []
             continue
@@ -376,25 +440,33 @@ def _parse_sse_response(response: Any) -> list[dict[str, Any]]:
             current_event = line.split(":", 1)[1].strip()
         elif line.startswith("data:"):
             data_lines.append(line.split(":", 1)[1].strip())
-    _append_sse_event(events, current_event, data_lines)
-    return events
+    event = _sse_event_from_lines(current_event, data_lines)
+    if event is not None:
+        yield event
 
 
 def _append_sse_event(events: list[dict[str, Any]], event_name: str, data_lines: list[str]) -> None:
+    event = _sse_event_from_lines(event_name, data_lines)
+    if event is not None:
+        events.append(event)
+
+
+def _sse_event_from_lines(event_name: str, data_lines: list[str]) -> dict[str, Any] | None:
     if not data_lines:
-        return
+        return None
     data = "\n".join(data_lines).strip()
     if not data or data == "[DONE]":
-        return
+        return None
     try:
         payload = json.loads(data)
     except json.JSONDecodeError:
-        return
+        return None
     if isinstance(payload, dict):
         payload.setdefault("type", event_name)
         if payload.get("type") == "response.failed":
             raise RuntimeError(f"Codex Responses stream failed: {_response_error_message(payload)}")
-        events.append(payload)
+        return payload
+    return None
 
 
 def _response_error_message(payload: dict[str, Any]) -> str:

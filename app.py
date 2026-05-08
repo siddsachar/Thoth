@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 
 _DISCORD_BENIGN_VOICE_LOGGERS = (
     "discord.client",
@@ -48,6 +49,8 @@ from stability import (
     mark_shutdown,
     record_client_error,
     setup_stability_monitoring,
+    start_performance_monitor,
+    stop_performance_monitor,
 )
 
 setup_stability_monitoring()
@@ -66,7 +69,7 @@ if _app_dir not in sys.path:
 
 from nicegui import ui, app, run
 from app_port import THOTH_HOST_ENV, get_app_port
-from ui.timer_utils import deactivate_on_disconnect, defer_ui, safe_timer
+from ui.timer_utils import deactivate_on_disconnect, defer_ui, safe_timer, safe_ui_task
 
 _APP_PORT = get_app_port()
 _APP_HOST = os.environ.get(THOTH_HOST_ENV) or None
@@ -153,7 +156,7 @@ from models import (
 from api_keys import apply_keys
 from agent import get_token_usage, clear_summary_cache
 from memory_extraction import (
-    run_extraction, start_periodic_extraction, set_active_thread,
+    mark_user_activity, schedule_idle_extraction, start_periodic_extraction, set_active_thread,
 )
 from dream_cycle import start_dream_loop
 from tasks import seed_default_tasks, start_task_scheduler, get_running_tasks, stop_task
@@ -230,6 +233,7 @@ def _periodic_oauth_check():
 @app.on_startup
 async def on_startup():
     install_asyncio_exception_handler()
+    start_performance_monitor()
     # Attach persistent file logging (daily JSONL to ~/.thoth/logs/)
     from logging_config import setup_file_logging
     setup_file_logging()
@@ -267,17 +271,9 @@ async def on_startup():
         await asyncio.to_thread(refresh_cloud_models)
         state.current_model = get_current_model()
 
-    _set("🧠 Extracting memories…")
-    def _extract():
-        def _on_status(m):
-            _st.startup_status = f"🧠 {m}"
-            print(f"[startup]   {m}")
-        return run_extraction(on_status=_on_status)
-    count = await asyncio.to_thread(_extract)
-    print(f"[startup] Memory extraction done — {count} new memory(s)")
-
-    _set("🔄 Starting periodic extraction…")
+    _set("🔄 Scheduling memory extraction…")
     await asyncio.to_thread(start_periodic_extraction)
+    await asyncio.to_thread(schedule_idle_extraction)
 
     _set("🌙 Starting dream cycle daemon…")
     await asyncio.to_thread(start_dream_loop)
@@ -396,6 +392,36 @@ async def on_startup():
     except Exception as exc:
         logger.warning("Could not schedule periodic OAuth check: %s", exc)
 
+    try:
+        from datetime import datetime, timedelta
+        from tasks import _get_scheduler
+        from threads import cleanup_old_checkpoints
+
+        def _run_checkpoint_cleanup() -> None:
+            try:
+                from memory_extraction import is_app_idle
+                if not is_app_idle():
+                    logger.info("Checkpoint cleanup deferred; app is active")
+                    return
+                cleanup_old_checkpoints()
+            except Exception:
+                logger.debug("Checkpoint cleanup failed", exc_info=True)
+
+        _sched = _get_scheduler()
+        _sched.add_job(
+            _run_checkpoint_cleanup,
+            trigger="interval",
+            hours=6,
+            id="checkpoint_cleanup",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            next_run_time=datetime.now() + timedelta(minutes=10),
+        )
+        print("[startup] 🧹 Checkpoint cleanup scheduled (idle, every 6 h)")
+    except Exception as exc:
+        logger.warning("Could not schedule checkpoint cleanup: %s", exc)
+
     # PTY bridge is started lazily when the user first opens the
     # terminal panel (ui/terminal_widget._wire_pty).  This ensures the
     # initial shell prompt flows through the registered xterm.js
@@ -465,6 +491,8 @@ async def _client_error_handler(request: Request) -> JSONResponse:
         payload = await request.json()
     except Exception:
         payload = {}
+    if isinstance(payload, dict) and payload.get("kind") == "activity":
+        mark_user_activity(str(payload.get("event") or "client activity"))
     record_client_error(payload if isinstance(payload, dict) else {"payload": payload})
     return JSONResponse({"ok": True})
 
@@ -476,6 +504,7 @@ app.add_route("/api/client-error", _client_error_handler, methods=["POST"])
 
 @app.on_shutdown
 async def on_shutdown():
+    stop_performance_monitor()
     mark_shutdown()
     print("[shutdown] Cleaning up sessions…")
     try:
@@ -634,6 +663,7 @@ async def index():
         open_export(state, p)
 
     def _send_message(text: str, voice_mode: bool = False):
+        mark_user_activity("send message")
         return send_message(text, state=state, p=p, cb=cb, voice_mode=voice_mode)
 
     def _show_task_dialog(task, on_done):
@@ -873,10 +903,13 @@ async def index():
                 rebuild_thread_list()
             asyncio.create_task(_send_message(text, voice_mode=True))
 
-    def _update_token_counter() -> None:
-        config = {"configurable": {"thread_id": state.thread_id}} if state.thread_id else None
-        _mo = state.thread_model_override or None
-        used, max_tokens = get_token_usage(config, model_override=_mo)
+    _token_counter_state = {
+        "in_flight": False,
+        "key": None,
+        "last": None,
+    }
+
+    def _render_token_counter(used: int, max_tokens: int) -> None:
         pct = min(used / max_tokens, 1.0) if max_tokens else 0.0
 
         def _fmt(val):
@@ -890,6 +923,54 @@ async def index():
             p.token_label.text = f"Context: {_fmt(used)} / {_fmt(max_tokens)} ({pct:.0%})"
         if p.token_bar:
             p.token_bar.value = pct
+
+    async def _refresh_token_counter_async(key, config, model_override) -> None:
+        started = time.perf_counter()
+        try:
+            used, max_tokens = await run.io_bound(
+                lambda: get_token_usage(config, model_override=model_override)
+            )
+        except Exception:
+            logger.debug("Token counter refresh failed", exc_info=True)
+            return
+        finally:
+            _token_counter_state["in_flight"] = False
+
+        elapsed = time.perf_counter() - started
+        if elapsed >= 1.0:
+            logger.info("perf: token counter refresh took %.3fs", elapsed)
+        current_key = (
+            state.thread_id,
+            state.thread_model_override or "",
+            len(state.messages),
+        )
+        if key != current_key:
+            return
+        _token_counter_state["last"] = (used, max_tokens)
+        _render_token_counter(used, max_tokens)
+
+    def _update_token_counter() -> None:
+        if state.is_generating or (state.thread_id and state.thread_id in _active_generations):
+            return
+        config = {"configurable": {"thread_id": state.thread_id}} if state.thread_id else None
+        model_override = state.thread_model_override or None
+        key = (
+            state.thread_id,
+            state.thread_model_override or "",
+            len(state.messages),
+        )
+        if _token_counter_state["in_flight"]:
+            return
+        if _token_counter_state["key"] == key and _token_counter_state.get("last"):
+            last = _token_counter_state.get("last")
+            _render_token_counter(*last)
+            return
+        _token_counter_state["key"] = key
+        _token_counter_state["in_flight"] = True
+        safe_ui_task(
+            lambda: _refresh_token_counter_async(key, config, model_override),
+            context="token counter refresh",
+        )
 
     _notification_timer = safe_timer(1.0, _poll_notifications)
     _voice_timer = safe_timer(0.3, _poll_voice)

@@ -58,6 +58,17 @@ class _Response:
             yield line
 
 
+class _StreamContext:
+    def __init__(self, response):
+        self.response = response
+
+    def __enter__(self):
+        return self.response
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class _HttpClient:
     def __init__(self, responses):
         self.responses = list(responses)
@@ -69,6 +80,13 @@ class _HttpClient:
         if not self.responses:
             raise AssertionError("No fake response queued")
         return self.responses.pop(0)
+
+    def stream(self, method, url, **kwargs):
+        assert method == "POST"
+        self.calls.append((url, kwargs))
+        if not self.responses:
+            raise AssertionError("No fake response queued")
+        return _StreamContext(self.responses.pop(0))
 
     def get(self, url, **kwargs):
         self.calls.append((url, kwargs))

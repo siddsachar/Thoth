@@ -5,7 +5,7 @@ import uuid
 import os
 import pathlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,104 @@ def _list_threads():
     ).fetchall()
     conn.close()
     return rows
+
+
+def cleanup_old_checkpoints(
+    *,
+    keep_per_thread: int = 10,
+    min_age_minutes: int = 30,
+) -> dict[str, int]:
+    """Prune redundant LangGraph checkpoints while preserving latest state."""
+    if keep_per_thread < 1:
+        keep_per_thread = 1
+    _ensure_thread_db()
+    cutoff = (datetime.now() - timedelta(minutes=min_age_minutes)).isoformat()
+    skipped_threads = _checkpoint_cleanup_skip_threads(cutoff)
+    stats = {"threads": 0, "checkpoints": 0, "writes": 0}
+    with sqlite3.connect(DB_PATH) as cleanup_conn:
+        tables = {
+            row[0]
+            for row in cleanup_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "checkpoints" not in tables:
+            return stats
+        rows = cleanup_conn.execute(
+            "SELECT rowid, thread_id, checkpoint_ns, checkpoint_id "
+            "FROM checkpoints ORDER BY thread_id, checkpoint_ns, rowid DESC"
+        ).fetchall()
+        seen: dict[tuple[str, str], int] = {}
+        delete_rows: list[int] = []
+        delete_keys: list[tuple[str, str, str]] = []
+        touched_threads: set[str] = set()
+        for rowid, thread_id, checkpoint_ns, checkpoint_id in rows:
+            if not thread_id or thread_id in skipped_threads:
+                continue
+            key = (str(thread_id), str(checkpoint_ns or ""))
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] <= keep_per_thread:
+                continue
+            delete_rows.append(int(rowid))
+            delete_keys.append((str(thread_id), str(checkpoint_ns or ""), str(checkpoint_id)))
+            touched_threads.add(str(thread_id))
+        if delete_rows:
+            cleanup_conn.executemany(
+                "DELETE FROM checkpoints WHERE rowid = ?",
+                [(rowid,) for rowid in delete_rows],
+            )
+            stats["checkpoints"] = len(delete_rows)
+        if delete_keys and "writes" in tables:
+            before = cleanup_conn.total_changes
+            cleanup_conn.executemany(
+                "DELETE FROM writes WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?",
+                delete_keys,
+            )
+            stats["writes"] = max(0, cleanup_conn.total_changes - before)
+        cleanup_conn.commit()
+        stats["threads"] = len(touched_threads)
+        try:
+            cleanup_conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except sqlite3.OperationalError:
+            pass
+    if stats["checkpoints"] or stats["writes"]:
+        logger.info(
+            "Checkpoint cleanup pruned %d checkpoint(s), %d write(s) across %d thread(s)",
+            stats["checkpoints"],
+            stats["writes"],
+            stats["threads"],
+        )
+    return stats
+
+
+def _checkpoint_cleanup_skip_threads(cutoff_iso: str) -> set[str]:
+    skipped: set[str] = set()
+    try:
+        with sqlite3.connect(DB_PATH) as cleanup_conn:
+            for tid, updated in cleanup_conn.execute(
+                "SELECT thread_id, COALESCE(updated_at, '') FROM thread_meta"
+            ).fetchall():
+                if updated and str(updated) >= cutoff_iso:
+                    skipped.add(str(tid))
+    except Exception:
+        logger.debug("Checkpoint cleanup could not read recent thread metadata", exc_info=True)
+    try:
+        from ui.state import _active_generations
+        skipped.update(str(tid) for tid in _active_generations.keys())
+    except Exception:
+        pass
+    try:
+        from tasks import get_running_tasks
+        skipped.update(str(tid) for tid in get_running_tasks().keys())
+    except Exception:
+        pass
+    try:
+        from memory_extraction import _active_lock, _active_threads
+        with _active_lock:
+            skipped.update(str(tid) for tid in _active_threads)
+    except Exception:
+        pass
+    return skipped
 
 def _set_thread_project_id(thread_id: str, project_id: str) -> None:
     """Link a thread to a designer project."""

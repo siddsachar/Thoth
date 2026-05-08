@@ -16,6 +16,7 @@ import logging
 import pathlib
 import os
 import threading
+import time
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -30,11 +31,15 @@ _JOURNAL_FILE = _DATA_DIR / "extraction_journal.json"
 _JOURNAL_MAX_ENTRIES = 100
 
 _INTERVAL_S = 2 * 3600  # 2 hours
+_IDLE_DELAY_S = 5 * 60
 
 # Thread IDs to exclude from background extraction (e.g. currently active
 # conversations).  Updated by the UI layer via ``set_active_thread``.
 _active_threads: set[str] = set()
 _active_lock = threading.Lock()
+_activity_lock = threading.Lock()
+_last_activity_ts = time.monotonic()
+_idle_once_thread: threading.Thread | None = None
 
 
 def set_active_thread(thread_id: str | None, previous_id: str | None = None) -> None:
@@ -49,6 +54,46 @@ def set_active_thread(thread_id: str | None, previous_id: str | None = None) -> 
             _active_threads.discard(previous_id)
         if thread_id:
             _active_threads.add(thread_id)
+    mark_user_activity("thread switch")
+
+
+def mark_user_activity(reason: str = "user") -> None:
+    """Record foreground activity so heavy extraction can wait for idle."""
+    global _last_activity_ts
+    with _activity_lock:
+        _last_activity_ts = time.monotonic()
+    logger.debug("Memory extraction idle timer reset: %s", reason)
+
+
+def idle_seconds() -> float:
+    with _activity_lock:
+        return max(0.0, time.monotonic() - _last_activity_ts)
+
+
+def is_app_idle(min_idle_s: float = _IDLE_DELAY_S) -> bool:
+    """Return True when heavyweight background memory work may run."""
+    if idle_seconds() < min_idle_s:
+        return False
+    try:
+        from ui.state import _active_generations
+        if _active_generations:
+            return False
+    except Exception:
+        pass
+    try:
+        from document_extraction import get_extraction_status
+        status = get_extraction_status()
+        if status and status.get("status") == "running":
+            return False
+    except Exception:
+        pass
+    try:
+        from tasks import get_running_tasks
+        if get_running_tasks():
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def _load_state() -> dict:
@@ -644,6 +689,14 @@ def run_extraction(on_status=None, exclude_thread_ids: set[str] | None = None) -
     return total_saved
 
 
+def run_extraction_if_idle(on_status=None, exclude_thread_ids: set[str] | None = None) -> int:
+    """Run extraction only when the foreground app is idle."""
+    if not is_app_idle():
+        logger.info("Memory extraction deferred; app is active (idle %.0fs)", idle_seconds())
+        return 0
+    return run_extraction(on_status=on_status, exclude_thread_ids=exclude_thread_ids)
+
+
 # ── Background timer ─────────────────────────────────────────────────────────
 
 _timer_thread: threading.Thread | None = None
@@ -664,7 +717,7 @@ def start_periodic_extraction() -> None:
             try:
                 with _active_lock:
                     exclude = set(_active_threads)
-                count = run_extraction(exclude_thread_ids=exclude)
+                count = run_extraction_if_idle(exclude_thread_ids=exclude)
                 logger.info("Periodic extraction complete: %d memories", count)
             except Exception as exc:
                 logger.warning("Periodic extraction failed: %s", exc)
@@ -672,6 +725,29 @@ def start_periodic_extraction() -> None:
     _timer_thread = threading.Thread(target=_loop, daemon=True, name="thoth-mem-extract")
     _timer_thread.start()
     logger.info("Periodic memory extraction scheduled every %d hours", _INTERVAL_S // 3600)
+
+
+def schedule_idle_extraction(delay_s: float = _IDLE_DELAY_S) -> None:
+    """Schedule one best-effort idle extraction after startup."""
+    global _idle_once_thread
+    if _idle_once_thread is not None and _idle_once_thread.is_alive():
+        return
+
+    def _run() -> None:
+        if _timer_stop.wait(timeout=delay_s):
+            return
+        try:
+            with _active_lock:
+                exclude = set(_active_threads)
+            count = run_extraction_if_idle(exclude_thread_ids=exclude)
+            if count:
+                logger.info("Startup idle extraction complete: %d memories", count)
+        except Exception as exc:
+            logger.warning("Startup idle extraction failed: %s", exc)
+
+    _idle_once_thread = threading.Thread(target=_run, daemon=True, name="thoth-mem-idle-once")
+    _idle_once_thread.start()
+    logger.info("Startup memory extraction deferred until idle")
 
 
 def stop_periodic_extraction() -> None:

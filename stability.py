@@ -32,6 +32,8 @@ _CRASH_DIR = _DATA_DIR / "crashes"
 _SESSION_ID = uuid.uuid4().hex[:12]
 _INSTALLED = False
 _FATAL_LOG_HANDLE = None
+_PERF_MONITOR_TASK: asyncio.Task | None = None
+_PERF_STOP = threading.Event()
 
 
 def session_id() -> str:
@@ -90,8 +92,45 @@ def record_client_error(payload: dict[str, Any]) -> pathlib.Path | None:
     """Persist a browser-side JS error report."""
     safe_payload = _json_safe(payload)
     msg = str(safe_payload.get("message") or safe_payload.get("reason") or "client error")
+    kind = str(safe_payload.get("kind") or "client_error")
+    if kind in {"activity", "visibility", "online", "offline"}:
+        logger.debug("Client-side event reported: %s %s", kind, msg)
+        return None
+    if kind == "connection_state":
+        logger.info("Client-side connection state reported: %s", msg)
+        return None
     logger.warning("Client-side error reported: %s", msg)
     return _write_report("client_error", msg, extra={"client": safe_payload})
+
+
+def start_performance_monitor(
+    *,
+    lag_warn_s: float = 1.0,
+    interval_s: float = 2.0,
+    memory_interval_s: float = 60.0,
+) -> None:
+    """Start lightweight local event-loop and memory diagnostics."""
+    global _PERF_MONITOR_TASK
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if _PERF_MONITOR_TASK is not None and not _PERF_MONITOR_TASK.done():
+        return
+    _PERF_STOP.clear()
+    _PERF_MONITOR_TASK = loop.create_task(
+        _performance_monitor_loop(lag_warn_s, interval_s, memory_interval_s),
+        name="thoth-performance-monitor",
+    )
+
+
+def stop_performance_monitor() -> None:
+    _PERF_STOP.set()
+
+
+def log_performance_snapshot(label: str) -> None:
+    """Log a one-off memory/thread snapshot for an important UI event."""
+    _log_memory_snapshot(label=label)
 
 
 def record_ui_callback_error(context: str, exc: BaseException) -> pathlib.Path | None:
@@ -152,6 +191,9 @@ def _unraisable_hook(unraisable) -> None:
 def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
     exc = context.get("exception")
     message = str(context.get("message") or "asyncio exception")
+    if _is_benign_asyncio_connection_reset(message, exc, context):
+        logger.debug("Suppressed benign asyncio connection reset during pipe teardown: %s", exc)
+        return
     if exc is not None:
         _write_report(
             "asyncio_exception",
@@ -164,6 +206,76 @@ def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[st
     else:
         _write_report("asyncio_exception", message, extra={"context": _json_safe(context)})
     loop.default_exception_handler(context)
+
+
+def _is_benign_asyncio_connection_reset(
+    message: str,
+    exc: BaseException | None,
+    context: dict[str, Any],
+) -> bool:
+    """Detect Windows Proactor pipe shutdown noise.
+
+    On Windows, subprocess/pipe cleanup can raise ``ConnectionResetError`` from
+    ``_ProactorBasePipeTransport._call_connection_lost`` after the remote side
+    already closed.  It is teardown noise, not an app crash.
+    """
+    if not isinstance(exc, ConnectionResetError):
+        return False
+    handle_text = repr(context.get("handle", ""))
+    text = f"{message} {handle_text} {exc}".lower()
+    return (
+        "_proactorbasepipetransport._call_connection_lost" in text
+        or "forcibly closed by the remote host" in text
+    )
+
+
+async def _performance_monitor_loop(
+    lag_warn_s: float,
+    interval_s: float,
+    memory_interval_s: float,
+) -> None:
+    last_memory = 0.0
+    expected = time.monotonic() + interval_s
+    while not _PERF_STOP.is_set():
+        try:
+            await asyncio.sleep(interval_s)
+            now = time.monotonic()
+            lag = max(0.0, now - expected)
+            expected = now + interval_s
+            if lag >= lag_warn_s:
+                logger.warning("perf: event loop lag %.3fs", lag)
+            if now - last_memory >= memory_interval_s:
+                last_memory = now
+                _log_memory_snapshot()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("Performance monitor tick failed", exc_info=True)
+
+
+def _log_memory_snapshot(label: str | None = None) -> None:
+    try:
+        import psutil
+
+        proc = psutil.Process(os.getpid())
+        mem = proc.memory_info()
+        if label:
+            logger.info(
+                "perf: snapshot %s rss=%.1fMB vms=%.1fMB threads=%d",
+                label,
+                mem.rss / (1024 * 1024),
+                mem.vms / (1024 * 1024),
+                proc.num_threads(),
+            )
+        else:
+            logger.info(
+                "perf: memory rss=%.1fMB vms=%.1fMB threads=%d",
+                mem.rss / (1024 * 1024),
+                mem.vms / (1024 * 1024),
+                proc.num_threads(),
+            )
+    except Exception:
+        logger.debug("Memory snapshot unavailable", exc_info=True)
 
 
 def _write_report(

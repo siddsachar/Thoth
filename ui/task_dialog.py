@@ -10,11 +10,13 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Callable
 
 from nicegui import ui
 
+from stability import log_performance_snapshot
 from ui.state import AppState, P
 from ui.constants import ICON_OPTIONS
 from ui.timer_utils import safe_timer
@@ -117,6 +119,7 @@ def show_task_dialog(
     *task=None* → create mode (blank fields).
     *task=dict* → edit mode (pre-populated).
     """
+    dialog_started = time.perf_counter()
     from models import get_current_model
     from providers.selection import list_model_choice_options, model_choice_value
     from tasks import (
@@ -1669,6 +1672,7 @@ def show_task_dialog(
         def _autosave_draft():
             if _draft_timer_ref["closing"]:
                 return
+            started = time.perf_counter()
             try:
                 payload = _collect_draft_payload()
                 serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -1685,6 +1689,13 @@ def show_task_dialog(
                     return
                 save_workflow_draft(_draft_key, payload)
                 _draft_timer_ref["last"] = serialized
+                elapsed = time.perf_counter() - started
+                if elapsed >= 0.5:
+                    logger.info(
+                        "perf: workflow draft autosave took %.3fs bytes=%d",
+                        elapsed,
+                        len(serialized),
+                    )
             except Exception:
                 logger.debug("Workflow draft autosave failed", exc_info=True)
 
@@ -1740,6 +1751,7 @@ def show_task_dialog(
             )
 
             def _save():
+                save_started = time.perf_counter()
                 # Determine mode and sync data
                 is_advanced = advanced_switch.value
                 if is_advanced:
@@ -1946,6 +1958,13 @@ def show_task_dialog(
                             newest = all_t[-1]
                             if not cur_enabled:
                                 update_task(newest["id"], enabled=False)
+                        logger.info(
+                            "perf: workflow create saved in %.3fs steps=%d prompts=%d channels=%s",
+                            time.perf_counter() - save_started,
+                            len(cur_steps),
+                            len(clean_prompts),
+                            "default" if cur_channels is None else len(cur_channels),
+                        )
                         ui.notify("✅ Task created", type="positive")
                     else:
                         updates = {}
@@ -1993,15 +2012,32 @@ def show_task_dialog(
 
                         if updates:
                             update_task(task["id"], **updates)
+                            logger.info(
+                                "perf: workflow update saved in %.3fs updates=%d steps=%d prompts=%d channels=%s",
+                                time.perf_counter() - save_started,
+                                len(updates),
+                                len(cur_steps),
+                                len(clean_prompts),
+                                "default" if cur_channels is None else len(cur_channels),
+                            )
                             ui.notify("💾 Saved", type="positive")
                         else:
+                            logger.info(
+                                "perf: workflow save no changes in %.3fs",
+                                time.perf_counter() - save_started,
+                            )
                             ui.notify("No changes.", type="info")
                 except ValueError as ve:
+                    logger.info(
+                        "perf: workflow save validation failed after %.3fs",
+                        time.perf_counter() - save_started,
+                    )
                     ui.notify(str(ve), type="negative")
                     return
 
                 delete_workflow_draft(_draft_key)
                 _close_dialog()
+                log_performance_snapshot("workflow-save")
                 on_done()
 
             ui.button("Save", on_click=_save).props(
@@ -2011,4 +2047,12 @@ def show_task_dialog(
                 "font-size: 0.9rem; padding: 8px 28px; border-radius: 8px;"
             )
 
+    logger.info(
+        "perf: workflow dialog built mode=%s steps=%d prompts=%d elapsed=%.3fs",
+        "new" if is_new else "edit",
+        len(_steps_data),
+        len(_prompts_data),
+        time.perf_counter() - dialog_started,
+    )
+    log_performance_snapshot("workflow-dialog-built")
     p.task_dlg.open()

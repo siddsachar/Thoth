@@ -197,11 +197,10 @@ def _is_pair_recently_rejected(entity_a_id: str, entity_b_id: str) -> bool:
 # ── Idle detection ───────────────────────────────────────────────────────────
 
 def _is_idle() -> bool:
-    """Check that no conversations are currently active."""
+    """Check that heavyweight dream work will not compete with the user."""
     try:
-        from memory_extraction import _active_threads, _active_lock
-        with _active_lock:
-            return len(_active_threads) == 0
+        from memory_extraction import is_app_idle
+        return is_app_idle()
     except Exception:
         return True  # If we can't check, assume idle
 

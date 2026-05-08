@@ -35,6 +35,7 @@ HEAD_HTML = """\
       }).catch(function() {});
     } catch (err) {}
   }
+  window.thothReportClientEvent = report;
   window.addEventListener('error', function(event) {
     report('error', {
       message: event.message || '',
@@ -51,6 +52,35 @@ HEAD_HTML = """\
       stack: reason && reason.stack ? String(reason.stack) : ''
     });
   });
+  var lastConnectionReport = 0;
+  function reportConnectionState(message) {
+    var now = Date.now();
+    if (now - lastConnectionReport < 30000) return;
+    lastConnectionReport = now;
+    report('connection_state', {message: message || 'connection state changed'});
+  }
+  window.addEventListener('offline', function() { reportConnectionState('browser offline'); });
+  window.addEventListener('online', function() { reportConnectionState('browser online'); });
+  var lastActivityReport = 0;
+  function reportActivity(eventName) {
+    var now = Date.now();
+    if (now - lastActivityReport < 60000) return;
+    lastActivityReport = now;
+    report('activity', {message: 'user activity', event: eventName || ''});
+  }
+  ['keydown', 'pointerdown', 'input', 'wheel'].forEach(function(name) {
+    window.addEventListener(name, function() { reportActivity(name); }, {passive: true, capture: true});
+  });
+  new MutationObserver(function() {
+    try {
+      var body = document.body;
+      if (!body) return;
+      var text = body.innerText || '';
+      if (text.indexOf('trying to connect') !== -1 || text.indexOf('Disconnected') !== -1) {
+        reportConnectionState('NiceGUI client reconnecting');
+      }
+    } catch (err) {}
+  }).observe(document.documentElement, {childList: true, subtree: true, characterData: true});
 })();
 </script>
 <script>

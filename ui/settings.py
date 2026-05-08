@@ -10,11 +10,13 @@ import logging
 import os
 import pathlib
 import tempfile
+import time
 from datetime import datetime
 from typing import Callable
 
 from nicegui import events, run, ui
 
+from stability import log_performance_snapshot
 from ui.state import AppState, P
 from ui.constants import ICON_OPTIONS
 from ui.helpers import browse_folder, browse_file
@@ -978,9 +980,15 @@ def open_settings(
     def _collect_models_tab_data() -> dict:
         from providers.selection import list_model_choice_options
 
+        started = time.perf_counter()
         ollama_up = _ollama_reachable()
+        ollama_elapsed = time.perf_counter() - started
+        trending_started = time.perf_counter()
         fetch_trending_ollama_models()
+        trending_elapsed = time.perf_counter() - trending_started
+        local_started = time.perf_counter()
         local_models = list_local_models()
+        local_elapsed = time.perf_counter() - local_started
         try:
             from tools.image_gen_tool import DEFAULT_MODEL as _IMAGE_DEFAULT
             image_tool = tool_registry.get_tool("image_gen")
@@ -993,12 +1001,30 @@ def open_settings(
             video_model = video_tool.get_config("model", _VIDEO_DEFAULT) if video_tool else _VIDEO_DEFAULT
         except Exception:
             video_model = ""
+        options_started = time.perf_counter()
+        chat_options = list_model_choice_options("chat", include_values=[get_current_model()])
+        vision_options = list_model_choice_options("vision", include_values=[state.vision_service.model])
+        options_elapsed = time.perf_counter() - options_started
+        total_elapsed = time.perf_counter() - started
+        logger.info(
+            "perf: models settings collect took %.3fs "
+            "(ollama=%.3fs trending=%.3fs local=%.3fs options=%.3fs local_count=%d chat_options=%d vision_options=%d)",
+            total_elapsed,
+            ollama_elapsed,
+            trending_elapsed,
+            local_elapsed,
+            options_elapsed,
+            len(local_models),
+            len(chat_options),
+            len(vision_options),
+        )
+        log_performance_snapshot("models-settings-collected")
         return {
             "ollama_up": ollama_up,
             "trending": get_trending_models(),
             "local": local_models,
-            "chat_options": list_model_choice_options("chat", include_values=[get_current_model()]),
-            "vision_options": list_model_choice_options("vision", include_values=[state.vision_service.model]),
+            "chat_options": chat_options,
+            "vision_options": vision_options,
             "image_model": image_model,
             "video_model": video_model,
         }
@@ -1019,14 +1045,28 @@ def open_settings(
                 with ui.row().classes("items-center gap-2 text-grey-6 text-sm"):
                     ui.spinner(size="sm")
                     ui.label("Loading model settings...")
+            load_started = time.perf_counter()
             try:
                 data = await run.io_bound(_collect_models_tab_data)
+                collected_elapsed = time.perf_counter() - load_started
                 if generation != load_state["generation"]:
                     return
+                render_started = time.perf_counter()
                 container.clear()
                 with container:
                     _render_models_tab_content(data)
+                logger.info(
+                    "perf: models settings load completed collect=%.3fs render=%.3fs total=%.3fs",
+                    collected_elapsed,
+                    time.perf_counter() - render_started,
+                    time.perf_counter() - load_started,
+                )
+                log_performance_snapshot("models-settings-rendered")
             except Exception as exc:
+                logger.info(
+                    "perf: models settings load failed after %.3fs",
+                    time.perf_counter() - load_started,
+                )
                 logger.warning("Could not load model settings", exc_info=True)
                 if generation != load_state["generation"]:
                     return
@@ -1056,8 +1096,12 @@ def open_settings(
 
         async def _do_refresh():
             n = ui.notification("Fetching models…", type="ongoing", spinner=True, timeout=None)
+            started = time.perf_counter()
             count = await run.io_bound(refresh_cloud_models)
+            elapsed = time.perf_counter() - started
             n.dismiss()
+            logger.info("perf: provider catalog refresh took %.3fs models=%d", elapsed, count)
+            log_performance_snapshot("provider-catalog-refresh")
             ui.notify(f"Found {count} provider models", type="positive")
 
         # API Keys
