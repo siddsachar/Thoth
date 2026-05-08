@@ -310,8 +310,16 @@ def build_chat_input_bar(
                 p.chat_input.value = ""
                 await send_fn("")
 
-        # Enter to send (without Shift), Shift+Enter for newline
-        p.chat_input.on("keydown.enter.exact.prevent", _on_send)
+        # Enter to send; modified Enter keeps native textarea behavior.
+        p.chat_input.on(
+            "keydown.enter",
+            _on_send,
+            js_handler="""(e) => {
+                if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+                e.preventDefault();
+                emit();
+            }""",
+        )
 
         def _on_stop():
             gen = _active_generations.get(state.thread_id)

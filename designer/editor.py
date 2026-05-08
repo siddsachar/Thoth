@@ -1020,11 +1020,12 @@ def build_designer_editor(
                         style_primary_button(fallback_send_btn, compact=True, round=True)
                         _fb_input.on(
                             "keydown.enter",
-                            lambda e: (
-                                asyncio.create_task(_fb_send())
-                                if not getattr(e, "args", {}).get("shiftKey", False)
-                                else None
-                            ),
+                            _fb_send,
+                            js_handler="""(e) => {
+                                if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+                                e.preventDefault();
+                                emit();
+                            }""",
                         )
 
         # ── Right pane: Preview + Navigator ──────────────────────────
