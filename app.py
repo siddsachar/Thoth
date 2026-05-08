@@ -319,6 +319,27 @@ async def on_startup():
     import channels.sms             # noqa: F401
     import channels.discord_channel # noqa: F401
     import channels.whatsapp        # noqa: F401
+    try:
+        from channels.auth_store import migrate_legacy_channel_secrets
+        migrated = await asyncio.to_thread(
+            migrate_legacy_channel_secrets,
+            _ch_registry.all_channels(),
+        )
+        if migrated.get("migrated"):
+            print(
+                f"[startup] 🔐 Migrated {migrated['migrated']} channel credential(s) "
+                "to channel keyring"
+            )
+        if migrated.get("failed"):
+            logger.warning(
+                "Channel credential migration skipped %s field(s); legacy fallback remains active",
+                migrated["failed"],
+            )
+    except Exception as exc:
+        logger.warning(
+            "Channel credential migration skipped; legacy fallback remains active: %s",
+            exc,
+        )
     for _ch in _ch_registry.all_channels():
         if _ch_config.get(_ch.name, "auto_start", False):
             try:

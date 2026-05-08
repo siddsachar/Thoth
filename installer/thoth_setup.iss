@@ -94,6 +94,7 @@ Source: "..\buddy\*.py";                DestDir: "{app}\app\buddy"; Flags: ignor
 ; ── Channels package ─────────────────────────────────────────────────────────
 Source: "..\channels\__init__.py";      DestDir: "{app}\app\channels"; Flags: ignoreversion
 Source: "..\channels\auth.py";          DestDir: "{app}\app\channels"; Flags: ignoreversion
+Source: "..\channels\auth_store.py";    DestDir: "{app}\app\channels"; Flags: ignoreversion
 Source: "..\channels\base.py";          DestDir: "{app}\app\channels"; Flags: ignoreversion
 Source: "..\channels\commands.py";      DestDir: "{app}\app\channels"; Flags: ignoreversion
 Source: "..\channels\config.py";        DestDir: "{app}\app\channels"; Flags: ignoreversion

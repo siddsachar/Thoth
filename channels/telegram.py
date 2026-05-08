@@ -37,6 +37,7 @@ from telegram.ext import (
 
 import agent as agent_mod
 from channels.base import Channel, ChannelCapabilities, ConfigField
+from channels.auth_store import get_channel_secret
 from threads import _save_thread_meta, _list_threads, _thread_exists
 from tools import registry as tool_registry
 
@@ -90,12 +91,12 @@ def _cleanup_stale_pending() -> None:
 # Helpers — credentials
 # ──────────────────────────────────────────────────────────────────────
 def _get_bot_token() -> str:
-    return os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    return get_channel_secret("telegram", "TELEGRAM_BOT_TOKEN")
 
 
 def _get_allowed_user_id() -> int | None:
     """Return the authorised Telegram user ID, or None if not set."""
-    raw = os.environ.get("TELEGRAM_USER_ID", "")
+    raw = get_channel_secret("telegram", "TELEGRAM_USER_ID")
     if raw.strip().isdigit():
         return int(raw.strip())
     return None

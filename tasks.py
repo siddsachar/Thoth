@@ -48,6 +48,7 @@ _DATA_DIR = pathlib.Path(
 _DATA_DIR.mkdir(parents=True, exist_ok=True)
 _DB_PATH = str(_DATA_DIR / "tasks.db")
 _OLD_WF_DB = str(_DATA_DIR / "workflows.db")
+_TASK_CONFIG_PATH = str(_DATA_DIR / "task_config.json")
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -88,7 +89,7 @@ def _init_db() -> None:
             concurrency_group   TEXT,                   -- null = no limit / 'local_gpu' / custom
             trigger             TEXT,                   -- JSON trigger config (null = schedule/manual only)
             tools_override      TEXT,                    -- JSON list of tool names (null = all enabled)
-            channels            TEXT                     -- JSON list of channel names (null = all running)
+            channels            TEXT                     -- JSON list of channel names (null = workflow default)
         )
     """)
     conn.execute("""
@@ -403,7 +404,7 @@ def create_task(
             concurrency_group,
             json.dumps(trigger) if trigger else None,
             json.dumps(tools_override) if tools_override else None,
-            json.dumps(channels) if channels else None,
+            json.dumps(channels) if channels is not None else None,
         ),
     )
     conn.commit()
@@ -901,23 +902,76 @@ def _validate_delivery(channel: str | None, target: str | None) -> None:
             )
 
 
-def get_task_channels(task: dict) -> list:
-    """Return channel objects for this task.
+def _load_task_config() -> dict:
+    try:
+        with open(_TASK_CONFIG_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
-    If ``task["channels"]`` is ``None`` (default / never configured),
-    returns all running channels.
-    If ``task["channels"]`` is ``[]`` (user explicitly unchecked all),
-    returns an empty list — no channel delivery.
-    Otherwise returns only the specified running channels.
-    Web UI always receives desktop notifications regardless.
+
+def _save_task_config(data: dict) -> None:
+    with open(_TASK_CONFIG_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def get_workflow_default_channels() -> list[str]:
+    """Return external channels for workflows that inherit defaults.
+
+    The web app is not stored here: it always receives workflow run status.
+    Defaults to an empty list, which means "web app only".
+    """
+    value = _load_task_config().get("workflow_default_channels", [])
+    if not isinstance(value, list):
+        return []
+    return [str(name) for name in value if isinstance(name, str) and name]
+
+
+def set_workflow_default_channels(channels: list[str] | None) -> None:
+    """Save the external channel default for inheriting workflows."""
+    data = _load_task_config()
+    clean: list[str] = []
+    seen: set[str] = set()
+    for name in channels or []:
+        if not isinstance(name, str) or not name or name in seen:
+            continue
+        clean.append(name)
+        seen.add(name)
+    data["workflow_default_channels"] = clean
+    _save_task_config(data)
+
+
+def get_effective_task_channel_names(task: dict) -> list[str]:
+    """Return configured external channel names for a task.
+
+    ``task["channels"] is None`` means inherit the workflow-level default.
+    Legacy ``delivery_channel`` values are treated as explicit overrides so
+    older workflows keep their specific destination until they are edited.
+    """
+    override = task.get("channels")
+    if override is None:
+        legacy = task.get("delivery_channel")
+        if legacy:
+            return [legacy]
+        return get_workflow_default_channels()
+    return [str(name) for name in override if isinstance(name, str) and name]
+
+
+def get_task_channels(task: dict) -> list:
+    """Return running external channel objects for this task.
+
+    ``task["channels"] is None`` inherits the workflow-level default.
+    ``task["channels"] == []`` means web app only. The web app always
+    receives run status and is not represented by a channel adapter.
     """
     from channels import registry as _ch_reg
-    override = task.get("channels")
-    if override is None:  # Never configured → all running channels
-        return _ch_reg.running_channels()
-    if not override:  # Empty list → user wants no channel delivery
+    # Preserve the old distinction in one place: override is None means
+    # inherited defaults, while not override means web app only.
+    channel_names = get_effective_task_channel_names(task)
+    if not channel_names:
         return []
-    return [ch for ch in _ch_reg.running_channels() if ch.name in override]
+    selected = set(channel_names)
+    return [ch for ch in _ch_reg.running_channels() if ch.name in selected]
 
 
 def _deliver_to_channel(task: dict, text: str) -> tuple[str, str]:
@@ -980,7 +1034,7 @@ def _deliver_to_channel(task: dict, text: str) -> tuple[str, str]:
 def _deliver_to_channels(task: dict, text: str) -> tuple[str, str]:
     """Send task output to all configured channels via ``get_task_channels``.
 
-    Uses the unified ``channels`` field (null = all running channels).
+    Uses the unified ``channels`` field (null = workflow default).
     Falls back to legacy ``delivery_channel`` if ``channels`` is not set
     and ``delivery_channel`` is.
 
@@ -1056,7 +1110,7 @@ def _push_approval_to_channels(task: dict, approval_id: str,
                                approval_msg: str) -> None:
     """Push a task approval request to all configured channels.
 
-    Uses the unified ``channels`` field (null = all running channels).
+    Uses the unified ``channels`` field (null = workflow default).
     Stores message refs in ``approval_channel_refs`` for cross-channel
     resolution.
 
@@ -2337,7 +2391,7 @@ def check_concurrency_group(task: dict) -> bool:
 
 # ── Global Retry Config ──────────────────────────────────────────────────────
 
-_RETRY_CONFIG_PATH = str(_DATA_DIR / "task_config.json")
+_RETRY_CONFIG_PATH = _TASK_CONFIG_PATH
 
 
 def get_retry_max() -> int:

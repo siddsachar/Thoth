@@ -32,6 +32,7 @@ from typing import Any
 import agent as agent_mod
 from app_port import get_app_port
 from channels.base import Channel, ChannelCapabilities, ConfigField
+from channels.auth_store import get_channel_secret
 from channels import commands as ch_commands
 from channels import auth as ch_auth
 from channels import config as ch_config
@@ -92,19 +93,19 @@ def _strip_markdown(text: str) -> str:
 # Helpers — credentials
 # ──────────────────────────────────────────────────────────────────────
 def _get_account_sid() -> str:
-    return os.environ.get("TWILIO_ACCOUNT_SID", "")
+    return get_channel_secret("sms", "TWILIO_ACCOUNT_SID")
 
 
 def _get_auth_token() -> str:
-    return os.environ.get("TWILIO_AUTH_TOKEN", "")
+    return get_channel_secret("sms", "TWILIO_AUTH_TOKEN")
 
 
 def _get_twilio_number() -> str:
-    return os.environ.get("TWILIO_PHONE_NUMBER", "")
+    return get_channel_secret("sms", "TWILIO_PHONE_NUMBER")
 
 
 def _get_user_phone() -> str:
-    return os.environ.get("SMS_USER_PHONE", "")
+    return get_channel_secret("sms", "SMS_USER_PHONE")
 
 
 # ──────────────────────────────────────────────────────────────────────

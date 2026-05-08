@@ -44,6 +44,7 @@ from typing import Any
 
 import agent as agent_mod
 from channels.base import Channel, ChannelCapabilities, ConfigField
+from channels.auth_store import get_channel_secret
 from channels import commands as ch_commands
 from channels import auth as ch_auth
 from channels import config as ch_config
@@ -357,7 +358,7 @@ def _ensure_node() -> tuple[str, Path]:
 # Helpers — credentials
 # ──────────────────────────────────────────────────────────────────────
 def _get_user_phone() -> str:
-    return os.environ.get("WHATSAPP_USER_PHONE", "")
+    return get_channel_secret("whatsapp", "WHATSAPP_USER_PHONE")
 
 
 # ──────────────────────────────────────────────────────────────────────

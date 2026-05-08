@@ -120,6 +120,77 @@ def open_settings(
 
         return inp, refresh_status
 
+    def _channel_secret_status_text(channel_name: str, env_var: str) -> str:
+        from channels.auth_store import channel_secret_status
+        status = channel_secret_status(channel_name, env_var)
+        if not status.get("configured"):
+            return "Not saved"
+        source = status.get("source") or "saved"
+        fingerprint = status.get("fingerprint") or "saved"
+        if source == "channel keyring":
+            return f"Saved securely ({fingerprint})"
+        if source == "environment":
+            return f"Set by environment ({fingerprint})"
+        if source == "legacy api_keys":
+            return f"Saved in legacy key store ({fingerprint})"
+        return f"Saved ({fingerprint})"
+
+    def _channel_secret_input(
+        label: str,
+        channel_name: str,
+        env_var: str,
+        *,
+        password: bool = True,
+    ):
+        status_label = ui.label(
+            _channel_secret_status_text(channel_name, env_var)
+        ).classes("text-grey-6 text-xs")
+        inp_kwargs = {
+            "label": label,
+            "value": "",
+            "placeholder": "Paste a new value to replace the saved one",
+        }
+        if password:
+            inp_kwargs.update({"password": True, "password_toggle_button": True})
+        inp = ui.input(**inp_kwargs).classes("w-full")
+
+        def refresh_status() -> None:
+            status_label.text = _channel_secret_status_text(channel_name, env_var)
+            status_label.update()
+
+        return inp, refresh_status
+
+    def _import_channel_secret(
+        channel_name: str,
+        env_var: str,
+        display: str,
+        refresh: Callable[[], None] | None = None,
+    ) -> None:
+        from channels.auth_store import import_channel_secret_from_fallback
+        if not import_channel_secret_from_fallback(channel_name, env_var):
+            ui.notify(
+                f"{display} has no environment or legacy value to save",
+                type="info",
+            )
+            return
+        clear_agent_cache()
+        if refresh:
+            refresh()
+        ui.notify(f"{display} saved securely", type="positive")
+
+    def _clear_channel_secret(
+        channel_name: str,
+        env_var: str,
+        display: str,
+        refresh: Callable[[], None] | None = None,
+    ) -> None:
+        from channels.auth_store import delete_channel_secret
+        delete_channel_secret(channel_name, env_var)
+        clear_agent_cache()
+        if refresh:
+            refresh()
+        ui.notify(f"{display} cleared", type="info")
+
     def _secret_value_or_notify(raw: object, display: str) -> str:
         val = raw.strip() if isinstance(raw, str) else ""
         if not val:
@@ -2891,41 +2962,49 @@ def open_settings(
             # ── Config field inputs ──────────────────────────────────
             field_inputs: dict[str, Any] = {}
             for cf in ch.config_fields:
+                refresh = None
                 if cf.storage == "env" and cf.env_key:
-                    val = get_key(cf.env_key) or cf.default
-                else:
-                    val = _ch_config.get(ch.name, cf.key, cf.default)
-
-                if cf.field_type == "password":
-                    if cf.storage == "env" and cf.env_key:
-                        inp, refresh = _secret_input(cf.label, cf.env_key)
+                    inp, refresh = _channel_secret_input(
+                        cf.label,
+                        ch.name,
+                        cf.env_key,
+                        password=cf.field_type == "password",
+                    )
+                    with ui.row().classes("gap-2"):
+                        ui.button(
+                            "Save Current",
+                            icon="key",
+                            on_click=lambda ch_name=ch.name, ev=cf.env_key, display=cf.label, refresh_status=refresh: _import_channel_secret(ch_name, ev, display, refresh_status),
+                        ).props("flat dense")
                         ui.button(
                             "Clear",
                             icon="delete",
-                            on_click=lambda ev=cf.env_key, display=cf.label, refresh_status=refresh: _clear_secret(ev, display, refresh_status),
+                            on_click=lambda ch_name=ch.name, ev=cf.env_key, display=cf.label, refresh_status=refresh: _clear_channel_secret(ch_name, ev, display, refresh_status),
                         ).props("flat dense color=negative")
-                    else:
+                else:
+                    val = _ch_config.get(ch.name, cf.key, cf.default)
+                    if cf.field_type == "password":
                         inp = ui.input(
                             label=cf.label, value=val or "",
                             password=True, password_toggle_button=True,
                         ).classes("w-full")
-                elif cf.field_type == "number":
-                    inp = ui.number(
-                        label=cf.label, value=val or cf.default,
-                    ).classes("w-full")
-                elif cf.field_type == "slider":
-                    inp = ui.slider(
-                        min=cf.slider_min, max=cf.slider_max,
-                        step=cf.slider_step, value=val or cf.default,
-                    ).classes("w-full")
-                else:
-                    inp = ui.input(
-                        label=cf.label, value=val or "",
-                    ).classes("w-full")
+                    elif cf.field_type == "number":
+                        inp = ui.number(
+                            label=cf.label, value=val or cf.default,
+                        ).classes("w-full")
+                    elif cf.field_type == "slider":
+                        inp = ui.slider(
+                            min=cf.slider_min, max=cf.slider_max,
+                            step=cf.slider_step, value=val or cf.default,
+                        ).classes("w-full")
+                    else:
+                        inp = ui.input(
+                            label=cf.label, value=val or "",
+                        ).classes("w-full")
 
                 if cf.help_text:
                     inp.tooltip(cf.help_text)
-                field_inputs[cf.key] = (cf, inp)
+                field_inputs[cf.key] = (cf, inp, refresh)
 
             # ── Status indicator ─────────────────────────────────────
             status_container = ui.row().classes("items-center gap-2 mt-2")
@@ -2937,13 +3016,18 @@ def open_settings(
 
             # ── Save credentials ─────────────────────────────────────
             def _save_creds(ch=ch, inputs=field_inputs):
-                for key, (cf, inp) in inputs.items():
+                for key, (cf, inp, refresh) in inputs.items():
                     raw = inp.value
                     if isinstance(raw, str):
                         raw = raw.strip()
                     if cf.storage == "env" and cf.env_key:
                         if raw:
-                            set_key(cf.env_key, str(raw))
+                            from channels.auth_store import set_channel_secret
+                            set_channel_secret(ch.name, cf.env_key, str(raw))
+                            inp.value = ""
+                            inp.update()
+                            if refresh:
+                                refresh()
                     else:
                         _ch_config.set(ch.name, cf.key, raw)
                 _update_channel_status(status_container, ch)

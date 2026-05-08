@@ -192,7 +192,9 @@ def show_task_dialog(
     # Parse delivery
     _del_channel = (task.get("delivery_channel") or "") if task else ""
     _del_target = (task.get("delivery_target") or "") if task else ""
-    _task_channels = task.get("channels") if task else None  # None = all
+    _task_channels = task.get("channels") if task else None  # None = workflow default
+    if task and _task_channels is None and _del_channel:
+        _task_channels = [_del_channel]
 
     p.task_dlg.clear()
     with p.task_dlg, ui.card().classes("q-pa-none").style(
@@ -1230,53 +1232,65 @@ def show_task_dialog(
                 _trig_target = (_trigger_data or {}).get("target_task", "")
                 _trig_secret = (_trigger_data or {}).get("secret", "")
 
-                # Channels (collapsed) — unified for delivery + approvals
-                _ch_checkboxes: dict = {}
-                _ch_all_checkbox = None
-                with ui.expansion("📡 Channels (optional)").classes("w-full"):
+                # Channels (collapsed) - unified for delivery + approvals
+                _ch_mode_sel = None
+                _ch_select = None
+                with ui.expansion("Channels (optional)").classes("w-full"):
                     ui.label(
-                        "Choose which channels receive task output and approval "
-                        "requests. 'All' sends to every running channel. "
-                        "Desktop notification always fires."
+                        "Choose external channels for task output and approval "
+                        "requests. Web app always receives run status."
                     ).style("font-size: 0.75rem; color: #666;")
 
                     from channels import registry as _ch_registry
                     _available_channels = _ch_registry.configured_channels()
-                    _is_all = _task_channels is None
-                    _selected_set = set(_task_channels) if _task_channels else set()
-
-                    def _on_all_toggle(e):
-                        for _cname, _ccb in _ch_checkboxes.items():
-                            _ccb.set_value(e.value)
-                            if e.value:
-                                _ccb.props("disable")
-                            else:
-                                _ccb.props(remove="disable")
-
-                    _ch_all_checkbox = ui.checkbox(
-                        "All channels", value=_is_all,
-                        on_change=_on_all_toggle,
-                    ).classes("text-sm font-bold")
-
-                    if _available_channels:
-                        for _ch in _available_channels:
-                            _checked = _is_all or _ch.name in _selected_set
-                            _ccb = ui.checkbox(
-                                f"{_ch.display_name}",
-                                value=_checked,
-                            ).classes("text-sm q-ml-md")
-                            if _is_all:
-                                _ccb.props("disable")
-                            _ch_checkboxes[_ch.name] = _ccb
+                    _channel_options = {
+                        _ch.name: _ch.display_name
+                        for _ch in _available_channels
+                    }
+                    _selected_channels = [
+                        name for name in (_task_channels or [])
+                        if name in _channel_options
+                    ]
+                    if _task_channels is None:
+                        _channel_mode = "Use workflow default"
+                    elif _task_channels:
+                        _channel_mode = "Custom channels"
                     else:
+                        _channel_mode = "Web app only"
+
+                    _ch_mode_sel = ui.select(
+                        label="Delivery mode",
+                        options=[
+                            "Use workflow default",
+                            "Custom channels",
+                            "Web app only",
+                        ],
+                        value=_channel_mode,
+                    ).classes("w-full").props("dense outlined")
+                    _ch_select = ui.select(
+                        label="External channels",
+                        options=_channel_options,
+                        value=_selected_channels,
+                        multiple=True,
+                    ).classes("w-full").props("dense outlined use-chips clearable")
+                    if not _channel_options:
+                        _ch_select.props("disable")
+                    _ch_select.visible = _channel_mode == "Custom channels"
+
+                    def _on_channel_mode_change(e):
+                        _ch_select.visible = e.value == "Custom channels"
+
+                    _ch_mode_sel.on_value_change(_on_channel_mode_change)
+
+                    if not _available_channels:
                         ui.label(
-                            "No channels configured. Set up Telegram or "
-                            "other channels in Settings."
+                            "No external channels configured. Workflows still "
+                            "update the web app."
                         ).classes("text-xs text-grey-6 q-ml-md")
 
-                    # Legacy compat: keep hidden refs for old delivery_channel
-                    del_ch_sel = type("_Compat", (), {"value": _del_channel})()
-
+                    # Legacy compat: old single-channel workflows are migrated
+                    # to the unified channels field on save.
+                    del_ch_sel = type("_Compat", (), {"value": None})()
                 # ── Advanced-only extras: Tools & Skills overrides ──────
                 from tools import registry as _tool_registry
                 _all_tools = _tool_registry.get_enabled_tools()
@@ -1667,11 +1681,11 @@ def show_task_dialog(
                 cur_del_tgt = None
 
                 # Parse channels (unified selector)
-                cur_channels = None  # None = all
-                if _ch_all_checkbox and not _ch_all_checkbox.value:
-                    cur_channels = [
-                        n for n, cb in _ch_checkboxes.items() if cb.value
-                    ]
+                cur_channels = None  # None = workflow default
+                if _ch_mode_sel and _ch_mode_sel.value == "Web app only":
+                    cur_channels = []
+                elif _ch_mode_sel and _ch_mode_sel.value == "Custom channels":
+                    cur_channels = list(_ch_select.value or [])
                 cur_model_ov = model_sel.value if model_sel.value != "__default__" else None
 
                 # Parse tools override (advanced mode only)

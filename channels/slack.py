@@ -37,6 +37,7 @@ from typing import Any
 
 import agent as agent_mod
 from channels.base import Channel, ChannelCapabilities, ConfigField
+from channels.auth_store import get_channel_secret
 from channels import commands as ch_commands
 from channels import auth as ch_auth
 from threads import _save_thread_meta, _list_threads
@@ -106,11 +107,11 @@ _pending_lock = threading.Lock()
 # Helpers — credentials
 # ──────────────────────────────────────────────────────────────────────
 def _get_bot_token() -> str:
-    return os.environ.get("SLACK_BOT_TOKEN", "")
+    return get_channel_secret("slack", "SLACK_BOT_TOKEN")
 
 
 def _get_app_token() -> str:
-    return os.environ.get("SLACK_APP_TOKEN", "")
+    return get_channel_secret("slack", "SLACK_APP_TOKEN")
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1016,7 +1017,7 @@ async def _handle_file(event: dict, say, client) -> None:
 def _is_authorised(user_id: str) -> bool:
     """Check if a Slack user is authorised."""
     # Check config-based user ID
-    allowed = os.environ.get("SLACK_USER_ID", "").strip()
+    allowed = get_channel_secret("slack", "SLACK_USER_ID").strip()
     if allowed and user_id == allowed:
         return True
     # Check DM pairing approved list
@@ -1230,7 +1231,7 @@ class SlackChannel(Channel):
         return is_running()
 
     def get_default_target(self) -> str:
-        uid = os.environ.get("SLACK_USER_ID", "").strip()
+        uid = get_channel_secret("slack", "SLACK_USER_ID").strip()
         if uid:
             return uid
         # Fall back to first approved user

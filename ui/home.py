@@ -42,6 +42,7 @@ def build_home(
         list_tasks, update_task, run_task_background,
         get_running_tasks, get_running_task_thread, stop_task,
         _prepare_task_thread,
+        get_workflow_default_channels, set_workflow_default_channels,
     )
 
     # ── Status bar (replaces old logo) ───────────────────────────────
@@ -124,12 +125,147 @@ def build_home(
                 _bulk_wf = _BULK_WF
 
                 ui.separator()
-                with ui.row().classes("w-full items-center justify-between"):
-                    with ui.column().classes("gap-0"):
+                with ui.row().classes("w-full items-start justify-between gap-3"):
+                    from channels import registry as _ch_registry
+                    _configured_channels = _ch_registry.configured_channels()
+                    _channel_meta = {
+                        ch.name: {
+                            "display": ch.display_name,
+                            "icon": ch.icon or "chat",
+                        }
+                        for ch in _configured_channels
+                    }
+                    _default_channels = [
+                        ch for ch in get_workflow_default_channels()
+                        if ch in _channel_meta
+                    ]
+
+                    def _persist_default_delivery(names: list[str]) -> None:
+                        selected = set(names)
+                        ordered = [
+                            ch.name for ch in _configured_channels
+                            if ch.name in selected
+                        ]
+                        set_workflow_default_channels(ordered)
+                        ui.notify(
+                            "Workflow default delivery saved",
+                            type="positive",
+                        )
+                        _refresh_home_tiles()
+
+                    def _toggle_default_channel(name: str, enabled: bool) -> None:
+                        selected = set(get_workflow_default_channels())
+                        if enabled:
+                            selected.add(name)
+                        else:
+                            selected.discard(name)
+                        _persist_default_delivery(list(selected))
+
+                    def _remove_default_channel(name: str) -> None:
+                        selected = [
+                            ch for ch in get_workflow_default_channels()
+                            if ch != name
+                        ]
+                        _persist_default_delivery(selected)
+
+                    with ui.column().classes("gap-1").style(
+                        "min-width: 0; flex: 1 1 auto;"
+                    ):
                         ui.label("⚡ Workflows").classes("text-h5")
                         ui.label("Background Agents").classes(
                             "text-xs text-grey-6"
                         ).style("margin-top: -2px; letter-spacing: 0.3px;")
+                        with ui.row().classes(
+                            "items-center gap-2 flex-wrap"
+                        ).style("margin-top: 6px;"):
+                            ui.label("Delivery defaults").classes(
+                                "text-xs text-grey-5"
+                            ).style(
+                                "text-transform: uppercase;"
+                                "letter-spacing: 0.08em;"
+                                "line-height: 1;"
+                            )
+                            if _default_channels:
+                                for _ch_name in _default_channels:
+                                    _meta = _channel_meta[_ch_name]
+                                    with ui.element("div").classes(
+                                        "row items-center no-wrap"
+                                    ).style(
+                                        "height: 28px;"
+                                        "gap: 6px;"
+                                        "padding: 0 8px;"
+                                        "border: 1px solid rgba(255,255,255,0.16);"
+                                        "border-radius: 999px;"
+                                        "background: rgba(255,255,255,0.055);"
+                                        "color: rgba(255,255,255,0.92);"
+                                    ):
+                                        ui.icon(_meta["icon"]).classes(
+                                            "text-primary"
+                                        ).style("font-size: 16px;")
+                                        ui.label(_meta["display"]).classes("text-sm")
+                                        ui.icon("close").classes(
+                                            "cursor-pointer text-grey-5"
+                                        ).style("font-size: 16px;").on(
+                                            "click",
+                                            lambda _=None, n=_ch_name: _remove_default_channel(n),
+                                        ).tooltip(
+                                            f"Remove {_meta['display']} from defaults"
+                                        )
+                            else:
+                                with ui.element("div").classes(
+                                    "row items-center no-wrap"
+                                ).style(
+                                    "height: 28px;"
+                                    "gap: 6px;"
+                                    "padding: 0 9px;"
+                                    "border: 1px solid rgba(255,255,255,0.12);"
+                                    "border-radius: 999px;"
+                                    "background: rgba(255,255,255,0.035);"
+                                    "color: rgba(255,255,255,0.58);"
+                                ):
+                                    ui.icon("web_asset").style("font-size: 16px;")
+                                    ui.label("Web app only").classes("text-sm")
+                            _delivery_btn = ui.button(icon="add").props(
+                                "flat dense round size=sm color=primary"
+                            ).tooltip("Edit default delivery channels")
+                            with _delivery_btn:
+                                with ui.menu().classes("q-pa-sm").style(
+                                    "min-width: 230px;"
+                                ):
+                                    ui.label("Default delivery").classes(
+                                        "text-xs text-grey-5 q-mb-xs"
+                                    )
+                                    if _configured_channels:
+                                        for _ch in _configured_channels:
+                                            ui.checkbox(
+                                                _ch.display_name,
+                                                value=_ch.name in _default_channels,
+                                                on_change=lambda e, n=_ch.name: _toggle_default_channel(n, bool(e.value)),
+                                            ).classes("text-sm")
+                                    else:
+                                        ui.label(
+                                            "No configured channels"
+                                        ).classes("text-sm text-grey-6")
+                                    ui.separator().classes("q-my-xs")
+                                    with ui.row().classes(
+                                        "items-center gap-2 no-wrap"
+                                    ):
+                                        ui.icon("lock").classes("text-grey-6")
+                                        ui.label(
+                                            "Web app always receives run status"
+                                        ).classes("text-xs text-grey-6")
+                            with ui.element("div").classes(
+                                "row items-center no-wrap"
+                            ).style(
+                                "height: 28px;"
+                                "gap: 6px;"
+                                "padding: 0 9px;"
+                                "border-radius: 999px;"
+                                "background: rgba(76,175,80,0.10);"
+                                "color: rgba(165,214,167,0.95);"
+                            ):
+                                ui.icon("lock").style("font-size: 15px;")
+                                ui.label("Web app always on").classes("text-xs")
                     with ui.row().classes("gap-2 items-center"):
                         if home_tasks:
                             _wf_select_btn = ui.button(

@@ -33,6 +33,7 @@ from typing import Any
 
 import agent as agent_mod
 from channels.base import Channel, ChannelCapabilities, ConfigField
+from channels.auth_store import get_channel_secret
 from channels import commands as ch_commands
 from channels import auth as ch_auth
 from threads import _save_thread_meta
@@ -57,11 +58,11 @@ DISCORD_MAX_LEN = 2000  # Discord message character limit
 # Helpers — credentials
 # ──────────────────────────────────────────────────────────────────────
 def _get_bot_token() -> str:
-    return os.environ.get("DISCORD_BOT_TOKEN", "")
+    return get_channel_secret("discord", "DISCORD_BOT_TOKEN")
 
 
 def _get_allowed_user_id() -> int | None:
-    raw = os.environ.get("DISCORD_USER_ID", "")
+    raw = get_channel_secret("discord", "DISCORD_USER_ID")
     if raw.strip().isdigit():
         return int(raw.strip())
     return None
