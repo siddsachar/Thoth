@@ -124,6 +124,15 @@ def _init_db() -> None:
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_drafts (
+            id          TEXT PRIMARY KEY,
+            task_id     TEXT,
+            mode        TEXT NOT NULL,
+            payload     TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS approval_requests (
             id              TEXT PRIMARY KEY,
             run_id          TEXT NOT NULL,
@@ -939,6 +948,67 @@ def set_workflow_default_channels(channels: list[str] | None) -> None:
         seen.add(name)
     data["workflow_default_channels"] = clean
     _save_task_config(data)
+
+
+def _workflow_draft_id(task_id: str | None) -> str:
+    return task_id or "__new__"
+
+
+def save_workflow_draft(task_id: str | None, payload: dict) -> None:
+    """Persist an autosaved workflow editor draft.
+
+    ``task_id is None`` represents the single "new workflow" draft.  Drafts
+    are intentionally separate from the canonical tasks table and are cleared
+    when the user saves or discards them.
+    """
+    conn = _get_conn()
+    now = datetime.now().isoformat()
+    draft_id = _workflow_draft_id(task_id)
+    conn.execute(
+        "INSERT OR REPLACE INTO workflow_drafts "
+        "(id, task_id, mode, payload, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (
+            draft_id,
+            task_id,
+            "edit" if task_id else "new",
+            json.dumps(payload, ensure_ascii=False),
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_workflow_draft(task_id: str | None) -> dict | None:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM workflow_drafts WHERE id = ?",
+        (_workflow_draft_id(task_id),),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    try:
+        payload = json.loads(row["payload"] or "{}")
+    except Exception:
+        payload = {}
+    return {
+        "id": row["id"],
+        "task_id": row["task_id"],
+        "mode": row["mode"],
+        "payload": payload if isinstance(payload, dict) else {},
+        "updated_at": row["updated_at"],
+    }
+
+
+def delete_workflow_draft(task_id: str | None) -> None:
+    conn = _get_conn()
+    conn.execute(
+        "DELETE FROM workflow_drafts WHERE id = ?",
+        (_workflow_draft_id(task_id),),
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_effective_task_channel_names(task: dict) -> list[str]:

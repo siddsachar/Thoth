@@ -7,6 +7,7 @@ import logging
 from typing import Callable
 
 from nicegui import events, run, ui
+from ui.timer_utils import safe_ui_task
 
 from designer.references import delete_project_reference, persist_project_references
 from designer.render_assets import normalize_project_inline_assets
@@ -144,7 +145,7 @@ def build_designer_editor(
                     # removed) card is pointless — just log and move on.
                     logger.exception("First-draft send failed")
 
-            build_btn.on_click(lambda: asyncio.create_task(_run_first_draft()))
+            build_btn.on_click(lambda: safe_ui_task(_run_first_draft, context="designer first draft"))
 
     def _render_zero_state_quick_actions() -> None:
         """Show per-mode quick-start chips when the project is empty.
@@ -193,7 +194,7 @@ def build_designer_editor(
                             except Exception:
                                 pass
                             await _send_with_references(prompt)
-                        return lambda: asyncio.create_task(_run())
+                        return lambda: safe_ui_task(_run, context="designer quick action")
 
                     btn = ui.button(
                         action.label, icon=action.icon,

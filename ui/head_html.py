@@ -17,6 +17,44 @@ HEAD_HTML = """\
 <script>mermaid.initialize({startOnLoad: false, theme: 'dark', securityLevel: 'strict'});</script>
 <script>
 (function() {
+  if (window.__thothClientErrorReporterInstalled) return;
+  window.__thothClientErrorReporterInstalled = true;
+  function report(kind, payload) {
+    try {
+      var body = Object.assign({
+        kind: kind,
+        url: window.location.href,
+        userAgent: navigator.userAgent,
+        ts: new Date().toISOString()
+      }, payload || {});
+      fetch('/api/client-error', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+        keepalive: true
+      }).catch(function() {});
+    } catch (err) {}
+  }
+  window.addEventListener('error', function(event) {
+    report('error', {
+      message: event.message || '',
+      source: event.filename || '',
+      line: event.lineno || 0,
+      column: event.colno || 0,
+      stack: event.error && event.error.stack ? String(event.error.stack) : ''
+    });
+  });
+  window.addEventListener('unhandledrejection', function(event) {
+    var reason = event.reason;
+    report('unhandledrejection', {
+      message: reason && reason.message ? String(reason.message) : String(reason || ''),
+      stack: reason && reason.stack ? String(reason.stack) : ''
+    });
+  });
+})();
+</script>
+<script>
+(function() {
   var _mermaidTimer = null;
   new MutationObserver(function() {
     var nodes = document.querySelectorAll('pre.mermaid');

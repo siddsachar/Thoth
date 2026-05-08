@@ -35,7 +35,7 @@ def build_model_catalog_section(
 
     catalog_expansion = ui.expansion("Model Catalog", icon="view_list", value=initial_open).classes("w-full")
     with catalog_expansion:
-        ui.label("Browse discovered models by surface and provider. Use the pin button to add a model to that surface's picker.").classes("text-grey-6 text-sm")
+        ui.label("Browse discovered models by provider. Open one provider or search before rendering model rows.").classes("text-grey-6 text-sm")
         with ui.row().classes("items-center gap-2 w-full"):
             category = ui.toggle(SURFACE_LABELS, value="chat").props("dense unelevated toggle-color=primary")
             provider_filter = ui.select(provider_options, value="", label="Provider").props("dense outlined").classes("min-w-[180px]")
@@ -54,9 +54,47 @@ def build_model_catalog_section(
                 if not surface_rows:
                     ui.label("No models match this catalog view.").classes("text-grey-6 text-sm")
                     return
+                grouped = group_rows_by_provider(surface_rows)
+                if not provider and not query:
+                    _render_provider_summaries(grouped, surface)
+                    return
                 auto_expand_results = bool(provider) or (bool(query) and len(surface_rows) <= CATALOG_PROVIDER_ROW_LIMIT)
-                for provider_id, provider_rows in group_rows_by_provider(surface_rows).items():
+                for provider_id, provider_rows in grouped.items():
                     _render_provider_group(provider_id, provider_rows, surface, query, provider, auto_expand_results)
+
+        def _render_provider_summaries(
+            grouped: dict[str, list[CatalogModelRow]],
+            surface: str,
+        ) -> None:
+            with ui.column().classes("w-full gap-2"):
+                ui.label("Providers").classes("text-subtitle2")
+                for provider_id, provider_rows in grouped.items():
+                    provider_label = provider_rows[0].provider_display_name or provider_id
+                    usable = sum(1 for row in provider_rows if row.runtime_ready and row.configured and row.installed)
+                    pinned = sum(1 for row in provider_rows if surface in row.pinned_surfaces)
+                    with ui.row().classes("items-center gap-2 no-wrap w-full q-py-sm").style(
+                        "border-bottom: 1px solid rgba(148, 163, 184, 0.14);"
+                    ):
+                        ui.label(provider_rows[0].provider_icon or "AI").classes("text-sm").style("width: 24px; text-align: center;")
+                        with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
+                            ui.label(provider_label).classes("text-sm text-weight-medium")
+                            ui.label(f"{len(provider_rows)} {SURFACE_LABELS.get(surface, surface).lower()} model(s) · {usable} ready · {pinned} pinned").classes("text-grey-6 text-xs")
+                        if usable == 0:
+                            ui.badge("needs setup", color="orange").props("outline dense")
+                        elif pinned:
+                            ui.badge(f"{pinned} pinned", color="cyan").props("outline dense")
+                        ui.button(
+                            "Open",
+                            icon="chevron_right",
+                            on_click=lambda _, pid=provider_id: _open_provider(pid),
+                        ).props("flat dense no-caps color=primary")
+
+        def _open_provider(provider_id: str) -> None:
+            state["provider"] = provider_id
+            provider_filter.value = provider_id
+            provider_filter.update()
+            visible_limits.clear()
+            _refresh()
 
         def _render_provider_group(
             provider_id: str,

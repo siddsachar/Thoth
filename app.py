@@ -31,7 +31,8 @@ for _noisy in ("httpx", "httpcore", "urllib3", "asyncio", "multipart",
                "sentence_transformers", "transformers", "huggingface_hub",
                "googleapiclient", "googleapiclient.discovery_cache",
                "primp", "ddgs", "ddgs.ddgs", "faster_whisper",
-               "streamlit", "kaleido", "choreographer"):
+               "streamlit", "kaleido", "choreographer", "pyngrok",
+               "pyngrok.process", "pyngrok.process.ngrok"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 for _discord_noisy in _DISCORD_BENIGN_VOICE_LOGGERS:
     logging.getLogger(_discord_noisy).setLevel(logging.ERROR)
@@ -41,6 +42,15 @@ from version import __version__ as _thoth_version
 os.environ.setdefault("USER_AGENT", f"Thoth/{_thoth_version}")
 
 logger = logging.getLogger(__name__)
+
+from stability import (
+    install_asyncio_exception_handler,
+    mark_shutdown,
+    record_client_error,
+    setup_stability_monitoring,
+)
+
+setup_stability_monitoring()
 
 try:
     from startup_diagnostics import preflight_optional_native_packages
@@ -219,6 +229,7 @@ def _periodic_oauth_check():
 
 @app.on_startup
 async def on_startup():
+    install_asyncio_exception_handler()
     # Attach persistent file logging (daily JSONL to ~/.thoth/logs/)
     from logging_config import setup_file_logging
     setup_file_logging()
@@ -448,12 +459,24 @@ async def _webhook_handler(request: Request) -> JSONResponse:
     return JSONResponse(result, status_code=status_code)
 
 
+async def _client_error_handler(request: Request) -> JSONResponse:
+    """Capture browser-side JavaScript errors for local diagnostics."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    record_client_error(payload if isinstance(payload, dict) else {"payload": payload})
+    return JSONResponse({"ok": True})
+
+
 app.add_route("/api/launcher-ping", _launcher_ping_handler, methods=["GET"])
 app.add_route("/api/webhook/{task_id}", _webhook_handler, methods=["POST"])
+app.add_route("/api/client-error", _client_error_handler, methods=["POST"])
 
 
 @app.on_shutdown
 async def on_shutdown():
+    mark_shutdown()
     print("[shutdown] Cleaning up sessions…")
     try:
         from tools.browser_tool import get_session_manager as _get_bsm

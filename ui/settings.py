@@ -18,7 +18,7 @@ from nicegui import events, run, ui
 from ui.state import AppState, P
 from ui.constants import ICON_OPTIONS
 from ui.helpers import browse_folder, browse_file
-from ui.timer_utils import defer_ui
+from ui.timer_utils import defer_ui, safe_ui_task
 
 logger = logging.getLogger(__name__)
 
@@ -1005,8 +1005,15 @@ def open_settings(
 
     def _build_models_tab() -> None:
         container = ui.column().classes("w-full gap-0")
+        load_state = {"loading": False, "generation": 0}
 
         async def _load() -> None:
+            if load_state["loading"]:
+                ui.notify("Model settings are already loading", type="info")
+                return
+            load_state["loading"] = True
+            load_state["generation"] += 1
+            generation = load_state["generation"]
             container.clear()
             with container:
                 with ui.row().classes("items-center gap-2 text-grey-6 text-sm"):
@@ -1014,19 +1021,27 @@ def open_settings(
                     ui.label("Loading model settings...")
             try:
                 data = await run.io_bound(_collect_models_tab_data)
+                if generation != load_state["generation"]:
+                    return
                 container.clear()
                 with container:
                     _render_models_tab_content(data)
             except Exception as exc:
+                logger.warning("Could not load model settings", exc_info=True)
+                if generation != load_state["generation"]:
+                    return
                 container.clear()
                 with container:
                     ui.label(f"Could not load model settings: {exc}").classes("text-warning text-sm")
-                    ui.button(icon="refresh", on_click=lambda: defer_ui(_load)).props("flat dense round size=sm").tooltip("Retry")
+                    ui.button(icon="refresh", on_click=lambda: safe_ui_task(_load, context="models settings retry")).props("flat dense round size=sm").tooltip("Retry")
+            finally:
+                if generation == load_state["generation"]:
+                    load_state["loading"] = False
 
         with container:
             ui.label("🤖 Models").classes("text-h6")
             ui.label("Load model settings when you need to change defaults, downloads, or catalog pins.").classes("text-grey-6 text-sm")
-            ui.button("Load model settings", icon="tune", on_click=lambda: defer_ui(_load)).props("flat dense color=primary")
+            ui.button("Load model settings", icon="tune", on_click=lambda: safe_ui_task(_load, context="models settings load")).props("flat dense color=primary")
 
     # ── Providers Tab ────────────────────────────────────────────────
 

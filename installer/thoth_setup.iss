@@ -80,6 +80,7 @@ Source: "..\tunnel.py";                DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\identity.py";              DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\self_knowledge.py";        DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\startup_diagnostics.py";   DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\stability.py";             DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\version.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\updater.py";               DestDir: "{app}\app"; Flags: ignoreversion
 ; ── Static assets (JS libraries) ──────────────────────────────────────────────

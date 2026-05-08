@@ -17,6 +17,7 @@ from nicegui import ui
 
 from ui.state import AppState, P
 from ui.constants import ICON_OPTIONS
+from ui.timer_utils import safe_timer
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,9 @@ def show_task_dialog(
         get_global_safety_mode,
         detect_circular_subtasks,
         generate_webhook_secret,
+        get_workflow_draft,
+        save_workflow_draft,
+        delete_workflow_draft,
     )
 
     is_new = task is None
@@ -144,14 +148,40 @@ def show_task_dialog(
     _steps_data: list[dict] = copy.deepcopy(task.get("steps") or []) if task else []
     _concurrency_group = (task.get("concurrency_group") or "") if task else ""
     _trigger_data: dict | None = task.get("trigger") if task else None
+    _tools_override_data = task.get("tools_override") if task else None
+    _skills_override_data = task.get("skills_override") if task else None
+    _persistent_enabled = bool(task.get("persistent_thread_id")) if task else False
+
+    _draft_key = task["id"] if task else None
+    _draft_timer_ref = {"timer": None, "closing": False, "last": "", "baseline": ""}
+
+    _draft_info = get_workflow_draft(_draft_key)
+    _draft_payload = (_draft_info or {}).get("payload") if _draft_info else {}
+    _draft_restored = bool(_draft_payload)
+    if isinstance(_draft_payload, dict) and _draft_payload:
+        _name = str(_draft_payload.get("name", _name) or "")
+        _icon = str(_draft_payload.get("icon", _icon) or "⚡")
+        _desc = str(_draft_payload.get("description", _desc) or "")
+        _enabled = bool(_draft_payload.get("enabled", _enabled))
+        _model_ov = str(_draft_payload.get("model_override") or "")
+        _prompts_data = list(_draft_payload.get("prompts") or _prompts_data)
+        _steps_data = copy.deepcopy(_draft_payload.get("steps") or _steps_data)
+        _safety_mode = str(_draft_payload.get("safety_mode") or _safety_mode or "block")
+        _concurrency_group = str(_draft_payload.get("concurrency_group") or _concurrency_group or "")
+        _trigger_data = _draft_payload.get("trigger") if isinstance(_draft_payload.get("trigger"), dict) else _trigger_data
+        _tools_override_data = _draft_payload.get("tools_override")
+        _skills_override_data = _draft_payload.get("skills_override")
+        _persistent_enabled = bool(_draft_payload.get("persistent_enabled", _persistent_enabled))
 
     # Determine if we should show advanced mode initially
     _has_advanced = bool(task and any(
         s.get("type") not in ("prompt", None) for s in _steps_data
     )) if _steps_data else False
+    if isinstance(_draft_payload, dict) and "advanced" in _draft_payload:
+        _has_advanced = bool(_draft_payload.get("advanced"))
 
     # Parse schedule
-    _current_sched = (task.get("schedule") or "") if task else ""
+    _current_sched = str(_draft_payload.get("schedule") or "") if isinstance(_draft_payload, dict) and _draft_payload.get("schedule") is not None else ((task.get("schedule") or "") if task else "")
     if _current_sched.startswith("daily"):
         _sched_mode = "Daily"
     elif _current_sched.startswith("weekly"):
@@ -193,6 +223,11 @@ def show_task_dialog(
     _del_channel = (task.get("delivery_channel") or "") if task else ""
     _del_target = (task.get("delivery_target") or "") if task else ""
     _task_channels = task.get("channels") if task else None  # None = workflow default
+    if isinstance(_draft_payload, dict) and _draft_payload:
+        _del_channel = _draft_payload.get("delivery_channel") or _del_channel
+        _del_target = _draft_payload.get("delivery_target") or _del_target
+        if "channels" in _draft_payload:
+            _task_channels = _draft_payload.get("channels")
     if task and _task_channels is None and _del_channel:
         _task_channels = [_del_channel]
 
@@ -214,6 +249,26 @@ def show_task_dialog(
             )
 
         # ── Body (scrollable) ──
+        if _draft_restored:
+            with ui.row().classes("w-full items-center gap-2 q-px-md q-py-sm").style(
+                "background: rgba(59, 130, 246, 0.12); border-bottom: 1px solid rgba(96, 165, 250, 0.22);"
+            ):
+                ui.icon("history", size="sm").classes("text-blue-3")
+                updated = (_draft_info or {}).get("updated_at") or "recently"
+                ui.label(f"Recovered unsaved draft from {updated}").classes("text-blue-2 text-sm")
+                ui.space()
+
+                def _discard_recovered_draft():
+                    _draft_timer_ref["closing"] = True
+                    _timer = _draft_timer_ref.get("timer")
+                    if _timer:
+                        _timer.deactivate()
+                    delete_workflow_draft(_draft_key)
+                    p.task_dlg.close()
+                    show_task_dialog(task, on_done, state=state, p=p)
+
+                ui.button("Discard", icon="delete", on_click=_discard_recovered_draft).props("flat dense no-caps color=negative")
+
         with ui.scroll_area().style("flex: 1; min-height: 0;"):
             with ui.column().classes("w-full q-pa-lg gap-3"):
                 # Name + Icon row
@@ -266,10 +321,9 @@ def show_task_dialog(
                 )
 
                 # Persistent thread toggle
-                _has_persistent = bool(task.get("persistent_thread_id")) if task else False
                 persistent_toggle = ui.switch(
                     "Keep conversation history across runs",
-                    value=_has_persistent,
+                    value=_persistent_enabled,
                 ).tooltip(
                     "When enabled, all runs share one thread so the agent "
                     "can see prior outputs. Useful for monitoring/polling tasks."
@@ -1294,7 +1348,7 @@ def show_task_dialog(
                 # ── Advanced-only extras: Tools & Skills overrides ──────
                 from tools import registry as _tool_registry
                 _all_tools = _tool_registry.get_enabled_tools()
-                _task_tools_override = task.get("tools_override") if task else None
+                _task_tools_override = _tools_override_data
                 _all_tool_names = [t.name for t in _all_tools]
                 # If override is set, use it; otherwise all checked
                 _task_tools_active = (
@@ -1471,7 +1525,7 @@ def show_task_dialog(
                 _task_skills_mod.load_skills()
                 _task_all_skills = [s for s in _task_skills_mod.get_enabled_skills()
                                     if not _task_skills_mod.is_tool_guide(s)]
-                _task_sk_override = task.get("skills_override") if task else None
+                _task_sk_override = _skills_override_data
                 _task_enabled_names = set(sk.name for sk in _task_all_skills)
                 _task_sk_active = (
                     set(_task_sk_override) & _task_enabled_names
@@ -1510,6 +1564,144 @@ def show_task_dialog(
                                     f"{r['steps_done']}/{r['steps_total']} steps"
                                 ).classes("text-xs")
 
+        def _current_schedule_value():
+            sv = sched_sel.value
+            if sv == "Daily":
+                t = sched_time_input.value.strip() or "08:00"
+                return f"daily:{t}"
+            if sv == "Weekly":
+                t = sched_time_input.value.strip() or "08:00"
+                d = sched_day_sel.value or "mon"
+                return f"weekly:{d}:{t}"
+            if sv == "Interval (hrs)":
+                v = sched_interval_input.value.strip() or "1"
+                return f"interval:{v}"
+            if sv == "Interval (min)":
+                v = sched_interval_input.value.strip() or "30"
+                return f"interval_minutes:{v}"
+            if sv == "Cron":
+                v = sched_cron_input.value.strip()
+                return f"cron:{v}" if v else None
+            return None
+
+        def _current_channels_value():
+            if _ch_mode_sel and _ch_mode_sel.value == "Web app only":
+                return []
+            if _ch_mode_sel and _ch_mode_sel.value == "Custom channels":
+                return list(_ch_select.value or [])
+            return None
+
+        def _current_trigger_value():
+            if not trigger_type_sel.value:
+                return None
+            cur_trigger = {"type": trigger_type_sel.value}
+            if trigger_type_sel.value == "task_complete":
+                cur_trigger["target_task"] = trigger_target_sel.value or ""
+            elif trigger_type_sel.value == "webhook":
+                cur_trigger["secret"] = webhook_secret_input.value or ""
+            return cur_trigger
+
+        def _current_tools_override_value(is_advanced: bool):
+            if not (is_advanced and _tool_checkboxes):
+                return None
+            checked = [n for n, cb in _tool_checkboxes.items() if cb.value]
+            if set(checked) == set(_all_tool_names):
+                return None
+            return checked if checked else []
+
+        def _current_skills_override_value(is_advanced: bool):
+            if not (is_advanced and _task_sk_checkboxes):
+                return None
+            checked = [n for n, cb in _task_sk_checkboxes.items() if cb.value]
+            return checked if checked else []
+
+        def _collect_draft_payload():
+            is_advanced = bool(advanced_switch.value)
+            if is_advanced:
+                _sync_step_data_from_editors()
+                from tasks import _steps_to_prompts
+                clean_prompts = _steps_to_prompts(_steps_data) or []
+                cur_steps = copy.deepcopy(_steps_data)
+            else:
+                for j, _ta in enumerate(prompt_inputs):
+                    if j < len(_prompts_data):
+                        _prompts_data[j] = _ta.value
+                clean_prompts = [pp for pp in _prompts_data if str(pp).strip()]
+                cur_steps = []
+
+            cur_model_ov = model_sel.value if model_sel.value != "__default__" else None
+            return {
+                "advanced": is_advanced,
+                "name": name_input.value.strip(),
+                "icon": icon_sel.value or "⚡",
+                "description": desc_input.value.strip(),
+                "enabled": bool(enabled_switch.value),
+                "model_override": cur_model_ov,
+                "prompts": clean_prompts,
+                "steps": cur_steps,
+                "safety_mode": safety_sel.value if safety_sel.value else "block",
+                "schedule": _current_schedule_value(),
+                "delivery_channel": del_ch_sel.value or None,
+                "delivery_target": None,
+                "channels": _current_channels_value(),
+                "concurrency_group": conc_group_input.value.strip() or None,
+                "trigger": _current_trigger_value(),
+                "tools_override": _current_tools_override_value(is_advanced),
+                "skills_override": _current_skills_override_value(is_advanced),
+                "persistent_enabled": bool(persistent_toggle.value),
+            }
+
+        def _stop_draft_timer():
+            _draft_timer_ref["closing"] = True
+            _timer = _draft_timer_ref.get("timer")
+            if _timer:
+                _timer.deactivate()
+
+        def _close_dialog():
+            _stop_draft_timer()
+            p.task_dlg.close()
+
+        def _cancel_dialog():
+            _stop_draft_timer()
+            delete_workflow_draft(_draft_key)
+            p.task_dlg.close()
+
+        def _autosave_draft():
+            if _draft_timer_ref["closing"]:
+                return
+            try:
+                payload = _collect_draft_payload()
+                serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                if not _draft_timer_ref["baseline"]:
+                    _draft_timer_ref["baseline"] = serialized
+                    _draft_timer_ref["last"] = serialized
+                    return
+                if serialized == _draft_timer_ref["baseline"]:
+                    if _draft_timer_ref["last"] != serialized:
+                        delete_workflow_draft(_draft_key)
+                    _draft_timer_ref["last"] = serialized
+                    return
+                if serialized == _draft_timer_ref["last"]:
+                    return
+                save_workflow_draft(_draft_key, payload)
+                _draft_timer_ref["last"] = serialized
+            except Exception:
+                logger.debug("Workflow draft autosave failed", exc_info=True)
+
+        try:
+            _initial_draft_payload = _collect_draft_payload()
+            _initial_draft = json.dumps(
+                _initial_draft_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            _draft_timer_ref["baseline"] = _initial_draft
+            _draft_timer_ref["last"] = _initial_draft
+        except Exception:
+            logger.debug("Workflow draft baseline capture failed", exc_info=True)
+
+        _draft_timer_ref["timer"] = safe_timer(2.0, _autosave_draft)
+
         # ── Footer ──
         with ui.row().classes("w-full items-center q-pa-md gap-2").style(
             "border-top: 1px solid #2a2a4a;"
@@ -1517,11 +1709,14 @@ def show_task_dialog(
             # Left cluster — duplicate + delete (edit only)
             if not is_new:
                 def _dup_task():
+                    _stop_draft_timer()
                     duplicate_task(task["id"])
                     p.task_dlg.close()
                     on_done()
 
                 def _del_task():
+                    _stop_draft_timer()
+                    delete_workflow_draft(_draft_key)
                     delete_task(task["id"])
                     p.task_dlg.close()
                     on_done()
@@ -1537,7 +1732,7 @@ def show_task_dialog(
             ui.element("div").classes("flex-grow")
 
             # Right cluster — cancel + save
-            ui.button("Cancel", on_click=p.task_dlg.close).props(
+            ui.button("Cancel", on_click=_cancel_dialog).props(
                 "flat no-caps"
             ).style(
                 "color: #8888aa; font-weight: 600; font-size: 0.9rem;"
@@ -1805,7 +2000,8 @@ def show_task_dialog(
                     ui.notify(str(ve), type="negative")
                     return
 
-                p.task_dlg.close()
+                delete_workflow_draft(_draft_key)
+                _close_dialog()
                 on_done()
 
             ui.button("Save", on_click=_save).props(

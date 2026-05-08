@@ -135,6 +135,39 @@ def defer_ui(callback: Callable[..., Any], *, delay: float = 0.01) -> asyncio.Ta
         return None
 
 
+def safe_ui_task(
+    callback: Callable[..., Any],
+    *,
+    context: str = "ui task",
+) -> asyncio.Task | None:
+    """Create a supervised asyncio task for UI callbacks.
+
+    NiceGUI callbacks often schedule short async work from button clicks.  A
+    plain ``asyncio.create_task`` can fail later with no user-visible evidence;
+    this wrapper records the failure and treats deleted-client errors as benign.
+    """
+
+    async def _runner() -> None:
+        try:
+            result = callback()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:
+            if _is_benign_dead_ui_error(exc):
+                logger.debug("safe_ui_task skipped after dead-UI error: %s", exc)
+            else:
+                try:
+                    from stability import record_ui_callback_error
+                    record_ui_callback_error(context, exc)
+                except Exception:
+                    logger.exception("safe_ui_task callback raised: %s", context)
+
+    try:
+        return asyncio.create_task(_runner())
+    except RuntimeError:
+        return None
+
+
 def deactivate_on_disconnect(*timers: ui.timer) -> None:
     """Deactivate timers when the current NiceGUI client disconnects."""
 

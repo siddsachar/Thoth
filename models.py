@@ -1386,7 +1386,7 @@ def refresh_cloud_models() -> int:
     # it. Keyring migrations, offline starts, and provider list gaps can all be
     # temporary, and clobbering model_settings.json makes new threads surprise
     # the user with the first local Ollama model.
-    if _was_cloud and _prev_model not in _cloud_model_cache:
+    if _was_cloud and not _cloud_model_available_after_refresh(_prev_model):
         logger.warning(
             "Default cloud model '%s' was not returned by refresh; preserving saved default.",
             _prev_model,
@@ -1394,6 +1394,39 @@ def refresh_cloud_models() -> int:
         _llm_instance = None  # lazy-recreate on next get_llm()
 
     return total
+
+
+def _cloud_model_available_after_refresh(model_name: str) -> bool:
+    """Return whether a saved cloud default is known after provider refresh.
+
+    Direct API providers store bare runtime IDs in ``_cloud_model_cache`` while
+    newer selectors may save provider-qualified refs such as
+    ``model:codex:gpt-5.5``.  Codex subscription models are maintained by the
+    provider catalog rather than ``refresh_cloud_models()``, so check that
+    catalog before warning about a missing default.
+    """
+    runtime_model = _runtime_model_name(model_name)
+    if model_name in _cloud_model_cache or runtime_model in _cloud_model_cache:
+        return True
+
+    parsed = _parse_provider_model_ref(model_name)
+    if not parsed:
+        return False
+    provider_id, parsed_model = parsed
+    if parsed_model in _cloud_model_cache:
+        info = _cloud_model_cache.get(parsed_model, {})
+        return not provider_id or info.get("provider") == provider_id
+    if provider_id == "codex":
+        try:
+            from providers.codex import list_codex_model_infos
+
+            return any(
+                model_info.model_id == parsed_model
+                for model_info in list_codex_model_infos()
+            )
+        except Exception:
+            logger.debug("Could not validate Codex default model after refresh", exc_info=True)
+    return False
 
 
 def is_tool_compatible(model_name: str) -> bool:
