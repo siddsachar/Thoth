@@ -214,7 +214,14 @@ def test_onboarding_source_contracts_are_wired():
     assert "save_onboarding_profile" in setup_src
     assert "mark_onboarding_step(\"models\")" in setup_src
     assert "codex_runtime_available" in setup_src
+    assert "start_codex_device_flow" in setup_src
+    assert "poll_codex_device_authorization" in setup_src
+    assert "exchange_codex_device_authorization" in setup_src
+    assert "save_codex_oauth_tokens" in setup_src
     assert "list_codex_model_infos" in setup_src
+    assert "Open OpenAI Login" in setup_src
+    assert "Open Settings -> Providers" not in setup_src
+    assert "save_external_reference" not in setup_src
     assert "open_setup_center_on_next_load" in Path("app.py").read_text(encoding="utf-8")
     assert "open_setup_center_on_next_load" in Path("ui/state.py").read_text(encoding="utf-8")
     assert "show_setup_center" in sidebar_src

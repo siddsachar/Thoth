@@ -12,6 +12,7 @@ The wizard is self-contained except for two callbacks:
 
 from __future__ import annotations
 
+import json
 import ipaddress
 import logging
 import sys
@@ -112,8 +113,11 @@ async def show_setup_wizard(
     )
     from providers.codex import (
         codex_runtime_available,
+        exchange_codex_device_authorization,
         list_codex_model_infos,
-        save_external_reference,
+        poll_codex_device_authorization,
+        save_codex_oauth_tokens,
+        start_codex_device_flow,
     )
 
     def _open_first_run_migration_wizard() -> None:
@@ -205,6 +209,7 @@ async def show_setup_wizard(
 
             # ── Provider Setup Path ──────────────────────────────────
             cloud_done: dict[str, bool] = {"value": False}
+            codex_models_by_ref: dict[str, object] = {}
             with _cloud_section:
                 ui.label(
                     "Use ChatGPT / Codex, or save one API key and fetch available models."
@@ -249,27 +254,15 @@ async def show_setup_wizard(
                 ).classes("w-full").props("use-input input-debounce=300")
                 cloud_vision_select.visible = False
 
-                async def _use_codex_provider():
-                    cloud_status.text = "Checking ChatGPT / Codex provider..."
-                    cloud_status.visible = True
+                async def _load_codex_models() -> bool:
                     try:
-                        if not codex_runtime_available():
-                            await run.io_bound(save_external_reference)
-                        if not codex_runtime_available():
-                            cloud_status.text = (
-                                "ChatGPT / Codex is not connected yet. Open Settings -> Providers "
-                                "to sign in, then return here."
-                            )
-                            cloud_done["value"] = False
-                            _update_finish()
-                            return
                         infos = await run.io_bound(lambda: list_codex_model_infos(force_refresh=True))
                     except Exception as exc:
                         logger.warning("Codex setup check failed", exc_info=True)
                         cloud_status.text = f"Could not use ChatGPT / Codex: {exc}"
                         cloud_done["value"] = False
                         _update_finish()
-                        return
+                        return False
                     opts = {
                         info.selection_ref: f"C {info.display_name or info.model_id}"
                         for info in infos
@@ -279,15 +272,127 @@ async def show_setup_wizard(
                         cloud_status.text = "No ChatGPT / Codex models were found."
                         cloud_done["value"] = False
                         _update_finish()
-                        return
+                        return False
+                    codex_models_by_ref.clear()
+                    codex_models_by_ref.update({info.selection_ref: info for info in infos})
                     first = next(iter(opts))
                     cloud_model_select.options = opts
                     cloud_model_select.set_value(first)
                     cloud_model_select.visible = True
                     cloud_status.text = f"Found {len(opts)} ChatGPT / Codex model(s)"
-                    add_quick_choice_for_model(first, source="setup_default")
+                    info = codex_models_by_ref.get(first)
+                    if info:
+                        add_quick_choice_for_model(
+                            info.model_id,
+                            provider_id=info.provider_id,
+                            display_name=info.display_name,
+                            source="setup_default",
+                            capabilities_snapshot=info.capability_snapshot(),
+                        )
                     cloud_done["value"] = True
                     _update_finish()
+                    return True
+
+                def _show_codex_device_dialog(flow) -> None:
+                    with ui.dialog() as codex_dialog:
+                        with ui.card().classes("w-full").style("max-width: 30rem;"):
+                            ui.label("Connect ChatGPT / Codex").classes("text-h6")
+                            ui.label(
+                                "Open the verification page, enter this code, then return here."
+                            ).classes("text-grey-6 text-sm")
+                            with ui.row().classes("items-center gap-2 no-wrap"):
+                                ui.link("Open OpenAI Login", flow.verification_uri, new_tab=True).classes(
+                                    "text-primary text-sm"
+                                )
+                                ui.badge("Codex", color="blue-grey").props("outline dense")
+                            with ui.row().classes("items-center gap-2 no-wrap w-full q-my-sm"):
+                                ui.input(value=flow.user_code).props("readonly outlined dense").classes(
+                                    "text-h5 text-weight-bold"
+                                ).style("letter-spacing: 0; max-width: 16rem;")
+                                ui.button(
+                                    icon="content_copy",
+                                    on_click=lambda: (
+                                        ui.run_javascript(
+                                            f"navigator.clipboard.writeText({json.dumps(flow.user_code)})"
+                                        ),
+                                        ui.notify("Code copied", type="positive"),
+                                    ),
+                                ).props("flat dense round size=sm color=primary").tooltip("Copy code")
+                            ui.label(f"Expires: {flow.expires_at}").classes("text-grey-6 text-xs")
+                            status_label = ui.label("Waiting for OpenAI confirmation.").classes(
+                                "text-grey-6 text-sm"
+                            )
+
+                            async def _check_login() -> None:
+                                check_note = ui.notification(
+                                    "Checking ChatGPT sign-in...",
+                                    type="ongoing",
+                                    spinner=True,
+                                    timeout=None,
+                                )
+                                try:
+                                    authorization = await run.io_bound(
+                                        poll_codex_device_authorization,
+                                        flow,
+                                    )
+                                    if authorization is None:
+                                        check_note.dismiss()
+                                        status_label.text = "Still waiting for OpenAI confirmation."
+                                        status_label.update()
+                                        ui.notify("Login is still pending", type="info")
+                                        return
+                                    token_set = await run.io_bound(
+                                        exchange_codex_device_authorization,
+                                        authorization,
+                                    )
+                                    await run.io_bound(save_codex_oauth_tokens, token_set)
+                                except Exception as exc:
+                                    check_note.dismiss()
+                                    logger.warning("Codex setup sign-in failed", exc_info=True)
+                                    status_label.text = f"Sign-in failed: {exc}"
+                                    status_label.update()
+                                    ui.notify(f"ChatGPT sign-in failed: {exc}", type="negative")
+                                    return
+                                check_note.dismiss()
+                                codex_dialog.close()
+                                ui.notify("ChatGPT / Codex connected", type="positive")
+                                cloud_status.text = "ChatGPT / Codex connected. Fetching models..."
+                                cloud_status.visible = True
+                                await _load_codex_models()
+
+                            with ui.row().classes("w-full items-center justify-end gap-2"):
+                                ui.button("Cancel", icon="close", on_click=codex_dialog.close).props(
+                                    "flat dense"
+                                )
+                                ui.button("Check Login", icon="check", on_click=_check_login).props(
+                                    "flat dense color=primary"
+                                )
+                    codex_dialog.open()
+
+                async def _use_codex_provider():
+                    cloud_status.text = "Checking ChatGPT / Codex provider..."
+                    cloud_status.visible = True
+                    if codex_runtime_available():
+                        await _load_codex_models()
+                        return
+                    notification = ui.notification(
+                        "Starting ChatGPT sign-in...",
+                        type="ongoing",
+                        spinner=True,
+                        timeout=None,
+                    )
+                    try:
+                        flow = await run.io_bound(start_codex_device_flow)
+                    except Exception as exc:
+                        notification.dismiss()
+                        logger.warning("Codex setup sign-in start failed", exc_info=True)
+                        cloud_status.text = f"Could not start ChatGPT sign-in: {exc}"
+                        cloud_done["value"] = False
+                        _update_finish()
+                        return
+                    notification.dismiss()
+                    cloud_status.text = "Complete ChatGPT sign-in, then check login here."
+                    _show_codex_device_dialog(flow)
 
                 ui.button(
                     "Use ChatGPT / Codex",
@@ -357,6 +462,7 @@ async def show_setup_wizard(
                         cloud_done["value"] = False
                         _update_finish()
                         return
+                    codex_models_by_ref.clear()
                     models = list_cloud_models()
                     opts = {m: f"{get_provider_emoji(m)} {m}" for m in models}
                     cloud_model_select.options = opts
@@ -772,7 +878,17 @@ async def show_setup_wizard(
                     if sel:
                         set_model(sel)
                         state.current_model = sel
-                        add_quick_choice_for_model(sel, source="setup_default")
+                        info = codex_models_by_ref.get(sel)
+                        if info:
+                            add_quick_choice_for_model(
+                                info.model_id,
+                                provider_id=info.provider_id,
+                                display_name=info.display_name,
+                                source="setup_default",
+                                capabilities_snapshot=info.capability_snapshot(),
+                            )
+                        else:
+                            add_quick_choice_for_model(sel, source="setup_default")
                         clear_agent_cache()
                     vsel = cloud_vision_select.value
                     if vsel:
