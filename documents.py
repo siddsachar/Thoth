@@ -4,7 +4,7 @@ from langchain_community.document_loaders import (
     TextLoader
 )
 
-# Optional loaders — graceful degradation if deps missing
+# Optional loaders - graceful degradation if deps missing
 try:
     from langchain_community.document_loaders import BSHTMLLoader
     _HTML_LOADER = BSHTMLLoader
@@ -24,6 +24,17 @@ import shutil
 import os
 import pathlib
 import json
+from typing import Any
+
+from embedding_config import (
+    active_embedding_metadata,
+    describe_active_embedding,
+    get_embedding_config,
+    index_metadata_matches,
+    read_index_metadata,
+    write_index_metadata,
+)
+from embedding_providers import get_embedding_provider, release_embedding_resources
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +77,7 @@ def reset_vector_store():
         shutil.rmtree(VECTOR_STORE_DIR)
     _vector_store = FAISS.from_texts([" "], embedding=get_embedding_model())
     _vector_store.save_local(str(VECTOR_STORE_DIR))
+    write_index_metadata(VECTOR_STORE_DIR)
 
 
 def remove_document(display_name: str) -> bool:
@@ -111,13 +123,26 @@ def remove_document(display_name: str) -> bool:
 
     return bool(ids_to_delete) or display_name in load_processed_files()
 
+
+def _load_text_file(path: str):
+    last_error: Exception | None = None
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            pathlib.Path(path).read_text(encoding=encoding)
+            return TextLoader(path, encoding=encoding)
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return TextLoader(path, encoding="utf-8")
+
 class DocumentLoader(object):
     supported_file_types = {
         ".pdf": PyPDFLoader,
         ".docx": UnstructuredWordDocumentLoader,
         ".doc": UnstructuredWordDocumentLoader,
-        ".txt": TextLoader,
-        ".md": TextLoader,
+        ".txt": _load_text_file,
+        ".md": _load_text_file,
     }
 
 
@@ -134,43 +159,16 @@ text_splitter = RecursiveCharacterTextSplitter(
     chunk_overlap = 150
 )
 
-# ── Lazy-loaded singletons (avoids heavy imports in child processes) ────────
+# Lazy-loaded singletons (avoids heavy imports in child processes)
 import threading as _threading
-_embedding_model = None
 _embedding_lock = _threading.Lock()
 _vector_store = None
 
 
 def get_embedding_model():
-    """Return the shared HuggingFaceEmbeddings instance (created on first call)."""
-    global _embedding_model
-    if _embedding_model is not None:
-        return _embedding_model
+    """Return the configured embedding provider (created on first call)."""
     with _embedding_lock:
-        if _embedding_model is not None:
-            return _embedding_model
-        import io as _io
-        import os as _os
-        import sys as _sys
-        # Suppress the noisy tqdm/safetensors "Loading weights" progress bar
-        # that writes ~1200 lines to stderr.
-        _os.environ["TQDM_DISABLE"] = "1"
-        _old_stderr = _sys.stderr
-        _sys.stderr = _io.StringIO()        # swallow progress bar output
-        try:
-            from langchain_huggingface import HuggingFaceEmbeddings
-            logger.info("Loading embedding model Qwen/Qwen3-Embedding-0.6B …")
-            # Force CPU to avoid MPS/Metal segfaults on macOS when
-            # embedding is called from non-main threads (agent, extraction).
-            _embedding_model = HuggingFaceEmbeddings(
-                model_name="Qwen/Qwen3-Embedding-0.6B",
-                model_kwargs={"device": "cpu"},
-            )
-        finally:
-            _sys.stderr = _old_stderr       # restore real stderr
-            _os.environ.pop("TQDM_DISABLE", None)
-        logger.info("Embedding model loaded")
-    return _embedding_model
+        return get_embedding_provider()
 
 
 def get_vector_store():
@@ -179,13 +177,20 @@ def get_vector_store():
     if _vector_store is None:
         from langchain_classic.vectorstores import FAISS
         em = get_embedding_model()
+        metadata_ok = VECTOR_STORE_DIR.exists() and index_metadata_matches(VECTOR_STORE_DIR)
+        if VECTOR_STORE_DIR.exists() and not metadata_ok:
+            logger.warning(
+                "Document vector index is stale for active embedding model %s; "
+                "new writes will start a compatible index until documents are rebuilt.",
+                describe_active_embedding(),
+            )
         _vector_store = (
             FAISS.load_local(
                 str(VECTOR_STORE_DIR),
                 embeddings=em,
                 allow_dangerous_deserialization=True,
             )
-            if VECTOR_STORE_DIR.exists()
+            if metadata_ok
             else FAISS.from_texts([" "], embedding=em)
         )
     return _vector_store
@@ -219,6 +224,7 @@ def load_and_vectorize_document(file_path, skip_if_processed=True, display_name=
         vs = get_vector_store()
         vs.add_documents(chunks)
         vs.save_local(str(VECTOR_STORE_DIR))
+        write_index_metadata(VECTOR_STORE_DIR)
         # Mark as processed using the display name
         save_processed_file(record_name)
         return
@@ -249,9 +255,109 @@ def load_document_text(file_path: str) -> tuple[str, str]:
     if not parts:
         raise ValueError(f"No text content found in: {file_path}")
     full_text = "\n\n".join(parts)
-    # Strip UTF-16 surrogates that can appear in PDF text extraction —
+    # Strip UTF-16 surrogates that can appear in PDF text extraction -
     # they crash orjson serialisation downstream (NiceGUI socketio emit).
     full_text = full_text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
     title = p.stem  # filename without extension
     return full_text, title
-    
+
+
+def document_vector_status() -> dict[str, Any]:
+    """Return display-safe status for the document FAISS index."""
+    active = active_embedding_metadata()
+    return {
+        "exists": VECTOR_STORE_DIR.exists(),
+        "stale": VECTOR_STORE_DIR.exists() and not index_metadata_matches(VECTOR_STORE_DIR, active),
+        "stored": read_index_metadata(VECTOR_STORE_DIR),
+        "active": active,
+        "active_label": describe_active_embedding(),
+    }
+
+
+def release_document_embedding_resources(reason: str = "document work complete") -> None:
+    """Release cached vector and embedding resources after heavyweight work."""
+    global _vector_store
+    if reason != "embedding settings changed" and not get_embedding_config().get("auto_unload", True):
+        return
+    _vector_store = None
+    release_embedding_resources(reason)
+
+
+def rebuild_vector_store_from_vault() -> int:
+    """Rebuild the document FAISS index from wiki vault raw document copies."""
+    global _vector_store
+    from langchain_classic.vectorstores import FAISS
+
+    try:
+        import wiki_vault
+
+        raw_dir = wiki_vault.get_vault_path() / "raw"
+    except Exception:
+        raw_dir = DATA_DIR / "vault" / "raw"
+    if not raw_dir.exists():
+        raise FileNotFoundError("No vault/raw document copies were found to rebuild from.")
+    files = [
+        path for path in sorted(raw_dir.iterdir())
+        if path.is_file() and path.suffix.lower() in DocumentLoader.supported_file_types
+    ]
+    if not files:
+        raise FileNotFoundError("No supported document files were found in vault/raw.")
+
+    all_chunks = []
+    indexed_names: list[str] = []
+    for path in files:
+        loader = DocumentLoader.supported_file_types[path.suffix.lower()](str(path))
+        pages = [
+            doc
+            for doc in loader.load()
+            if isinstance(doc.page_content, str) and doc.page_content.strip()
+        ]
+        if not pages:
+            logger.warning("No valid text content found in vault copy: %s", path)
+            continue
+        chunks = text_splitter.split_documents(pages)
+        for chunk in chunks:
+            chunk.metadata["source"] = path.name
+        all_chunks.extend(chunks)
+        indexed_names.append(path.name)
+
+    if not all_chunks:
+        raise ValueError("No valid text content was found in vault/raw documents.")
+
+    tmp_dir = VECTOR_STORE_DIR.with_name(f"{VECTOR_STORE_DIR.name}_rebuild_tmp")
+    backup_dir = VECTOR_STORE_DIR.with_name(f"{VECTOR_STORE_DIR.name}_rebuild_backup")
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir)
+
+    vs = FAISS.from_documents(all_chunks, embedding=get_embedding_model())
+    vs.save_local(str(tmp_dir))
+    write_index_metadata(tmp_dir)
+
+    try:
+        if VECTOR_STORE_DIR.exists():
+            shutil.move(str(VECTOR_STORE_DIR), str(backup_dir))
+        shutil.move(str(tmp_dir), str(VECTOR_STORE_DIR))
+        PROCESSED_FILES_PATH.write_text(json.dumps(indexed_names, indent=2), encoding="utf-8")
+        _vector_store = vs
+    except Exception:
+        logger.exception("Failed to swap rebuilt document vector store into place")
+        if VECTOR_STORE_DIR.exists():
+            shutil.rmtree(VECTOR_STORE_DIR, ignore_errors=True)
+        if backup_dir.exists():
+            shutil.move(str(backup_dir), str(VECTOR_STORE_DIR))
+        raise
+    finally:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
+        release_document_embedding_resources("document vector rebuild")
+
+    logger.info(
+        "Rebuilt document vector store with %d document(s), %d chunk(s)",
+        len(indexed_names),
+        len(all_chunks),
+    )
+    return len(indexed_names)

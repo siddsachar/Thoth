@@ -61,6 +61,8 @@ Source: "..\tasks.py";                 DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\models.py";                DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\data_reader.py";            DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\documents.py";             DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\embedding_config.py";      DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\embedding_providers.py";   DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\threads.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\api_keys.py";              DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app_port.py";              DestDir: "{app}\app"; Flags: ignoreversion

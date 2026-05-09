@@ -654,6 +654,16 @@ def run_extraction(on_status=None, exclude_thread_ids: set[str] | None = None) -
             kg.rebuild_index()
     except Exception as exc:
         logger.debug("Post-extraction rebuild_index failed: %s", exc)
+    finally:
+        if total_saved:
+            try:
+                from embedding_config import get_embedding_config
+                from embedding_providers import release_embedding_resources
+
+                if get_embedding_config().get("auto_unload", True):
+                    release_embedding_resources("memory extraction complete")
+            except Exception:
+                logger.debug("Memory embedding resource release failed", exc_info=True)
 
     # Single wiki vault rebuild after ALL threads processed (not per-entity)
     if total_saved:

@@ -86,6 +86,8 @@ def test_stability_source_contracts_are_wired():
     settings_src = Path("ui/settings.py").read_text(encoding="utf-8")
     catalog_src = Path("ui/model_catalog.py").read_text(encoding="utf-8")
     dialog_src = Path("ui/task_dialog.py").read_text(encoding="utf-8")
+    graph_src = Path("ui/graph_panel.py").read_text(encoding="utf-8")
+    discord_src = Path("channels/discord_channel.py").read_text(encoding="utf-8")
     installer_src = Path("installer/thoth_setup.iss").read_text(encoding="utf-8")
 
     assert "setup_stability_monitoring()" in app_src
@@ -100,11 +102,17 @@ def test_stability_source_contracts_are_wired():
     assert "save_workflow_draft" in dialog_src
     assert "Recovered unsaved draft" in dialog_src
     assert "safe_timer(2.0, _autosave_draft)" in dialog_src
+    assert "physicsTimer" in graph_src
+    assert "window._thothGraph !== G" in graph_src
+    assert "G.network.setOptions({ physics: false })" in graph_src
     assert "_is_transient_stream_disconnect" in agent_src
     assert "provider stream disconnected" in agent_src
     assert "start_performance_monitor()" in app_src
     assert "schedule_idle_extraction" in app_src
     assert "cleanup_old_checkpoints" in app_src
+    assert "install_asyncio_exception_handler(loop)" in discord_src
+    assert "loop.run_until_complete(client.close())" in discord_src
+    assert "loop.shutdown_asyncgens()" in discord_src
     assert "stability.py" in installer_src
 
 

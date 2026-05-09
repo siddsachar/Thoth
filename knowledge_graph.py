@@ -33,6 +33,7 @@ import os
 import pathlib
 import re
 import sqlite3
+import time
 import uuid
 from collections import defaultdict
 from datetime import datetime
@@ -591,7 +592,10 @@ def _entity_text(entity: dict) -> str:
 def rebuild_index() -> None:
     """(Re)build the FAISS index from all entities in SQLite."""
     import faiss as _faiss
+    from embedding_config import write_index_metadata
+    from stability import log_performance_snapshot
 
+    started = time.perf_counter()
     entities = list_entities(limit=100_000)
     _VECTOR_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -602,6 +606,7 @@ def rebuild_index() -> None:
         with _faiss_lock:
             _faiss.write_index(index, str(_VECTOR_DIR / "index.faiss"))
             (_VECTOR_DIR / "id_map.json").write_text("[]")
+            write_index_metadata(_VECTOR_DIR)
         return
 
     emb = _get_embedding_model()
@@ -620,7 +625,13 @@ def rebuild_index() -> None:
         _faiss.write_index(index, str(_VECTOR_DIR / "index.faiss"))
         id_map = [e["id"] for e in entities]
         (_VECTOR_DIR / "id_map.json").write_text(json.dumps(id_map))
-    logger.info("Rebuilt FAISS index with %d entities", len(id_map))
+        write_index_metadata(_VECTOR_DIR)
+    logger.info(
+        "Rebuilt FAISS index with %d entities in %.3fs",
+        len(id_map),
+        time.perf_counter() - started,
+    )
+    log_performance_snapshot("memory-faiss-rebuild")
 
 
 def _upsert_index(entity_id: str) -> None:
@@ -635,6 +646,7 @@ def _upsert_index(entity_id: str) -> None:
     _VECTOR_DIR.mkdir(parents=True, exist_ok=True)
     index_path = _VECTOR_DIR / "index.faiss"
     map_path = _VECTOR_DIR / "id_map.json"
+    from embedding_config import index_metadata_matches, write_index_metadata
 
     entity = get_entity(entity_id)
     if not entity:
@@ -649,10 +661,12 @@ def _upsert_index(entity_id: str) -> None:
 
     with _faiss_lock:
         # Load existing index, or create empty one
-        if index_path.exists() and map_path.exists():
+        if index_path.exists() and map_path.exists() and index_metadata_matches(_VECTOR_DIR):
             index = _faiss.read_index(str(index_path))
             id_map: list[str] = json.loads(map_path.read_text())
         else:
+            if index_path.exists() and not index_metadata_matches(_VECTOR_DIR):
+                logger.warning("Memory FAISS index is stale for active embedding model; starting compatible index")
             dim = vec.shape[1]
             index = _faiss.IndexFlatIP(dim)
             id_map = []
@@ -681,6 +695,7 @@ def _upsert_index(entity_id: str) -> None:
 
         _faiss.write_index(index, str(index_path))
         map_path.write_text(json.dumps(id_map))
+        write_index_metadata(_VECTOR_DIR)
 
 
 def _remove_from_index(entity_id: str) -> None:
@@ -1135,8 +1150,9 @@ def semantic_search(
 
     index_path = _VECTOR_DIR / "index.faiss"
     map_path = _VECTOR_DIR / "id_map.json"
+    from embedding_config import index_metadata_matches
 
-    if not index_path.exists() or not map_path.exists():
+    if not index_path.exists() or not map_path.exists() or not index_metadata_matches(_VECTOR_DIR):
         rebuild_index()
     if not index_path.exists():
         return []

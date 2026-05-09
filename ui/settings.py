@@ -6,6 +6,7 @@ Receives ``state`` and ``p`` explicitly.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import pathlib
@@ -76,7 +77,22 @@ def open_settings(
         _cloud_model_cache,
     )
     from vision import POPULAR_VISION_MODELS
-    from documents import load_processed_files, load_and_vectorize_document, reset_vector_store, remove_document
+    from documents import (
+        document_vector_status,
+        load_processed_files,
+        load_and_vectorize_document,
+        rebuild_vector_store_from_vault,
+        release_document_embedding_resources,
+        remove_document,
+        reset_vector_store,
+    )
+    from embedding_config import (
+        CLOUD_MODELS,
+        LOCAL_MODELS,
+        describe_active_embedding,
+        get_embedding_config,
+        save_embedding_config,
+    )
 
     # ── Recursive reopen helper ──
     def _reopen(tab: str = initial_tab):
@@ -219,18 +235,124 @@ def open_settings(
             "analyzed to extract entities into your knowledge graph and wiki vault."
         ).classes("text-grey-6 text-sm")
 
+        emb_cfg = get_embedding_config()
+        doc_status = document_vector_status()
+        local_options = {key: val["label"] for key, val in LOCAL_MODELS.items()}
+        cloud_options = {key: val["label"] for key, val in CLOUD_MODELS.items()}
+        with ui.column().classes("w-full gap-2 q-pa-sm rounded-borders q-mb-md").style(
+            "border: 1px solid rgba(148, 163, 184, 0.22);"
+        ):
+            with ui.row().classes("items-center justify-between w-full"):
+                ui.label("Embedding engine").classes("text-subtitle2")
+                ui.badge("Index rebuild required after changes", color="blue-grey").props("outline dense")
+            ui.label(
+                f"Current: {describe_active_embedding(emb_cfg)}. "
+                "Local models are private but use RAM; cloud models reduce local memory and send chunks to the provider."
+            ).classes("text-grey-6 text-xs")
+            if doc_status["stale"]:
+                ui.label(
+                    "Document vectors were built with a different embedding setting. Rebuild document vectors before relying on document search."
+                ).classes("text-warning text-xs")
+
+            provider_sel = ui.select(
+                label="Provider",
+                options={"local": "Local runtime model", "cloud": "Cloud embedding model"},
+                value=emb_cfg["provider"],
+            ).classes("w-full").props("dense outlined")
+            local_sel = ui.select(
+                label="Local model",
+                options=local_options,
+                value=emb_cfg["local_model"],
+            ).classes("w-full").props("dense outlined")
+            cloud_sel = ui.select(
+                label="Cloud model",
+                options=cloud_options,
+                value=emb_cfg["cloud_model"],
+            ).classes("w-full").props("dense outlined")
+            dimension_input = ui.number(
+                label="Dimension override",
+                value=emb_cfg.get("dimension"),
+                min=0,
+                step=1,
+            ).classes("w-full").props("dense outlined").tooltip("Leave blank or 0 for the model default.")
+            batch_input = ui.number(
+                label="Batch size",
+                value=emb_cfg.get("batch_size", 32),
+                min=1,
+                max=256,
+                step=1,
+            ).classes("w-full").props("dense outlined")
+            unload_switch = ui.switch("Auto-unload local embedding resources after heavy work", value=bool(emb_cfg.get("auto_unload", True)))
+            privacy_label = ui.label(
+                "Cloud embeddings send document chunks and memory text to the selected provider."
+            ).classes("text-warning text-xs")
+
+            def _sync_embedding_controls():
+                is_cloud = provider_sel.value == "cloud"
+                local_sel.visible = not is_cloud
+                cloud_sel.visible = is_cloud
+                privacy_label.visible = is_cloud
+
+            provider_sel.on("update:model-value", lambda _: _sync_embedding_controls())
+            _sync_embedding_controls()
+
+            def _save_embedding_settings():
+                save_embedding_config({
+                    "provider": provider_sel.value,
+                    "local_model": local_sel.value,
+                    "cloud_model": cloud_sel.value,
+                    "dimension": int(dimension_input.value or 0) or None,
+                    "batch_size": int(batch_input.value or 32),
+                    "auto_unload": bool(unload_switch.value),
+                })
+                release_document_embedding_resources("embedding settings changed")
+                ui.notify("Embedding settings saved. Rebuild indexes when ready.", type="positive")
+                _reopen("Documents")
+
+            async def _rebuild_document_vectors():
+                n = ui.notification("Rebuilding document vectors...", type="ongoing", spinner=True, timeout=None)
+                try:
+                    count = await run.io_bound(rebuild_vector_store_from_vault)
+                    n.dismiss()
+                    ui.notify(f"Rebuilt document vectors for {count} document(s)", type="positive")
+                    _reopen("Documents")
+                except Exception as exc:
+                    n.dismiss()
+                    logger.error("Document vector rebuild failed", exc_info=True)
+                    ui.notify(f"Document vector rebuild failed: {exc}", type="negative", close_button=True)
+
+            async def _rebuild_memory_vectors():
+                n = ui.notification("Rebuilding memory vectors...", type="ongoing", spinner=True, timeout=None)
+                try:
+                    import knowledge_graph as kg
+
+                    await run.io_bound(kg.rebuild_index)
+                    n.dismiss()
+                    ui.notify("Memory vectors rebuilt", type="positive")
+                except Exception as exc:
+                    n.dismiss()
+                    logger.error("Memory vector rebuild failed", exc_info=True)
+                    ui.notify(f"Memory vector rebuild failed: {exc}", type="negative", close_button=True)
+
+            with ui.row().classes("items-center gap-2"):
+                ui.button("Save embedding settings", icon="save", on_click=_save_embedding_settings).props("flat dense no-caps color=primary")
+                ui.button("Rebuild document vectors", icon="refresh", on_click=_rebuild_document_vectors).props("flat dense no-caps")
+                ui.button("Rebuild memory vectors", icon="hub", on_click=_rebuild_memory_vectors).props("flat dense no-caps")
+
         async def _handle_doc_upload(e: events.UploadEventArguments):
             name = e.file.name
             n = ui.notification(f"📄 Indexing {name}…", type="ongoing", spinner=True, timeout=None)
-            # Clear the upload widget file list immediately
-            doc_upload.reset()
-            data = await e.file.read()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=pathlib.Path(name).suffix) as tmp:
-                tmp.write(data)
-                tmp_path = tmp.name
+            tmp_path = None
             try:
+                data = await e.file.read()
+                if not data:
+                    raise ValueError(f"Uploaded file {name} is empty or could not be read")
+                with tempfile.NamedTemporaryFile(delete=False, suffix=pathlib.Path(name).suffix) as tmp:
+                    tmp.write(data)
+                    tmp_path = tmp.name
                 await run.io_bound(load_and_vectorize_document, tmp_path, True, name)
                 n.dismiss()
+                doc_upload.reset()
                 ui.notify(f"✅ {name} indexed", type="positive")
 
                 # Queue background knowledge extraction
@@ -244,12 +366,15 @@ def open_settings(
                     queue_extraction(str(staging_path), name)
                     ui.notify(f"🧠 Extracting knowledge from {name}…", type="info")
                 except Exception as exc:
-                    logger.warning("Failed to queue document extraction: %s", exc)
+                    logger.warning("Failed to queue document extraction for %s: %s", name, exc, exc_info=True)
             except Exception as exc:
                 n.dismiss()
+                logger.error("Document upload/index failed for %s", name, exc_info=True)
                 ui.notify(f"Failed: {exc}", type="negative")
             finally:
-                os.unlink(tmp_path)
+                if tmp_path:
+                    with contextlib.suppress(FileNotFoundError):
+                        os.unlink(tmp_path)
 
         doc_upload = ui.upload(
             label="Upload documents (PDF, DOCX, TXT, MD, HTML, EPUB)",

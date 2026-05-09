@@ -818,12 +818,24 @@ async def start_bot() -> bool:
             _bot_loop = loop
             asyncio.set_event_loop(loop)
             try:
+                from stability import install_asyncio_exception_handler
+
+                install_asyncio_exception_handler(loop)
+            except Exception:
+                pass
+            try:
                 loop.run_until_complete(client.start(bot_token))
             except asyncio.CancelledError:
                 pass
             except Exception as exc:
                 log.error("Discord bot error: %s", exc)
             finally:
+                try:
+                    if not client.is_closed():
+                        loop.run_until_complete(client.close())
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except Exception as exc:
+                    log.debug("Discord bot loop cleanup failed: %s", exc, exc_info=True)
                 loop.close()
 
         _bot_thread = threading.Thread(target=_run, daemon=True,

@@ -499,6 +499,13 @@ def extract_from_document(
         logger.error("Document extraction failed for %s: %s", display_name, exc)
         result["status"] = "error"
         result["error"] = str(exc)
+    finally:
+        try:
+            from documents import release_document_embedding_resources
+
+            release_document_embedding_resources("document extraction complete")
+        except Exception:
+            logger.debug("Document embedding resource release failed", exc_info=True)
 
     return result
 

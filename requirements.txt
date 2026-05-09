@@ -29,6 +29,7 @@ sentence-transformers
 huggingface_hub
 transformers
 tokenizers
+einops
 
 # ── Knowledge Graph ─────────────────────────────────────────────────────────
 networkx
