@@ -15,12 +15,13 @@ from __future__ import annotations
 import ipaddress
 import logging
 import sys
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from nicegui import run, ui
 
-from ui.state import AppState
+if TYPE_CHECKING:
+    from ui.state import AppState
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +103,17 @@ async def show_setup_wizard(
     from api_keys import set_key
     from agent import clear_agent_cache
     from ui.helpers import mark_setup_complete
+    from ui.onboarding_state import INTENT_OPTIONS, mark_onboarding_step, save_onboarding_profile
     from providers.selection import add_quick_choice_for_model
     from providers.custom import (
         endpoint_id_from_provider_id,
         refresh_custom_endpoint_models,
         save_custom_endpoint,
+    )
+    from providers.codex import (
+        codex_runtime_available,
+        list_codex_model_infos,
+        save_external_reference,
     )
 
     def _open_first_run_migration_wizard() -> None:
@@ -133,39 +140,26 @@ async def show_setup_wizard(
     )
 
     with setup_dlg:
-        with ui.card().classes("w-full max-w-4xl mx-auto q-pa-lg"):
+        with ui.card().classes("w-full max-w-4xl mx-auto q-pa-lg").style(
+            "border-radius: 10px;"
+        ):
+            selected_intents: set[str] = set()
+
             # ── Header ───────────────────────────────────────────────
-            ui.html(
-                '<div style="text-align:center;">'
-                '<h1 style="color: gold; margin-bottom: 0;">𓁟 Welcome to Thoth</h1>'
-                '</div>',
-                sanitize=False,
-            )
-            ui.label(
-                "Let's get your default mode, providers, and Quick Choices ready."
-            ).classes("text-center text-grey-6")
-
-            ui.separator()
-
-            ui.label("Import from an existing setup").classes("text-h6")
-            ui.label(
-                "Migration runs before provider setup so imported defaults and provider settings can shape the recommendations."
-            ).classes("text-grey-6 text-sm")
-            with ui.row().classes("w-full gap-2 q-my-sm"):
-                ui.button(
-                    "Open Migration Wizard",
-                    icon="move_up",
-                    on_click=_open_first_run_migration_wizard,
-                ).props("outline color=primary")
-                ui.button("Skip migration", icon="skip_next").props("flat color=grey")
+            with ui.row().classes("w-full items-center justify-between gap-3"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Welcome to Thoth").classes("text-h4 text-weight-medium")
+                    ui.label(
+                        "Connect one working model first. Everything else can wait."
+                    ).classes("text-grey-6 text-sm")
+                ui.badge("1 Model  ·  2 Import  ·  3 Ready", color="blue-grey").props("outline")
 
             ui.separator()
 
             # ── Setup Path Toggle ────────────────────────────────────
-            ui.label("Choose an AI account or local model").classes("text-h6")
+            ui.label("Connect your first model").classes("text-h6")
             ui.label(
-                "Choose Local if you have a GPU and want full privacy. "
-                "Choose Provider if you prefer using OpenAI, Claude, Gemini, xAI, or OpenRouter API keys."
+                "Pick the path you want to use first. Thoth only needs one working model to get started."
             ).classes("text-grey-6 text-sm")
 
             setup_path: dict[str, str | None] = {"mode": None}
@@ -192,13 +186,13 @@ async def show_setup_wizard(
                     _custom_section.visible = True
                     _update_finish()
 
-                ui.button("🖥️ Local (Ollama)", on_click=_pick_local).props(
+                ui.button("Local (Ollama)", icon="desktop_windows", on_click=_pick_local).props(
                     "color=primary outline"
                 ).classes("flex-grow")
-                ui.button("Providers (API key)", on_click=_pick_cloud).props(
+                ui.button("API providers", icon="key", on_click=_pick_cloud).props(
                     "color=cyan outline"
                 ).classes("flex-grow")
-                ui.button("Custom/Self-hosted", on_click=_pick_custom).props(
+                ui.button("Custom endpoint", icon="hub", on_click=_pick_custom).props(
                     "color=teal outline"
                 ).classes("flex-grow")
 
@@ -213,10 +207,7 @@ async def show_setup_wizard(
             cloud_done: dict[str, bool] = {"value": False}
             with _cloud_section:
                 ui.label(
-                    "Enter at least one provider API key. OpenAI gives direct access to GPT models. "
-                    "Anthropic gives direct access to Claude. Google AI gives direct access to Gemini. "
-                    "xAI gives direct access to Grok. MiniMax gives direct access to M2 models. "
-                    "OpenRouter gives access to 100+ models from all providers."
+                    "Use ChatGPT / Codex, or save one API key and fetch available models."
                 ).classes("text-grey-6 text-sm")
 
                 setup_openai_key = ui.input(
@@ -257,6 +248,52 @@ async def show_setup_wizard(
                     options=[],
                 ).classes("w-full").props("use-input input-debounce=300")
                 cloud_vision_select.visible = False
+
+                async def _use_codex_provider():
+                    cloud_status.text = "Checking ChatGPT / Codex provider..."
+                    cloud_status.visible = True
+                    try:
+                        if not codex_runtime_available():
+                            await run.io_bound(save_external_reference)
+                        if not codex_runtime_available():
+                            cloud_status.text = (
+                                "ChatGPT / Codex is not connected yet. Open Settings -> Providers "
+                                "to sign in, then return here."
+                            )
+                            cloud_done["value"] = False
+                            _update_finish()
+                            return
+                        infos = await run.io_bound(lambda: list_codex_model_infos(force_refresh=True))
+                    except Exception as exc:
+                        logger.warning("Codex setup check failed", exc_info=True)
+                        cloud_status.text = f"Could not use ChatGPT / Codex: {exc}"
+                        cloud_done["value"] = False
+                        _update_finish()
+                        return
+                    opts = {
+                        info.selection_ref: f"C {info.display_name or info.model_id}"
+                        for info in infos
+                        if getattr(info, "selection_ref", "")
+                    }
+                    if not opts:
+                        cloud_status.text = "No ChatGPT / Codex models were found."
+                        cloud_done["value"] = False
+                        _update_finish()
+                        return
+                    first = next(iter(opts))
+                    cloud_model_select.options = opts
+                    cloud_model_select.set_value(first)
+                    cloud_model_select.visible = True
+                    cloud_status.text = f"Found {len(opts)} ChatGPT / Codex model(s)"
+                    add_quick_choice_for_model(first, source="setup_default")
+                    cloud_done["value"] = True
+                    _update_finish()
+
+                ui.button(
+                    "Use ChatGPT / Codex",
+                    icon="login",
+                    on_click=_use_codex_provider,
+                ).props("outline color=blue-grey").classes("q-mb-sm")
 
                 async def _validate_cloud_keys():
                     oai_val = setup_openai_key.value.strip()
@@ -648,119 +685,88 @@ async def show_setup_wizard(
 
             ui.separator()
 
-            # ── Recommended Setup ────────────────────────────────────
-            ui.label("📋 Recommended Setup").classes("text-h6")
+            # ── Optional import ──────────────────────────────────────
+            ui.label("Import existing setup?").classes("text-h6")
             ui.label(
-                "After completing this wizard, head to Settings to get the most out of Thoth:"
+                "Bring over a previous setup now, or skip and import later from Settings."
             ).classes("text-grey-6 text-sm")
+            with ui.row().classes("w-full gap-2 q-my-sm"):
+                ui.button(
+                    "Open migration",
+                    icon="move_up",
+                    on_click=_open_first_run_migration_wizard,
+                ).props("outline color=primary")
+                ui.button(
+                    "Skip for now",
+                    icon="skip_next",
+                    on_click=lambda: ui.notify("Import skipped. You can run it later from Settings.", type="info"),
+                ).props("flat color=grey")
 
-            tips = [
-                (
-                    "🧠",
-                    "Memory & Knowledge Graph",
-                    "I build a personal knowledge graph from our conversations automatically — "
-                    "people, places, preferences, and their connections. "
-                    "You can also tell me things explicitly — 'Remember that my standup is at 9 AM.'",
-                ),
-                (
-                    "🎤",
-                    "Voice & Text-to-Speech",
-                    "Toggle the mic to talk to me — I'll transcribe with Whisper and respond conversationally. "
-                    "Enable TTS in Settings → Voice for spoken replies with 10 neural voices via Kokoro.",
-                ),
-                (
-                    "🧩",
-                    "Skills",
-                    "9 bundled instruction packs — Deep Research, Daily Briefing, Humanizer, and more. "
-                    "Enable them in Settings → Skills to shape how I think and respond.",
-                ),
-                (
-                    "⚡",
-                    "Tasks & Scheduling",
-                    "Create scheduled automations — daily briefings, email digests, research summaries. "
-                    "7 trigger types including cron expressions. Open the Tasks tab or just ask me.",
-                ),
-                (
-                    "🌐",
-                    "Browser Automation",
-                    "I can browse the web in a visible Chromium window — navigate, click, fill forms, "
-                    "and extract data. Logins persist across sessions.",
-                ),
-                (
-                    "📧",
-                    "Gmail & Calendar",
-                    "Settings → Tools → Gmail to connect your Google account. "
-                    "Once connected, I can read, draft and send emails, and manage calendar events.",
-                ),
-                (
-                    "📄",
-                    "Documents",
-                    "Settings → Documents to upload PDFs and text files as a persistent knowledge base. "
-                    "You can also attach files directly in chat with the 📎 button or drag-and-drop.",
-                ),
-                (
-                    "📋",
-                    "Habit & Health Tracker",
-                    "Log medications, symptoms, exercise, or any recurring activity through conversation. "
-                    "Streak analysis, trend charts, and CSV export — all stored locally.",
-                ),
-                (
-                    "🖥️",
-                    "Shell Access",
-                    "I can run shell commands on your machine — install packages, manage git repos, "
-                    "run scripts. Dangerous commands require your approval first.",
-                ),
-                (
-                    "📁",
-                    "Workspace Folder",
-                    "File operations are sandboxed to ~/Documents/Thoth (auto-created). "
-                    "I can read, write, and organize files there — including PDF, CSV, and Excel.",
-                ),
-                (
-                    "📡",
-                    "Channels",
-                    "Settings → Channels to connect Telegram or Email so I can respond even when the app is closed.",
-                ),
-            ]
-            # If provider path was selected, add a tips entry for Quick Choices
-            _is_cloud = setup_path["mode"] in {"cloud", "custom"}
-            if _is_cloud:
-                tips.insert(
-                    1,
-                    (
-                        "📌",
-                        "Quick Choices",
-                        "Head to Settings → Models to pin exact models. "
-                        "Quick Choices appear in chat, workflow, channel, and Designer pickers.",
-                    ),
-                )
-            for icon, title, desc in tips:
-                with ui.row().classes("items-start gap-2 q-py-xs"):
-                    ui.label(icon).classes("text-lg")
-                    with ui.column().classes("gap-0"):
-                        ui.label(title).classes("font-bold text-sm")
+            ui.separator()
+
+            # ── Ready / setup checklist ──────────────────────────────
+            ui.label("You're ready").classes("text-h6")
+            ui.label(
+                "Open Thoth now, or continue into the Setup Center for documents, workflows, Designer Studio, channels, accounts, tools, plugins, and voice."
+            ).classes("text-grey-6 text-sm")
+            ui.label("What should Setup Center prioritize?").classes("text-subtitle2 q-mt-sm")
+
+            def _toggle_intent(e, key: str) -> None:
+                if e.value:
+                    selected_intents.add(key)
+                else:
+                    selected_intents.discard(key)
+                save_onboarding_profile(list(selected_intents))
+
+            with ui.row().classes("w-full gap-2 q-my-sm flex-wrap"):
+                for intent_key, intent_label in INTENT_OPTIONS.items():
+                    ui.checkbox(
+                        intent_label,
+                        on_change=lambda e, key=intent_key: _toggle_intent(e, key),
+                    ).classes("text-sm")
+
+            with ui.row().classes("w-full gap-2 q-mt-sm"):
+                for icon, title, desc in (
+                    ("description", "Knowledge", "Upload docs and choose embeddings."),
+                    ("bolt", "Workflows", "Starter workflows are added disabled."),
+                    ("design_services", "Designer Studio", "Create decks, pages, and mockups."),
+                    ("forum", "Channels", "Connect messaging channels when ready."),
+                ):
+                    with ui.card().classes("q-pa-sm").style(
+                        "flex: 1 1 180px; min-width: 170px; border-radius: 8px; background: rgba(255,255,255,0.035);"
+                    ):
+                        ui.icon(icon).classes("text-blue-3")
+                        ui.label(title).classes("text-subtitle2")
                         ui.label(desc).classes("text-grey-6 text-xs")
 
             ui.separator()
 
             # ── Finish ───────────────────────────────────────────────
-            finish_btn = ui.button("Get Started →").props(
-                "color=primary size=lg"
-            ).classes("w-full")
+            with ui.row().classes("w-full gap-2"):
+                open_btn = ui.button("Open Thoth", icon="home").props(
+                    "color=primary size=lg"
+                ).classes("col")
+                continue_btn = ui.button("Continue setup", icon="checklist").props(
+                    "outline color=primary size=lg"
+                ).classes("col")
 
             def _update_finish():
                 if setup_path["mode"] is None:
-                    finish_btn.set_enabled(False)
+                    open_btn.set_enabled(False)
+                    continue_btn.set_enabled(False)
                 elif setup_path["mode"] == "cloud":
-                    finish_btn.set_enabled(cloud_done["value"])
+                    open_btn.set_enabled(cloud_done["value"])
+                    continue_btn.set_enabled(cloud_done["value"])
                 elif setup_path["mode"] == "custom":
-                    finish_btn.set_enabled(custom_done["value"])
+                    open_btn.set_enabled(custom_done["value"])
+                    continue_btn.set_enabled(custom_done["value"])
                 else:
-                    finish_btn.set_enabled(brain_done["value"])
+                    open_btn.set_enabled(brain_done["value"])
+                    continue_btn.set_enabled(brain_done["value"])
 
             _update_finish()
 
-            async def _finish_setup():
+            async def _finish_setup(*, continue_setup: bool = False):
                 if setup_path["mode"] == "cloud":
                     sel = cloud_model_select.value
                     if sel:
@@ -785,10 +791,20 @@ async def show_setup_wizard(
                             capabilities_snapshot=info.capability_snapshot(),
                         )
                         clear_agent_cache()
+                mark_onboarding_step("models")
+                if continue_setup:
+                    setattr(state, "open_setup_center_on_next_load", True)
                 mark_setup_complete()
                 setup_dlg.close()
                 await on_finish()
 
-            finish_btn.on_click(_finish_setup)
+            async def _open_thoth():
+                await _finish_setup(continue_setup=False)
+
+            async def _continue_setup():
+                await _finish_setup(continue_setup=True)
+
+            open_btn.on_click(_open_thoth)
+            continue_btn.on_click(_continue_setup)
 
     setup_dlg.open()

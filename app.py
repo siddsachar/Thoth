@@ -979,6 +979,19 @@ async def index():
 
     # ── Build initial view ───────────────────────────────────────────────
     _rebuild_main()
+    if getattr(state, "open_setup_center_on_next_load", False):
+        state.open_setup_center_on_next_load = False
+
+        def _open_setup_center_after_first_run() -> None:
+            from ui.onboarding_center import show_setup_center
+
+            show_setup_center(
+                open_settings=_open_settings,
+                rebuild_main=_rebuild_main,
+                state=state,
+            )
+
+        defer_ui(_open_setup_center_after_first_run)
     _update_token_counter()
 
 

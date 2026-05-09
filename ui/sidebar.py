@@ -239,8 +239,13 @@ def build_sidebar(
         # Help & Settings buttons
         with ui.row().classes("w-full justify-center items-center gap-1"):
             def _show_help():
-                state.show_onboarding = True
-                rebuild_main()
+                from ui.onboarding_center import show_setup_center
+
+                show_setup_center(
+                    open_settings=open_settings,
+                    rebuild_main=rebuild_main,
+                    state=state,
+                )
 
             ui.button("👋", on_click=_show_help).props("flat dense").style("font-size: 1.1rem;")
             ui.button(icon="settings", on_click=lambda: open_settings()).props(

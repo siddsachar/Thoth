@@ -41,6 +41,7 @@ class AppState:
         self.stop_event: threading.Event = threading.Event()
         self.pending_interrupt: dict | None = None
         self.show_onboarding: bool = False  # set by helpers._is_first_run()
+        self.open_setup_center_on_next_load: bool = False
         self.voice_enabled: bool = False
         self.voice_service = get_voice_service()
         self.tts_service = TTSService()

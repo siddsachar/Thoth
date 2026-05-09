@@ -111,6 +111,52 @@ def build_home(
                         sanitize=False,
                     )
 
+                try:
+                    from ui.onboarding_state import dismiss_onboarding_home_card, onboarding_progress
+
+                    _setup_progress = onboarding_progress()
+                    if (
+                        _setup_progress["setup_complete"]
+                        and not _setup_progress["complete"]
+                        and not _setup_progress["dismissed_home_card"]
+                    ):
+                        with ui.card().classes("w-full q-pa-md").style(
+                            "border: 1px solid rgba(96, 165, 250, 0.28);"
+                            "background: rgba(59, 130, 246, 0.08);"
+                            "border-radius: 8px;"
+                        ):
+                            with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                                ui.icon("waving_hand").classes("text-blue-3")
+                                with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
+                                    ui.label("Finish setting up Thoth").classes("text-subtitle2")
+                                    ui.label(
+                                        f"{_setup_progress['done']} of {_setup_progress['total']} setup areas handled. "
+                                        "You can resume anytime from the hello button in the sidebar."
+                                    ).classes("text-grey-5 text-sm")
+                                def _open_setup_center():
+                                    from ui.onboarding_center import show_setup_center
+
+                                    show_setup_center(
+                                        open_settings=open_settings,
+                                        rebuild_main=rebuild_main,
+                                        state=state,
+                                    )
+
+                                ui.button(
+                                    "Resume",
+                                    icon="checklist",
+                                    on_click=_open_setup_center,
+                                ).props("flat dense no-caps color=primary")
+                                ui.button(
+                                    icon="close",
+                                    on_click=lambda: (
+                                        dismiss_onboarding_home_card(),
+                                        rebuild_main(),
+                                    ),
+                                ).props("flat dense round size=sm")
+                except Exception:
+                    logger.debug("Failed to render onboarding progress card", exc_info=True)
+
                 # Task tiles
                 home_tasks = list_tasks()
 

@@ -2657,12 +2657,12 @@ try:
     else:
         record("FAIL", "task-engine: _DEFAULT_TASKS count", str(len(_DEFAULT_TASKS)))
 
-    # ── 24aa. _DEFAULT_TASKS has notify_only entry ───────────────────
-    _has_notify = any(t.get("notify_only") for t in _DEFAULT_TASKS)
-    if _has_notify:
-        record("PASS", "task-engine: _DEFAULT_TASKS includes notify_only template")
+    # ── 24aa. _DEFAULT_TASKS are disabled manual templates ───────────
+    _manual_disabled = all(not t.get("schedule") and t.get("enabled") is False for t in _DEFAULT_TASKS)
+    if _manual_disabled:
+        record("PASS", "task-engine: _DEFAULT_TASKS are disabled manual templates")
     else:
-        record("FAIL", "task-engine: _DEFAULT_TASKS notify_only", "none found")
+        record("FAIL", "task-engine: _DEFAULT_TASKS manual disabled", "scheduled/enabled template found")
 
     # ── 24ab. _job_id deterministic ──────────────────────────────────
     if _job_id("abc123") == "task_abc123":

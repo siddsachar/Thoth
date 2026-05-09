@@ -360,6 +360,7 @@ def create_task(
     trigger: dict | None = None,
     tools_override: list[str] | None = None,
     channels: list[str] | None = None,
+    enabled: bool = True,
 ) -> str:
     """Create a new task and return its ID.
 
@@ -399,14 +400,14 @@ def create_task(
         "INSERT INTO tasks "
         "(id, name, description, icon, prompts, schedule, at, notify_only, "
         "notify_label, delivery_channel, delivery_target, model_override, "
-        "persistent_thread_id, delete_after_run, created_at, skills_override, "
+        "persistent_thread_id, delete_after_run, created_at, enabled, skills_override, "
         "steps, safety_mode, concurrency_group, trigger, tools_override, channels) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             task_id, name, description, icon, json.dumps(prompts),
             schedule, at, int(notify_only), notify_label,
             delivery_channel, delivery_target, model_override,
-            persistent_thread_id, int(delete_after_run), now,
+            persistent_thread_id, int(delete_after_run), now, int(enabled),
             json.dumps(skills_override) if skills_override else None,
             json.dumps(steps) if steps else "[]",
             safety_mode,
@@ -3928,7 +3929,7 @@ def generate_pipeline_mermaid(steps: list[dict]) -> str:
 
 # ── Default Templates ────────────────────────────────────────────────────────
 
-_DEFAULT_TASKS = [
+_LEGACY_DEFAULT_TASKS = [
     {
         "name": "Morning Briefing",
         "description": "News, weather, and today's calendar — delivered every morning",
@@ -3988,6 +3989,159 @@ _DEFAULT_TASKS = [
 ]
 
 
+_DEFAULT_TASKS = [
+    {
+        "name": "Daily Operating Brief",
+        "description": "Manual daily planning brief across calendar, weather, news, and priorities",
+        "icon": "🌅",
+        "complexity": "simple",
+        "steps": [
+            {
+                "type": "prompt",
+                "prompt": "Collect today's planning context. Check calendar, weather, and current news if those tools/accounts are configured. "
+                "Also consider any known priorities from memory. If something is not configured, mark it as unavailable and continue.",
+            },
+            {
+                "type": "prompt",
+                "prompt": "Create a concise daily operating brief from the collected context. Include: schedule, weather, important external context, "
+                "top 3 priorities, risks, and a recommended first action.\n\nCollected context:\n{{prev_output}}",
+            },
+        ],
+        "schedule": None,
+        "enabled": False,
+    },
+    {
+        "name": "Document Decision Brief",
+        "description": "Manual document review for a chosen topic, decision, or question",
+        "icon": "📄",
+        "complexity": "simple",
+        "steps": [
+            {
+                "type": "prompt",
+                "prompt": "Search uploaded documents and the knowledge base for material related to <topic-or-decision>. "
+                "Extract the most relevant facts, quotes or source names, open questions, and contradictions. "
+                "Before enabling this workflow, replace <topic-or-decision> with the decision or question to investigate.",
+            },
+            {
+                "type": "prompt",
+                "prompt": "Turn the extracted material into a decision brief. Include: answer/recommendation, supporting evidence, risks, "
+                "open questions, and next actions.\n\nExtracted material:\n{{prev_output}}",
+            },
+        ],
+        "schedule": None,
+        "enabled": False,
+    },
+    {
+        "name": "Launch Content Pack",
+        "description": "Manual content pack for a product, project, or announcement",
+        "icon": "✍️",
+        "complexity": "simple",
+        "steps": [
+            {
+                "type": "prompt",
+                "prompt": "Create a positioning brief for <product-or-project> aimed at <audience>. "
+                "Before enabling this workflow, replace the placeholders with the product/project and audience. "
+                "Include core value proposition, proof points, objections, and tone guidance.",
+            },
+            {
+                "type": "prompt",
+                "prompt": "Using the positioning brief, draft a reusable launch content pack: short announcement, email draft, social post, "
+                "landing page hero copy, and 5 FAQ bullets.\n\nPositioning brief:\n{{prev_output}}",
+            },
+        ],
+        "schedule": None,
+        "enabled": False,
+    },
+    {
+        "name": "Research Pipeline With Review",
+        "description": "Advanced manual research pipeline with source extraction and approval",
+        "icon": "🔬",
+        "complexity": "advanced",
+        "schedule": None,
+        "enabled": False,
+        "steps": [
+            {
+                "type": "prompt",
+                "prompt": "Research <topic> for <audience>. Before enabling this workflow, replace <topic> and <audience>. "
+                "Find credible, recent sources and capture the strongest facts, disagreements, and source links.",
+            },
+            {
+                "type": "prompt",
+                "prompt": "Turn the research into a structured brief: executive summary, key evidence, "
+                "risks/unknowns, and recommended next steps. Include citations or source names where available.\n\n"
+                "Prior research:\n{{prev_output}}",
+            },
+            {
+                "type": "approval",
+                "message": "Review the research brief before Thoth prepares the final shareable report.",
+                "timeout_minutes": 120,
+            },
+            {
+                "type": "prompt",
+                "prompt": "Prepare the final shareable research report based on the approved brief. "
+                "Keep it concise, practical, and source-aware.\n\nApproved brief:\n{{prev_output}}",
+            },
+        ],
+    },
+    {
+        "name": "Opportunity Monitor",
+        "description": "Advanced manual scan with relevance gate and notification step",
+        "icon": "📣",
+        "complexity": "advanced",
+        "schedule": None,
+        "enabled": False,
+        "steps": [
+            {
+                "type": "prompt",
+                "prompt": "Scan for opportunities related to <market-or-customer-segment>. Before enabling this workflow, replace the placeholder. "
+                "Look for leads, partnership openings, product ideas, grants, hiring signals, events, or customer pain points. "
+                "Return only opportunities that look actionable. If there are no actionable opportunities, say exactly: NO_ACTIONABLE_OPPORTUNITIES.",
+            },
+            {
+                "type": "condition",
+                "condition": "not_contains:NO_ACTIONABLE_OPPORTUNITIES",
+                "if_true": "",
+                "if_false": "end",
+            },
+            {
+                "type": "prompt",
+                "prompt": "Act as a specialist analyst and score the opportunities from the scan. For each one, "
+                "estimate relevance, urgency, effort, next action, and why it matters.\n\n"
+                "Scan output:\n{{prev_output}}",
+            },
+            {
+                "type": "notify",
+                "channel": "desktop",
+                "message": "Opportunity Monitor found actionable items. Open the workflow run to review the ranked opportunities.",
+            },
+        ],
+    },
+]
+
+
+def add_default_workflow_templates() -> int:
+    """Add any missing starter workflow templates as disabled manual workflows."""
+    existing_names = {str(t.get("name") or "") for t in list_tasks()}
+    created = 0
+    for t in _DEFAULT_TASKS:
+        if t["name"] in existing_names:
+            continue
+        create_task(
+            name=t["name"],
+            prompts=t.get("prompts", []),
+            description=t.get("description", ""),
+            icon=t.get("icon", "⚡"),
+            schedule=t.get("schedule"),
+            notify_only=t.get("notify_only", False),
+            notify_label=t.get("notify_label", ""),
+            steps=t.get("steps"),
+            enabled=t.get("enabled", False),
+            channels=t.get("channels"),
+        )
+        created += 1
+    return created
+
+
 def seed_default_tasks() -> None:
     """Insert default task templates on first-ever run only.
 
@@ -4011,6 +4165,9 @@ def seed_default_tasks() -> None:
             schedule=t.get("schedule"),
             notify_only=t.get("notify_only", False),
             notify_label=t.get("notify_label", ""),
+            steps=t.get("steps"),
+            enabled=t.get("enabled", False),
+            channels=t.get("channels"),
         )
     open(_MARKER, "w").close()
     logger.info("Seeded %d default tasks", len(_DEFAULT_TASKS))

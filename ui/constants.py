@@ -15,53 +15,49 @@ _WELCOME_BODY = """\
 
 ---
 
-🤖 **Agent** — I autonomously pick from 23 tools to answer your questions — search the web, read files, send emails, check your calendar, and more.
+🤖 **Agent workspace** — Chat, reason, browse, read files, use tools, and work across your local app state.
 
-🧠 **Memory** — I build a personal knowledge graph from our conversations — people, places, preferences, and their connections — and remember across sessions.
+🧠 **Knowledge** — Build memory from conversations, upload documents, search your knowledge graph, and choose local or cloud embeddings.
 
-🧩 **Skills** — 9 built-in instruction packs (Deep Research, Daily Briefing, Humanizer, and more). Enable them in Settings → Skills to shape how I respond.
+⚡ **Workflows** — Run manual or scheduled background agents. Starter workflows are disabled until you review and enable them.
 
-⚡ **Tasks** — Create scheduled automations — daily briefings, email digests, research summaries — from the Tasks tab or just ask.
+🎨 **Designer Studio** — Create decks, documents, landing pages, app mockups, and storyboards from briefs or templates.
 
-🌐 **Browser** — I can browse the web in a visible Chromium window — navigate, click, fill forms, and extract data. Logins persist across sessions.
+🌐 **Browser & tools** — Use visible browser automation, search, files, shell, Gmail, Calendar, MCP servers, plugins, and skills when configured.
 
-🎤 **Voice** — Toggle the mic to talk hands-free. I can speak back too — all processed locally, never sent to the cloud.
+🎤 **Voice & vision** — Talk hands-free, hear spoken replies, and ask questions about your camera or screen.
 
-👁️ **Vision** — I can see your webcam or screen and answer questions about what's there.
-
-📄 **Documents** — Upload PDFs and files as a persistent knowledge base, or attach them directly in chat with 📎.
-
-📬 **Channels** — Connect Telegram or Email so I can respond to messages even when the app window is closed.
+📬 **Channels** — Connect Telegram, WhatsApp, Discord, Slack, or SMS. Workflow run status always remains available in the web app.
 
 ---
 
-⚙️ Head to **Settings** to connect accounts and explore options. Just type or speak — I'll figure out which tools to use.
+⚙️ Use **Settings** or the sidebar hello button to finish setup anytime. Just type what you want done — I'll pick the useful tools.
 """
 
 
 def welcome_message(cloud: bool = False) -> str:
     if cloud:
         header = (
-            "👋 **Welcome to Thoth — your AI assistant.**\n\n"
-            "Your model runs in the cloud, but your conversations, "
-            "memories, and files are stored locally on your machine."
+            "👋 **Welcome to Thoth — your personal AI workspace.**\n\n"
+            "Your selected model runs in the cloud, while Thoth stores your "
+            "conversations, memory, documents, workflows, and settings locally."
         )
     else:
         header = (
-            "👋 **Welcome to Thoth — your private AI assistant.**\n\n"
-            "Everything runs locally on your machine. Your conversations, "
-            "memories, and files never leave your computer."
+            "👋 **Welcome to Thoth — your private AI workspace.**\n\n"
+            "Your selected model runs locally. Conversations, memory, documents, "
+            "workflows, and settings stay on this machine unless you connect external services."
         )
     return header + _WELCOME_BODY
 
 
 EXAMPLE_PROMPTS = [
-    "What's the weather this week?",
-    "Summarize the latest AI research papers",
-    "What do you remember about me?",
-    "Create a daily morning briefing task",
-    "Read and summarize report.pdf from my workspace",
-    "What am I looking at? (with camera)",
+    "Summarize my latest documents and suggest next actions",
+    "Create a disabled workflow for a weekly research briefing",
+    "Draft a landing page in Designer Studio for a new product",
+    "What do you remember about my current projects?",
+    "Research the latest AI agent trends and cite sources",
+    "Check my upcoming calendar and prepare a daily plan",
 ]
 
 # ═════════════════════════════════════════════════════════════════════════════

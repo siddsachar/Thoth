@@ -217,6 +217,8 @@ Source: "..\ui\home.py";               DestDir: "{app}\app\ui"; Flags: ignorever
 Source: "..\ui\mcp_settings.py";       DestDir: "{app}\app\ui"; Flags: ignoreversion
 Source: "..\ui\migration_wizard.py";   DestDir: "{app}\app\ui"; Flags: ignoreversion
 Source: "..\ui\model_catalog.py";      DestDir: "{app}\app\ui"; Flags: ignoreversion
+Source: "..\ui\onboarding_center.py";  DestDir: "{app}\app\ui"; Flags: ignoreversion
+Source: "..\ui\onboarding_state.py";   DestDir: "{app}\app\ui"; Flags: ignoreversion
 Source: "..\ui\provider_settings.py";  DestDir: "{app}\app\ui"; Flags: ignoreversion
 Source: "..\ui\render.py";             DestDir: "{app}\app\ui"; Flags: ignoreversion
 Source: "..\ui\settings.py";           DestDir: "{app}\app\ui"; Flags: ignoreversion
