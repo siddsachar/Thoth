@@ -104,7 +104,12 @@ async def show_setup_wizard(
     from api_keys import set_key
     from agent import clear_agent_cache
     from ui.helpers import mark_setup_complete
-    from ui.onboarding_state import INTENT_OPTIONS, mark_onboarding_step, save_onboarding_profile
+    from ui.onboarding_state import (
+        INTENT_OPTIONS,
+        mark_onboarding_step,
+        request_setup_center_on_next_load,
+        save_onboarding_profile,
+    )
     from providers.selection import add_quick_choice_for_model
     from providers.custom import (
         endpoint_id_from_provider_id,
@@ -910,6 +915,7 @@ async def show_setup_wizard(
                 mark_onboarding_step("models")
                 if continue_setup:
                     setattr(state, "open_setup_center_on_next_load", True)
+                    request_setup_center_on_next_load()
                 mark_setup_complete()
                 setup_dlg.close()
                 await on_finish()

@@ -24,12 +24,17 @@ _INTENT_STEP_PRIORITY: dict[str, tuple[str, ...]] = {
 }
 
 
-def _ordered_setup_steps(progress: dict) -> list[tuple[str, dict[str, str]]]:
+def _priority_steps_for_profile(profile: list[str]) -> list[str]:
     priority: list[str] = []
-    for intent in progress.get("profile") or []:
+    for intent in profile:
         for step in _INTENT_STEP_PRIORITY.get(str(intent), ()):
             if step in SETUP_STEPS and step not in priority:
                 priority.append(step)
+    return priority
+
+
+def _ordered_setup_steps(progress: dict) -> list[tuple[str, dict[str, str]]]:
+    priority = _priority_steps_for_profile(progress.get("profile") or [])
     ordered = priority + [step for step in SETUP_STEPS if step not in priority]
     return [(step, SETUP_STEPS[step]) for step in ordered]
 
@@ -82,6 +87,7 @@ def show_setup_center(
     progress = onboarding_progress()
     completed = set(progress["completed_steps"])
     skipped = set(progress["skipped_steps"])
+    priority_steps = set(_priority_steps_for_profile(progress.get("profile") or []))
 
     def _refresh(dialog) -> None:
         dialog.close()
@@ -112,6 +118,16 @@ def show_setup_center(
                             f"{progress['done']} of {progress['total']} handled",
                             color="blue-grey",
                         ).props("outline")
+                    if priority_steps:
+                        priority_titles = [
+                            SETUP_STEPS[step]["title"]
+                            for step, _meta in _ordered_setup_steps(progress)
+                            if step in priority_steps
+                        ]
+                        ui.label(
+                            f"Recommended from your choices: {', '.join(priority_titles)}. "
+                            "All setup areas remain available."
+                        ).classes("text-grey-6 text-sm")
 
                     with ui.element("div").classes("w-full").style(
                         "display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;"
@@ -119,8 +135,17 @@ def show_setup_center(
                         for step, meta in _ordered_setup_steps(progress):
                             is_done = step in completed
                             is_skipped = step in skipped
+                            is_priority = step in priority_steps
                             status = "Done" if is_done else "Skipped" if is_skipped else "Open"
-                            color = "#22c55e" if is_done else "#94a3b8" if is_skipped else "#f59e0b"
+                            color = (
+                                "#22c55e"
+                                if is_done
+                                else "#94a3b8"
+                                if is_skipped
+                                else "#38bdf8"
+                                if is_priority
+                                else "#f59e0b"
+                            )
                             with ui.card().classes("q-pa-md").style(
                                 "border-radius: 8px; background: rgba(255,255,255,0.035); "
                                 f"border: 1px solid {color}55;"
@@ -130,7 +155,13 @@ def show_setup_center(
                                     with ui.column().classes("gap-1").style("min-width: 0; flex: 1;"):
                                         with ui.row().classes("w-full items-center justify-between gap-2"):
                                             ui.label(meta["title"]).classes("text-subtitle1 text-weight-medium")
-                                            ui.badge(status, color="green" if is_done else "grey" if is_skipped else "orange")
+                                            with ui.row().classes("items-center gap-1"):
+                                                if is_priority and not is_done and not is_skipped:
+                                                    ui.badge("Recommended", color="light-blue").props("outline")
+                                                ui.badge(
+                                                    status,
+                                                    color="green" if is_done else "grey" if is_skipped else "orange",
+                                                )
                                         ui.label(meta["description"]).classes("text-grey-6 text-sm")
 
                                 with ui.row().classes("w-full items-center justify-end gap-1 q-mt-sm"):

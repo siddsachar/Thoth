@@ -646,7 +646,10 @@ async def index():
     if not is_setup_complete():
         async def _on_wizard_finish():
             state.current_model = get_current_model()
-            ui.navigate.to("/")
+            if getattr(state, "open_setup_center_on_next_load", False):
+                ui.navigate.reload()
+            else:
+                ui.navigate.to("/")
 
         await show_setup_wizard(state, on_finish=_on_wizard_finish)
         return
@@ -979,19 +982,29 @@ async def index():
 
     # ── Build initial view ───────────────────────────────────────────────
     _rebuild_main()
-    if getattr(state, "open_setup_center_on_next_load", False):
+    try:
+        from ui.onboarding_state import consume_setup_center_on_next_load
+
+        should_open_setup_center = consume_setup_center_on_next_load()
+    except Exception:
+        logger.exception("Failed to consume setup center launch request")
+        should_open_setup_center = False
+    should_open_setup_center = bool(getattr(state, "open_setup_center_on_next_load", False)) or should_open_setup_center
+    if should_open_setup_center:
         state.open_setup_center_on_next_load = False
+        client = ui.context.client
 
         def _open_setup_center_after_first_run() -> None:
             from ui.onboarding_center import show_setup_center
 
-            show_setup_center(
-                open_settings=_open_settings,
-                rebuild_main=_rebuild_main,
-                state=state,
-            )
+            with client:
+                show_setup_center(
+                    open_settings=_open_settings,
+                    rebuild_main=_rebuild_main,
+                    state=state,
+                )
 
-        defer_ui(_open_setup_center_after_first_run)
+        defer_ui(_open_setup_center_after_first_run, delay=0.15)
     _update_token_counter()
 
 

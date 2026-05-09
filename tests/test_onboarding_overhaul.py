@@ -28,6 +28,7 @@ def test_onboarding_state_tracks_profile_steps_and_dismissal(monkeypatch):
     onboarding.save_onboarding_profile(["workflows", "designer", "missing", "workflows"])
     onboarding.mark_onboarding_step("models")
     onboarding.mark_onboarding_step("channels", skipped=True)
+    onboarding.request_setup_center_on_next_load()
     onboarding.dismiss_onboarding_home_card()
 
     state = onboarding.get_onboarding_state()
@@ -38,6 +39,8 @@ def test_onboarding_state_tracks_profile_steps_and_dismissal(monkeypatch):
     assert state["completed_steps"] == ["models"]
     assert state["skipped_steps"] == ["channels"]
     assert state["dismissed_home_card"] is True
+    assert onboarding.consume_setup_center_on_next_load() is True
+    assert onboarding.consume_setup_center_on_next_load() is False
     assert progress["done"] == 2
     assert progress["total"] == len(onboarding.SETUP_STEPS)
     assert "models" not in progress["remaining_steps"]
@@ -147,11 +150,18 @@ def test_existing_users_are_not_reseeded_automatically(monkeypatch):
 
 
 def test_setup_center_orders_steps_by_profile_intent():
-    from ui.onboarding_center import _ordered_setup_steps
+    from ui.onboarding_center import _ordered_setup_steps, _priority_steps_for_profile
 
     ordered = [step for step, _meta in _ordered_setup_steps({"profile": ["designer", "workflows"]})]
 
     assert ordered[:4] == ["designer", "knowledge", "workflows", "channels"]
+    assert _priority_steps_for_profile(["designer", "workflows"]) == [
+        "designer",
+        "knowledge",
+        "workflows",
+        "channels",
+        "accounts",
+    ]
     assert set(ordered) == {
         "models",
         "knowledge",
@@ -212,6 +222,7 @@ def test_onboarding_source_contracts_are_wired():
     assert setup_src.index("Import existing setup?") < setup_src.index("You're ready")
     assert "INTENT_OPTIONS" in setup_src
     assert "save_onboarding_profile" in setup_src
+    assert "request_setup_center_on_next_load" in setup_src
     assert "mark_onboarding_step(\"models\")" in setup_src
     assert "codex_runtime_available" in setup_src
     assert "start_codex_device_flow" in setup_src
@@ -223,9 +234,13 @@ def test_onboarding_source_contracts_are_wired():
     assert "Open Settings -> Providers" not in setup_src
     assert "save_external_reference" not in setup_src
     assert "open_setup_center_on_next_load" in Path("app.py").read_text(encoding="utf-8")
+    assert "consume_setup_center_on_next_load" in Path("app.py").read_text(encoding="utf-8")
+    assert "ui.navigate.reload()" in Path("app.py").read_text(encoding="utf-8")
     assert "open_setup_center_on_next_load" in Path("ui/state.py").read_text(encoding="utf-8")
     assert "show_setup_center" in sidebar_src
     assert "state=state" in sidebar_src
+    assert "Recommended from your choices" in center_src
+    assert "Recommended" in center_src
     assert 'preferred_home_tab = "Designer"' in center_src
     assert "Finish setting up Thoth" in home_src
     assert "add_default_workflow_templates" in center_src

@@ -106,6 +106,23 @@ def save_onboarding_profile(profile: list[str]) -> None:
     save_app_config(cfg)
 
 
+def request_setup_center_on_next_load() -> None:
+    cfg = load_app_config()
+    cfg["onboarding_open_setup_center_on_next_load"] = True
+    cfg["onboarding_last_seen"] = datetime.now().isoformat()
+    save_app_config(cfg)
+
+
+def consume_setup_center_on_next_load() -> bool:
+    cfg = load_app_config()
+    should_open = bool(cfg.get("onboarding_open_setup_center_on_next_load"))
+    if should_open:
+        cfg["onboarding_open_setup_center_on_next_load"] = False
+        cfg["onboarding_last_seen"] = datetime.now().isoformat()
+        save_app_config(cfg)
+    return should_open
+
+
 def mark_onboarding_step(step: str, *, skipped: bool = False) -> None:
     if step not in SETUP_STEPS:
         raise ValueError(f"Unknown onboarding step: {step}")
