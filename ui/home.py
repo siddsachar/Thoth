@@ -857,7 +857,7 @@ def _build_activity_content(container) -> None:
                         "flat dense size=sm"
                     ).classes("q-ml-sm text-xs")
             else:
-                ui.label("Disabled — enable in Settings → Knowledge.").classes("text-grey-6 text-sm q-ml-sm")
+                ui.label("Disabled — enable in Settings → Preferences.").classes("text-grey-6 text-sm q-ml-sm")
 
             # Channels
             ui.separator().classes("q-my-sm")

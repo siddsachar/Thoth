@@ -110,6 +110,7 @@ class GenerationState:
     captured_images_persist: list = field(default_factory=list)
     captured_videos: list = field(default_factory=list)
     captured_videos_persist: list = field(default_factory=list)
+    browser_step_count: int = 0
     interrupt_data: Any = None
     status: str = "streaming"  # streaming | done | error | stopped
     error: str = ""
@@ -165,6 +166,7 @@ class P:
     file_chips_row: ui.row = None       # type: ignore[assignment]
     chat_input: ui.textarea = None      # type: ignore[assignment]
     chat_header_label: ui.label = None  # type: ignore[assignment]
+    model_banner_container: Any = None
     settings_dlg: ui.dialog = None      # type: ignore[assignment]
     export_dlg: ui.dialog = None        # type: ignore[assignment]
     interrupt_dlg: ui.dialog = None     # type: ignore[assignment]

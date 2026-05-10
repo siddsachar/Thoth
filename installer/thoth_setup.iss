@@ -234,6 +234,7 @@ Source: "..\ui\command_center.py";     DestDir: "{app}\app\ui"; Flags: ignorever
 Source: "..\ui\entity_editor.py";      DestDir: "{app}\app\ui"; Flags: ignoreversion
 Source: "..\ui\terminal_widget.py";    DestDir: "{app}\app\ui"; Flags: ignoreversion
 Source: "..\ui\timer_utils.py";        DestDir: "{app}\app\ui"; Flags: ignoreversion
+Source: "..\ui\tool_trace.py";         DestDir: "{app}\app\ui"; Flags: ignoreversion
 Source: "..\ui\update_dialog.py";      DestDir: "{app}\app\ui"; Flags: ignoreversion
 ; ── Updater scripts (used by maintainers — also shipped for self-help) ─────
 Source: "..\scripts\append_sha_manifest.py"; DestDir: "{app}\app\scripts"; Flags: ignoreversion

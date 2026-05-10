@@ -714,20 +714,22 @@ def _build_conversation_html(thread_name: str, messages: list[dict],
         # Tool results (collapsed details)
         tool_results = msg.get("tool_results")
         if tool_results:
-            for tr in tool_results:
-                name = tr.get("name", "tool")
-                content = tr.get("content", "")
-                if len(content) > 3000:
-                    content = content[:3000] + "\n… (truncated)"
-                safe_content = (
-                    content.replace("&", "&amp;")
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-                )
+            from ui.tool_trace import display_tool_content, group_tool_results
+
+            for group in group_tool_results(tool_results):
                 parts.append(
-                    f'<details class="tool-block"><summary>✅ {name}</summary>'
-                    f"<pre>{safe_content}</pre></details>"
+                    f'<details class="tool-block"><summary>✅ {group.label}</summary>'
                 )
+                for idx, tr in enumerate(group.results, start=1):
+                    name = f"#{idx}" if group.count > 1 else group.name
+                    content = display_tool_content(tr.get("content", ""), limit=3000)
+                    safe_content = (
+                        content.replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                    )
+                    parts.append(f"<strong>{name}</strong><pre>{safe_content}</pre>")
+                parts.append("</details>")
 
         # Images — may be raw base64 or a filename persisted to the
         # per-thread media directory.  (See D1 refactor: once a thread

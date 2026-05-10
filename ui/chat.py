@@ -37,19 +37,16 @@ def build_chat(
     browse_file: Callable,
 ) -> None:
     """Render the full chat view for the current thread."""
-    from agent import clear_agent_cache, get_token_usage
+    from agent import clear_agent_cache
     from models import (
         get_current_model, is_cloud_model, get_cloud_provider,
-        get_model_max_context, get_user_context_size, CONTEXT_SIZE_LABELS,
     )
     from providers.selection import (
-        list_model_choice_options,
-        model_choice_value,
         model_id_from_choice_value,
         provider_display_label,
     )
     from threads import (
-        _save_thread_meta, _set_thread_model_override,
+        _save_thread_meta,
         get_thread_skills_override, set_thread_skills_override,
     )
     from tasks import get_running_tasks, stop_task
@@ -78,65 +75,7 @@ def build_chat(
         else:
             p.chat_header_label = ui.label(f"💬 {state.thread_name}").classes("text-h5 flex-grow")
 
-            # ── Model picker ─────────────────────────────────────────
-            _cur_mo = state.thread_model_override or ""
-
-            _cur_default = get_current_model()
-            _cur_default_value = model_choice_value(_cur_default)
-            _picker_opts = {"__default__": f"Default — {_cur_default}"}
-            for option in list_model_choice_options("chat", include_values=[_cur_mo] if _cur_mo else []):
-                value = str(option.get("value") or "")
-                if value and value != _cur_default_value:
-                    _picker_opts[value] = str(option.get("label") or value)
-
-            _MORE_MODELS_SENTINEL = "⚙️ More models…"
-            _picker_opts[_MORE_MODELS_SENTINEL] = _MORE_MODELS_SENTINEL
-
-            _cur_mo_value = model_choice_value(_cur_mo)
-            _picker_val = _cur_mo_value if _cur_mo_value and _cur_mo_value in _picker_opts else "__default__"
-
-            async def _on_model_pick(e):
-                val = e.value
-                if val == _MORE_MODELS_SENTINEL:
-                    e.sender.set_value(_picker_val)
-                    open_settings("Models")
-                    return
-                if val == "__default__":
-                    state.thread_model_override = ""
-                    _set_thread_model_override(state.thread_id, "")
-                    _switched_label = "default"
-                elif val in _picker_opts:
-                    state.thread_model_override = val
-                    _set_thread_model_override(state.thread_id, val)
-                    _switched_label = _picker_opts.get(val, val)
-                else:
-                    state.thread_model_override = ""
-                    _set_thread_model_override(state.thread_id, "")
-                    _switched_label = "default"
-                clear_agent_cache()
-                _eff = state.thread_model_override or get_current_model()
-                if _switched_label == "default":
-                    ui.notify(f"Switched to default model ({_eff})", type="info")
-                else:
-                    ui.notify(f"Switched to {_switched_label}", type="info")
-                _mmax = await run.io_bound(lambda: get_model_max_context(_eff))
-                _uval = get_user_context_size()
-                if _mmax is not None and _uval > _mmax:
-                    _ml = CONTEXT_SIZE_LABELS.get(_mmax, f"{_mmax:,}")
-                    _ul = CONTEXT_SIZE_LABELS.get(_uval, f"{_uval:,}")
-                    ui.notify(
-                        f"Context capped: {_eff} max is {_ml} (you selected {_ul}). "
-                        f"Trimming will use {_ml}.",
-                        type="warning", close_button=True, timeout=8000,
-                    )
-                rebuild_main()
-
-            ui.select(
-                options=_picker_opts, value=_picker_val,
-                on_change=_on_model_pick,
-            ).props('dense borderless use-input input-debounce=300').classes("text-sm").style(
-                "min-width: 200px; max-width: 320px;"
-            ).tooltip("Select model for this thread")
+            # Model selection now lives in the composer, matching Designer.
 
             # ── Per-thread skills override ───────────────────────────
             import skills as _skills_mod
@@ -207,31 +146,61 @@ def build_chat(
             ui.button(icon="download", on_click=open_export).props("flat round").tooltip("Export")
 
     # ── Cloud/local model banner ─────────────────────────────────────
-    _active_model = state.thread_model_override or get_current_model()
-    _is_active_cloud = is_cloud_model(_active_model)
-    if _is_active_cloud:
-        _prov = get_cloud_provider(_active_model) or "cloud"
-        _prov_label = provider_display_label(_prov)
-        _model_label = model_id_from_choice_value(_active_model)
-        with ui.row().classes("w-full items-center gap-2 q-px-sm q-py-xs").style(
-            "background: rgba(255, 152, 0, 0.08); border-radius: 8px; border: 1px solid rgba(255, 152, 0, 0.25);"
-        ):
-            ui.icon("cloud", color="orange").style("font-size: 1.1rem;")
-            ui.label(f"Using {_model_label} via {_prov_label} — data is sent to the cloud").classes("text-orange text-sm")
-    else:
-        with ui.row().classes("w-full items-center gap-2 q-px-sm q-py-xs").style(
-            "background: rgba(76, 175, 80, 0.08); border-radius: 8px; border: 1px solid rgba(76, 175, 80, 0.25);"
-        ):
-            ui.icon("lock", color="green").style("font-size: 1.1rem;")
-            ui.label(f"Using {_active_model} via Ollama — complete privacy").classes("text-green text-sm")
+    def _model_surface():
+        active_model = state.thread_model_override or get_current_model()
+        active_cloud = is_cloud_model(active_model)
+        if active_cloud:
+            prov = get_cloud_provider(active_model) or "cloud"
+            prov_label = provider_display_label(prov)
+            model_label = model_id_from_choice_value(active_model)
+            return {
+                "model": active_model,
+                "cloud": True,
+                "icon": "cloud",
+                "icon_color": "orange",
+                "text": f"Using {model_label} via {prov_label} — data is sent to the cloud",
+                "text_class": "text-orange text-sm",
+                "banner_style": (
+                    "background: rgba(255, 152, 0, 0.08); "
+                    "border-radius: 8px; border: 1px solid rgba(255, 152, 0, 0.25);"
+                ),
+                "scroll_style": "background: rgba(255, 152, 0, 0.03);",
+            }
+        return {
+            "model": active_model,
+            "cloud": False,
+            "icon": "lock",
+            "icon_color": "green",
+            "text": f"Using {active_model} via Ollama — complete privacy",
+            "text_class": "text-green text-sm",
+            "banner_style": (
+                "background: rgba(76, 175, 80, 0.08); "
+                "border-radius: 8px; border: 1px solid rgba(76, 175, 80, 0.25);"
+            ),
+            "scroll_style": "background: rgba(76, 175, 80, 0.03);",
+        }
+
+    def _render_model_banner() -> None:
+        surface = _model_surface()
+        if not p.model_banner_container:
+            return
+        p.model_banner_container.clear()
+        with p.model_banner_container:
+            with ui.row().classes("w-full items-center gap-2 q-px-sm q-py-xs").style(surface["banner_style"]):
+                ui.icon(surface["icon"], color=surface["icon_color"]).style("font-size: 1.1rem;")
+                ui.label(surface["text"]).classes(surface["text_class"])
+
+    def _refresh_model_surface() -> None:
+        _render_model_banner()
+        if p.chat_scroll:
+            p.chat_scroll.style(replace=_model_surface()["scroll_style"])
+
+    _surface = _model_surface()
+    p.model_banner_container = ui.column().classes("w-full gap-0")
+    _render_model_banner()
 
     # ── Scrollable message area ──────────────────────────────────────
-    _scroll_bg = (
-        "background: rgba(255, 152, 0, 0.03);"
-        if _is_active_cloud
-        else "background: rgba(76, 175, 80, 0.03);"
-    )
-    p.chat_scroll = ui.scroll_area().classes("w-full flex-grow").style(_scroll_bg)
+    p.chat_scroll = ui.scroll_area().classes("w-full flex-grow").style(_surface["scroll_style"])
 
     with p.chat_scroll:
         p.chat_container = ui.column().classes("w-full gap-2")
@@ -279,14 +248,18 @@ def build_chat(
                             sanitize=False,
                         )
                         _reattach_gen.tool_col = ui.column().classes("w-full gap-1")
-                        for _tr in _reattach_gen.tool_results:
+                        from ui.tool_trace import display_tool_content, group_tool_results
+                        for _group in group_tool_results(_reattach_gen.tool_results):
                             with _reattach_gen.tool_col:
-                                with ui.expansion(f"\u2705 {_tr['name']}", icon="check_circle").classes("w-full"):
-                                    if _tr.get('content'):
-                                        _disp = _tr['content'][:5_000]
-                                        if len(_tr['content']) > 5_000:
-                                            _disp += "\n\n\u2026 (truncated)"
-                                        ui.code(_disp).classes("w-full text-xs")
+                                with ui.expansion(f"✅ {_group.label}", icon="check_circle").classes("w-full"):
+                                    for _idx, _tr in enumerate(_group.results, start=1):
+                                        with ui.expansion(
+                                            f"#{_idx}" if _group.count > 1 else _group.name,
+                                            icon="subdirectory_arrow_right",
+                                        ).classes("w-full"):
+                                            _disp = display_tool_content(_tr.get("content", ""))
+                                            if _disp:
+                                                ui.code(_disp).classes("w-full text-xs")
                         for _cj in _reattach_gen.chart_data:
                             try:
                                 import plotly.io as _pio
@@ -354,7 +327,7 @@ def build_chat(
                             '</div>',
                             sanitize=False,
                         )
-                        _cloud_ob2 = is_cloud_model(_active_model)
+                        _cloud_ob2 = bool(_model_surface()["cloud"])
                         ui.markdown(welcome_message(cloud=_cloud_ob2), extras=['code-friendly', 'fenced-code-blocks', 'tables'])
                         with ui.row().classes("flex-wrap gap-2"):
                             for prompt in EXAMPLE_PROMPTS:
@@ -620,6 +593,13 @@ def build_chat(
             ui.button(icon="attach_file", on_click=_on_attach).props(
                 "flat round dense size=sm"
             ).tooltip("Attach files")
+
+            from ui.chat_components import _build_inline_model_picker
+            _build_inline_model_picker(
+                state,
+                open_settings=open_settings,
+                on_model_switch=_refresh_model_surface,
+            )
 
             def _toggle_voice(e):
                 state.voice_enabled = e.value

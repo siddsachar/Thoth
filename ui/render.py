@@ -416,6 +416,8 @@ def render_text_with_embeds(text: str) -> None:
 
 def render_message_content(msg: dict, thread_id: str | None = None) -> None:
     """Render a single message's content inside the current parent element."""
+    from ui.tool_trace import display_tool_content, group_tool_results
+
     role = msg.get("role", "assistant")
 
     # Thinking / reasoning (collapsed by default)
@@ -428,44 +430,47 @@ def render_message_content(msg: dict, thread_id: str | None = None) -> None:
 
     # Tool results
     tool_results = msg.get("tool_results")
+    tool_results_for_media = tool_results
     if tool_results:
-        for tr in tool_results:
-            with ui.expansion(f"✅ {tr['name']}", icon="check_circle").classes("w-full"):
-                content = tr.get("content", "")
-                # Rich marker detection — render inline widgets
-                if content.startswith("__CHART__:"):
-                    _me = content.find("\n\n", 10)
-                    _fj = content[10:] if _me == -1 else content[10:_me]
-                    _dt = "Chart created" if _me == -1 else content[_me + 2:]
-                    try:
-                        import plotly.io as _pio
-                        fig = _pio.from_json(_fj)
-                        ui.plotly(fig).classes("w-full")
-                    except Exception:
-                        logger.debug("Chart rendering failed in tool result", exc_info=True)
-                    content = _dt
-                if content.startswith("__IMAGE__:"):
-                    _me = content.find("\n\n", 10)
-                    _ib = content[10:] if _me == -1 else content[10:_me]
-                    _dt = "Image generated" if _me == -1 else content[_me + 2:]
-                    try:
-                        render_image_with_save(_ib)
-                    except Exception:
-                        logger.debug("Image rendering failed in tool result", exc_info=True)
-                    content = _dt
-                if content.startswith("__HTML__:"):
-                    _me = content.find("\n\n", 9)
-                    _hc = content[9:] if _me == -1 else content[9:_me]
-                    _dt = "" if _me == -1 else content[_me + 2:]
-                    try:
-                        ui.html(_hc).classes("w-full")
-                    except Exception:
-                        logger.debug("HTML widget rendering failed in tool result", exc_info=True)
-                    content = _dt
-                if len(content) > 5_000:
-                    content = content[:5_000] + "\n\n… (truncated)"
-                if content:
-                    ui.code(content).classes("w-full text-xs")
+        for group in group_tool_results(tool_results):
+            with ui.expansion(f"✅ {group.label}", icon="check_circle").classes("w-full"):
+                for idx, tr in enumerate(group.results, start=1):
+                    title = f"#{idx}" if group.count > 1 else group.name
+                    with ui.expansion(title, icon="subdirectory_arrow_right").classes("w-full"):
+                        content = tr.get("content", "")
+                        if isinstance(content, str) and content.startswith("__CHART__:"):
+                            _me = content.find("\n\n", 10)
+                            _fj = content[10:] if _me == -1 else content[10:_me]
+                            _dt = "Chart created" if _me == -1 else content[_me + 2:]
+                            try:
+                                import plotly.io as _pio
+                                fig = _pio.from_json(_fj)
+                                ui.plotly(fig).classes("w-full")
+                            except Exception:
+                                logger.debug("Chart rendering failed in tool result", exc_info=True)
+                            content = _dt
+                        if isinstance(content, str) and content.startswith("__IMAGE__:"):
+                            _me = content.find("\n\n", 10)
+                            _ib = content[10:] if _me == -1 else content[10:_me]
+                            _dt = "Image generated" if _me == -1 else content[_me + 2:]
+                            try:
+                                render_image_with_save(_ib)
+                            except Exception:
+                                logger.debug("Image rendering failed in tool result", exc_info=True)
+                            content = _dt
+                        if isinstance(content, str) and content.startswith("__HTML__:"):
+                            _me = content.find("\n\n", 9)
+                            _hc = content[9:] if _me == -1 else content[9:_me]
+                            _dt = "" if _me == -1 else content[_me + 2:]
+                            try:
+                                ui.html(_hc).classes("w-full")
+                            except Exception:
+                                logger.debug("HTML widget rendering failed in tool result", exc_info=True)
+                            content = _dt
+                        display = display_tool_content(content)
+                        if display:
+                            ui.code(display).classes("w-full text-xs")
+    tool_results = tool_results_for_media
 
     # Images (live) or placeholder (reloaded thread)
     images = msg.get("images")

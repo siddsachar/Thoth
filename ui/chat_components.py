@@ -217,6 +217,7 @@ def build_chat_input_bar(
     browse_file: Callable | None = None,
     open_settings: Callable | None = None,
     show_model_picker: bool = True,
+    on_model_switch: Callable | None = None,
 ) -> None:
     """Build the chat input card with textarea, buttons, and optional model picker.
 
@@ -232,8 +233,9 @@ def build_chat_input_bar(
     open_settings
         Called when "More models…" is selected.  ``None`` to skip model picker.
     show_model_picker
-        Whether to render the model override dropdown.  ``True`` in normal
-        chat and Designer.  ``False`` only if explicitly suppressed.
+        Whether to render the model override dropdown.
+    on_model_switch
+        Called after the thread model override changes.
     """
     # ── Attach handler ───────────────────────────────────────────────
     async def _on_attach():
@@ -341,7 +343,11 @@ def build_chat_input_bar(
 
             # ── Inline model picker ──────────────────────────────────
             if show_model_picker:
-                _build_inline_model_picker(state, open_settings=open_settings)
+                _build_inline_model_picker(
+                    state,
+                    open_settings=open_settings,
+                    on_model_switch=on_model_switch,
+                )
 
             def _toggle_voice(e):
                 state.voice_enabled = e.value
@@ -371,10 +377,11 @@ def _build_inline_model_picker(
     state: AppState,
     *,
     open_settings: Callable | None = None,
+    on_model_switch: Callable | None = None,
 ) -> None:
     """Compact model picker rendered inside the input bar."""
     from agent import clear_agent_cache
-    from models import get_current_model
+    from models import get_current_model, get_model_max_context, get_user_context_size, CONTEXT_SIZE_LABELS
     from providers.selection import list_model_choice_options, model_choice_value
 
     _cur_default = get_current_model()
@@ -397,6 +404,8 @@ def _build_inline_model_picker(
 
     async def _on_pick(e):
         val = e.value
+        if val == _picker_val:
+            return
         if val == _MORE:
             e.sender.set_value(_picker_val)
             if open_settings:
@@ -413,6 +422,22 @@ def _build_inline_model_picker(
             state.thread_model_override = ""
             _set_thread_model_override(state.thread_id, "")
         clear_agent_cache()
+        _eff = state.thread_model_override or get_current_model()
+        if on_model_switch:
+            on_model_switch()
+        _mmax = await run.io_bound(lambda: get_model_max_context(_eff))
+        _uval = get_user_context_size()
+        if _mmax is not None and _uval > _mmax:
+            _ml = CONTEXT_SIZE_LABELS.get(_mmax, f"{_mmax:,}")
+            _ul = CONTEXT_SIZE_LABELS.get(_uval, f"{_uval:,}")
+            ui.notify(
+                f"Context capped: {_eff} max is {_ml} (you selected {_ul}). "
+                f"Trimming will use {_ml}.",
+                type="warning",
+                close_button=True,
+                timeout=8000,
+            )
+        ui.notify(f"Switched to {_picker_opts.get(val, _eff)}", type="info")
 
     ui.select(
         options=_picker_opts,

@@ -33,6 +33,7 @@ from ui.constants import (
     IMAGE_EXTENSIONS,
 )
 from ui.render import autolink_urls, _auto_fence_mermaid, render_image_with_save
+from ui.tool_trace import canonical_tool_name, display_tool_content, is_browser_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,89 @@ def _drop_terminal_active_generation(thread_id: str | None) -> bool:
 
 
 # ── Type alias for the callback bundle ───────────────────────────────
+def _set_expansion_title(expansion: Any, title: str, icon: str) -> None:
+    """Update a NiceGUI expansion title without relying on a public setter."""
+
+    try:
+        expansion._props["icon"] = icon
+        expansion._text = title
+        expansion.update()
+    except Exception:
+        logger.debug("Failed to update expansion title", exc_info=True)
+
+
+def _live_tool_group(gen: GenerationState, tool_name: str) -> dict[str, Any] | None:
+    if gen.detached or not gen.tool_col:
+        return None
+    canonical_name = canonical_tool_name(tool_name)
+    display_name = "Browser activity" if is_browser_tool_name(canonical_name) else canonical_name
+    group = gen.pending_tools.get(display_name)
+    if isinstance(group, dict):
+        return group
+    with gen.tool_col:
+        exp = ui.expansion(f"🔄 {display_name} · 0 calls", icon="hourglass_empty").classes("w-full")
+    group = {
+        "name": display_name,
+        "expansion": exp,
+        "count": 0,
+        "done": 0,
+        "pending": [],
+    }
+    gen.pending_tools[display_name] = group
+    return group
+
+
+def _add_live_tool_pending(gen: GenerationState, tool_name: str) -> None:
+    group = _live_tool_group(gen, tool_name)
+    if not group:
+        return
+    group["count"] += 1
+    call_no = group["count"]
+    exp = group["expansion"]
+    with exp:
+        row = ui.column().classes("w-full gap-1 q-ml-sm")
+        with row:
+            label = ui.label(f"#{call_no} running…").classes("text-xs text-grey-6")
+    group["pending"].append({"row": row, "label": label, "call_no": call_no})
+    unit = "step" if group["name"] == "Browser activity" else "call"
+    suffix = unit if group["count"] == 1 else f"{unit}s"
+    _set_expansion_title(exp, f"🔄 {group['name']} · {group['count']} {suffix}", "hourglass_empty")
+
+
+def _finish_live_tool_result(gen: GenerationState, tool_name: str, content: str) -> bool:
+    canonical_name = canonical_tool_name(tool_name)
+    display_name = "Browser activity" if is_browser_tool_name(canonical_name) else canonical_name
+    group = gen.pending_tools.get(display_name)
+    if not isinstance(group, dict):
+        return False
+    pending = group.get("pending") or []
+    item = pending.pop(0) if pending else None
+    group["done"] = int(group.get("done") or 0) + 1
+    row = item.get("row") if item else None
+    label = item.get("label") if item else None
+    call_no = item.get("call_no") if item else group["done"]
+    if row is None:
+        with group["expansion"]:
+            row = ui.column().classes("w-full gap-1 q-ml-sm")
+    with row:
+        if label is not None:
+            label.set_text(f"#{call_no} complete")
+            label.classes("text-xs text-positive")
+        else:
+            ui.label(f"#{call_no} complete").classes("text-xs text-positive")
+        display = display_tool_content(content)
+        if display:
+            ui.code(display).classes("w-full text-xs")
+    icon = "check_circle" if group["done"] >= group["count"] else "hourglass_empty"
+    prefix = "✅" if icon == "check_circle" else "🔄"
+    _set_expansion_title(
+        group["expansion"],
+        f"{prefix} {group['name']} · {group['done']}/{group['count']} complete",
+        icon,
+    )
+    return True
+
+
 class _Callbacks:
     """Container for all cross-cutting callbacks.
 
@@ -353,7 +437,15 @@ async def consume_generation(
 
         elif event_type == "tool_call":
             _buddy(BuddyEventType.TOOL_STARTED, "Using a tool", tool=str(payload))
+            _grouped_tool_call = False
             if not gen.detached and gen.tool_col:
+                try:
+                    _add_live_tool_pending(gen, str(payload))
+                    _grouped_tool_call = True
+                except Exception as exc:
+                    _handle_ui_runtime_error(gen, state, exc, "tool-call group")
+                    logger.debug("Tool-call group creation failed", exc_info=True)
+            if not _grouped_tool_call and not gen.detached and gen.tool_col:
                 try:
                     with gen.tool_col:
                         _pending_exp = ui.expansion(
@@ -544,6 +636,7 @@ async def consume_generation(
     )
     _persisted_detached = False
     if _has_final_output:
+        await _capture_balanced_browser_screenshot(gen, state)
         a_msg: dict = {"role": "assistant", "content": gen.accumulated}
         if gen.tool_results:
             a_msg["tool_results"] = gen.tool_results
@@ -708,7 +801,14 @@ async def _handle_tool_done(
         tool_content = display_text
 
     # Update the pending expansion or create a new one
+    _grouped_live_result = False
     if not gen.detached and gen.tool_col:
+        try:
+            _grouped_live_result = _finish_live_tool_result(gen, tool_name, tool_content)
+        except Exception as exc:
+            _handle_ui_runtime_error(gen, state, exc, "tool group update")
+            logger.debug("Tool group update failed for %s", tool_name, exc_info=True)
+    if not _grouped_live_result and not gen.detached and gen.tool_col:
         try:
             _queue = gen.pending_tools.get(tool_name)
             matched_exp = _queue.pop(0) if _queue else None
@@ -759,28 +859,7 @@ async def _handle_tool_done(
     # round-trip (200-800 ms) does not block the asyncio loop; otherwise
     # socket.io pings stall and the client is considered disconnected.
     if raw_tool_name.startswith("browser_"):
-        try:
-            from tools.browser_tool import get_session_manager as _get_bsm
-            _bsm = _get_bsm()
-            if _bsm.has_active_session():
-                _bs = _bsm.get_session()
-                _screenshot_bytes = await run.io_bound(
-                    _bs.take_screenshot, gen.thread_id
-                )
-                if _screenshot_bytes:
-                    _b64_ss = _b64.b64encode(_screenshot_bytes).decode("ascii")
-                    gen.captured_images.append(_b64_ss)
-                    gen.captured_images_persist.append(False)  # Tier 2: browser capture
-                    _spill_excess_captured_images(gen)
-                    if not gen.detached and gen.tool_col:
-                        with gen.tool_col:
-                            render_image_with_save(
-                                _b64_ss,
-                                extra_style="border: 1px solid #333; margin-top: 4px;",
-                            )
-        except Exception as exc:
-            _handle_ui_runtime_error(gen, state, exc, "browser screenshot rendering")
-            logger.debug("Browser screenshot rendering failed", exc_info=True)
+        gen.browser_step_count += 1
 
     # Filesystem image display (workspace_read_file on image files)
     if raw_tool_name in ("workspace_read_file",):
@@ -829,6 +908,37 @@ async def _handle_tool_done(
         except Exception as exc:
             _handle_ui_runtime_error(gen, state, exc, "video generation rendering")
             logger.debug("Video generation rendering failed", exc_info=True)
+
+
+async def _capture_balanced_browser_screenshot(gen: GenerationState, state: AppState) -> None:
+    """Capture one final browser screenshot for Balanced browser traces."""
+
+    if gen.browser_step_count <= 0:
+        return
+    try:
+        from tools.browser_tool import get_session_manager as _get_bsm
+
+        _bsm = _get_bsm()
+        if not _bsm.has_active_session():
+            return
+        _bs = _bsm.get_session()
+        _screenshot_bytes = await run.io_bound(_bs.take_screenshot, gen.thread_id)
+        if not _screenshot_bytes:
+            return
+        _b64_ss = _b64.b64encode(_screenshot_bytes).decode("ascii")
+        gen.captured_images.append(_b64_ss)
+        gen.captured_images_persist.append(False)
+        _spill_excess_captured_images(gen)
+        if not gen.detached and gen.tool_col:
+            with gen.tool_col:
+                ui.label("Final browser screenshot").classes("text-xs text-grey-6")
+                render_image_with_save(
+                    _b64_ss,
+                    extra_style="border: 1px solid #333; margin-top: 4px;",
+                )
+    except Exception as exc:
+        _handle_ui_runtime_error(gen, state, exc, "balanced browser screenshot capture")
+        logger.debug("Balanced browser screenshot capture failed", exc_info=True)
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -9,7 +9,7 @@ Setup:
     1. Create a Twilio account at https://www.twilio.com/
     2. Get your **Account SID** and **Auth Token** from the console
     3. Buy or use a Twilio phone number
-    4. Enable the main-app tunnel in Settings → Channels → Tunnel Settings
+    4. Enable the main-app tunnel in Settings → System → Tunnel Settings
        (or manually set the Twilio webhook to ``<public-url>/sms``)
     5. Enter credentials in Settings → Channels → SMS
 
@@ -543,7 +543,7 @@ async def start_bot() -> bool:
                 else:
                     log.info(
                         "Main-app tunnel not active — enable 'Expose task "
-                        "webhook endpoint' in Settings → Channels → Tunnel "
+                        "webhook endpoint' in Settings → System → Tunnel "
                         "Settings, or set the Twilio webhook URL manually."
                     )
                     _webhook_public_url = None
@@ -627,7 +627,7 @@ class SMSChannel(Channel):
             "1. Create a [Twilio account](https://www.twilio.com/)\n"
             "2. Get your **Account SID** and **Auth Token** from the console\n"
             "3. Buy or use a Twilio phone number\n"
-            "4. Enable **Expose task webhook endpoint** in **Tunnel Settings** above\n"
+            "4. Enable **Expose task webhook endpoint** in **Settings → System → Tunnel Settings**\n"
             "   (the `/sms` webhook shares the main app's tunnel)\n"
             "5. Paste credentials below and click **Save**\n"
             "6. Click **▶️ Start** — Twilio webhook auto-registers"

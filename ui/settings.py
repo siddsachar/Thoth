@@ -13,7 +13,7 @@ import pathlib
 import tempfile
 import time
 from datetime import datetime
-from typing import Callable
+from typing import Any, Callable
 
 from nicegui import events, run, ui
 
@@ -222,25 +222,352 @@ def open_settings(
             refresh()
         ui.notify(f"{display} cleared", type="info")
 
+    def _settings_header(title: str, subtitle: str, icon: str | None = None) -> None:
+        with ui.row().classes("items-start gap-3 w-full q-mb-sm"):
+            if icon:
+                ui.icon(icon, size="1.55rem").classes("text-primary q-mt-xs")
+            with ui.column().classes("gap-0").style("min-width: 0;"):
+                ui.label(title).classes("text-h6")
+                if subtitle:
+                    ui.label(subtitle).classes("text-grey-6 text-sm")
+
+    @contextlib.contextmanager
+    def _settings_section(
+        title: str,
+        subtitle: str | None = None,
+        *,
+        icon: str | None = None,
+        tone: str = "default",
+    ):
+        border = "rgba(148, 163, 184, 0.22)"
+        background = "rgba(148, 163, 184, 0.045)"
+        if tone == "warning":
+            border = "rgba(245, 158, 11, 0.42)"
+            background = "rgba(245, 158, 11, 0.08)"
+        elif tone == "danger":
+            border = "rgba(239, 68, 68, 0.42)"
+            background = "rgba(239, 68, 68, 0.06)"
+        with ui.column().classes("w-full gap-3 q-pa-md rounded-borders q-mb-md").style(
+            f"border: 1px solid {border}; background: {background};"
+        ):
+            with ui.row().classes("items-start gap-2 w-full no-wrap"):
+                if icon:
+                    ui.icon(icon, size="1.15rem").classes("text-grey-5 q-mt-xs")
+                with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
+                    ui.label(title).classes("text-subtitle2 text-weight-medium")
+                    if subtitle:
+                        ui.label(subtitle).classes("text-grey-6 text-xs")
+            yield
+
+    def _metric_chip(label: str, value: Any, icon: str | None = None, color: str = "blue-grey") -> None:
+        with ui.row().classes("items-center gap-1 px-2 py-1 rounded-borders no-wrap").style(
+            "border: 1px solid rgba(148, 163, 184, 0.24); "
+            "background: rgba(148, 163, 184, 0.08);"
+        ):
+            if icon:
+                ui.icon(icon, size="0.95rem").classes(f"text-{color}")
+            ui.label(str(value)).classes("text-weight-bold text-xs")
+            ui.label(label).classes("text-grey-6 text-xs")
+
+    def _status_dot(label: str, state_name: str, detail: str | None = None) -> None:
+        colors = {
+            "ok": "#22c55e",
+            "running": "#22c55e",
+            "warn": "#f59e0b",
+            "warning": "#f59e0b",
+            "error": "#ef4444",
+            "off": "#64748b",
+            "inactive": "#64748b",
+            "neutral": "#94a3b8",
+        }
+        dot = colors.get(state_name, colors["neutral"])
+        with ui.row().classes("items-center gap-2 no-wrap"):
+            ui.element("span").style(
+                f"width: 8px; height: 8px; border-radius: 999px; "
+                f"background: {dot}; display: inline-block; flex: 0 0 auto;"
+            )
+            ui.label(label).classes("text-sm")
+            if detail:
+                ui.label(detail).classes("text-grey-6 text-xs")
+
+    def _build_window_mode_section() -> None:
+        from ui.helpers import load_app_config, save_app_config
+
+        with _settings_section(
+            "Window Mode",
+            "Choose how Thoth opens on launch. Takes effect next time the app starts.",
+            icon="web_asset",
+        ):
+            _wm_cfg = load_app_config()
+            _current_mode = _wm_cfg.get("window_mode", "ask")
+
+            def _on_window_mode_change(e):
+                cfg = load_app_config()
+                cfg["window_mode"] = e.value
+                save_app_config(cfg)
+                ui.notify("Window mode saved for next launch", type="info")
+
+            with ui.row().classes("items-center gap-3 w-full"):
+                ui.select(
+                    {"ask": "Ask on Launch", "native": "Native Window", "browser": "System Browser"},
+                    value=_current_mode,
+                    label="Window mode",
+                    on_change=_on_window_mode_change,
+                ).classes("w-64").props("dense outlined").tooltip("Takes effect on next launch")
+                ui.label(
+                    "Native Window gives Thoth its own app window. System Browser uses your default browser."
+                ).classes("text-grey-6 text-xs")
+
+    def _build_dream_cycle_section() -> None:
+        import dream_cycle
+
+        dream_cfg = dream_cycle.get_config()
+        dream_status = dream_cycle.get_dream_status()
+        enabled = bool(dream_cfg.get("enabled", True))
+        last_run = dream_status.get("last_run")
+        with _settings_section(
+            "Dream Cycle",
+            "Idle background cleanup for memory: merge duplicates, enrich sparse notes, and infer missing links.",
+            icon="nightlight",
+        ):
+            with ui.row().classes("items-center gap-2 q-mb-xs"):
+                _status_dot(
+                    "Enabled" if enabled else "Disabled",
+                    "ok" if enabled else "inactive",
+                    "Runs only during the configured idle window.",
+                )
+                if last_run:
+                    try:
+                        last_dt = datetime.fromisoformat(last_run)
+                        _metric_chip("last run", last_dt.strftime("%b %d, %I:%M %p"), icon="history")
+                    except (ValueError, TypeError):
+                        _metric_chip("last run", "unknown", icon="history")
+                else:
+                    _metric_chip("last run", "never", icon="history")
+
+            def _toggle_dream(e):
+                dream_cycle.set_enabled(e.value)
+                ui.notify(
+                    "Dream cycle enabled." if e.value else "Dream cycle disabled.",
+                    type="info",
+                )
+                _reopen("Preferences")
+
+            ui.switch(
+                "Enable Dream Cycle",
+                value=enabled,
+                on_change=_toggle_dream,
+            )
+
+            with ui.row().classes("gap-4 items-center"):
+                ui.label("Idle window").classes("text-sm")
+
+                _start_val = f"{dream_cfg.get('window_start', 1):02d}:00"
+                with ui.input("Start", value=_start_val).props(
+                    "dense outlined"
+                ).classes("w-28") as _dream_start_input:
+                    with ui.menu().props("no-parent-event") as _start_menu:
+                        ui.time(value=_start_val, mask="HH:00").props(
+                            "format24h"
+                        ).bind_value(_dream_start_input)
+                    with _dream_start_input.add_slot("append"):
+                        ui.icon("schedule").on("click", _start_menu.open).classes(
+                            "cursor-pointer"
+                        )
+
+                ui.label("-").classes("text-sm")
+
+                _end_val = f"{dream_cfg.get('window_end', 5):02d}:00"
+                with ui.input("End", value=_end_val).props(
+                    "dense outlined"
+                ).classes("w-28") as _dream_end_input:
+                    with ui.menu().props("no-parent-event") as _end_menu:
+                        ui.time(value=_end_val, mask="HH:00").props(
+                            "format24h"
+                        ).bind_value(_dream_end_input)
+                    with _dream_end_input.add_slot("append"):
+                        ui.icon("schedule").on("click", _end_menu.open).classes(
+                            "cursor-pointer"
+                        )
+
+                def _on_dream_window_change(_=None):
+                    try:
+                        s = int(_dream_start_input.value.split(":")[0])
+                        e = int(_dream_end_input.value.split(":")[0])
+                    except (ValueError, AttributeError):
+                        return
+                    dream_cycle.set_window(s, e)
+                    ui.notify(f"Dream window updated: {s:02d}:00 - {e:02d}:00", type="info")
+
+                _dream_start_input.on("update:model-value", _on_dream_window_change)
+                _dream_end_input.on("update:model-value", _on_dream_window_change)
+
+            summary = dream_status.get("last_summary") or ""
+            if summary:
+                ui.label(summary).classes("text-xs text-grey-6")
+            elif not last_run:
+                ui.label("No dream cycles have run yet.").classes("text-xs text-grey-6")
+
+    def _build_tunnel_settings_section() -> None:
+        from channels import config as _ch_config
+        from tunnel import tunnel_manager
+
+        with _settings_section(
+            "Tunnel Settings",
+            "Securely expose local webhook ports to the internet for channels and workflow webhooks.",
+            icon="lan",
+        ):
+            with ui.row().classes("items-center gap-2 q-mb-xs"):
+                _status_dot(
+                    "ngrok available" if tunnel_manager.is_available() else "Not configured",
+                    "ok" if tunnel_manager.is_available() else "warn",
+                    "The ngrok binary downloads automatically on first use.",
+                )
+                active_count = len(tunnel_manager.active_tunnels())
+                _metric_chip("active tunnel" if active_count == 1 else "active tunnels", active_count, icon="hub")
+
+            provider_val = _ch_config.get("tunnel", "provider", "ngrok")
+            provider_select = ui.select(
+                label="Provider",
+                options=["ngrok"],
+                value=provider_val,
+            ).classes("w-full").style("max-width: 300px").props("dense outlined")
+
+            token_input, token_refresh = _secret_input("Authtoken", "NGROK_AUTHTOKEN")
+            token_input.tooltip("Your ngrok authtoken from https://dashboard.ngrok.com/")
+
+            tunnel_container = ui.column().classes("w-full q-mt-sm")
+
+            def _refresh_active_tunnels():
+                tunnel_container.clear()
+                with tunnel_container:
+                    active = tunnel_manager.active_tunnels()
+                    if active:
+                        ui.label("Active tunnels").classes("text-weight-medium text-sm")
+                        for port, url in active.items():
+                            with ui.row().classes("items-center gap-2 no-wrap"):
+                                ui.badge(f"Port {port}", color="blue-grey").props("outline dense")
+                                ui.label(url).classes("text-sm text-primary").style("word-break: break-all;")
+                                ui.button(
+                                    icon="content_copy",
+                                    on_click=lambda u=url: (
+                                        ui.run_javascript(f"navigator.clipboard.writeText('{u}')"),
+                                        ui.notify("Copied", type="info"),
+                                    ),
+                                ).props("flat dense round size=sm").tooltip("Copy URL")
+                    else:
+                        ui.label(
+                            "No active tunnels. Start a webhook channel or expose the task webhook endpoint to open one."
+                            if tunnel_manager.is_available()
+                            else "Paste and save your authtoken to enable tunnels."
+                        ).classes("text-grey-6 text-sm")
+
+            def _save_tunnel_settings():
+                _ch_config.set("tunnel", "provider", provider_select.value)
+                raw = token_input.value.strip() if isinstance(token_input.value, str) else ""
+                if raw:
+                    set_key("NGROK_AUTHTOKEN", raw)
+                    token_input.value = ""
+                    token_input.update()
+                    token_refresh()
+                ui.notify("Tunnel settings saved", type="positive")
+                _refresh_active_tunnels()
+
+            with ui.row().classes("gap-2"):
+                ui.button("Save", icon="save", on_click=_save_tunnel_settings).props("flat dense no-caps color=primary")
+                ui.button(
+                    icon="delete",
+                    on_click=lambda: _clear_secret("NGROK_AUTHTOKEN", "ngrok authtoken", token_refresh),
+                ).props("flat dense round color=negative").tooltip("Clear authtoken")
+
+            _refresh_active_tunnels()
+
+            with ui.expansion("Setup Guide", icon="help_outline").classes("w-full q-mt-sm"):
+                ui.markdown(
+                    "1. Sign up at [ngrok.com](https://ngrok.com/) (free tier available)\n"
+                    "2. Copy your **authtoken** from the "
+                    "[dashboard](https://dashboard.ngrok.com/get-started/your-authtoken)\n"
+                    "3. Paste it above and click **Save**\n"
+                    "4. Start a webhook channel or expose task webhooks when needed\n\n"
+                    "*The ngrok binary is downloaded automatically on first use.*",
+                    extras=["code-friendly", "fenced-code-blocks"],
+                ).classes("text-sm")
+
+            ui.separator().classes("q-mt-sm")
+            main_app_val = _ch_config.get("tunnel", "tunnel_main_app", False)
+            main_app_switch = ui.switch(
+                "Expose task webhook endpoint",
+                value=main_app_val,
+            )
+            main_app_switch.tooltip(
+                "Tunnel the main Thoth port so external services can trigger "
+                "task webhooks via /api/webhook/{task_id}. This also exposes "
+                "the web UI via the tunnel URL."
+            )
+
+            main_app_url_container = ui.column().classes("w-full")
+
+            async def _on_main_app_toggle(e):
+                from app_port import get_app_port
+
+                _ch_config.set("tunnel", "tunnel_main_app", e.args)
+                if e.args and tunnel_manager.is_available():
+                    try:
+                        app_port = get_app_port()
+                        url = tunnel_manager.start_tunnel(app_port, label="main_app")
+                        main_app_url_container.clear()
+                        with main_app_url_container:
+                            webhook_url = f"{url}/api/webhook/{{task_id}}"
+                            with ui.row().classes("items-center gap-2 no-wrap"):
+                                ui.label(webhook_url).classes("text-sm text-primary").style("word-break: break-all;")
+                                ui.button(
+                                    icon="content_copy",
+                                    on_click=lambda u=webhook_url: (
+                                        ui.run_javascript(f"navigator.clipboard.writeText('{u}')"),
+                                        ui.notify("Copied", type="info"),
+                                    ),
+                                ).props("flat dense round size=sm").tooltip("Copy webhook URL")
+                        _refresh_active_tunnels()
+                    except Exception as exc:
+                        ui.notify(f"Tunnel error: {exc}", type="negative")
+                elif not e.args:
+                    try:
+                        app_port = get_app_port()
+                        tunnel_manager.stop_tunnel(app_port)
+                    except Exception:
+                        pass
+                    main_app_url_container.clear()
+                    _refresh_active_tunnels()
+
+            main_app_switch.on("update:model-value", _on_main_app_toggle)
+
     # ══════════════════════════════════════════════════════════════════
     # TAB BUILDERS
     # ══════════════════════════════════════════════════════════════════
 
     def _build_documents_tab() -> None:
-        ui.label("📄 Local Documents").classes("text-h6")
-        ui.label(
-            "Upload your own files (PDF, TXT, DOCX, MD, HTML, EPUB) to build a local knowledge base. "
-            "Documents are chunked, vectorized, and stored in a local FAISS database "
-            "for fast semantic search. Uploaded documents are also automatically "
-            "analyzed to extract entities into your knowledge graph and wiki vault."
-        ).classes("text-grey-6 text-sm")
+        _settings_header(
+            "Documents",
+            "Upload files, choose embedding engines, rebuild indexes, and manage indexed source material.",
+            "description",
+        )
 
         emb_cfg = get_embedding_config()
         doc_status = document_vector_status()
+        processed = load_processed_files()
+        with ui.row().classes("items-center gap-2 q-mb-sm"):
+            _metric_chip("indexed", len(processed), icon="library_books")
+            _metric_chip("embedding", describe_active_embedding(emb_cfg), icon="hub")
+            _status_dot(
+                "Vectors stale" if doc_status["stale"] else "Vectors current",
+                "warn" if doc_status["stale"] else "ok",
+            )
         local_options = {key: val["label"] for key, val in LOCAL_MODELS.items()}
         cloud_options = {key: val["label"] for key, val in CLOUD_MODELS.items()}
-        with ui.column().classes("w-full gap-2 q-pa-sm rounded-borders q-mb-md").style(
-            "border: 1px solid rgba(148, 163, 184, 0.22);"
+        with _settings_section(
+            "Embedding Engine",
+            "Local models are private but use RAM; cloud models reduce local memory and send text to the provider.",
+            icon="hub",
         ):
             with ui.row().classes("items-center justify-between w-full"):
                 ui.label("Embedding engine").classes("text-subtitle2")
@@ -376,66 +703,75 @@ def open_settings(
                     with contextlib.suppress(FileNotFoundError):
                         os.unlink(tmp_path)
 
-        doc_upload = ui.upload(
-            label="Upload documents (PDF, DOCX, TXT, MD, HTML, EPUB)",
-            on_upload=_handle_doc_upload,
-            auto_upload=True,
-            multiple=True,
-        ).classes("w-full").props('flat bordered hide-upload-btn')
+        with _settings_section(
+            "Upload & Index",
+            "Supported files: PDF, DOCX, TXT, MD, HTML, and EPUB.",
+            icon="upload_file",
+        ):
+            doc_upload = ui.upload(
+                label="Upload documents",
+                on_upload=_handle_doc_upload,
+                auto_upload=True,
+                multiple=True,
+            ).classes("w-full").props('flat bordered hide-upload-btn')
 
-        ui.separator()
-        processed = load_processed_files()
-        if processed:
-            ui.label(f"📚 {len(processed)} indexed document(s)").classes("font-bold")
-            for f in sorted(processed):
-                with ui.row().classes("items-center gap-1"):
-                    ui.label(f"  • {f}").classes("text-sm")
+        with _settings_section("Indexed Documents", "Remove individual sources when they are no longer needed.", icon="inventory_2"):
+            if processed:
+                ui.label(f"{len(processed)} indexed document(s)").classes("font-bold")
+                for f in sorted(processed):
+                    with ui.row().classes("items-center gap-1 w-full no-wrap"):
+                        ui.icon("description", size="sm").classes("text-grey-6")
+                        ui.label(f).classes("text-sm").style("min-width: 0; flex: 1;")
 
-                    def _make_delete(name=f):
-                        async def _do_delete():
-                            import knowledge_graph as kg
-                            n = ui.notification(f"🗑️ Removing {name}…", type="ongoing", spinner=True, timeout=None)
-                            try:
-                                await run.io_bound(remove_document, name)
-                                await run.io_bound(kg.delete_entities_by_source, f"document:{name}")
-                                n.dismiss()
-                                ui.notify(f"🗑️ Removed {name}", type="info")
-                                _reopen("documents")
-                            except Exception as exc:
-                                n.dismiss()
-                                ui.notify(f"Delete failed: {exc}", type="negative")
-                        return _do_delete
+                        def _make_delete(name=f):
+                            async def _do_delete():
+                                import knowledge_graph as kg
+                                n = ui.notification(f"Removing {name}...", type="ongoing", spinner=True, timeout=None)
+                                try:
+                                    await run.io_bound(remove_document, name)
+                                    await run.io_bound(kg.delete_entities_by_source, f"document:{name}")
+                                    n.dismiss()
+                                    ui.notify(f"Removed {name}", type="info")
+                                    _reopen("documents")
+                                except Exception as exc:
+                                    n.dismiss()
+                                    ui.notify(f"Delete failed: {exc}", type="negative")
+                            return _do_delete
 
-                    ui.button(icon="delete", on_click=_make_delete(f)).props(
-                        "flat dense round size=xs color=negative"
-                    ).tooltip(f"Remove {f}")
-        else:
-            ui.label("No documents indexed yet.").classes("text-grey-6")
+                        ui.button(icon="delete", on_click=_make_delete(f)).props(
+                            "flat dense round size=xs color=negative"
+                        ).tooltip(f"Remove {f}")
+            else:
+                ui.label("No documents indexed yet.").classes("text-grey-6")
 
-        ui.separator()
+        with _settings_section(
+            "Danger Zone",
+            "Clear document vectors and document-derived knowledge.",
+            icon="warning",
+            tone="danger",
+        ):
+            _clearing_docs = False
 
-        _clearing_docs = False
+            async def _clear_docs():
+                nonlocal _clearing_docs
+                if _clearing_docs:
+                    return
+                _clearing_docs = True
+                try:
+                    confirm = await ui.run_javascript(
+                        "confirm('Clear ALL documents? This will remove all indexed files and their extracted knowledge. This cannot be undone.')",
+                        timeout=30,
+                    )
+                    if confirm:
+                        import knowledge_graph as kg
+                        reset_vector_store()
+                        kg.delete_entities_by_source_prefix("document:")
+                        ui.notify("All documents and extracted knowledge cleared.", type="info")
+                        _reopen("documents")
+                finally:
+                    _clearing_docs = False
 
-        async def _clear_docs():
-            nonlocal _clearing_docs
-            if _clearing_docs:
-                return
-            _clearing_docs = True
-            try:
-                confirm = await ui.run_javascript(
-                    "confirm('Clear ALL documents? This will remove all indexed files and their extracted knowledge. This cannot be undone.')",
-                    timeout=30,
-                )
-                if confirm:
-                    import knowledge_graph as kg
-                    reset_vector_store()
-                    kg.delete_entities_by_source_prefix("document:")
-                    ui.notify("🗑️ All documents and extracted knowledge cleared.", type="info")
-                    _reopen("documents")
-            finally:
-                _clearing_docs = False
-
-        ui.button("🗑️ Clear all documents", on_click=_clear_docs).props("flat color=negative")
+            ui.button("Clear all documents", icon="delete", on_click=_clear_docs).props("flat color=negative no-caps")
 
     # ── Models Tab ───────────────────────────────────────────────────
 
@@ -1593,33 +1929,45 @@ def open_settings(
     # ── Search / Tools Tab ───────────────────────────────────────────
 
     def _build_tools_tab() -> None:
-        ui.label("⚡ Retrieval Compression").classes("text-h6")
-        ui.label(
-            "Controls how search results are filtered before reaching the model. "
-            "Off uses the built-in context trimmer. Deep uses extra LLM calls for precise extraction."
-        ).classes("text-grey-6 text-sm")
-        _comp_options = {"off": "Off (default)", "deep": "Deep (LLM)"}
-        ui.select(
-            label="Compression mode",
-            options=_comp_options,
-            value=tool_registry.get_global_config("compression_mode", "off"),
-            on_change=lambda e: tool_registry.set_global_config("compression_mode", e.value),
-        ).classes("w-60")
-        ui.separator().classes("q-my-md")
-
-        ui.label("🔍 Search & Knowledge Tools").classes("text-h6")
-        ui.label("Enable or disable search and knowledge tools.").classes("text-grey-6 text-sm")
-        ui.separator()
+        _settings_header(
+            "Search",
+            "Configure retrieval compression and external research tools.",
+            "search",
+        )
+        with _settings_section(
+            "Retrieval Compression",
+            "Controls how search results are filtered before reaching the model.",
+            icon="compress",
+        ):
+            _comp_options = {"off": "Off (default)", "deep": "Deep (LLM)"}
+            ui.select(
+                label="Compression mode",
+                options=_comp_options,
+                value=tool_registry.get_global_config("compression_mode", "off"),
+                on_change=lambda e: tool_registry.set_global_config("compression_mode", e.value),
+            ).classes("w-60").props("dense outlined")
 
         search_tools = {
             "web_search", "duckduckgo", "wolfram_alpha", "arxiv",
             "wikipedia", "youtube",
         }
-        for tool in tool_registry.get_all_tools():
-            if tool.name not in search_tools:
-                continue
-            _build_tool_toggle(tool)
-            ui.separator()
+        enabled = [
+            tool for tool in tool_registry.get_all_tools()
+            if tool.name in search_tools and tool_registry.is_enabled(tool.name)
+        ]
+        with _settings_section(
+            "Search & Knowledge Tools",
+            "Enable or disable web, research, and reference lookup tools.",
+            icon="travel_explore",
+        ):
+            _metric_chip("enabled", len(enabled), icon="toggle_on")
+            for tool in tool_registry.get_all_tools():
+                if tool.name not in search_tools:
+                    continue
+                with ui.column().classes("w-full gap-1 q-pa-sm rounded-borders").style(
+                    "border: 1px solid rgba(148, 163, 184, 0.14);"
+                ):
+                    _build_tool_toggle(tool)
 
     def _build_tool_toggle(tool) -> None:
         ui.switch(
@@ -1725,154 +2073,132 @@ def open_settings(
     def _build_system_access_tab() -> None:
         from tools.filesystem_tool import _SAFE_OPS, _WRITE_OPS, _DESTRUCTIVE_OPS
 
-        ui.label("🖥️ System Access").classes("text-h6")
-        ui.label("Give Thoth access to your local system.").classes("text-grey-6 text-sm")
+        _settings_header(
+            "System",
+            "Control local access, command execution, browser automation, tunnels, and logs.",
+            "terminal",
+        )
 
         fs_tool = tool_registry.get_tool("filesystem")
         if not fs_tool:
             ui.label("Filesystem tool not found.").classes("text-negative")
             return
 
-        ui.separator()
-        ui.label("📂 Workspace Folder").classes("text-subtitle1 font-bold")
-        ui.label(
-            "The Filesystem tool is sandboxed to this folder."
-        ).classes("text-grey-6 text-xs")
+        with _settings_section(
+            "Workspace Folder",
+            "The filesystem tool is sandboxed to this folder.",
+            icon="folder",
+        ):
+            fs_root_default = fs_tool.config_schema.get("workspace_root", {}).get("default", "")
+            current_root = fs_tool.get_config("workspace_root", fs_root_default)
+            root_input = ui.input(
+                "Workspace folder", value=current_root or "",
+                on_change=lambda e: fs_tool.set_config("workspace_root", e.value),
+            ).classes("w-full").props("dense outlined")
 
-        fs_root_default = fs_tool.config_schema.get("workspace_root", {}).get("default", "")
-        current_root = fs_tool.get_config("workspace_root", fs_root_default)
-        root_input = ui.input(
-            "Workspace folder", value=current_root or "",
-            on_change=lambda e: fs_tool.set_config("workspace_root", e.value),
-        ).classes("w-full")
+            async def _browse_ws():
+                folder = await browse_folder("Select Workspace folder", current_root)
+                if folder:
+                    root_input.value = folder
+                    fs_tool.set_config("workspace_root", folder)
 
-        async def _browse_ws():
-            folder = await browse_folder("Select Workspace folder", current_root)
-            if folder:
-                root_input.value = folder
-                fs_tool.set_config("workspace_root", folder)
+            ui.button("Browse", icon="folder_open", on_click=_browse_ws).props("flat dense no-caps")
 
-        ui.button("Browse…", on_click=_browse_ws).props("flat dense")
-
-        if current_root and not os.path.isdir(current_root):
-            ui.label(f"⚠️ Folder not found: {current_root}").classes("text-warning text-sm")
+            if current_root and not os.path.isdir(current_root):
+                ui.label(f"Folder not found: {current_root}").classes("text-warning text-sm")
 
         # Shell Access
-        ui.separator()
-        ui.label("🖥️ Shell Access").classes("text-subtitle1 font-bold")
-        ui.label("Run shell commands directly on your system.").classes("text-grey-6 text-xs")
+        with _settings_section(
+            "Shell Access",
+            "Run shell commands directly on your system.",
+            icon="terminal",
+            tone="warning",
+        ):
+            shell_tool = tool_registry.get_tool("shell")
+            if shell_tool:
+                ui.switch(
+                    "Enable Shell tool",
+                    value=tool_registry.is_enabled("shell"),
+                    on_change=lambda e: tool_registry.set_enabled("shell", e.value),
+                ).tooltip(shell_tool.description)
 
-        shell_tool = tool_registry.get_tool("shell")
-        if shell_tool:
-            ui.switch(
-                "Enable Shell tool",
-                value=tool_registry.is_enabled("shell"),
-                on_change=lambda e: tool_registry.set_enabled("shell", e.value),
-            ).tooltip(shell_tool.description)
-
-            shell_blocked = shell_tool.get_config("blocked_commands", "")
-            ui.input(
-                "Additional blocked patterns (comma-separated)",
-                value=shell_blocked or "",
-                on_change=lambda e: shell_tool.set_config("blocked_commands", e.value),
-            ).classes("w-full")
-        else:
-            ui.label("Shell tool not found.").classes("text-grey-6 text-sm")
+                shell_blocked = shell_tool.get_config("blocked_commands", "")
+                ui.input(
+                    "Additional blocked patterns (comma-separated)",
+                    value=shell_blocked or "",
+                    on_change=lambda e: shell_tool.set_config("blocked_commands", e.value),
+                ).classes("w-full").props("dense outlined")
+            else:
+                ui.label("Shell tool not found.").classes("text-grey-6 text-sm")
 
         # Browser Automation
-        ui.separator()
-        ui.label("🌐 Browser Automation").classes("text-subtitle1 font-bold")
-        ui.label("Open a real browser window that you and the agent share.").classes("text-grey-6 text-xs")
-
-        browser_tool = tool_registry.get_tool("browser")
-        if browser_tool:
-            ui.switch(
-                "Enable Browser tool",
-                value=tool_registry.is_enabled("browser"),
-                on_change=lambda e: tool_registry.set_enabled("browser", e.value),
-            ).tooltip(browser_tool.description)
-        else:
-            ui.label("Browser tool not found.").classes("text-grey-6 text-sm")
+        with _settings_section(
+            "Browser Automation",
+            "Open a real browser window that you and the agent share.",
+            icon="public",
+        ):
+            browser_tool = tool_registry.get_tool("browser")
+            if browser_tool:
+                ui.switch(
+                    "Enable Browser tool",
+                    value=tool_registry.is_enabled("browser"),
+                    on_change=lambda e: tool_registry.set_enabled("browser", e.value),
+                ).tooltip(browser_tool.description)
+            else:
+                ui.label("Browser tool not found.").classes("text-grey-6 text-sm")
 
         # File Operations
-        ui.separator()
-        ui.label("📁 File Operations").classes("text-subtitle1 font-bold")
-        ui.label("Read, write, search, copy, move, and delete files.").classes("text-grey-6 text-xs")
+        with _settings_section(
+            "File Operations",
+            "Read, write, search, copy, move, and delete files.",
+            icon="draft",
+        ):
+            ui.switch(
+                "Enable Filesystem tool",
+                value=tool_registry.is_enabled("filesystem"),
+                on_change=lambda e: tool_registry.set_enabled("filesystem", e.value),
+            ).tooltip(fs_tool.description)
 
-        ui.switch(
-            "Enable Filesystem tool",
-            value=tool_registry.is_enabled("filesystem"),
-            on_change=lambda e: tool_registry.set_enabled("filesystem", e.value),
-        ).tooltip(fs_tool.description)
+            ops_default = fs_tool.config_schema.get("selected_operations", {}).get("default", [])
+            current_ops = fs_tool.get_config("selected_operations", ops_default)
+            if not isinstance(current_ops, list):
+                current_ops = ops_default
+            _build_ops_checkboxes(
+                [("Read-only", _SAFE_OPS), ("Write", _WRITE_OPS), ("Destructive", _DESTRUCTIVE_OPS)],
+                current_ops, fs_tool,
+            )
 
-        ops_default = fs_tool.config_schema.get("selected_operations", {}).get("default", [])
-        current_ops = fs_tool.get_config("selected_operations", ops_default)
-        if not isinstance(current_ops, list):
-            current_ops = ops_default
-        _build_ops_checkboxes(
-            [("Read-only", _SAFE_OPS), ("Write", _WRITE_OPS), ("⚠️ Destructive", _DESTRUCTIVE_OPS)],
-            current_ops, fs_tool,
-        )
+        _build_tunnel_settings_section()
 
         # ── Logging ──────────────────────────────────────────────────
-        ui.separator()
-        ui.label("📝 Logging").classes("text-subtitle1 font-bold")
-        ui.label(
-            "Structured logs are saved daily to ~/.thoth/logs/ (7-day retention)."
-        ).classes("text-grey-6 text-xs")
+        with _settings_section(
+            "Logging",
+            "Structured logs are saved daily to ~/.thoth/logs/ with 7-day retention.",
+            icon="article",
+        ):
+            from logging_config import get_file_log_level, set_file_log_level, get_log_dir
 
-        from logging_config import get_file_log_level, set_file_log_level, get_log_dir
+            _level_options = ["DEBUG", "INFO", "WARNING", "ERROR"]
+            ui.select(
+                _level_options,
+                value=get_file_log_level(),
+                label="File log level",
+                on_change=lambda e: set_file_log_level(e.value),
+            ).classes("w-48").props("dense outlined").tooltip("Minimum severity written to log files")
 
-        _level_options = ["DEBUG", "INFO", "WARNING", "ERROR"]
-        ui.select(
-            _level_options,
-            value=get_file_log_level(),
-            label="File log level",
-            on_change=lambda e: set_file_log_level(e.value),
-        ).classes("w-48").tooltip("Minimum severity written to log files")
+            async def _open_log_folder():
+                import subprocess, sys
+                log_dir = str(get_log_dir())
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", log_dir])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", log_dir])
+                else:
+                    subprocess.Popen(["xdg-open", log_dir])
 
-        async def _open_log_folder():
-            import subprocess, sys
-            log_dir = str(get_log_dir())
-            if sys.platform == "win32":
-                subprocess.Popen(["explorer", log_dir])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", log_dir])
-            else:
-                subprocess.Popen(["xdg-open", log_dir])
-
-        ui.button("Open Log Folder", icon="folder_open", on_click=_open_log_folder).props(
-            "flat dense no-caps"
-        )
-
-        # ── Window Mode ──────────────────────────────────────────────
-        ui.separator()
-        ui.label("🪟 Window Mode").classes("text-subtitle1 font-bold")
-        ui.label(
-            "Choose how Thoth opens on launch. "
-            "\"Native Window\" provides a dedicated app window. "
-            "\"System Browser\" opens in your default browser "
-            "(avoids macOS WebView issues)."
-        ).classes("text-grey-6 text-xs")
-
-        from ui.helpers import load_app_config, save_app_config
-
-        _wm_cfg = load_app_config()
-        _current_mode = _wm_cfg.get("window_mode", "ask")
-
-        def _on_window_mode_change(e):
-            cfg = load_app_config()
-            cfg["window_mode"] = e.value
-            save_app_config(cfg)
-
-        ui.select(
-            {"ask": "Ask on Launch", "native": "Native Window", "browser": "System Browser"},
-            value=_current_mode,
-            label="Window mode",
-            on_change=_on_window_mode_change,
-        ).classes("w-64").tooltip("Takes effect on next launch")
-
-        ui.label("Takes effect on next launch.").classes("text-grey-7 text-xs q-mt-xs")
+            ui.button("Open Log Folder", icon="folder_open", on_click=_open_log_folder).props(
+                "flat dense no-caps"
+            )
 
     # ── Google Account Tab (unified Gmail + Calendar) ──────────────
 
@@ -2127,12 +2453,11 @@ def open_settings(
     # ── Accounts Tab ─────────────────────────────────────────────────
 
     def _build_accounts_tab() -> None:
-        ui.label("👥 Accounts").classes("text-h6")
-        ui.label(
-            "Connect Google, social media, and other personal accounts."
-        ).classes("text-grey-6 text-sm")
-
-        ui.separator()
+        _settings_header(
+            "Accounts",
+            "Connect Google, X, and other personal accounts used by tools.",
+            "group",
+        )
 
         _build_google_account_panel()
         _build_x_account_panel()
@@ -2386,41 +2711,55 @@ def open_settings(
     # ── Utilities Tab ────────────────────────────────────────────────
 
     def _build_utilities_tab() -> None:
-        ui.label("🔧 Utility Tools").classes("text-h6")
-        ui.label("Lightweight productivity tools.").classes("text-grey-6 text-sm")
-        ui.separator()
+        _settings_header(
+            "Utilities",
+            "Lightweight productivity tools available to the assistant.",
+            "build",
+        )
         util_names = ["task", "timer", "url_reader", "calculator", "weather", "chart", "system_info", "conversation_search"]
-        for uname in util_names:
-            utool = tool_registry.get_tool(uname)
-            if utool is None:
-                continue
-            ui.switch(
-                utool.display_name,
-                value=tool_registry.is_enabled(uname),
-                on_change=lambda e, n=uname: tool_registry.set_enabled(n, e.value),
-            ).tooltip(utool.description)
-            ui.separator()
+        enabled_count = sum(1 for name in util_names if tool_registry.is_enabled(name))
+        with ui.row().classes("items-center gap-2 q-mb-sm"):
+            _metric_chip("enabled", enabled_count, icon="toggle_on")
+            _metric_chip("available", len(util_names), icon="apps")
+        with _settings_section("Utility Tools", "Toggle small tools used for everyday tasks.", icon="apps"):
+            for uname in util_names:
+                utool = tool_registry.get_tool(uname)
+                if utool is None:
+                    continue
+                with ui.row().classes("items-center w-full no-wrap q-py-xs").style(
+                    "border-bottom: 1px solid rgba(148, 163, 184, 0.12);"
+                ):
+                    ui.switch(
+                        "",
+                        value=tool_registry.is_enabled(uname),
+                        on_change=lambda e, n=uname: tool_registry.set_enabled(n, e.value),
+                    ).tooltip(utool.description)
+                    with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
+                        ui.label(utool.display_name).classes("text-sm text-weight-medium")
+                        ui.label(utool.description).classes("text-grey-6 text-xs")
 
     # ── Tracker Tab ──────────────────────────────────────────────────
 
     def _build_tracker_tab() -> None:
         from tools.tracker_tool import _get_db, _get_all_trackers, _DB_PATH
 
-        ui.label("\U0001f4cb Habit & Health Tracker").classes("text-h6")
-        ui.label("Track recurring activities, habits, symptoms, and health events.").classes("text-grey-6 text-sm")
+        _settings_header(
+            "Tracker",
+            "Track recurring activities, habits, symptoms, and health events.",
+            "checklist",
+        )
 
         tracker_tool = tool_registry.get_tool("tracker")
         if not tracker_tool:
             ui.label("Tracker tool not found.").classes("text-negative")
             return
 
-        ui.switch(
-            "Enable Habit Tracker",
-            value=tool_registry.is_enabled("tracker"),
-            on_change=lambda e: tool_registry.set_enabled("tracker", e.value),
-        ).tooltip(tracker_tool.description)
-
-        ui.separator()
+        with _settings_section("Tracker Tool", "Enable the tool and review stored tracker data.", icon="checklist"):
+            ui.switch(
+                "Enable Habit Tracker",
+                value=tool_registry.is_enabled("tracker"),
+                on_change=lambda e: tool_registry.set_enabled("tracker", e.value),
+            ).tooltip(tracker_tool.description)
 
         try:
             conn = _get_db()
@@ -2431,7 +2770,9 @@ def open_settings(
             trackers = []
             total_entries = 0
 
-        ui.label(f"Active trackers: {len(trackers)}  ·  Total entries: {total_entries}").classes("font-bold")
+        with ui.row().classes("items-center gap-2 q-mb-sm"):
+            _metric_chip("active trackers", len(trackers), icon="fact_check")
+            _metric_chip("entries", total_entries, icon="data_usage")
 
         if trackers:
             tracker_container = ui.column().classes("w-full")
@@ -2489,7 +2830,13 @@ def open_settings(
                     except Exception as exc:
                         ui.notify(f"Error: {exc}", type="negative")
 
-            ui.button("🗑️ Delete All Tracker Data", on_click=_delete_all_tracker_data).props("flat dense color=negative")
+            with _settings_section(
+                "Danger Zone",
+                "Delete all habit and health tracker rows.",
+                icon="warning",
+                tone="danger",
+            ):
+                ui.button("Delete All Tracker Data", icon="delete", on_click=_delete_all_tracker_data).props("flat dense color=negative no-caps")
         else:
             ui.label("No trackers yet.").classes("text-grey-6 mt-2")
 
@@ -2501,51 +2848,47 @@ def open_settings(
         import wiki_vault
         from documents import reset_vector_store
 
-        ui.label("🧠 Knowledge").classes("text-h6")
-        ui.label(
-            "Thoth builds a knowledge graph from your conversations and documents."
-        ).classes("text-grey-6 text-sm")
+        _settings_header(
+            "Knowledge",
+            "Manage memory, graph health, wiki vault export, and stored knowledge.",
+            "psychology",
+        )
 
         mem_tool = tool_registry.get_tool("memory")
-        if mem_tool:
-            ui.switch(
-                "Enable Memory",
-                value=tool_registry.is_enabled("memory"),
-                on_change=lambda e: tool_registry.set_enabled("memory", e.value),
-            )
-
-        ui.separator()
-
         total = memory_db.count_memories()
         rel_count = kg.count_relations()
 
-        with ui.row().classes("gap-6"):
-            ui.label(f"Entities: {total}").classes("font-bold")
-            ui.label(f"Relations: {rel_count}").classes("font-bold")
+        with _settings_section(
+            "Memory Graph",
+            "Conversation and document entities used for recall and relationship browsing.",
+            icon="hub",
+        ):
+            if mem_tool:
+                ui.switch(
+                    "Enable Memory",
+                    value=tool_registry.is_enabled("memory"),
+                    on_change=lambda e: tool_registry.set_enabled("memory", e.value),
+                )
+            with ui.row().classes("gap-2"):
+                _metric_chip("entities", total, icon="account_tree")
+                _metric_chip("relations", rel_count, icon="share")
 
-        if total > 0:
-            try:
-                stats = kg.get_graph_stats()
-                type_parts = [f"{t}: {c}" for t, c in sorted(stats.get("entity_types", {}).items())]
-                if type_parts:
-                    ui.label(f"Types — {', '.join(type_parts)}").classes("text-xs text-grey-6")
-                if stats.get("connected_components", 0) > 0:
-                    ui.label(
-                        f"Knowledge graph — {stats['connected_components']} component(s), "
-                        f"largest: {stats['largest_component']} entities, "
-                        f"{stats['isolated_entities']} isolated"
-                    ).classes("text-xs text-grey-6")
-            except Exception:
-                pass
+            if total > 0:
+                try:
+                    stats = kg.get_graph_stats()
+                    type_parts = [f"{t}: {c}" for t, c in sorted(stats.get("entity_types", {}).items())]
+                    if type_parts:
+                        ui.label(f"Types: {', '.join(type_parts)}").classes("text-xs text-grey-6")
+                    if stats.get("connected_components", 0) > 0:
+                        ui.label(
+                            f"Knowledge graph: {stats['connected_components']} component(s), "
+                            f"largest {stats['largest_component']} entities, "
+                            f"{stats['isolated_entities']} isolated"
+                        ).classes("text-xs text-grey-6")
+                except Exception:
+                    pass
 
         # ── Wiki Vault section ───────────────────────────────────────
-        ui.separator()
-        ui.label("📚 Wiki Vault").classes("text-subtitle1 font-bold")
-        ui.label(
-            "Export your knowledge graph as Obsidian-compatible markdown files. "
-            "Open the vault in Obsidian, VS Code, or any markdown editor."
-        ).classes("text-grey-6 text-sm")
-
         cfg = wiki_vault._load_config()
         vault_enabled = cfg.get("enabled", False)
         vault_path = cfg.get("vault_path", str(wiki_vault._DATA_DIR / "vault"))
@@ -2566,34 +2909,39 @@ def open_settings(
             else:
                 ui.notify("Wiki vault disabled.", type="info")
 
-        ui.switch("Enable Wiki Vault", value=vault_enabled, on_change=_toggle_vault)
+        with _settings_section(
+            "Wiki Vault",
+            "Export your knowledge graph as Obsidian-compatible markdown files.",
+            icon="menu_book",
+        ):
+            ui.switch("Enable Wiki Vault", value=vault_enabled, on_change=_toggle_vault)
 
-        ui.label("Vault Path").classes("font-bold")
-        with ui.row().classes("w-full items-center gap-2"):
-            path_input = ui.input(value=vault_path).classes("flex-grow")
+            ui.label("Vault Path").classes("font-bold")
+            with ui.row().classes("w-full items-center gap-2"):
+                path_input = ui.input(value=vault_path).classes("flex-grow").props("dense outlined")
 
-            async def _browse_vault():
-                folder = await browse_folder("Select vault folder")
-                if folder:
-                    path_input.value = folder
+                async def _browse_vault():
+                    folder = await browse_folder("Select vault folder")
+                    if folder:
+                        path_input.value = folder
 
-            ui.button("Browse", on_click=_browse_vault).props("flat dense")
+                ui.button("Browse", icon="folder_open", on_click=_browse_vault).props("flat dense no-caps")
 
-            def _apply_path():
-                new_path = path_input.value.strip()
-                if new_path:
-                    wiki_vault.set_vault_path(new_path)
-                    ui.notify(f"Vault path set to: {new_path}", type="info")
+                def _apply_path():
+                    new_path = path_input.value.strip()
+                    if new_path:
+                        wiki_vault.set_vault_path(new_path)
+                        ui.notify(f"Vault path set to: {new_path}", type="info")
 
-            ui.button("Apply", on_click=_apply_path).props("flat dense color=primary")
+                ui.button("Apply", icon="save", on_click=_apply_path).props("flat dense color=primary no-caps")
 
-        if vault_enabled:
-            vstats = wiki_vault.get_vault_stats()
-            with ui.row().classes("gap-6"):
-                ui.label(f"Articles: {vstats.get('articles', 0)}").classes("font-bold")
-                conv_count = vstats.get('conversations', 0)
-                if conv_count > 0:
-                    ui.label(f"Conversations: {conv_count}").classes("font-bold")
+            if vault_enabled:
+                vstats = wiki_vault.get_vault_stats()
+                with ui.row().classes("gap-2"):
+                    _metric_chip("articles", vstats.get("articles", 0), icon="article")
+                    conv_count = vstats.get("conversations", 0)
+                    if conv_count > 0:
+                        _metric_chip("conversations", conv_count, icon="forum")
 
             # ── Vault sync detection ──────────────────────────────
             edited = wiki_vault.check_vault_sync()
@@ -2659,87 +3007,6 @@ def open_settings(
                         ui.notify(f"Failed to open: {exc}", type="negative")
 
                 ui.button("📂 Open Vault Folder", on_click=_open_vault).props("flat")
-
-        # ── Dream Cycle section ───────────────────────────────────────
-        ui.separator()
-        import dream_cycle
-
-        ui.label("🌙 Dream Cycle").classes("text-subtitle1 font-bold")
-        ui.label(
-            "Nightly background task that merges duplicates, enriches "
-            "thin descriptions, and infers missing relationships."
-        ).classes("text-grey-6 text-sm")
-
-        dream_cfg = dream_cycle.get_config()
-
-        def _toggle_dream(e):
-            dream_cycle.set_enabled(e.value)
-            ui.notify(
-                "Dream cycle enabled." if e.value else "Dream cycle disabled.",
-                type="info",
-            )
-
-        ui.switch(
-            "Enable Dream Cycle",
-            value=dream_cfg.get("enabled", True),
-            on_change=_toggle_dream,
-        )
-
-        with ui.row().classes("gap-4 items-center"):
-            ui.label("Window").classes("text-sm")
-
-            _start_val = f"{dream_cfg.get('window_start', 1):02d}:00"
-            with ui.input("Start", value=_start_val).props(
-                "dense outlined"
-            ).classes("w-28") as _dream_start_input:
-                with ui.menu().props("no-parent-event") as _start_menu:
-                    ui.time(value=_start_val, mask="HH:00").props(
-                        'format24h'
-                    ).bind_value(_dream_start_input)
-                with _dream_start_input.add_slot("append"):
-                    ui.icon("schedule").on("click", _start_menu.open).classes(
-                        "cursor-pointer"
-                    )
-
-            ui.label("–").classes("text-sm")
-
-            _end_val = f"{dream_cfg.get('window_end', 5):02d}:00"
-            with ui.input("End", value=_end_val).props(
-                "dense outlined"
-            ).classes("w-28") as _dream_end_input:
-                with ui.menu().props("no-parent-event") as _end_menu:
-                    ui.time(value=_end_val, mask="HH:00").props(
-                        'format24h'
-                    ).bind_value(_dream_end_input)
-                with _dream_end_input.add_slot("append"):
-                    ui.icon("schedule").on("click", _end_menu.open).classes(
-                        "cursor-pointer"
-                    )
-
-            def _on_dream_window_change(_=None):
-                try:
-                    s = int(_dream_start_input.value.split(":")[0])
-                    e = int(_dream_end_input.value.split(":")[0])
-                except (ValueError, AttributeError):
-                    return
-                dream_cycle.set_window(s, e)
-                ui.notify(f"Dream window updated: {s:02d}:00 – {e:02d}:00", type="info")
-
-            _dream_start_input.on("update:model-value", _on_dream_window_change)
-            _dream_end_input.on("update:model-value", _on_dream_window_change)
-
-        dream_status = dream_cycle.get_dream_status()
-        if dream_status.get("last_run"):
-            try:
-                last_dt = datetime.fromisoformat(dream_status["last_run"])
-                ui.label(
-                    f"Last run: {last_dt.strftime('%b %d, %I:%M %p')} — "
-                    f"{dream_status.get('last_summary', '')}"
-                ).classes("text-xs text-grey-6")
-            except (ValueError, TypeError):
-                pass
-        else:
-            ui.label("No dream cycles have run yet.").classes("text-xs text-grey-6")
 
         # ── Browse knowledge ─────────────────────────────────────────
         ui.separator()
@@ -2906,222 +3173,102 @@ def open_settings(
         from voice import get_available_whisper_sizes
         from tts import VOICE_CATALOG
 
-        ui.label("🎤 Voice Input").classes("text-h6")
-        ui.label("Talk to Thoth hands-free using voice input.").classes("text-grey-6 text-sm")
+        _settings_header(
+            "Voice",
+            "Configure speech input and local text-to-speech.",
+            "mic",
+        )
 
         voice_svc = state.voice_service
 
-        whisper_sizes = get_available_whisper_sizes()
-        whisper_labels = {
-            "tiny": "Tiny (~39 MB, fastest)", "base": "Base (~74 MB, balanced)",
-            "small": "Small (~244 MB, accurate)", "medium": "Medium (~769 MB, best accuracy)",
-        }
-        whisper_opts = {s: whisper_labels.get(s, s) for s in whisper_sizes}
-        ui.select(
-            label="Whisper model size", options=whisper_opts,
-            value=voice_svc.whisper_size,
-            on_change=lambda e: setattr(voice_svc, "whisper_size", e.value),
-        ).classes("w-full")
-
-        ui.separator()
-
-        ui.label("🔊 Text-to-Speech").classes("text-h6")
-        ui.label("Enable text-to-speech to hear Thoth read responses aloud.").classes("text-grey-6 text-sm")
+        with _settings_section(
+            "Voice Input",
+            "Talk to Thoth hands-free using local Whisper transcription.",
+            icon="record_voice_over",
+        ):
+            whisper_sizes = get_available_whisper_sizes()
+            whisper_labels = {
+                "tiny": "Tiny (~39 MB, fastest)", "base": "Base (~74 MB, balanced)",
+                "small": "Small (~244 MB, accurate)", "medium": "Medium (~769 MB, best accuracy)",
+            }
+            whisper_opts = {s: whisper_labels.get(s, s) for s in whisper_sizes}
+            ui.select(
+                label="Whisper model size", options=whisper_opts,
+                value=voice_svc.whisper_size,
+                on_change=lambda e: setattr(voice_svc, "whisper_size", e.value),
+            ).classes("w-full").props("dense outlined")
 
         tts = state.tts_service
 
-        if not tts.is_installed():
-            async def _install_kokoro():
-                ui.notify("Downloading Kokoro TTS model & voices…", type="ongoing", timeout=0)
-                await run.io_bound(tts.download_model)
-                ui.notify("✅ Kokoro TTS installed!", type="positive")
-                _reopen("Voice")
+        with _settings_section(
+            "Text-to-Speech",
+            "Hear Thoth read responses aloud using local Kokoro voices.",
+            icon="volume_up",
+        ):
+            _status_dot(
+                "Kokoro installed" if tts.is_installed() else "Kokoro not installed",
+                "ok" if tts.is_installed() else "inactive",
+            )
+            if not tts.is_installed():
+                async def _install_kokoro():
+                    ui.notify("Downloading Kokoro TTS model & voices...", type="ongoing", timeout=0)
+                    await run.io_bound(tts.download_model)
+                    ui.notify("Kokoro TTS installed", type="positive")
+                    _reopen("Voice")
 
-            ui.button("⬇️ Install Kokoro TTS", on_click=_install_kokoro).classes("w-full")
-        else:
-            ui.switch("Enable text-to-speech", value=tts.enabled,
-                      on_change=lambda e: setattr(tts, "enabled", e.value))
+                ui.button("Install Kokoro TTS", icon="download", on_click=_install_kokoro).classes("w-full").props("no-caps")
+            else:
+                ui.switch("Enable text-to-speech", value=tts.enabled,
+                          on_change=lambda e: setattr(tts, "enabled", e.value))
 
-            voice_opts = {v: VOICE_CATALOG.get(v, v) for v in tts.get_installed_voices()}
-            if voice_opts:
-                ui.select(label="Voice", options=voice_opts, value=tts.voice,
-                          on_change=lambda e: setattr(tts, "voice", e.value)).classes("w-full")
+                voice_opts = {v: VOICE_CATALOG.get(v, v) for v in tts.get_installed_voices()}
+                if voice_opts:
+                    ui.select(label="Voice", options=voice_opts, value=tts.voice,
+                              on_change=lambda e: setattr(tts, "voice", e.value)).classes("w-full").props("dense outlined")
 
-            ui.label("Speech speed").classes("text-sm")
-            ui.slider(
-                min=0.5, max=2.0, step=0.1, value=tts.speed,
-                on_change=lambda e: setattr(tts, "speed", e.value),
-            ).classes("w-full")
+                ui.label("Speech speed").classes("text-sm")
+                ui.slider(
+                    min=0.5, max=2.0, step=0.1, value=tts.speed,
+                    on_change=lambda e: setattr(tts, "speed", e.value),
+                ).classes("w-full")
 
-            ui.switch("Auto-speak voice responses", value=tts.auto_speak,
-                      on_change=lambda e: setattr(tts, "auto_speak", e.value))
+                ui.switch("Auto-speak voice responses", value=tts.auto_speak,
+                          on_change=lambda e: setattr(tts, "auto_speak", e.value))
 
-            def _test():
-                tts.speak_now("Hello! I'm Thoth, your knowledgeable personal agent.")
+                def _test():
+                    tts.speak_now("Hello! I'm Thoth, your knowledgeable personal agent.")
 
-            ui.button("🔊 Test voice", on_click=_test).props("flat")
+                ui.button("Test voice", icon="volume_up", on_click=_test).props("flat no-caps")
 
     # ── Channels Tab ─────────────────────────────────────────────────
 
     def _build_channels_tab() -> None:
         from channels import registry as _ch_registry
         from channels import config as _ch_config
-        from tunnel import tunnel_manager
-
-        # ── Tunnel Settings ──────────────────────────────────────
-        ui.label("🔗 Tunnel Settings").classes("text-h6")
-        ui.label(
-            "Securely expose local webhook ports to the internet."
-        ).classes("text-grey-6 text-sm")
-
-        with ui.card().classes("w-full q-pa-md q-mb-md"):
-            # Provider selector (future: cloudflare, tailscale)
-            provider_val = _ch_config.get("tunnel", "provider", "ngrok")
-            provider_select = ui.select(
-                label="Provider",
-                options=["ngrok"],
-                value=provider_val,
-            ).classes("w-full").style("max-width: 300px")
-
-            # Authtoken
-            token_input, token_refresh = _secret_input("Authtoken", "NGROK_AUTHTOKEN")
-            token_input.tooltip("Your ngrok authtoken from https://dashboard.ngrok.com/")
-
-            def _save_tunnel_settings():
-                _ch_config.set("tunnel", "provider", provider_select.value)
-                raw = token_input.value.strip() if isinstance(token_input.value, str) else ""
-                if raw:
-                    set_key("NGROK_AUTHTOKEN", raw)
-                    token_input.value = ""
-                    token_input.update()
-                    token_refresh()
-                ui.notify("Tunnel settings saved", type="positive")
-                _refresh_active_tunnels()
-
-            with ui.row().classes("gap-2"):
-                ui.button("💾 Save", on_click=_save_tunnel_settings)
-                ui.button(
-                    "Clear authtoken",
-                    icon="delete",
-                    on_click=lambda: _clear_secret("NGROK_AUTHTOKEN", "ngrok authtoken", token_refresh),
-                ).props("flat color=negative")
-
-            # Active tunnels display
-            tunnel_container = ui.column().classes("w-full q-mt-sm")
-
-            def _refresh_active_tunnels():
-                tunnel_container.clear()
-                with tunnel_container:
-                    active = tunnel_manager.active_tunnels()
-                    if active:
-                        ui.label("Active Tunnels:").classes(
-                            "text-weight-medium text-sm"
-                        )
-                        for port, url in active.items():
-                            with ui.row().classes("items-center gap-2"):
-                                ui.label(f"Port {port}").classes("text-sm")
-                                ui.label("→").classes("text-grey-6 text-sm")
-                                url_label = ui.label(url).classes(
-                                    "text-sm text-primary"
-                                )
-                                ui.button(
-                                    icon="content_copy",
-                                    on_click=lambda u=url: (
-                                        ui.run_javascript(
-                                            f"navigator.clipboard.writeText('{u}')"
-                                        ),
-                                        ui.notify("Copied!", type="info"),
-                                    ),
-                                ).props("flat dense size=xs")
-                    else:
-                        if tunnel_manager.is_available():
-                            ui.label(
-                                "No active tunnels — start a channel to open one."
-                            ).classes("text-grey-6 text-sm")
-                        else:
-                            ui.label(
-                                "Not configured — paste your authtoken above."
-                            ).classes("text-grey-6 text-sm")
-
-            _refresh_active_tunnels()
-
-            # Setup guide
-            with ui.expansion("ⓘ Setup Guide").classes("w-full q-mt-sm"):
-                ui.markdown(
-                    "1. Sign up at [ngrok.com](https://ngrok.com/) (free tier available)\n"
-                    "2. Copy your **authtoken** from the "
-                    "[dashboard](https://dashboard.ngrok.com/get-started/your-authtoken)\n"
-                    "3. Paste it above and click **Save**\n"
-                    "4. Start a channel — a tunnel activates automatically\n\n"
-                    "*The ngrok binary is downloaded automatically on first use.*",
-                    extras=["code-friendly", "fenced-code-blocks"],
-                ).classes("text-sm")
-
-            # Main-app tunnel toggle
-            ui.separator().classes("q-mt-sm")
-            main_app_val = _ch_config.get("tunnel", "tunnel_main_app", False)
-            main_app_switch = ui.switch(
-                "🌐 Expose task webhook endpoint",
-                value=main_app_val,
-            )
-            main_app_switch.tooltip(
-                "Tunnel the main Thoth port so external services can "
-                "trigger task webhooks via /api/webhook/{task_id}. "
-                "⚠️ This also exposes the web UI via the tunnel URL."
-            )
-
-            main_app_url_container = ui.column().classes("w-full")
-
-            async def _on_main_app_toggle(e):
-                from app_port import get_app_port
-
-                _ch_config.set("tunnel", "tunnel_main_app", e.args)
-                if e.args and tunnel_manager.is_available():
-                    try:
-                        app_port = get_app_port()
-                        url = tunnel_manager.start_tunnel(app_port, label="main_app")
-                        main_app_url_container.clear()
-                        with main_app_url_container:
-                            with ui.row().classes("items-center gap-2"):
-                                ui.label(f"{url}/api/webhook/{{task_id}}").classes(
-                                    "text-sm text-primary"
-                                )
-                                ui.button(
-                                    icon="content_copy",
-                                    on_click=lambda u=url: (
-                                        ui.run_javascript(
-                                            f"navigator.clipboard.writeText("
-                                            f"'{u}/api/webhook/{{task_id}}')"
-                                        ),
-                                        ui.notify("Copied!", type="info"),
-                                    ),
-                                ).props("flat dense size=xs")
-                        _refresh_active_tunnels()
-                    except Exception as exc:
-                        ui.notify(f"Tunnel error: {exc}", type="negative")
-                elif not e.args:
-                    try:
-                        app_port = get_app_port()
-                        tunnel_manager.stop_tunnel(app_port)
-                    except Exception:
-                        pass
-                    main_app_url_container.clear()
-                    _refresh_active_tunnels()
-
-            main_app_switch.on("update:model-value", _on_main_app_toggle)
-
-        ui.separator()
 
         # ── Messaging Channels ───────────────────────────────────
-        ui.label("📱 Messaging Channels").classes("text-h6")
-        ui.label("Connect Thoth to external messaging platforms.").classes("text-grey-6 text-sm")
-
-        ui.separator()
+        _settings_header(
+            "Channels",
+            "Connect Thoth to external messaging platforms. Tunnel credentials live in System.",
+            "forum",
+        )
 
         channels = _ch_registry.all_channels()
         if not channels:
             ui.label("No channels registered.").classes("text-grey-6 text-sm")
             return
+
+        configured = sum(1 for ch in channels if ch.is_configured())
+        running = sum(1 for ch in channels if ch.is_running())
+        with ui.row().classes("items-center gap-2 q-mb-sm"):
+            _metric_chip("configured", configured, icon="settings")
+            _metric_chip("running", running, icon="play_circle")
+            if any(getattr(ch, "needs_tunnel", False) for ch in channels):
+                ui.button(
+                    "Tunnel credentials are in System",
+                    icon="lan",
+                    on_click=lambda: _reopen("System"),
+                ).props("flat dense no-caps")
 
         for ch in channels:
             _build_channel_panel(ch, _ch_config)
@@ -3445,11 +3592,11 @@ def open_settings(
 
         cfg = get_identity_config()
 
-        ui.label("⚙️ Preferences").classes("text-h6")
-        ui.label(
-            "Customize the assistant's name and personality."
-        ).classes("text-grey-6 text-sm")
-        ui.separator()
+        _settings_header(
+            "Preferences",
+            "Customize identity, launch behavior, background intelligence, updates, and migration.",
+            "tune",
+        )
 
         # ── Name ─────────────────────────────────────────────────
         ui.label("Assistant name").classes("text-subtitle2 q-mt-sm")
@@ -3544,6 +3691,9 @@ def open_settings(
         )
 
         # ── Auto-update section ─────────────────────────────────
+        _build_window_mode_section()
+        _build_dream_cycle_section()
+
         try:
             from ui.update_dialog import build_update_section
             build_update_section()
