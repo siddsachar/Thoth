@@ -78,6 +78,9 @@ def test_chat_tool_trace_source_contracts():
     assert "tooltip(\"Select model for this thread\")" not in chat_src
     assert "on_model_change" not in components_src
     assert "on_model_switch" in components_src
+    assert "_MORE_MODELS_SENTINEL" in components_src
+    assert "async def _on_model_pick" in components_src
+    assert "use-input" in components_src
     assert "if val == _picker_val" in components_src
     assert "get_model_max_context" in components_src
     assert "tool_trace.py" in installer_src

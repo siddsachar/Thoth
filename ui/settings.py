@@ -2172,9 +2172,8 @@ def open_settings(
 
         # ── Logging ──────────────────────────────────────────────────
         with _settings_section(
-            "Logging",
+            "📝 Logging",
             "Structured logs are saved daily to ~/.thoth/logs/ with 7-day retention.",
-            icon="article",
         ):
             from logging_config import get_file_log_level, set_file_log_level, get_log_dir
 

@@ -59,10 +59,12 @@ def test_settings_polish_helpers_are_local_and_used():
 def test_status_and_home_links_follow_new_information_architecture():
     status_src = Path("ui/status_checks.py").read_text(encoding="utf-8")
     home_src = Path("ui/home.py").read_text(encoding="utf-8")
+    tunnel_src = status_src.split("def check_tunnel", 1)[1].split("def check_gmail_oauth", 1)[0]
+    dream_src = status_src.split("def check_dream_cycle", 1)[1].split("def check_tts", 1)[0]
 
     assert 'CheckResult("Tunnel"' in status_src
-    assert 'settings_tab="System"' in status_src
+    assert 'settings_tab="Channels"' in tunnel_src
     assert 'CheckResult("Dream Cycle"' in status_src
-    assert 'settings_tab="Preferences"' in status_src
+    assert 'settings_tab="Knowledge"' in dream_src
     assert "Settings \u2192 Preferences" in home_src
     assert "Settings \u2192 Knowledge" not in home_src

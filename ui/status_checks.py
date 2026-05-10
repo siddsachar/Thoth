@@ -145,18 +145,18 @@ def check_tunnel() -> CheckResult:
         from tunnel import tunnel_manager
         if not tunnel_manager.is_available():
             return CheckResult("Tunnel", "inactive", "Not configured",
-                               settings_tab="System")
+                               settings_tab="Channels")
         active = tunnel_manager.active_tunnels()
         if active:
             urls = ", ".join(f"{p}\u2192{u}" for p, u in active.items())
             return CheckResult("Tunnel", "ok",
                                f"{len(active)} active: {urls}",
-                               settings_tab="System")
+                               settings_tab="Channels")
         return CheckResult("Tunnel", "inactive", "Ready (no active tunnels)",
-                           settings_tab="System")
+                           settings_tab="Channels")
     except Exception as exc:
         return CheckResult("Tunnel", "error", str(exc),
-                           settings_tab="System")
+                           settings_tab="Channels")
 
 
 def check_gmail_oauth() -> CheckResult:
@@ -323,7 +323,7 @@ def check_dream_cycle() -> CheckResult:
         from dream_cycle import get_dream_status
         status = get_dream_status()
         if not status.get("enabled"):
-            return CheckResult("Dream Cycle", "inactive", "Disabled", settings_tab="Preferences")
+            return CheckResult("Dream Cycle", "inactive", "Disabled", settings_tab="Knowledge")
         last = status.get("last_run")
         if last:
             try:
@@ -332,13 +332,13 @@ def check_dream_cycle() -> CheckResult:
                 return CheckResult(
                     "Dream Cycle", "ok",
                     f"{dt.strftime('%b %d, %I:%M %p')} — {summary}",
-                    settings_tab="Preferences",
+                    settings_tab="Knowledge",
                 )
             except (ValueError, TypeError):
-                return CheckResult("Dream Cycle", "ok", f"Last: {last}", settings_tab="Preferences")
-        return CheckResult("Dream Cycle", "ok", "Enabled — not yet run", settings_tab="Preferences")
+                return CheckResult("Dream Cycle", "ok", f"Last: {last}", settings_tab="Knowledge")
+        return CheckResult("Dream Cycle", "ok", "Enabled — not yet run", settings_tab="Knowledge")
     except Exception as exc:
-        return CheckResult("Dream Cycle", "error", str(exc), settings_tab="Preferences")
+        return CheckResult("Dream Cycle", "error", str(exc), settings_tab="Knowledge")
 
 
 def check_tts() -> CheckResult:

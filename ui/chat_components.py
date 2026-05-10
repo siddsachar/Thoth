@@ -395,18 +395,18 @@ def _build_inline_model_picker(
         if value and value != _cur_default_value:
             _picker_opts[value] = str(option.get("label") or value)
 
-    _MORE = "⚙️ More models…"
+    _MORE_MODELS_SENTINEL = "⚙️ More models…"
     if open_settings:
-        _picker_opts[_MORE] = _MORE
+        _picker_opts[_MORE_MODELS_SENTINEL] = _MORE_MODELS_SENTINEL
 
     _cur_mo_value = model_choice_value(_cur_mo)
     _picker_val = _cur_mo_value if _cur_mo_value and _cur_mo_value in _picker_opts else _default_opt
 
-    async def _on_pick(e):
+    async def _on_model_pick(e):
         val = e.value
         if val == _picker_val:
             return
-        if val == _MORE:
+        if val == _MORE_MODELS_SENTINEL:
             e.sender.set_value(_picker_val)
             if open_settings:
                 open_settings("Models")
@@ -442,7 +442,7 @@ def _build_inline_model_picker(
     ui.select(
         options=_picker_opts,
         value=_picker_val,
-        on_change=_on_pick,
-    ).props("dense borderless").classes("text-xs").style(
+        on_change=_on_model_pick,
+    ).props("dense borderless use-input input-debounce=300").classes("text-xs").style(
         "min-width: 140px; max-width: 220px;"
-    ).tooltip("Select model")
+    ).tooltip("Select model for this thread")
