@@ -482,7 +482,7 @@ def open_settings(
 
             _refresh_active_tunnels()
 
-            with ui.expansion("Setup Guide", icon="help_outline").classes("w-full q-mt-sm"):
+            with ui.expansion("Tunnel Setup", icon="help_outline").classes("w-full q-mt-sm"):
                 ui.markdown(
                     "1. Sign up at [ngrok.com](https://ngrok.com/) (free tier available)\n"
                     "2. Copy your **authtoken** from the "
