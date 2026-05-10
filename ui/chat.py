@@ -187,7 +187,10 @@ def build_chat(
         p.model_banner_container.clear()
         with p.model_banner_container:
             with ui.row().classes("w-full items-center gap-2 q-px-sm q-py-xs").style(surface["banner_style"]):
-                ui.icon(surface["icon"], color=surface["icon_color"]).style("font-size: 1.1rem;")
+                if surface["cloud"]:
+                    ui.icon("cloud", color=surface["icon_color"]).style("font-size: 1.1rem;")
+                else:
+                    ui.icon("lock", color=surface["icon_color"]).style("font-size: 1.1rem;")
                 ui.label(surface["text"]).classes(surface["text_class"])
 
     def _refresh_model_surface() -> None:
