@@ -158,11 +158,22 @@ def safe_ui_task(
     this wrapper records the failure and treats deleted-client errors as benign.
     """
 
+    try:
+        client = ui.context.client
+    except Exception:
+        client = None
+
     async def _runner() -> None:
         try:
-            result = callback()
-            if asyncio.iscoroutine(result):
-                await result
+            if client is not None:
+                with client:
+                    result = callback()
+                    if asyncio.iscoroutine(result):
+                        await result
+            else:
+                result = callback()
+                if asyncio.iscoroutine(result):
+                    await result
         except Exception as exc:
             if _is_benign_dead_ui_error(exc):
                 logger.debug("safe_ui_task skipped after dead-UI error: %s", exc)

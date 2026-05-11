@@ -26,6 +26,7 @@ ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 GOOGLE_GENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 XAI_BASE_URL = "https://api.x.ai/v1"
 MINIMAX_ANTHROPIC_BASE_URL = "https://api.minimax.io/anthropic"
+OLLAMA_CLOUD_BASE_URL = "https://ollama.com"
 
 # ── Context-size heuristics (prefix-match, checked top-to-bottom) ───────────
 # Used when the provider API doesn't expose context_length (e.g. OpenAI) and
@@ -604,8 +605,20 @@ def _infer_cloud_provider(model_name: str) -> str | None:
     parsed = _parse_provider_model_ref(model_name)
     if parsed:
         provider_id, _model_id = parsed
-        return None if provider_id in {"local", "ollama"} else provider_id
+        if provider_id == "ollama":
+            try:
+                from providers.ollama import is_ollama_cloud_offload_model
+                return "ollama" if is_ollama_cloud_offload_model(_model_id) else None
+            except Exception:
+                return None
+        return None if provider_id == "local" else provider_id
     model_name = _runtime_model_name(model_name)
+    try:
+        from providers.ollama import is_ollama_cloud_offload_model
+        if is_ollama_cloud_offload_model(model_name):
+            return "ollama"
+    except Exception:
+        pass
     _sync_custom_model_cache()
     if model_name in _cloud_model_cache:
         return _cloud_model_cache[model_name]["provider"]
@@ -646,6 +659,8 @@ def get_cloud_provider(model_name: str) -> str | None:
 # ── Provider emoji mapping ───────────────────────────────────────────────────
 _PROVIDER_EMOJI: dict[str | None, str] = {
     "openai": "⬡",
+    "ollama": "☁️",
+    "ollama_cloud": "☁️",
     "codex": "C",
     "openrouter": "🌐",
     "anthropic": "🔶",
@@ -683,6 +698,12 @@ def is_openrouter_available() -> bool:
     """Return True if an OpenRouter API key is configured."""
     from api_keys import get_key
     return bool(get_key("OPENROUTER_API_KEY"))
+
+
+def is_ollama_cloud_available() -> bool:
+    """Return True if an Ollama Cloud API key is configured."""
+    from api_keys import get_key
+    return bool(get_key("OLLAMA_API_KEY"))
 
 
 def is_anthropic_available() -> bool:
@@ -923,6 +944,25 @@ def validate_openrouter_key(api_key: str) -> bool:
         return False
 
 
+def validate_ollama_cloud_key(api_key: str) -> bool:
+    """Validate an Ollama Cloud API key by listing available models."""
+    import httpx
+
+    try:
+        resp = httpx.get(
+            f"{OLLAMA_CLOUD_BASE_URL}/api/tags",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return True
+        logger.warning("Ollama Cloud key validation: %d - %s", resp.status_code, resp.text[:200])
+        return False
+    except Exception as exc:
+        logger.warning("Ollama Cloud key validation error: %s", exc)
+        return False
+
+
 def validate_anthropic_key(api_key: str) -> bool:
     """Validate an Anthropic API key by listing models.
 
@@ -1056,10 +1096,65 @@ _ANTHROPIC_SKIP_SUBSTRINGS = ("embed", "tokenizer")
 _GOOGLE_SKIP_SUBSTRINGS = ("embed", "aqa", "tts")
 
 
+def _fetch_ollama_cloud_models(api_key: str) -> int:
+    """Fetch models from Ollama Cloud's native ``/api/tags`` endpoint."""
+    import httpx
+    from providers.capabilities import model_supports_surface
+    from providers.catalog import model_info_from_metadata, model_info_to_cache_entry
+
+    try:
+        resp = httpx.get(
+            f"{OLLAMA_CLOUD_BASE_URL}/api/tags",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        models = resp.json().get("models", [])
+        if not isinstance(models, list):
+            logger.warning("Ollama Cloud model fetch returned invalid models payload")
+            return 0
+        if len(models) > 500:
+            logger.warning("Ollama Cloud model fetch returned %d entries; limiting to first 500", len(models))
+            models = models[:500]
+    except Exception as exc:
+        logger.warning("Failed to fetch ollama_cloud models: %s", exc)
+        return 0
+
+    count = 0
+    with _cloud_cache_lock:
+        for m in models:
+            if not isinstance(m, dict):
+                continue
+            mid = str(m.get("name") or m.get("model") or "").strip()
+            if not mid:
+                continue
+            metadata = dict(m)
+            details = m.get("details")
+            if isinstance(details, dict):
+                metadata.update({f"details_{key}": value for key, value in details.items()})
+            ctx = int(m.get("context_length") or m.get("context_window") or 0)
+            if ctx <= 0:
+                ctx = _catalog_or_heuristic(mid)
+            model_info = model_info_from_metadata(
+                "ollama_cloud",
+                mid,
+                metadata,
+                display_name=mid,
+                context_window=ctx,
+                source="ollama_cloud_catalog",
+            )
+            if not model_supports_surface(model_info, "chat"):
+                continue
+            _cloud_model_cache[mid] = model_info_to_cache_entry(model_info)
+            count += 1
+    logger.info("Fetched %d ollama_cloud models", count)
+    return count
+
+
 def fetch_cloud_models(provider: str) -> int:
     """Fetch available models from *provider*.
 
-    Supported providers: ``'openai'``, ``'openrouter'``, ``'anthropic'``,
+    Supported providers: ``'openai'``, ``'ollama_cloud'``, ``'openrouter'``, ``'anthropic'``,
     ``'google'``, ``'xai'``, and ``'minimax'``.  Populates ``_cloud_model_cache``.  Returns the number
     of models found.  Safe to call from background threads.
     """
@@ -1074,6 +1169,11 @@ def fetch_cloud_models(provider: str) -> int:
             return 0
         url = f"{OPENAI_BASE_URL}/models"
         headers = {"Authorization": f"Bearer {api_key}"}
+    elif provider == "ollama_cloud":
+        api_key = get_key("OLLAMA_API_KEY")
+        if not api_key:
+            return 0
+        return _fetch_ollama_cloud_models(api_key)
     elif provider == "openrouter":
         api_key = get_key("OPENROUTER_API_KEY")
         if not api_key:
@@ -1375,6 +1475,7 @@ def refresh_cloud_models() -> int:
         _cloud_model_cache.clear()
     total = 0
     total += fetch_cloud_models("openai")
+    total += fetch_cloud_models("ollama_cloud")
     total += fetch_cloud_models("openrouter")
     total += fetch_cloud_models("anthropic")
     total += fetch_cloud_models("google")

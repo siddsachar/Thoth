@@ -84,6 +84,7 @@ async def show_setup_wizard(
     from models import (
         POPULAR_MODELS,
         DEFAULT_MODEL,
+        validate_ollama_cloud_key,
         validate_openrouter_key,
         validate_anthropic_key,
         validate_google_key,
@@ -99,6 +100,7 @@ async def show_setup_wizard(
         set_model,
         list_local_models,
         _ollama_reachable,
+        _cloud_model_cache,
     )
     from vision import DEFAULT_VISION_MODEL, POPULAR_VISION_MODELS
     from api_keys import set_key
@@ -110,7 +112,7 @@ async def show_setup_wizard(
         request_setup_center_on_next_load,
         save_onboarding_profile,
     )
-    from providers.selection import add_quick_choice_for_model
+    from providers.selection import add_quick_choice_for_model, model_choice_value, model_id_from_choice_value, parse_model_ref
     from providers.custom import (
         endpoint_id_from_provider_id,
         refresh_custom_endpoint_models,
@@ -222,6 +224,10 @@ async def show_setup_wizard(
 
                 setup_openai_key = ui.input(
                     "OpenAI API Key (optional)",
+                    password=True, password_toggle_button=True,
+                ).classes("w-full")
+                setup_ollama_cloud_key = ui.input(
+                    "Ollama Cloud API Key (optional)",
                     password=True, password_toggle_button=True,
                 ).classes("w-full")
                 setup_anth_key = ui.input(
@@ -407,16 +413,25 @@ async def show_setup_wizard(
 
                 async def _validate_cloud_keys():
                     oai_val = setup_openai_key.value.strip()
+                    ollama_cloud_val = setup_ollama_cloud_key.value.strip()
                     anth_val = setup_anth_key.value.strip()
                     goog_val = setup_goog_key.value.strip()
                     xai_val = setup_xai_key.value.strip()
                     minimax_val = setup_minimax_key.value.strip()
                     or_val = setup_or_key.value.strip()
-                    if not oai_val and not anth_val and not goog_val and not xai_val and not minimax_val and not or_val:
+                    if not oai_val and not ollama_cloud_val and not anth_val and not goog_val and not xai_val and not minimax_val and not or_val:
                         ui.notify("Enter at least one API key", type="warning")
                         return
                     cloud_status.text = "⏳ Validating key(s)…"
                     cloud_status.visible = True
+                    if ollama_cloud_val:
+                        ollama_cloud_valid = await run.io_bound(validate_ollama_cloud_key, ollama_cloud_val)
+                        if not ollama_cloud_valid:
+                            cloud_status.text = "Invalid Ollama Cloud API key."
+                            cloud_done["value"] = False
+                            _update_finish()
+                            return
+                        set_key("OLLAMA_API_KEY", ollama_cloud_val)
                     if or_val:
                         or_valid = await run.io_bound(validate_openrouter_key, or_val)
                         if not or_valid:
@@ -469,20 +484,40 @@ async def show_setup_wizard(
                         return
                     codex_models_by_ref.clear()
                     models = list_cloud_models()
-                    opts = {m: f"{get_provider_emoji(m)} {m}" for m in models}
+                    opts = {}
+                    for m in models:
+                        provider_id = str((_cloud_model_cache.get(m) or {}).get("provider") or "")
+                        value = model_choice_value(m, provider_id=provider_id)
+                        opts[value] = f"{get_provider_emoji(value)} {m}"
                     cloud_model_select.options = opts
                     cloud_model_select.visible = True
-                    first = "gpt-5" if "gpt-5" in models else models[0]
+                    first_model = "gpt-5" if "gpt-5" in models else models[0]
+                    first = model_choice_value(
+                        first_model,
+                        provider_id=str((_cloud_model_cache.get(first_model) or {}).get("provider") or ""),
+                    )
                     cloud_model_select.set_value(first)
                     vision_models = list_cloud_vision_models()
                     if vision_models:
-                        v_opts = {m: f"{get_provider_emoji(m)} {m}" for m in vision_models}
+                        v_opts = {}
+                        for m in vision_models:
+                            provider_id = str((_cloud_model_cache.get(m) or {}).get("provider") or "")
+                            value = model_choice_value(m, provider_id=provider_id)
+                            v_opts[value] = f"{get_provider_emoji(value)} {m}"
                         cloud_vision_select.options = v_opts
-                        v_first = "gpt-5" if "gpt-5" in vision_models else vision_models[0]
+                        v_first_model = "gpt-5" if "gpt-5" in vision_models else vision_models[0]
+                        v_first = model_choice_value(
+                            v_first_model,
+                            provider_id=str((_cloud_model_cache.get(v_first_model) or {}).get("provider") or ""),
+                        )
                         cloud_vision_select.set_value(v_first)
                         cloud_vision_select.visible = True
                     cloud_status.text = f"✅ Found {count} models"
-                    add_quick_choice_for_model(first, source="setup_default")
+                    first_parsed = parse_model_ref(first)
+                    if first_parsed:
+                        add_quick_choice_for_model(first_parsed[1], provider_id=first_parsed[0], source="setup_default")
+                    else:
+                        add_quick_choice_for_model(first, source="setup_default")
                     cloud_done["value"] = True
                     _update_finish()
 
@@ -893,7 +928,18 @@ async def show_setup_wizard(
                                 capabilities_snapshot=info.capability_snapshot(),
                             )
                         else:
-                            add_quick_choice_for_model(sel, source="setup_default")
+                            parsed = parse_model_ref(sel)
+                            if parsed:
+                                cached = _cloud_model_cache.get(parsed[1]) or {}
+                                add_quick_choice_for_model(
+                                    parsed[1],
+                                    provider_id=parsed[0],
+                                    display_name=str(cached.get("label") or parsed[1]),
+                                    source="setup_default",
+                                    capabilities_snapshot=cached.get("capabilities_snapshot") if isinstance(cached.get("capabilities_snapshot"), dict) else None,
+                                )
+                            else:
+                                add_quick_choice_for_model(sel, source="setup_default")
                         clear_agent_cache()
                     vsel = cloud_vision_select.value
                     if vsel:

@@ -267,8 +267,7 @@ async def on_startup():
     await asyncio.to_thread(fetch_context_catalog)
 
     if is_cloud_available():
-        _set("☁️ Refreshing cloud models…")
-        await asyncio.to_thread(refresh_cloud_models)
+        _set("☁️ Loading cached model catalog...")
         state.current_model = get_current_model()
 
     _set("🔄 Scheduling memory extraction…")
@@ -287,6 +286,12 @@ async def on_startup():
 
     _set("⚡ Loading workflows…")
     await asyncio.to_thread(lambda: (seed_default_tasks(), start_task_scheduler()))
+
+    try:
+        from providers.model_catalog_cache import schedule_model_catalog_refresh_jobs
+        await asyncio.to_thread(schedule_model_catalog_refresh_jobs)
+    except Exception as exc:
+        logger.warning("Model catalog refresh scheduler failed to start (non-fatal): %s", exc)
 
     _set("🔌 Starting MCP servers…")
     try:
@@ -363,7 +368,11 @@ async def on_startup():
                 )
 
     # Auto-start tunnel if it was enabled before restart
-    if _ch_config.get("tunnel", "tunnel_main_app", False):
+    _main_app_tunnel = _ch_config.get("tunnel", "tunnel_main_app", False)
+    if isinstance(_main_app_tunnel, list) and _main_app_tunnel:
+        _main_app_tunnel = _main_app_tunnel[0] is True
+        _ch_config.set("tunnel", "tunnel_main_app", _main_app_tunnel)
+    if _main_app_tunnel is True:
         try:
             from tunnel import tunnel_manager
             if tunnel_manager.is_available():
@@ -471,6 +480,17 @@ async def _launcher_ping_handler(request: Request) -> JSONResponse:  # noqa: ARG
     return JSONResponse({"app": "thoth", "version": _thoth_version, "port": _APP_PORT})
 
 
+async def _startup_state_handler(request: Request) -> JSONResponse:  # noqa: ARG001
+    """Expose startup state for the browser-side splash handoff."""
+    import ui.state as _st
+
+    return JSONResponse({
+        "ready": bool(_st.startup_ready),
+        "status": str(_st.startup_status or ""),
+        "warnings": len(_st.startup_warnings),
+    })
+
+
 async def _webhook_handler(request: Request) -> JSONResponse:
     """Handle POST /api/webhook/{task_id} for webhook-triggered tasks."""
     task_id = request.path_params.get("task_id", "")
@@ -497,16 +517,32 @@ async def _client_error_handler(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-app.add_route("/api/launcher-ping", _launcher_ping_handler, methods=["GET"])
-app.add_route("/api/webhook/{task_id}", _webhook_handler, methods=["POST"])
-app.add_route("/api/client-error", _client_error_handler, methods=["POST"])
+_shutdown_cleanup_started = False
 
 
-@app.on_shutdown
-async def on_shutdown():
+async def _cleanup_runtime(reason: str = "shutdown") -> None:
+    """Stop long-lived helpers before the process exits."""
+    global _shutdown_cleanup_started
+    if _shutdown_cleanup_started:
+        return
+    _shutdown_cleanup_started = True
+
     stop_performance_monitor()
     mark_shutdown()
-    print("[shutdown] Cleaning up sessions…")
+    print(f"[shutdown] Cleaning up sessions ({reason})...")
+    try:
+        # Stop channels before tunnels so webhook/socket clients can close cleanly.
+        for _ch in _ch_registry.all_channels():
+            try:
+                if _ch.is_running():
+                    await asyncio.wait_for(_ch.stop(), timeout=10)
+                    print(f"[shutdown] {_ch.display_name} channel stopped")
+            except asyncio.TimeoutError:
+                print(f"[shutdown] {_ch.display_name} channel cleanup timed out")
+            except Exception as exc:
+                print(f"[shutdown] {_ch.display_name} channel cleanup error: {exc}")
+    except Exception as exc:
+        print(f"[shutdown] Channel registry cleanup error: {exc}")
     try:
         from tools.browser_tool import get_session_manager as _get_bsm
         _get_bsm().kill_all()
@@ -541,7 +577,34 @@ async def on_shutdown():
     print("[shutdown] Done")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
+async def _launcher_shutdown_handler(request: Request) -> JSONResponse:
+    """Local launcher hook used for tray quit and updater handoff."""
+    client_host = (request.client.host if request.client else "") or ""
+    if client_host not in {"127.0.0.1", "::1", "localhost"} and not client_host.endswith("127.0.0.1"):
+        return JSONResponse({"ok": False, "error": "localhost only"}, status_code=403)
+
+    async def _shutdown_soon() -> None:
+        await asyncio.sleep(0.1)
+        await _cleanup_runtime("launcher")
+        logger.info("Launcher shutdown complete; exiting process")
+        os._exit(0)
+
+    asyncio.create_task(_shutdown_soon())
+    return JSONResponse({"ok": True})
+
+
+app.add_route("/api/launcher-ping", _launcher_ping_handler, methods=["GET"])
+app.add_route("/api/startup-state", _startup_state_handler, methods=["GET"])
+app.add_route("/api/launcher-shutdown", _launcher_shutdown_handler, methods=["POST"])
+app.add_route("/api/webhook/{task_id}", _webhook_handler, methods=["POST"])
+app.add_route("/api/client-error", _client_error_handler, methods=["POST"])
+
+
+@app.on_shutdown
+async def on_shutdown():
+    await _cleanup_runtime()
+
+
 # MAIN PAGE
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -591,9 +654,30 @@ async def index():
 
         def _poll_ready():
             status_label.text = _st.startup_status
+            status_label.update()
             if _st.startup_ready:
                 _poll_timer.deactivate()
-                ui.navigate.to("/")
+                ui.run_javascript("window.location.reload()")
+
+        ui.run_javascript("""
+        (() => {
+          if (window.__thothStartupPollInstalled) return;
+          window.__thothStartupPollInstalled = true;
+          const poll = async () => {
+            try {
+              const response = await fetch('/api/startup-state', {cache: 'no-store'});
+              if (!response.ok) return;
+              const state = await response.json();
+              if (state && state.ready) {
+                window.location.reload();
+              }
+            } catch (_) {}
+          };
+          const interval = setInterval(poll, 750);
+          window.addEventListener('beforeunload', () => clearInterval(interval), {once: true});
+          poll();
+        })();
+        """)
 
         _poll_timer = safe_timer(0.3, _poll_ready)
         return
@@ -659,7 +743,7 @@ async def index():
     # Slots wired after layout is built (forward declarations)
 
     # ── Wrappers that close over (state, p, cb) ─────────────────────────
-    def _open_settings(initial_tab: str = "Models"):
+    def _open_settings(initial_tab: str = "Providers"):
         open_settings(state, p, initial_tab)
 
     def _open_export():

@@ -18,6 +18,7 @@ class TransportMode(StrEnum):
     OPENAI_CHAT = "openai_chat"
     OPENAI_RESPONSES = "openai_responses"
     OLLAMA_CHAT = "ollama_chat"
+    OLLAMA_CLOUD_CHAT = "ollama_cloud_chat"
     ANTHROPIC_MESSAGES = "anthropic_messages"
     GOOGLE_GENAI = "google_genai"
     GOOGLE_CLOUDCODE = "google_cloudcode"

@@ -151,8 +151,14 @@ def build_chat(
         active_cloud = is_cloud_model(active_model)
         if active_cloud:
             prov = get_cloud_provider(active_model) or "cloud"
-            prov_label = provider_display_label(prov)
             model_label = model_id_from_choice_value(active_model)
+            prov_label = provider_display_label(prov)
+            try:
+                from providers.ollama import is_ollama_cloud_offload_model
+                if prov == "ollama" and is_ollama_cloud_offload_model(model_label):
+                    prov_label = "Ollama Cloud Offload"
+            except Exception:
+                pass
             return {
                 "model": active_model,
                 "cloud": True,

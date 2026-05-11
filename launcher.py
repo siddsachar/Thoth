@@ -318,6 +318,7 @@ class _ThothProcess:
     def __init__(self, port: int = _PORT, host: str | None = None) -> None:
         self._proc: subprocess.Popen | None = None
         self._log_file: Path | None = None
+        self._log_handle = None
         self.port = port
         self.host = host
 
@@ -355,7 +356,8 @@ class _ThothProcess:
             except OSError as exc:
                 logger.warning("Could not rotate log: %s", exc)
 
-        log_fh = open(self._log_file, "w", encoding="utf-8")  # noqa: SIM115
+        self._close_log_handle()
+        self._log_handle = open(self._log_file, "w", encoding="utf-8", buffering=1)  # noqa: SIM115
 
         # Isolate from any system-wide Python site-packages
         # Force UTF-8 I/O so emoji in print() never crash on cp1252 consoles
@@ -371,30 +373,101 @@ class _ThothProcess:
         if self.host:
             env[THOTH_HOST_ENV] = self.host
 
-        self._proc = subprocess.Popen(
-            cmd,
-            cwd=str(app_dir),
-            env=env,
-            stdout=log_fh,
-            stderr=log_fh,
-            # On Windows, CREATE_NO_WINDOW prevents a visible console
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        try:
+            self._proc = subprocess.Popen(
+                cmd,
+                cwd=str(app_dir),
+                env=env,
+                stdout=self._log_handle,
+                stderr=self._log_handle,
+                # On Windows, CREATE_NO_WINDOW prevents a visible console
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            self._close_log_handle()
+            raise
         logger.info("Thoth server started (PID %s, log=%s)",
                      self._proc.pid, self._log_file)
+
+    def _close_log_handle(self) -> None:
+        if self._log_handle is None:
+            return
+        try:
+            self._log_handle.close()
+        except Exception:
+            logger.debug("Could not close Thoth app log handle", exc_info=True)
+        finally:
+            self._log_handle = None
+
+    def _request_graceful_shutdown(self, timeout: float = 1.5) -> bool:
+        """Ask the app to run cleanup before the launcher falls back to killing it."""
+        if self._proc is None or self._proc.poll() is not None:
+            return True
+        url = f"http://127.0.0.1:{self.port}/api/launcher-shutdown"
+        req = urllib.request.Request(url, data=b"", method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                status = getattr(response, "status", 200)
+                return 200 <= status < 300
+        except (OSError, urllib.error.URLError, TimeoutError):
+            return False
+
+    @staticmethod
+    def _terminate_process(proc: subprocess.Popen | None,
+                           *,
+                           label: str,
+                           timeout: float = 5.0,
+                           kill_tree: bool = False) -> None:
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=timeout)
+            return
+        except subprocess.TimeoutExpired:
+            logger.warning("%s did not exit after terminate; killing", label)
+        except Exception:
+            logger.debug("%s terminate failed; killing", label, exc_info=True)
+
+        if kill_tree and sys.platform == "win32":
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True,
+                    timeout=10,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except Exception:
+                logger.debug("%s taskkill fallback failed", label, exc_info=True)
+        try:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=3)
+        except Exception:
+            logger.debug("%s kill fallback failed", label, exc_info=True)
 
     def stop(self) -> None:
         """Terminate the NiceGUI process."""
         if self._proc is None:
+            self._close_log_handle()
             return
+        proc = self._proc
         try:
-            self._proc.terminate()
-            self._proc.wait(timeout=5)
-        except Exception:
-            try:
-                self._proc.kill()
-            except Exception:
-                pass
+            if proc.poll() is None:
+                graceful = self._request_graceful_shutdown()
+                if graceful:
+                    try:
+                        proc.wait(timeout=12)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("Thoth graceful shutdown timed out")
+                self._terminate_process(
+                    proc,
+                    label="Thoth server",
+                    timeout=5,
+                    kill_tree=True,
+                )
+        finally:
+            self._close_log_handle()
         logger.info("Thoth stopped")
         self._proc = None
 
@@ -1166,6 +1239,7 @@ class ThothTray:
         self._window_proc: subprocess.Popen | None = None
         self._window_control_port: int | None = None
         self._stop_event = threading.Event()
+        self._quitting = False
 
         menu = pystray.Menu(
             pystray.MenuItem("Open Thoth", self._on_open, default=True),
@@ -1274,11 +1348,12 @@ class ThothTray:
                 return  # keep existing WebSocket connection alive
 
             # Platform trick failed — kill and spawn fresh window.
-            try:
-                self._window_proc.terminate()
-                self._window_proc.wait(timeout=3)
-            except Exception:
-                pass
+            _ThothProcess._terminate_process(
+                self._window_proc,
+                label="Thoth window",
+                timeout=3,
+                kill_tree=True,
+            )
             self._window_proc = None
 
         if self._owns_server and not self._server.is_alive:
@@ -1335,18 +1410,43 @@ class ThothTray:
 
     def _on_quit(self, icon=None, item=None) -> None:    # noqa: ARG002
         logger.info("Quit requested")
+        if self._quitting:
+            logger.info("Quit already in progress")
+            return
+        self._quitting = True
         self._stop_event.set()
-        # Close the window first
-        if self._is_window_alive():
+
+        def _quit_watchdog() -> None:
+            time.sleep(30)
+            logger.warning("Quit watchdog forcing launcher exit after timeout")
+            os._exit(0)
+
+        def _quit_worker() -> None:
             try:
-                self._window_proc.terminate()
-                self._window_proc.wait(timeout=3)
-            except Exception:
-                pass
-        # Then stop the server
-        if self._owns_server:
-            self._server.stop()
-        self._icon.stop()
+                if self._is_window_alive():
+                    _ThothProcess._terminate_process(
+                        self._window_proc,
+                        label="Thoth window",
+                        timeout=3,
+                        kill_tree=True,
+                    )
+                    self._window_proc = None
+                if self._owns_server:
+                    self._server.stop()
+            finally:
+                try:
+                    self._icon.stop()
+                except Exception:
+                    logger.debug("Could not stop tray icon during quit", exc_info=True)
+                logger.info("Launcher quit complete")
+                os._exit(0)
+
+        threading.Thread(target=_quit_watchdog, daemon=True, name="quit-watchdog").start()
+        threading.Thread(target=_quit_worker, daemon=False, name="quit-worker").start()
+        try:
+            self._icon.stop()
+        except Exception:
+            logger.debug("Could not stop tray icon immediately", exc_info=True)
 
     # ── Background poller ────────────────────────────────────────────────
 

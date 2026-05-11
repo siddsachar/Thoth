@@ -14,7 +14,7 @@ def is_provider_available(provider_id: str) -> bool:
 
 def list_configured_provider_ids() -> list[str]:
     configured = [
-        provider_id for provider_id in ("openai", "openrouter", "anthropic", "google", "xai", "minimax")
+        provider_id for provider_id in ("openai", "ollama_cloud", "openrouter", "anthropic", "google", "xai", "minimax")
         if is_provider_available(provider_id)
     ]
     try:
@@ -108,6 +108,15 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
         from langchain_ollama import ChatOllama
         from models import _ollama_base_url
         return ChatOllama(model=model_name, base_url=_ollama_base_url(), reasoning=True)
+    if provider == "ollama_cloud":
+        from providers.transports.ollama_cloud import ChatOllamaCloud
+
+        api_key = get_provider_secret("ollama_cloud")
+        if not api_key:
+            raise ValueError("Ollama Cloud API key not configured. Set it in Settings -> Providers.")
+        definition = get_provider_definition("ollama_cloud")
+        base_url = definition.base_url if definition and definition.base_url else "https://ollama.com"
+        return ChatOllamaCloud(model_name=model_name, api_key=api_key, base_url=base_url)
     if is_custom_openai_provider(provider):
         from langchain_openai import ChatOpenAI
         endpoint = get_custom_endpoint(provider)

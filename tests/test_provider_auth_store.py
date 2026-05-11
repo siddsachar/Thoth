@@ -66,6 +66,15 @@ def test_minimax_provider_auth_store_uses_environment(monkeypatch):
     os.environ.pop("MINIMAX_API_KEY", None)
 
 
+def test_ollama_cloud_provider_auth_store_uses_environment(monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-cloud-env-secret")
+
+    assert get_provider_secret("ollama_cloud") == "ollama-cloud-env-secret"
+    assert provider_secret_status("ollama_cloud")["source"] == "environment"
+
+    os.environ.pop("OLLAMA_API_KEY", None)
+
+
 def test_provider_auth_store_reports_keyring_when_saved_key_is_loaded_into_env(tmp_path, monkeypatch):
     monkeypatch.setattr(api_keys, "KEYS_PATH", tmp_path / "api_keys.json")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

@@ -93,13 +93,33 @@ def test_stability_source_contracts_are_wired():
 
     assert "setup_stability_monitoring()" in app_src
     assert 'app.add_route("/api/client-error"' in app_src
+    assert 'app.add_route("/api/launcher-shutdown"' in app_src
+    assert 'app.add_route("/api/startup-state"' in app_src
+    assert "window.__thothStartupPollInstalled" in app_src
+    assert "window.location.reload()" in app_src
+    assert "async def _cleanup_runtime" in app_src
+    assert "_ch_registry.all_channels()" in app_src
+    assert "await asyncio.wait_for(_ch.stop(), timeout=10)" in app_src
+    assert "os._exit(0)" in app_src
+    assert "ui.navigate.reload()" in app_src
+    assert 'ui.navigate.to("/")' not in app_src.split("# ── Startup warnings", 1)[0]
     assert "window.__thothClientErrorReporterInstalled" in head_src
     assert "thothReportClientEvent" in head_src
     assert "connection_state" in head_src
+    assert "if (!document.body)" in head_src
+    assert "DOMContentLoaded" in head_src
+    assert "document.getElementById('thoth-ctx-menu')" in head_src
     assert "def safe_ui_task(" in timer_src
+    safe_task_src = timer_src.split("def safe_ui_task", 1)[1].split("def deactivate_on_disconnect", 1)[0]
+    assert "client = ui.context.client" in safe_task_src
+    assert "with client:" in safe_task_src
     assert "client = ui.context.client" in defer_src
     assert "with client:" in defer_src
-    assert "safe_ui_task(_load, context=\"models settings load\")" in settings_src
+    assert "def _load_settings_tab" in settings_src
+    assert "p.settings_dlg.open()" in settings_src
+    assert "defer_ui(lambda: _load_settings_tab(_initial_name)" in settings_src
+    assert "start_model_catalog_refresh_background" in settings_src
+    assert "build_cached_model_catalog_rows" in settings_src
     assert "_render_provider_summaries" in catalog_src
     assert "Open one provider or search" in catalog_src
     assert "save_workflow_draft" in dialog_src
@@ -113,10 +133,17 @@ def test_stability_source_contracts_are_wired():
     assert "start_performance_monitor()" in app_src
     assert "schedule_idle_extraction" in app_src
     assert "cleanup_old_checkpoints" in app_src
+    assert '_ch_config.set("tunnel", "tunnel_main_app", _main_app_tunnel)' in app_src
+    assert '_ch_config.set("tunnel", "tunnel_main_app", enabled)' in settings_src
+    assert '_ch_config.set("tunnel", "tunnel_main_app", e.args)' not in settings_src
     assert "install_asyncio_exception_handler(loop)" in discord_src
     assert "loop.run_until_complete(client.close())" in discord_src
     assert "loop.shutdown_asyncgens()" in discord_src
     assert "stability.py" in installer_src
+    assert "self._quitting = False" in Path("launcher.py").read_text(encoding="utf-8")
+    assert 'name="quit-worker"' in Path("launcher.py").read_text(encoding="utf-8")
+    assert 'name="quit-watchdog"' in Path("launcher.py").read_text(encoding="utf-8")
+    assert "Quit watchdog forcing launcher exit after timeout" in Path("launcher.py").read_text(encoding="utf-8")
 
 
 def test_provider_qualified_cloud_defaults_validate_after_refresh(monkeypatch):

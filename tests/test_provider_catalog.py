@@ -7,6 +7,8 @@ from providers.models import ModelInfo, TransportMode
 from providers.ollama import (
     extract_ollama_library_family_ids,
     extract_ollama_library_model_ids,
+    preferred_ollama_cloud_offload_models,
+    is_ollama_cloud_offload_model,
     is_ollama_chat_candidate,
     ollama_catalog_rows,
     ollama_model_info,
@@ -38,18 +40,21 @@ def test_minimax_provider_definition_and_model_inference():
 def test_settings_models_tab_does_not_auto_load_heavy_work():
     source = (ROOT / "ui" / "settings.py").read_text(encoding="utf-8")
 
-    assert "Load model settings" in source
+    assert "Load model settings" not in source
     assert "Preparing model settings" not in source
     assert "\n        defer_ui(_load)" not in source
+    assert "start_model_catalog_refresh_background" in source
 
 
-def test_settings_models_defers_catalog_and_camera_probe():
+def test_settings_models_uses_cached_catalog_and_defers_camera_probe():
     source = (ROOT / "ui" / "settings.py").read_text(encoding="utf-8")
     render_section = source.split("def _render_models_tab_content", 1)[1].split("def _collect_models_tab_data", 1)[0]
     collect_section = source.split("def _collect_models_tab_data", 1)[1].split("def _build_models_tab", 1)[0]
 
-    assert "build_lazy_model_catalog_section" in render_section
+    assert "build_cached_model_catalog_rows" in render_section
+    assert "load_ollama_catalog_rows" not in render_section
     assert "build_model_catalog_rows" not in collect_section
+    assert "fetch_trending_ollama_models" not in collect_section
     assert "cameras = list_cameras()" not in render_section
     assert "await run.io_bound(list_cameras)" in render_section
 
@@ -144,6 +149,67 @@ def test_ollama_provider_definition_and_model_capabilities():
     assert model_supports_surface(info, "vision") is False
     assert vision_info.tool_calling is False
     assert model_supports_surface(vision_info, "vision") is True
+
+
+def test_ollama_cloud_provider_definition_and_capabilities():
+    definition = get_provider_definition("ollama_cloud")
+    classified = classify_model_capabilities("ollama_cloud", "gpt-oss:120b-cloud")
+    vision = classify_model_capabilities("ollama_cloud", "gemma4:31b-cloud", {"capabilities": ["completion", "vision"]})
+
+    assert definition is not None
+    assert definition.display_name == "Ollama Cloud"
+    assert definition.default_transport == TransportMode.OLLAMA_CLOUD_CHAT
+    assert definition.base_url == "https://ollama.com"
+    assert definition.risk_label == "cloud_provider"
+    assert "chat" in classified["tasks"]
+    assert classified["transport"] == TransportMode.OLLAMA_CLOUD_CHAT
+    assert "vision" in vision["capabilities"]
+    assert "image" in vision["input_modalities"]
+
+
+def test_ollama_cloud_offload_models_keep_local_provider_but_cloud_risk():
+    info = ollama_model_info("gpt-oss:120b-cloud", installed=True)
+
+    assert is_ollama_cloud_offload_model("gpt-oss:120b-cloud") is True
+    assert is_ollama_cloud_offload_model("qwen3:14b") is False
+    assert info.provider_id == "ollama"
+    assert info.transport == TransportMode.OLLAMA_CHAT
+    assert info.risk_label == "cloud_provider"
+
+
+def test_ollama_cloud_offload_model_can_be_ready_without_local_list(monkeypatch):
+    import providers.model_catalog as catalog_view
+
+    monkeypatch.setattr(catalog_view, "_provider_status_by_id", lambda: {"ollama": {"configured": True, "source": "local_daemon"}})
+    monkeypatch.setattr(catalog_view, "_custom_model_infos", lambda: [])
+    monkeypatch.setattr(catalog_view, "_codex_model_infos", lambda: [])
+    monkeypatch.setattr(catalog_view, "_curated_media_entries", lambda surface: {})
+
+    rows = build_model_catalog_rows(
+        cloud_cache={},
+        ollama_rows=ollama_catalog_rows(
+            [],
+            ["gemma4:31b-cloud"],
+            ready_cloud_offload={"gemma4:31b-cloud"},
+            metadata_by_model={
+                "gemma4:31b-cloud": {
+                    "context_window": 262144,
+                    "capabilities": ["completion", "vision"],
+                },
+            },
+        ),
+    )
+
+    row = rows[0]
+    assert row.model_id == "gemma4:31b-cloud"
+    assert row.provider_id == "ollama"
+    assert row.installed is True
+    assert row.runtime_ready is True
+    assert row.downloadable is False
+    assert row.risk_label == "cloud_provider"
+    assert row.availability == "cloud_offload_ready"
+    assert row.context_window == 262144
+    assert "vision" in row.categories
 
 
 def test_direct_and_routed_multimodal_chat_models_support_vision_surface():
@@ -359,6 +425,7 @@ def test_preferred_ollama_tag_models_filters_variant_noise():
     ]
 
     assert preferred_ollama_tag_models(tags) == ["qwen3.6:27b", "qwen3.6:35b", "qwen3.6:35b-a3b", "gemma3:4b"]
+    assert preferred_ollama_cloud_offload_models(tags) == ["qwen3.6:27b-cloud"]
 
 
 def test_ollama_provider_catalog_model_ids_keeps_tool_and_vision_choices():
@@ -366,10 +433,10 @@ def test_ollama_provider_catalog_model_ids_keeps_tool_and_vision_choices():
         installed_models=["qwen3.6:27b", "gemma3:4b"],
         curated_models=["mistral:7b", "llava-phi3:3.8b", "phi4:14b"],
         library_families=["qwen3.6", "granite4.1", "gemma4", "moondream"],
-        family_tag_models=["qwen3.6:27b", "qwen3.6:27b-q4_K_M", "qwen3.6:35b"],
+        family_tag_models=["qwen3.6:27b", "qwen3.6:27b-q4_K_M", "qwen3.6:35b", "gemma4:31b-cloud"],
     )
 
-    assert ids == ["qwen3.6:27b", "gemma3:4b", "mistral:7b", "llava-phi3:3.8b", "moondream", "qwen3.6:35b"]
+    assert ids == ["qwen3.6:27b", "gemma3:4b", "mistral:7b", "llava-phi3:3.8b", "moondream", "qwen3.6:35b", "gemma4:31b-cloud"]
 
 
 def test_extract_ollama_library_model_ids_includes_small_qwen_tags():

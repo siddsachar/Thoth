@@ -6,6 +6,7 @@ Receives ``state`` and ``p`` explicitly.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import os
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 def open_settings(
     state: AppState,
     p: P,
-    initial_tab: str = "Models",
+    initial_tab: str = "Providers",
 ) -> None:
     """Build and open the maximised settings dialog.
 
@@ -42,7 +43,6 @@ def open_settings(
     from tools import registry as tool_registry
     from models import (
         _ollama_reachable,
-        fetch_trending_ollama_models,
         get_trending_models,
         list_local_models,
         list_cloud_models,
@@ -59,7 +59,7 @@ def open_settings(
         get_user_context_size,
         set_context_size,
         get_model_max_context,
-        refresh_cloud_models,
+        validate_ollama_cloud_key,
         star_cloud_model,
         unstar_cloud_model,
         validate_openrouter_key,
@@ -75,6 +75,13 @@ def open_settings(
         set_cloud_context_size,
         is_cloud_available,
         _cloud_model_cache,
+    )
+    from providers.model_catalog_cache import (
+        cache_age_label,
+        is_model_catalog_refresh_running,
+        model_catalog_refresh_state,
+        read_model_catalog_cache,
+        start_model_catalog_refresh_background,
     )
     from vision import POPULAR_VISION_MODELS
     from documents import (
@@ -215,11 +222,56 @@ def open_settings(
             ui.notify(f"{display} unchanged — enter a new value to replace it", type="info")
         return val
 
+    _PROVIDER_BY_SECRET_ENV = {
+        "OPENAI_API_KEY": "openai",
+        "OLLAMA_API_KEY": "ollama_cloud",
+        "OPENROUTER_API_KEY": "openrouter",
+        "ANTHROPIC_API_KEY": "anthropic",
+        "GOOGLE_API_KEY": "google",
+        "XAI_API_KEY": "xai",
+        "MINIMAX_API_KEY": "minimax",
+    }
+
+    def _start_catalog_refresh_ui(
+        *,
+        reason: str = "manual",
+        provider_id: str | None = None,
+        force: bool = True,
+        on_done: Callable[[], None] | None = None,
+    ) -> None:
+        started = start_model_catalog_refresh_background(reason=reason, provider_id=provider_id, force=force)
+        if not started:
+            ui.notify("Model catalog refresh is already running", type="info")
+            return
+        ui.notify("Refreshing model catalog in the background...", type="info")
+
+        async def _watch() -> None:
+            while is_model_catalog_refresh_running():
+                await asyncio.sleep(0.75)
+            state_info = model_catalog_refresh_state()
+            result = state_info.get("last_result") if isinstance(state_info.get("last_result"), dict) else {}
+            if result.get("ok"):
+                warnings = result.get("warnings") if isinstance(result.get("warnings"), list) else []
+                rows = int(result.get("rows") or 0)
+                if warnings:
+                    ui.notify(f"Model catalog refreshed: {rows} models, {len(warnings)} warning(s)", type="warning")
+                else:
+                    ui.notify(f"Model catalog refreshed: {rows} models", type="positive")
+            else:
+                ui.notify("Catalog refresh failed. Showing last cached catalog.", type="negative")
+            if on_done:
+                on_done()
+
+        safe_ui_task(_watch, context="model catalog refresh watcher")
+
     def _clear_secret(env_var: str, display: str, refresh: Callable[[], None] | None = None) -> None:
         delete_key(env_var)
         clear_agent_cache()
         if refresh:
             refresh()
+        provider_id = _PROVIDER_BY_SECRET_ENV.get(env_var)
+        if provider_id:
+            _start_catalog_refresh_ui(reason="provider_key_cleared", provider_id=provider_id, force=True)
         ui.notify(f"{display} cleared", type="info")
 
     def _settings_header(title: str, subtitle: str, icon: str | None = None) -> None:
@@ -494,7 +546,11 @@ def open_settings(
                 ).classes("text-sm")
 
             ui.separator().classes("q-mt-sm")
-            main_app_val = _ch_config.get("tunnel", "tunnel_main_app", False)
+            raw_main_app_val = _ch_config.get("tunnel", "tunnel_main_app", False)
+            main_app_val = raw_main_app_val is True
+            if isinstance(raw_main_app_val, list) and raw_main_app_val:
+                main_app_val = raw_main_app_val[0] is True
+                _ch_config.set("tunnel", "tunnel_main_app", main_app_val)
             main_app_switch = ui.switch(
                 "Expose task webhook endpoint",
                 value=main_app_val,
@@ -510,8 +566,9 @@ def open_settings(
             async def _on_main_app_toggle(e):
                 from app_port import get_app_port
 
-                _ch_config.set("tunnel", "tunnel_main_app", e.args)
-                if e.args and tunnel_manager.is_available():
+                enabled = bool(getattr(e, "value", False))
+                _ch_config.set("tunnel", "tunnel_main_app", enabled)
+                if enabled and tunnel_manager.is_available():
                     try:
                         app_port = get_app_port()
                         url = tunnel_manager.start_tunnel(app_port, label="main_app")
@@ -530,7 +587,7 @@ def open_settings(
                         _refresh_active_tunnels()
                     except Exception as exc:
                         ui.notify(f"Tunnel error: {exc}", type="negative")
-                elif not e.args:
+                elif not enabled:
                     try:
                         app_port = get_app_port()
                         tunnel_manager.stop_tunnel(app_port)
@@ -694,7 +751,6 @@ def open_settings(
                     ui.notify(f"🧠 Extracting knowledge from {name}…", type="info")
                 except Exception as exc:
                     logger.warning("Failed to queue document extraction for %s: %s", name, exc, exc_info=True)
-            except Exception as exc:
                 n.dismiss()
                 logger.error("Document upload/index failed for %s", name, exc_info=True)
                 ui.notify(f"Failed: {exc}", type="negative")
@@ -785,7 +841,6 @@ def open_settings(
 
         if preloaded is None:
             _ollama_up = _ollama_reachable()
-            fetch_trending_ollama_models()
             trending = get_trending_models()
             local_models = list_local_models()
             chat_options = list_model_choice_options("chat", include_values=[get_current_model()])
@@ -1288,10 +1343,7 @@ def open_settings(
 
         from ui.model_catalog import build_lazy_model_catalog_section
 
-        with ui.row().classes("items-center justify-between w-full q-mt-md q-mb-xs"):
-            with ui.column().classes("gap-0"):
-                ui.label("Catalog").classes("text-subtitle2")
-                ui.label("Browse by surface, then pin models so they appear in the pickers above.").classes("text-grey-6 text-xs")
+        catalog_container = ui.column().classes("w-full gap-2 q-mt-md")
 
         def _refresh_top_picker_options() -> None:
             current_chat = state.current_model
@@ -1402,10 +1454,9 @@ def open_settings(
         def _download_catalog_model(row) -> None:
             list(pull_model(row.model_id))
 
-        def _load_catalog_rows():
-            from providers.model_catalog import build_model_catalog_rows, load_ollama_catalog_rows
-            from providers.selection import list_quick_choices
-
+        def _catalog_defaults() -> dict[str, str]:
+            image_model = ""
+            video_model = ""
             try:
                 from tools.image_gen_tool import DEFAULT_MODEL as _IMAGE_DEFAULT
                 image_tool = tool_registry.get_tool("image_gen")
@@ -1418,25 +1469,61 @@ def open_settings(
                 video_model = video_tool.get_config("model", _VIDEO_DEFAULT) if video_tool else _VIDEO_DEFAULT
             except Exception:
                 video_model = ""
-            ollama_catalog_rows = load_ollama_catalog_rows() if _ollama_up else []
-            return build_model_catalog_rows(
-                cloud_cache=_cloud_model_cache,
-                ollama_rows=ollama_catalog_rows,
-                defaults={
-                    "chat": get_current_model(),
-                    "vision": state.vision_service.model,
-                    "image": image_model,
-                    "video": video_model,
-                },
+            return {
+                "chat": get_current_model(),
+                "vision": state.vision_service.model,
+                "image": image_model,
+                "video": video_model,
+            }
+
+        def _load_catalog_rows_from_cache():
+            from providers.model_catalog_cache import build_cached_model_catalog_rows
+            from providers.selection import list_quick_choices
+
+            return build_cached_model_catalog_rows(
+                defaults=_catalog_defaults(),
                 quick_choices=list_quick_choices("", include_inactive=True),
             )
 
-        build_lazy_model_catalog_section(
-            _load_catalog_rows,
-            on_set_default=_set_catalog_default,
-            on_download=_download_catalog_model,
-            on_change=_refresh_top_picker_options,
-        )
+        def _render_catalog_status() -> None:
+            snapshot = read_model_catalog_cache()
+            catalog_container.clear()
+            with catalog_container:
+                with ui.row().classes("items-center justify-between w-full q-mb-xs"):
+                    with ui.column().classes("gap-0"):
+                        ui.label("Catalog").classes("text-subtitle2")
+                        ui.label("Open only when you need to browse or pin models. The cached catalog stays off the initial Settings render path.").classes("text-grey-6 text-xs")
+                    with ui.row().classes("items-center gap-2"):
+                        if is_model_catalog_refresh_running():
+                            with ui.row().classes("items-center gap-1 text-grey-6 text-xs"):
+                                ui.spinner(size="xs")
+                                ui.label("Refreshing")
+                        elif snapshot.warnings:
+                            ui.badge("provider warnings", color="orange").props("outline dense").tooltip("\n".join(snapshot.warnings[:5]))
+                        elif snapshot.is_stale:
+                            ui.badge("stale", color="orange").props("outline dense")
+                        else:
+                            ui.badge("fresh", color="positive").props("outline dense")
+                        ui.label(cache_age_label(snapshot)).classes("text-grey-6 text-xs")
+                        ui.button(
+                            "Refresh catalog",
+                            icon="refresh",
+                            on_click=lambda: _start_catalog_refresh_ui(
+                                reason="manual",
+                                force=True,
+                                on_done=lambda: (_render_catalog_status(), _refresh_top_picker_options()),
+                            ),
+                        ).props("flat dense color=primary no-caps")
+                if snapshot.is_empty:
+                    ui.label("Model catalog cache is warming up. You can keep using the selectors above while Thoth refreshes in the background.").classes("text-grey-6 text-sm")
+                build_lazy_model_catalog_section(
+                    _load_catalog_rows_from_cache,
+                    on_set_default=_set_catalog_default,
+                    on_download=_download_catalog_model,
+                    on_change=_refresh_top_picker_options,
+                )
+
+        _render_catalog_status()
 
     def _collect_models_tab_data() -> dict:
         from providers.selection import list_model_choice_options
@@ -1444,9 +1531,6 @@ def open_settings(
         started = time.perf_counter()
         ollama_up = _ollama_reachable()
         ollama_elapsed = time.perf_counter() - started
-        trending_started = time.perf_counter()
-        fetch_trending_ollama_models()
-        trending_elapsed = time.perf_counter() - trending_started
         local_started = time.perf_counter()
         local_models = list_local_models()
         local_elapsed = time.perf_counter() - local_started
@@ -1469,10 +1553,9 @@ def open_settings(
         total_elapsed = time.perf_counter() - started
         logger.info(
             "perf: models settings collect took %.3fs "
-            "(ollama=%.3fs trending=%.3fs local=%.3fs options=%.3fs local_count=%d chat_options=%d vision_options=%d)",
+            "(ollama=%.3fs local=%.3fs options=%.3fs local_count=%d chat_options=%d vision_options=%d)",
             total_elapsed,
             ollama_elapsed,
-            trending_elapsed,
             local_elapsed,
             options_elapsed,
             len(local_models),
@@ -1491,58 +1574,47 @@ def open_settings(
         }
 
     def _build_models_tab() -> None:
-        container = ui.column().classes("w-full gap-0")
-        load_state = {"loading": False, "generation": 0}
+        load_started = time.perf_counter()
+        container = ui.column().classes("w-full gap-4")
 
-        async def _load() -> None:
-            if load_state["loading"]:
-                ui.notify("Model settings are already loading", type="info")
-                return
-            load_state["loading"] = True
-            load_state["generation"] += 1
-            generation = load_state["generation"]
-            container.clear()
-            with container:
-                with ui.row().classes("items-center gap-2 text-grey-6 text-sm"):
-                    ui.spinner(size="sm")
-                    ui.label("Loading model settings...")
-            load_started = time.perf_counter()
+        with container:
+            _settings_header(
+                "Models",
+                "Choose defaults, tune context, manage local models, and browse the cached model catalog.",
+                "smart_toy",
+            )
+            with ui.row().classes("items-center gap-3 text-grey-6"):
+                ui.spinner(size="sm")
+                ui.label("Loading cached model settings...").classes("text-sm")
+
+        async def _load_models() -> None:
             try:
                 data = await run.io_bound(_collect_models_tab_data)
                 collected_elapsed = time.perf_counter() - load_started
-                if generation != load_state["generation"]:
-                    return
                 render_started = time.perf_counter()
                 container.clear()
                 with container:
                     _render_models_tab_content(data)
                 logger.info(
-                    "perf: models settings load completed collect=%.3fs render=%.3fs total=%.3fs",
+                    "perf: models settings loaded collect=%.3fs render=%.3fs total=%.3fs",
                     collected_elapsed,
                     time.perf_counter() - render_started,
                     time.perf_counter() - load_started,
                 )
                 log_performance_snapshot("models-settings-rendered")
             except Exception as exc:
-                logger.info(
-                    "perf: models settings load failed after %.3fs",
-                    time.perf_counter() - load_started,
-                )
                 logger.warning("Could not load model settings", exc_info=True)
-                if generation != load_state["generation"]:
-                    return
                 container.clear()
                 with container:
+                    _settings_header(
+                        "Models",
+                        "Choose defaults, tune context, manage local models, and browse the cached model catalog.",
+                        "smart_toy",
+                    )
                     ui.label(f"Could not load model settings: {exc}").classes("text-warning text-sm")
-                    ui.button(icon="refresh", on_click=lambda: safe_ui_task(_load, context="models settings retry")).props("flat dense round size=sm").tooltip("Retry")
-            finally:
-                if generation == load_state["generation"]:
-                    load_state["loading"] = False
 
-        with container:
-            ui.label("🤖 Models").classes("text-h6")
-            ui.label("Load model settings when you need to change defaults, downloads, or catalog pins.").classes("text-grey-6 text-sm")
-            ui.button("Load model settings", icon="tune", on_click=lambda: safe_ui_task(_load, context="models settings load")).props("flat dense color=primary")
+        safe_ui_task(_load_models, context="models settings load")
+
 
     # ── Providers Tab ────────────────────────────────────────────────
 
@@ -1555,21 +1627,15 @@ def open_settings(
         ).classes("text-grey-6 text-sm")
         build_provider_summary_cards()
 
-        async def _do_refresh():
-            n = ui.notification("Fetching models…", type="ongoing", spinner=True, timeout=None)
-            started = time.perf_counter()
-            count = await run.io_bound(refresh_cloud_models)
-            elapsed = time.perf_counter() - started
-            n.dismiss()
-            logger.info("perf: provider catalog refresh took %.3fs models=%d", elapsed, count)
-            log_performance_snapshot("provider-catalog-refresh")
-            ui.notify(f"Found {count} provider models", type="positive")
+        def _do_refresh():
+            _start_catalog_refresh_ui(reason="manual", force=True)
+            return
 
         # API Keys
         ui.separator()
         ui.label("Cloud API Providers").classes("text-subtitle2")
         with ui.row().classes("items-center gap-2"):
-            ui.button(icon="refresh", on_click=_do_refresh).props("flat round dense").tooltip("Refresh model catalogs from configured providers")
+            ui.button(icon="refresh", on_click=_do_refresh).props("flat round dense").tooltip("Refresh model catalog in the background")
         with ui.expansion("🔑 OpenAI Direct", icon="key", value=False).classes("w-full"):
             ui.label("Direct access to OpenAI models.").classes("text-grey-6 text-sm")
             oai_input, oai_refresh = _secret_input("OpenAI API Key", "OPENAI_API_KEY")
@@ -1583,10 +1649,32 @@ def open_settings(
                 oai_input.update()
                 oai_refresh()
                 ui.notify("OpenAI key saved ✅", type="positive")
-                await run.io_bound(refresh_cloud_models)
+                _start_catalog_refresh_ui(reason="provider_key_saved", provider_id="openai", force=True)
             with ui.row().classes("gap-2"):
                 ui.button("Save Key", icon="save", on_click=_save_oai).props("flat dense")
                 ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("OPENAI_API_KEY", "OpenAI key", oai_refresh)).props("flat dense color=negative")
+
+        with ui.expansion("Ollama Cloud", icon="cloud", value=False).classes("w-full"):
+            ui.label("Direct Ollama Cloud API access. Local Ollama :cloud models still run through your signed-in local daemon.").classes("text-grey-6 text-sm")
+            ollama_cloud_input, ollama_cloud_refresh = _secret_input("Ollama Cloud API Key", "OLLAMA_API_KEY")
+
+            async def _save_ollama_cloud():
+                val = _secret_value_or_notify(ollama_cloud_input.value, "Ollama Cloud key")
+                if not val:
+                    return
+                valid = await run.io_bound(validate_ollama_cloud_key, val)
+                if not valid:
+                    ui.notify("Invalid Ollama Cloud API key", type="negative")
+                    return
+                set_key("OLLAMA_API_KEY", val)
+                ollama_cloud_input.value = ""
+                ollama_cloud_input.update()
+                ollama_cloud_refresh()
+                ui.notify("Ollama Cloud key saved", type="positive")
+                _start_catalog_refresh_ui(reason="provider_key_saved", provider_id="ollama_cloud", force=True)
+            with ui.row().classes("gap-2"):
+                ui.button("Save Key", icon="save", on_click=_save_ollama_cloud).props("flat dense")
+                ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("OLLAMA_API_KEY", "Ollama Cloud key", ollama_cloud_refresh)).props("flat dense color=negative")
 
         with ui.expansion("🌐 OpenRouter", icon="language", value=False).classes("w-full"):
             ui.label("One key for Claude, Gemini, Llama, and 100+ more.").classes("text-grey-6 text-sm")
@@ -1605,7 +1693,7 @@ def open_settings(
                 or_input.update()
                 or_refresh()
                 ui.notify("OpenRouter key saved ✅", type="positive")
-                await run.io_bound(refresh_cloud_models)
+                _start_catalog_refresh_ui(reason="provider_key_saved", provider_id="openrouter", force=True)
             with ui.row().classes("gap-2"):
                 ui.button("Save Key", icon="save", on_click=_save_or).props("flat dense")
                 ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("OPENROUTER_API_KEY", "OpenRouter key", or_refresh)).props("flat dense color=negative")
@@ -1627,7 +1715,7 @@ def open_settings(
                 anth_input.update()
                 anth_refresh()
                 ui.notify("Anthropic key saved ✅", type="positive")
-                await run.io_bound(refresh_cloud_models)
+                _start_catalog_refresh_ui(reason="provider_key_saved", provider_id="anthropic", force=True)
             with ui.row().classes("gap-2"):
                 ui.button("Save Key", icon="save", on_click=_save_anth).props("flat dense")
                 ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("ANTHROPIC_API_KEY", "Anthropic key", anth_refresh)).props("flat dense color=negative")
@@ -1649,7 +1737,7 @@ def open_settings(
                 goog_input.update()
                 goog_refresh()
                 ui.notify("Google AI key saved ✅", type="positive")
-                await run.io_bound(refresh_cloud_models)
+                _start_catalog_refresh_ui(reason="provider_key_saved", provider_id="google", force=True)
             with ui.row().classes("gap-2"):
                 ui.button("Save Key", icon="save", on_click=_save_goog).props("flat dense")
                 ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("GOOGLE_API_KEY", "Google AI key", goog_refresh)).props("flat dense color=negative")
@@ -1672,7 +1760,7 @@ def open_settings(
                 xai_input.update()
                 xai_refresh()
                 ui.notify("xAI key saved ✅", type="positive")
-                await run.io_bound(refresh_cloud_models)
+                _start_catalog_refresh_ui(reason="provider_key_saved", provider_id="xai", force=True)
             with ui.row().classes("gap-2"):
                 ui.button("Save Key", icon="save", on_click=_save_xai).props("flat dense")
                 ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("XAI_API_KEY", "xAI key", xai_refresh)).props("flat dense color=negative")
@@ -1695,7 +1783,7 @@ def open_settings(
                 minimax_input.update()
                 minimax_refresh()
                 ui.notify("MiniMax key saved ✅", type="positive")
-                await run.io_bound(refresh_cloud_models)
+                _start_catalog_refresh_ui(reason="provider_key_saved", provider_id="minimax", force=True)
             with ui.row().classes("gap-2"):
                 ui.button("Save Key", icon="save", on_click=_save_minimax).props("flat dense")
                 ui.button("Clear", icon="delete", on_click=lambda: _clear_secret("MINIMAX_API_KEY", "MiniMax key", minimax_refresh)).props("flat dense color=negative")
@@ -1722,6 +1810,9 @@ def open_settings(
                 "### MiniMax\n\n"
                 "1. Go to [platform.minimax.io](https://platform.minimax.io/) → API Keys\n"
                 "2. Create a new key and paste it above\n\n"
+                "### Ollama Cloud\n\n"
+                "1. Create an Ollama Cloud API key from your Ollama account\n"
+                "2. Paste it above for direct cloud models, or use `ollama signin` for local daemon cloud-offload models\n\n"
                 "### OpenRouter\n\n"
                 "1. Go to [openrouter.ai](https://openrouter.ai) and create an account\n"
                 "2. Navigate to **Keys** → **Create Key** and paste it above\n\n"
@@ -3729,14 +3820,30 @@ def open_settings(
 
             ui.separator()
 
+            _tab_aliases = {
+                "Cloud": "Providers",
+                "Google": "Accounts",
+                "Gmail": "Accounts",
+                "Calendar": "Accounts",
+                "Migration": "Preferences",
+            }
+            _known_tab_names = {
+                "Providers", "Models", "Knowledge", "Buddy", "Voice",
+                "System", "Tracker", "Documents", "Search", "Skills",
+                "Accounts", "Channels", "Utilities", "MCP", "Plugins",
+                "Preferences",
+            }
+            _initial_name = _tab_aliases.get(initial_tab, initial_tab)
+            if _initial_name not in _known_tab_names:
+                _initial_name = "Providers"
             _tab_map = {}
             with ui.splitter(value=18).classes("w-full flex-grow").props(
                 "disable"
             ).style("height: calc(100vh - 100px);") as splitter:
                 with splitter.before:
-                    with ui.tabs().props("vertical").classes("w-full h-full") as tabs:
-                        tab_models = ui.tab("Models", icon="smart_toy")
+                    with ui.tabs(value=_initial_name).props("vertical").classes("w-full h-full") as tabs:
                         tab_cloud = ui.tab("Providers", icon="cloud")
+                        tab_models = ui.tab("Models", icon="smart_toy")
                         tab_knowledge = ui.tab("Knowledge", icon="psychology")
                         tab_buddy = ui.tab("Buddy", icon="pets")
                         tab_voice = ui.tab("Voice", icon="mic")
@@ -3769,13 +3876,11 @@ def open_settings(
                             "Preferences": tab_prefs,
                         }
 
-                _initial = _tab_map.get(initial_tab, tab_models)
-
                 # ── Lazy tab loading (build only visible tab) ──
                 _tab_defs = [
-                    (tab_docs, "Documents", _build_documents_tab),
-                    (tab_models, "Models", _build_models_tab),
                     (tab_cloud, "Providers", _build_cloud_tab),
+                    (tab_models, "Models", _build_models_tab),
+                    (tab_docs, "Documents", _build_documents_tab),
                     (tab_tools, "Search", _build_tools_tab),
                     (tab_skills, "Skills", _build_skills_tab),
                     (tab_fs, "System", _build_system_access_tab),
@@ -3790,31 +3895,50 @@ def open_settings(
                     (tab_plugins, "Plugins", _build_plugins_tab),
                     (tab_prefs, "Preferences", _build_preferences_tab),
                 ]
-                _built_tabs: set[str] = set()
-                _panel_map: dict[str, object] = {}
                 _builder_map: dict[str, Callable] = {}
+                _load_generation = {"value": 0}
+
+                def _tab_name_for_value(value) -> str | None:
+                    if isinstance(value, str):
+                        return _tab_aliases.get(value, value)
+                    for _tab_obj, _tab_name, _ in _tab_defs:
+                        if value is _tab_obj:
+                            return _tab_name
+                    return None
+
+                def _settings_tab_placeholder(text: str = "Loading settings...") -> None:
+                    with ui.column().classes("items-center justify-center gap-3 w-full").style("min-height: 320px;"):
+                        ui.spinner(size="lg").classes("text-blue-400")
+                        ui.label(text).classes("text-grey-5 text-sm")
+
+                def _load_settings_tab(name: str | None) -> None:
+                    if not name or name not in _builder_map:
+                        return
+                    _load_generation["value"] += 1
+                    generation = _load_generation["value"]
+                    content_panel.clear()
+                    with content_panel:
+                        if generation != _load_generation["value"]:
+                            return
+                        try:
+                            _builder_map[name]()
+                        except Exception as exc:
+                            logger.exception("Settings tab '%s' failed to render", name)
+                            ui.label(f"Could not load {name} settings: {exc}").classes("text-warning text-sm")
 
                 with splitter.after:
-                    with ui.tab_panels(tabs, value=_initial).classes("w-full h-full"):
-                        for _t_obj, _t_name, _t_builder in _tab_defs:
-                            with ui.tab_panel(_t_obj).classes("px-6 py-4") as _pnl:
-                                if _t_obj is _initial:
-                                    _t_builder()
-                                    _built_tabs.add(_t_name)
-                                else:
-                                    ui.spinner(size="lg").classes("block mx-auto mt-8")
-                            _panel_map[_t_name] = _pnl
-                            _builder_map[_t_name] = _t_builder
+                    content_panel = ui.column().classes("w-full h-full px-6 py-4 overflow-auto")
+                    for _t_obj, _t_name, _t_builder in _tab_defs:
+                        _builder_map[_t_name] = _t_builder
+                    with content_panel:
+                        _settings_tab_placeholder()
 
                     def _on_tab_switch(e):
-                        name = e.value if isinstance(e.value, str) else None
-                        if name and name not in _built_tabs and name in _builder_map:
-                            _built_tabs.add(name)
-                            panel = _panel_map[name]
-                            panel.clear()
-                            with panel:
-                                _builder_map[name]()
+                        name = _tab_name_for_value(e.value)
+                        if name and name in _builder_map:
+                            defer_ui(lambda name=name: _load_settings_tab(name), delay=0.01)
 
                     tabs.on_value_change(_on_tab_switch)
 
     p.settings_dlg.open()
+    defer_ui(lambda: _load_settings_tab(_initial_name), delay=0.05)

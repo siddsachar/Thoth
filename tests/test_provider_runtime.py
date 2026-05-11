@@ -157,6 +157,77 @@ def test_ollama_provider_runtime_constructs_chat_ollama(monkeypatch):
     }
 
 
+def test_ollama_cloud_provider_runtime_constructs_native_client(monkeypatch):
+    monkeypatch.setattr(runtime, "get_provider_secret", lambda provider_id: "ollama-cloud-key")
+
+    model = runtime.create_chat_model("gpt-oss:120b-cloud", provider_id="ollama_cloud")
+
+    assert model.model_name == "gpt-oss:120b-cloud"
+    assert model.api_key == "ollama-cloud-key"
+    assert model.base_url == "https://ollama.com"
+
+
+def test_ollama_cloud_runtime_posts_native_chat_request():
+    from langchain_core.messages import HumanMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    captured = {}
+
+    class _Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"message": {"role": "assistant", "content": "hello"}, "done": True}
+
+    class _Client:
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="gpt-oss:120b-cloud", api_key="test-key", http_client=_Client())
+    result = model.invoke([HumanMessage(content="Hi")])
+
+    assert result.content == "hello"
+    assert captured["url"] == "https://ollama.com/api/chat"
+    assert captured["kwargs"]["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["kwargs"]["json"]["model"] == "gpt-oss:120b-cloud"
+    assert captured["kwargs"]["json"]["messages"] == [{"role": "user", "content": "Hi"}]
+
+
+def test_ollama_cloud_runtime_serializes_vision_images():
+    from langchain_core.messages import HumanMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    captured = {}
+
+    class _Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"message": {"role": "assistant", "content": "seen"}, "done": True}
+
+    class _Client:
+        def post(self, url, **kwargs):
+            captured["kwargs"] = kwargs
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="gemma4:31b-cloud", api_key="test-key", http_client=_Client())
+    result = model.invoke([HumanMessage(content=[
+        {"type": "text", "text": "What is in this image?"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
+    ])])
+
+    assert result.content == "seen"
+    assert captured["kwargs"]["json"]["messages"] == [{
+        "role": "user",
+        "content": "What is in this image?",
+        "images": ["AAAA"],
+    }]
+
+
 def test_ollama_reachable_parses_ollama_host_variants(monkeypatch):
     import models
 
@@ -262,6 +333,45 @@ def test_minimax_model_facade_recognizes_static_catalog(monkeypatch):
     finally:
         models._cloud_model_cache.clear()
         models._cloud_model_cache.update(old_cache)
+
+
+def test_ollama_cloud_model_facade_fetches_direct_catalog(monkeypatch):
+    import api_keys
+    import httpx
+    import models
+
+    old_cache = dict(models._cloud_model_cache)
+
+    class _Response:
+        status_code = 200
+        text = "{}"
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "gpt-oss:120b-cloud"}]}
+
+    monkeypatch.setattr(api_keys, "get_key", lambda key: "test-ollama-key" if key == "OLLAMA_API_KEY" else "")
+    monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: _Response())
+    try:
+        models._cloud_model_cache.clear()
+        count = models.fetch_cloud_models("ollama_cloud")
+
+        assert count == 1
+        assert models.is_cloud_model("model:ollama_cloud:gpt-oss:120b-cloud") is True
+        assert models.get_cloud_provider("model:ollama_cloud:gpt-oss:120b-cloud") == "ollama_cloud"
+        assert models._cloud_model_cache["gpt-oss:120b-cloud"]["provider"] == "ollama_cloud"
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(old_cache)
+
+
+def test_ollama_cloud_offload_model_facade_routes_to_local_ollama_provider():
+    import models
+
+    assert models.is_cloud_model("model:ollama:gpt-oss:120b-cloud") is True
+    assert models.get_cloud_provider("model:ollama:gpt-oss:120b-cloud") == "ollama"
 
 
 def test_minimax_validation_treats_insufficient_balance_as_accepted_key(monkeypatch):

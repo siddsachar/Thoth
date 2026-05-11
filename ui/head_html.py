@@ -340,6 +340,11 @@ window.thothCloseManagedWindow = async function(name) {
         initThothCtx();
     }
     function initThothCtx() {
+        if (!document.body) {
+            document.addEventListener('DOMContentLoaded', initThothCtx, {once:true});
+            return;
+        }
+        if (document.getElementById('thoth-ctx-menu')) return;
         var menu = document.createElement('div');
         menu.id = 'thoth-ctx-menu';
         menu.style.cssText = 'display:none; position:fixed; z-index:99999; '

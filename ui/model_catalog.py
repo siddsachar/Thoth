@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
+import time
 
 from nicegui import run, ui
 
@@ -15,6 +17,7 @@ SURFACE_LABELS = {
 }
 
 CATALOG_PROVIDER_ROW_LIMIT = 80
+logger = logging.getLogger(__name__)
 
 
 def build_model_catalog_section(
@@ -177,18 +180,24 @@ def build_model_catalog_section(
                 for category_id in row.categories:
                     ui.badge(SURFACE_LABELS.get(category_id, category_id), color="grey").props("outline dense")
                 if row.downloadable:
-                    ui.badge("download", color="orange").props("outline dense")
+                    ui.badge("needs sign-in" if row.availability == "cloud_offload_available" else "download", color="orange").props("outline dense")
                 elif not row.configured:
                     ui.badge("connect", color="orange").props("outline dense")
                 elif not row.runtime_ready:
                     ui.badge("unavailable", color="orange").props("outline dense")
+                if row.provider_id == "ollama" and row.risk_label == "cloud_provider":
+                    ui.badge("cloud offload", color="orange").props("outline dense")
+                elif row.provider_id == "ollama_cloud":
+                    ui.badge("cloud", color="orange").props("outline dense")
                 if is_default:
                     ui.badge("default", color="cyan").props("outline dense")
                 ui.space()
                 if row.status_reason:
                     ui.icon("info", size="xs").tooltip(row.status_reason)
                 if row.downloadable and on_download:
-                    ui.button(icon="download", on_click=lambda _, r=row: _download(r)).props("flat dense round size=sm color=primary").tooltip("Download model")
+                    ui.button(icon="download", on_click=lambda _, r=row: _download(r)).props("flat dense round size=sm color=primary").tooltip(
+                        "Pull cloud model through Ollama" if row.availability == "cloud_offload_available" else "Download model"
+                    )
                 pin_button = ui.button(icon="push_pin", on_click=lambda _, r=row, s=surface: _toggle_pin(r, s)).props(f"flat dense round size=sm color={'primary' if pinned else 'grey'}").tooltip("Remove from this picker" if pinned else "Pin to this picker")
                 if not can_use:
                     pin_button.disable()
@@ -277,10 +286,13 @@ def build_lazy_model_catalog_section(
                     ui.spinner(size="sm")
                     ui.label("Loading catalog...")
         try:
+            started = time.perf_counter()
             rows = await run.io_bound(load_rows)
+            logger.info("perf: model catalog lazy load collected %d rows in %.3fs", len(rows), time.perf_counter() - started)
             state["loaded"] = True
             container.clear()
             with container:
+                render_started = time.perf_counter()
                 build_model_catalog_section(
                     rows,
                     on_set_default=on_set_default,
@@ -288,7 +300,9 @@ def build_lazy_model_catalog_section(
                     on_change=on_change,
                     initial_open=True,
                 )
+                logger.info("perf: model catalog lazy render took %.3fs", time.perf_counter() - render_started)
         except Exception as exc:
+            logger.warning("Could not load model catalog", exc_info=True)
             container.clear()
             with container:
                 with ui.expansion("Model Catalog", icon="view_list", value=True).classes("w-full"):

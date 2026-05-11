@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
+import time
 from typing import Any, Iterable
 
 from providers.capabilities import SURFACE_REQUIREMENTS, normalize_snapshot, snapshot_supports_surface
@@ -9,6 +11,7 @@ from providers.models import ModelInfo
 from providers.selection import model_ref
 
 CATALOG_SURFACES = ("chat", "vision", "image", "video")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,7 @@ class CatalogModelRow:
     source: str = "catalog"
     risk_label: str = "api_key"
     status_reason: str = ""
+    availability: str = ""
 
     def supports(self, surface: str) -> bool:
         return surface in self.categories
@@ -67,24 +71,116 @@ def load_ollama_catalog_rows() -> list[dict[str, Any]]:
     from models import POPULAR_MODELS, fetch_trending_ollama_models, list_local_models
     from providers.ollama import (
         DEFAULT_OLLAMA_LIBRARY_FAMILIES,
+        fetch_ollama_cloud_library_models,
         fetch_ollama_library_family_models,
         fetch_ollama_library_models,
+        is_ollama_cloud_offload_model,
         ollama_catalog_rows,
         ollama_provider_catalog_model_ids,
     )
 
+    started = time.perf_counter()
     local = list_local_models()
     library_families = fetch_ollama_library_models()
+    cloud_families = fetch_ollama_cloud_library_models()
     family_tag_models: list[str] = []
-    for family in DEFAULT_OLLAMA_LIBRARY_FAMILIES:
+    families_to_expand = _unique_ordered([
+        *DEFAULT_OLLAMA_LIBRARY_FAMILIES,
+        *cloud_families[:24],
+    ])
+    for family in families_to_expand:
         family_tag_models.extend(fetch_ollama_library_family_models(family))
+    cloud_candidates = [
+        model_id for model_id in family_tag_models
+        if is_ollama_cloud_offload_model(model_id) and model_id not in local
+    ]
+    cloud_show_metadata = _probe_ollama_show_metadata(cloud_candidates[:40])
     recommended_models = ollama_provider_catalog_model_ids(
         [],
         [*POPULAR_MODELS, *fetch_trending_ollama_models()],
-        library_families,
+        _unique_ordered([*library_families, *cloud_families]),
         family_tag_models,
     )
-    return ollama_catalog_rows(local, recommended_models)
+    rows = ollama_catalog_rows(
+        local,
+        recommended_models,
+        ready_cloud_offload=set(cloud_show_metadata),
+        metadata_by_model=cloud_show_metadata,
+    )
+    logger.info(
+        "perf: ollama catalog rows loaded in %.3fs (local=%d families=%d tags=%d cloud_candidates=%d show_ready=%d rows=%d)",
+        time.perf_counter() - started,
+        len(local),
+        len(families_to_expand),
+        len(family_tag_models),
+        len(cloud_candidates),
+        len(cloud_show_metadata),
+        len(rows),
+    )
+    return rows
+
+
+def _unique_ordered(values: Iterable[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value or "").strip()
+        if item and item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+def _probe_ollama_show_metadata(model_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+    try:
+        from models import _ollama_client, _ollama_reachable
+    except Exception:
+        return {}
+    if not _ollama_reachable():
+        return {}
+    client = _ollama_client()
+    if client is None:
+        return {}
+    results: dict[str, dict[str, Any]] = {}
+    for model_id in _unique_ordered(model_ids):
+        try:
+            raw = client.show(model_id)
+        except Exception:
+            continue
+        metadata = _normalize_ollama_show_response(raw)
+        if metadata:
+            results[model_id] = metadata
+    return results
+
+
+def _normalize_ollama_show_response(raw: Any) -> dict[str, Any]:
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        data = dict(raw)
+    elif hasattr(raw, "model_dump"):
+        try:
+            data = dict(raw.model_dump())
+        except Exception:
+            data = {}
+    else:
+        data = {
+            key: getattr(raw, key)
+            for key in ("details", "modelinfo", "capabilities", "parameters", "template")
+            if hasattr(raw, key)
+        }
+    metadata: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            for subkey, subvalue in value.items():
+                metadata[f"{key}_{subkey}"] = subvalue
+        else:
+            metadata[key] = value
+    modelinfo = data.get("modelinfo") if isinstance(data.get("modelinfo"), dict) else {}
+    context = modelinfo.get("general.context_length") or modelinfo.get("llama.context_length")
+    if context:
+        metadata["context_window"] = context
+    return metadata
 
 
 def build_model_catalog_rows(
@@ -194,9 +290,10 @@ def _add_ollama_row(
         default_refs=default_refs,
         context_window=int(row.get("context_window") or 0),
         installed=bool(row.get("installed")),
-        downloadable=not bool(row.get("installed")),
-        source="ollama_catalog",
+        downloadable=bool(row.get("downloadable", not bool(row.get("installed")))),
+        source=str(row.get("source") or "ollama_catalog"),
         risk_label=str(row.get("risk_label") or "local_private"),
+        availability=str(row.get("availability") or ""),
     )
 
 
@@ -215,6 +312,7 @@ def _catalog_row(
     downloadable: bool,
     source: str,
     risk_label: str,
+    availability: str = "",
 ) -> CatalogModelRow:
     definition = get_provider_definition(provider_id)
     status = provider_status.get(provider_id, {})
@@ -225,6 +323,8 @@ def _catalog_row(
     status_reason = ""
     if not configured:
         status_reason = "Connect this provider before using this model."
+    elif provider_id == "ollama" and availability == "cloud_offload_available":
+        status_reason = "Sign in to Ollama and pull this cloud model before using it."
     elif not installed:
         status_reason = "Download this Ollama model before using it."
     if provider_id == "codex" and not bool(status.get("runtime_enabled")):
@@ -250,6 +350,7 @@ def _catalog_row(
         source=source,
         risk_label=risk_label,
         status_reason=status_reason,
+        availability=availability,
     )
 
 

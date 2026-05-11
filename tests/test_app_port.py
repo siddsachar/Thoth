@@ -104,6 +104,61 @@ def test_thoth_process_passes_selected_port_to_app(monkeypatch, tmp_path):
     assert captured["cmd"][-1].endswith("app.py")
 
 
+def test_thoth_process_stop_closes_parent_log_handle(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakePopen:
+        pid = 4242
+
+        def __init__(self):
+            self._alive = True
+
+        def poll(self):
+            return None if self._alive else 0
+
+        def terminate(self):
+            self._alive = False
+
+        def wait(self, timeout=None):  # noqa: ARG002
+            self._alive = False
+            return 0
+
+        def kill(self):
+            self._alive = False
+
+    def _fake_popen(cmd, **kwargs):  # noqa: ARG001
+        captured.update(kwargs)
+        return _FakePopen()
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(launcher.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(
+        launcher._ThothProcess,
+        "_request_graceful_shutdown",
+        lambda self: False,
+    )
+
+    process = launcher._ThothProcess(port=8125, host="127.0.0.1")
+    process.start()
+    log_handle = captured["stdout"]
+
+    assert not log_handle.closed
+
+    process.stop()
+
+    assert process._log_handle is None
+    assert log_handle.closed
+
+
+def test_launcher_shutdown_source_contracts_are_wired():
+    src = Path("launcher.py").read_text(encoding="utf-8")
+
+    assert "/api/launcher-shutdown" in src
+    assert "def _close_log_handle" in src
+    assert "self._close_log_handle()" in src
+    assert '["taskkill", "/PID", str(proc.pid), "/T", "/F"]' in src
+
+
 def test_launcher_display_detection_on_headless_linux(monkeypatch):
     monkeypatch.setattr(launcher.sys, "platform", "linux")
     monkeypatch.delenv("DISPLAY", raising=False)

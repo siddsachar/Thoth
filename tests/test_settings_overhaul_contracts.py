@@ -63,8 +63,54 @@ def test_status_and_home_links_follow_new_information_architecture():
     dream_src = status_src.split("def check_dream_cycle", 1)[1].split("def check_tts", 1)[0]
 
     assert 'CheckResult("Tunnel"' in status_src
-    assert 'settings_tab="Channels"' in tunnel_src
+    assert 'settings_tab="System"' in tunnel_src
     assert 'CheckResult("Dream Cycle"' in status_src
-    assert 'settings_tab="Knowledge"' in dream_src
+    assert 'settings_tab="Preferences"' in dream_src
     assert "Settings \u2192 Preferences" in home_src
     assert "Settings \u2192 Knowledge" not in home_src
+
+
+def test_settings_shell_is_providers_first_and_single_panel():
+    settings_src = SETTINGS.read_text(encoding="utf-8")
+    app_src = Path("app.py").read_text(encoding="utf-8")
+    open_src = _function_source("open_settings")
+    build_models_src = _function_source("_build_models_tab")
+
+    assert 'initial_tab: str = "Providers"' in settings_src
+    assert 'def _open_settings(initial_tab: str = "Providers")' in app_src
+    assert "with ui.tabs(value=_initial_name)" in open_src
+    assert open_src.index('tab_cloud = ui.tab("Providers"') < open_src.index('tab_models = ui.tab("Models"')
+    assert open_src.index('(tab_cloud, "Providers", _build_cloud_tab)') < open_src.index('(tab_models, "Models", _build_models_tab)')
+    assert "ui.tab_panels" not in open_src
+    assert "ui.tab_panel" not in open_src
+    assert "content_panel = ui.column()" in open_src
+    assert "_load_generation" in open_src
+    assert "data = await run.io_bound(_collect_models_tab_data)" in build_models_src
+    assert 'safe_ui_task(_load_models, context="models settings load")' in build_models_src
+    render_models_src = _function_source("_render_models_tab_content")
+    assert "build_lazy_model_catalog_section" in render_models_src
+    assert "build_model_catalog_section(" not in render_models_src
+
+
+def test_settings_shell_preserves_all_registered_tabs():
+    open_src = _function_source("open_settings")
+
+    for tab_name in (
+        "Providers",
+        "Models",
+        "Documents",
+        "Search",
+        "Skills",
+        "System",
+        "Accounts",
+        "Utilities",
+        "Tracker",
+        "Knowledge",
+        "Buddy",
+        "Voice",
+        "Channels",
+        "MCP",
+        "Plugins",
+        "Preferences",
+    ):
+        assert f'"{tab_name}"' in open_src

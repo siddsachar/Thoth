@@ -15,6 +15,15 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         risk_label="local_private",
         icon="🖥️",
     ),
+    "ollama_cloud": ProviderDefinition(
+        id="ollama_cloud",
+        display_name="Ollama Cloud",
+        auth_methods=(AuthMethod.API_KEY,),
+        default_transport=TransportMode.OLLAMA_CLOUD_CHAT,
+        base_url="https://ollama.com",
+        risk_label="cloud_provider",
+        icon="☁️",
+    ),
     "openai": ProviderDefinition(
         id="openai",
         display_name="OpenAI API",
@@ -90,12 +99,24 @@ _LOCAL_VISION_MARKERS = (
     "qwen2-vl",
     "qwen2.5-vl",
     "qwen3-vl",
+    "qwen3.5-vl",
 )
 
 
 def _name_suggests_vision_model(model_id: str) -> bool:
     normalized = str(model_id or "").split(":", 1)[0].split("/", 1)[-1].lower().replace("_", "-")
     return any(marker in normalized for marker in _LOCAL_VISION_MARKERS)
+
+
+def _metadata_suggests_image_input(metadata: dict[str, Any]) -> bool:
+    capabilities = metadata.get("capabilities")
+    if isinstance(capabilities, list) and any(str(item).lower() in {"vision", "image"} for item in capabilities):
+        return True
+    for key in ("input_modalities", "input", "modalities"):
+        modalities = metadata.get(key)
+        if isinstance(modalities, list) and any(str(item).lower() == "image" for item in modalities):
+            return True
+    return False
 
 
 def list_provider_definitions() -> list[ProviderDefinition]:
@@ -234,11 +255,11 @@ def classify_model_capabilities(
     streaming: bool | None = True
     endpoint_compatibility = {default_transport}
 
-    if provider_id == "ollama":
-        default_transport = TransportMode.OLLAMA_CHAT
-        endpoint_compatibility = {TransportMode.OLLAMA_CHAT}
+    if provider_id in {"ollama", "ollama_cloud"}:
+        default_transport = TransportMode.OLLAMA_CLOUD_CHAT if provider_id == "ollama_cloud" else TransportMode.OLLAMA_CHAT
+        endpoint_compatibility = {default_transport}
         family = bare.split(":", 1)[0]
-        if metadata.get("vision") or _name_suggests_vision_model(family):
+        if metadata.get("vision") or _metadata_suggests_image_input(metadata) or _name_suggests_vision_model(family):
             input_modalities.add(ModelModality.IMAGE.value)
             capabilities.add("vision")
         if metadata.get("tool_calling") is False:

@@ -12,6 +12,7 @@ from providers.models import AuthMethod, ProviderHealth
 
 PROVIDER_API_KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
+    "ollama_cloud": "OLLAMA_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "google": "GOOGLE_API_KEY",

@@ -5079,12 +5079,13 @@ try:
     record("PASS", "cloud: get_trending_models returns list")
 
     # ── 35az. app.py uses trending models + Ollama-aware logic
-    assert "fetch_trending_ollama_models" in _gui_src35, "app.py should import fetch_trending"
+    assert "build_cached_model_catalog_rows" in _gui_src35, "settings should render model catalog from cache"
+    assert "start_model_catalog_refresh_background" in _gui_src35, "settings should refresh catalog in the background"
     assert "get_trending_models" in _gui_src35, "app.py should import get_trending_models"
     assert "🆕" in _gui_src35, "app.py should show trending icon"
     assert "_ollama_up" in _gui_src35, "app.py should track Ollama reachability"
     assert "ollama.com/download" in _gui_src35, "app.py should link to Ollama download"
-    record("PASS", "cloud: app.py has trending + Ollama-aware model lists")
+    record("PASS", "cloud: settings has cached catalog + Ollama-aware model lists")
 
     # ── 35ba. cross-platform install instructions in app ─────
     assert "brew install ollama" in _gui_src35, "app.py should have macOS install hint"
@@ -6657,7 +6658,7 @@ try:
         "Email": "Channels", "Telegram": "Channels",
         "Gmail OAuth": "Gmail", "Calendar OAuth": "Calendar",
         "Knowledge": "Knowledge", "FAISS Index": "",
-        "Dream Cycle": "Knowledge", "TTS": "Voice",
+        "Dream Cycle": "Preferences", "TTS": "Voice",
         "Wiki Vault": "Knowledge", "Disk": "System",
         "Documents": "Documents", "Threads DB": "",
     }
@@ -7584,7 +7585,7 @@ try:
     assert "Dream Cycle" in _settings_src48, "settings.py must have Dream Cycle section"
     assert "dream_cycle" in _settings_src48, "settings.py must import dream_cycle"
     assert "Enable Dream Cycle" in _settings_src48, "settings.py must have Enable toggle"
-    record("PASS", "dream_cycle: Knowledge tab has Dream Cycle UI section")
+    record("PASS", "dream_cycle: Preferences tab has Dream Cycle UI section")
 
     # ── 48k. Activity tab shows Dream Cycle ──────────────────────────
     _home_src48 = (PROJECT_ROOT / "ui" / "home.py").read_text(encoding="utf-8")
@@ -13561,7 +13562,7 @@ try:
     _cr67 = _ct67()
     assert isinstance(_cr67, _CR67)
     assert _cr67.name == "Tunnel"
-    assert _cr67.settings_tab == "Channels"
+    assert _cr67.settings_tab == "System"
     record("PASS", "67n: check_tunnel returns CheckResult(name='Tunnel')")
 
     # ── 67o. check_tunnel in LIGHT_CHECKS ───────────────────────────
