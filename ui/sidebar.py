@@ -21,7 +21,7 @@ from ui.constants import SIDEBAR_MAX_THREADS
 logger = logging.getLogger(__name__)
 
 # Module-level so filter choice survives rebuild_main() re-renders.
-_SIDEBAR_FILTER: str = "all"  # one of: "all", "chat", "designer", "workflow"
+_SIDEBAR_FILTER: str = "all"  # one of: "all", "chat", "designer", "code", "workflow"
 _MODAL_FILTER: str = "all"
 _SIDEBAR_AVATAR_CSS = """
 .sb-avatar { position: relative; }
@@ -96,6 +96,7 @@ def build_sidebar(
                         state.tts_service.stop()
                         prev_gen.tts_active = False
                 state.active_designer_project = None
+                state.active_developer_workspace_id = None
                 state.thread_id = None
                 state.thread_name = None
                 state.messages = []
@@ -118,6 +119,7 @@ def build_sidebar(
                         state.tts_service.stop()
                         prev_gen.tts_active = False
                 state.active_designer_project = None
+                state.active_developer_workspace_id = None
                 state.thread_id = tid
                 state.thread_name = name
                 state.messages = []
@@ -264,26 +266,30 @@ def build_sidebar(
         p.thread_container.clear()
         if p.thread_filter_container is not None:
             p.thread_filter_container.clear()
-        threads = _list_threads()
+        threads = _list_threads(include_details=True)
         running_tids = get_running_tasks()
 
         # Classify every thread once so pills + list share the same data.
         from threads import get_workflow_thread_ids
         workflow_tids = get_workflow_thread_ids()
 
-        def _cat_of(pid: str, tid: str) -> str:
+        def _cat_of(pid: str, tid: str, thread_type: str = "", dev_ws: str = "") -> str:
             if pid:
                 return "designer"
+            if thread_type == "code" or dev_ws:
+                return "code"
             if tid in workflow_tids:
                 return "workflow"
             return "chat"
 
         classified: list[tuple] = []
-        counts = {"all": len(threads), "chat": 0, "designer": 0, "workflow": 0}
+        counts = {"all": len(threads), "chat": 0, "designer": 0, "code": 0, "workflow": 0}
         for row in threads:
             tid = row[0]
             _pid = row[5] if len(row) > 5 else ""
-            cat = _cat_of(_pid, tid)
+            _thread_type = row[6] if len(row) > 6 else ""
+            _dev_ws = row[7] if len(row) > 7 else ""
+            cat = _cat_of(_pid, tid, _thread_type, _dev_ws)
             counts[cat] += 1
             classified.append((row, cat))
 
@@ -294,6 +300,7 @@ def build_sidebar(
                 ("all", "All", counts["all"]),
                 ("chat", "Chats", counts["chat"]),
                 ("designer", "Designs", counts["designer"]),
+                ("code", "Code", counts["code"]),
                 ("workflow", "Workflows", counts["workflow"]),
             ]
             with p.thread_filter_container:
@@ -345,14 +352,17 @@ def build_sidebar(
                 tid, name, created, updated, *_rest = row
                 _thread_model_ov = _rest[0] if _rest else ""
                 _thread_project_id = _rest[1] if len(_rest) > 1 else ""
+                _thread_type = _rest[2] if len(_rest) > 2 else ""
+                _dev_workspace_id = _rest[3] if len(_rest) > 3 else ""
                 name = name or ""
                 is_active = tid == state.thread_id
                 is_running = tid in running_tids
                 is_generating_tid = tid in _active_generations
                 is_cloud_thread = is_cloud_model(_thread_model_ov or get_current_model())
                 is_designer_thread = bool(_thread_project_id)
+                is_code_thread = _thread_type == "code" or bool(_dev_workspace_id)
 
-                async def _select(t=tid, n=name, mo=_thread_model_ov, pid=_thread_project_id):
+                async def _select(t=tid, n=name, mo=_thread_model_ov, pid=_thread_project_id, dev_ws=_dev_workspace_id):
                     prev = state.thread_id
                     prev_gen = _active_generations.get(prev) if prev else None
                     if prev_gen and prev_gen.status == "streaming":
@@ -382,13 +392,31 @@ def build_sidebar(
                             p.pending_files.clear()
                             set_active_thread(t, previous_id=prev)
                             state.active_designer_project = proj
+                            state.active_developer_workspace_id = None
                             rebuild_main()
                             _rebuild_thread_list_ref[0]()
                             return
                         # Project missing — fall through to normal thread behaviour
 
                     # Non-designer thread (or missing project) — close designer if open
+                    if dev_ws:
+                        from developer.storage import get_workspace
+                        workspace = get_workspace(dev_ws)
+                        if workspace:
+                            state.active_designer_project = None
+                            state.active_developer_workspace_id = dev_ws
+                            state.thread_id = t
+                            state.thread_name = n
+                            state.thread_model_override = mo or ""
+                            state.messages = await _load_messages_cached(t)
+                            p.pending_files.clear()
+                            set_active_thread(t, previous_id=prev)
+                            rebuild_main()
+                            _rebuild_thread_list_ref[0]()
+                            return
+
                     state.active_designer_project = None
+                    state.active_developer_workspace_id = None
                     state.thread_id = t
                     state.thread_name = n
                     state.thread_model_override = mo or ""
@@ -420,6 +448,7 @@ def build_sidebar(
                         state.thread_id = None
                         state.thread_name = None
                         state.messages = []
+                        state.active_developer_workspace_id = None
                         rebuild_main()
                     _rebuild_thread_list_ref[0]()
 
@@ -433,6 +462,8 @@ def build_sidebar(
                             _thr_icon = "hourglass_top"
                         elif is_designer_thread:
                             _thr_icon = "brush"
+                        elif is_code_thread:
+                            _thr_icon = "code"
                         elif is_cloud_thread:
                             _thr_icon = "cloud"
                         elif name.startswith("✈️"):
@@ -533,18 +564,22 @@ def build_sidebar(
                         from threads import get_workflow_thread_ids as _gwf
                         _wf_tids = _gwf()
 
-                        def _cat_modal(pid: str, tid: str) -> str:
+                        def _cat_modal(pid: str, tid: str, thread_type: str = "", dev_ws: str = "") -> str:
                             if pid:
                                 return "designer"
+                            if thread_type == "code" or dev_ws:
+                                return "code"
                             if tid in _wf_tids:
                                 return "workflow"
                             return "chat"
 
                         _modal_counts = {"all": len(threads), "chat": 0,
-                                         "designer": 0, "workflow": 0}
+                                         "designer": 0, "code": 0, "workflow": 0}
                         for _r in threads:
                             _pid = _r[5] if len(_r) > 5 else ""
-                            _modal_counts[_cat_modal(_pid, _r[0])] += 1
+                            _tt = _r[6] if len(_r) > 6 else ""
+                            _dw = _r[7] if len(_r) > 7 else ""
+                            _modal_counts[_cat_modal(_pid, _r[0], _tt, _dw)] += 1
 
                         filter_row = ui.row().classes(
                             "w-full gap-1 items-center q-mb-xs"
@@ -558,6 +593,7 @@ def build_sidebar(
                                 ("chat", "Chats", _modal_counts["chat"]),
                                 ("designer", "Designs",
                                  _modal_counts["designer"]),
+                                ("code", "Code", _modal_counts["code"]),
                                 ("workflow", "Workflows",
                                  _modal_counts["workflow"]),
                             ]
@@ -594,7 +630,9 @@ def build_sidebar(
                                 r for r in threads
                                 if (_MODAL_FILTER == "all"
                                     or _cat_modal(r[5] if len(r) > 5 else "",
-                                                  r[0]) == _MODAL_FILTER)
+                                                  r[0],
+                                                  r[6] if len(r) > 6 else "",
+                                                  r[7] if len(r) > 7 else "") == _MODAL_FILTER)
                             ]
                             with list_container:
                                 if not _filtered:
@@ -606,8 +644,10 @@ def build_sidebar(
                                     for row in _filtered:
                                         tid, name, created, updated, *_rest2 = row
                                         _mo2 = _rest2[0] if _rest2 else ""
+                                        _pid2 = _rest2[1] if len(_rest2) > 1 else ""
+                                        _dev_ws2 = _rest2[3] if len(_rest2) > 3 else ""
 
-                                        def _sel(t=tid, n=name, mo=_mo2):
+                                        def _sel(t=tid, n=name, mo=_mo2, pid=_pid2, dev_ws=_dev_ws2):
                                             # In selection mode, clicking a row toggles selection
                                             if bulk.active:
                                                 bulk.toggle_item(t)
@@ -623,6 +663,17 @@ def build_sidebar(
                                             state.thread_name = n
                                             state.thread_model_override = mo or ""
                                             state.messages = load_thread_messages(t)
+                                            state.active_designer_project = None
+                                            state.active_developer_workspace_id = None
+                                            if dev_ws:
+                                                from developer.storage import get_workspace
+                                                if get_workspace(dev_ws):
+                                                    state.active_developer_workspace_id = dev_ws
+                                            elif pid:
+                                                from designer.storage import load_project
+                                                proj = load_project(pid)
+                                                if proj:
+                                                    state.active_designer_project = proj
                                             dlg.close()
                                             rebuild_main()
                                             _rebuild_thread_list_ref[0]()
@@ -716,7 +767,9 @@ def build_sidebar(
                                     r[0] for r in threads
                                     if (_MODAL_FILTER == "all"
                                         or _cat_modal(r[5] if len(r) > 5 else "",
-                                                      r[0]) == _MODAL_FILTER)
+                                                      r[0],
+                                                      r[6] if len(r) > 6 else "",
+                                                      r[7] if len(r) > 7 else "") == _MODAL_FILTER)
                                 ]
                                 if not all_ids:
                                     ui.notify("Nothing to delete in this filter.",
@@ -740,6 +793,7 @@ def build_sidebar(
                                     else {
                                         "chat": "chats",
                                         "designer": "design conversations",
+                                        "code": "code conversations",
                                         "workflow": "workflow conversations",
                                     }[_MODAL_FILTER]
                                 )

@@ -25,12 +25,15 @@ class ToolResultGroup:
 
     @property
     def label(self) -> str:
+        prefix = "error" if any(tool_result_failed(item) for item in self.results) else ""
         if is_browser_tool_name(self.name):
             base = "Browser activity"
             suffix = "step" if self.count == 1 else "steps"
-            return f"{base} · {self.count} {suffix}"
+            label = f"{base} · {self.count} {suffix}"
+            return f"{label} · {prefix}" if prefix else label
         suffix = "call" if self.count == 1 else "calls"
-        return f"{self.name} · {self.count} {suffix}"
+        label = f"{self.name} · {self.count} {suffix}"
+        return f"{label} · {prefix}" if prefix else label
 
 
 def canonical_tool_name(name: Any) -> str:
@@ -75,3 +78,16 @@ def display_tool_content(content: Any, *, limit: int = 5_000) -> str:
     if len(text) > limit:
         return text[:limit] + "\n\n… (truncated)"
     return text
+
+
+def tool_result_failed(result_or_content: Any) -> bool:
+    """Return True when a tool result should be rendered as failed."""
+
+    if isinstance(result_or_content, dict):
+        if result_or_content.get("error") is True:
+            return True
+        content = result_or_content.get("content", "")
+    else:
+        content = result_or_content
+    text = display_tool_content(content, limit=800).strip().lower()
+    return text.startswith("tool error:") or text.startswith("error:") or "traceback (most recent call last)" in text

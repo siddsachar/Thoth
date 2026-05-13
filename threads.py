@@ -27,6 +27,8 @@ _THREAD_META_COLUMNS = {
     "summary": "TEXT DEFAULT ''",
     "summary_msg_count": "INTEGER DEFAULT 0",
     "project_id": "TEXT DEFAULT ''",
+    "thread_type": "TEXT DEFAULT ''",
+    "developer_workspace_id": "TEXT DEFAULT ''",
 }
 
 
@@ -54,14 +56,22 @@ def _init_thread_db(*, raise_on_error: bool = False):
 def _ensure_thread_db() -> None:
     _init_thread_db(raise_on_error=True)
 
-def _list_threads():
+def _list_threads(*, include_details: bool = False):
     _ensure_thread_db()
     conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(
-        "SELECT thread_id, name, created_at, updated_at, COALESCE(model_override, ''), "
-        "COALESCE(project_id, '') "
-        "FROM thread_meta ORDER BY updated_at DESC"
-    ).fetchall()
+    if include_details:
+        rows = conn.execute(
+            "SELECT thread_id, name, created_at, updated_at, COALESCE(model_override, ''), "
+            "COALESCE(project_id, ''), COALESCE(thread_type, ''), "
+            "COALESCE(developer_workspace_id, '') "
+            "FROM thread_meta ORDER BY updated_at DESC"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT thread_id, name, created_at, updated_at, COALESCE(model_override, ''), "
+            "COALESCE(project_id, '') "
+            "FROM thread_meta ORDER BY updated_at DESC"
+        ).fetchall()
     conn.close()
     return rows
 
@@ -181,6 +191,54 @@ def _get_thread_project_id(thread_id: str) -> str:
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
         "SELECT COALESCE(project_id, '') FROM thread_meta WHERE thread_id = ?",
+        (thread_id,),
+    ).fetchone()
+    conn.close()
+    return row[0] if row else ""
+
+
+def _set_thread_type(thread_id: str, thread_type: str) -> None:
+    """Set a high-level thread type such as ``code``."""
+    _ensure_thread_db()
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE thread_meta SET thread_type = ? WHERE thread_id = ?",
+        (thread_type, thread_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _get_thread_type(thread_id: str) -> str:
+    """Return the stored thread type, or an empty string."""
+    _ensure_thread_db()
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT COALESCE(thread_type, '') FROM thread_meta WHERE thread_id = ?",
+        (thread_id,),
+    ).fetchone()
+    conn.close()
+    return row[0] if row else ""
+
+
+def _set_thread_developer_workspace(thread_id: str, workspace_id: str) -> None:
+    """Link a thread to a Developer workspace."""
+    _ensure_thread_db()
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE thread_meta SET developer_workspace_id = ? WHERE thread_id = ?",
+        (workspace_id, thread_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _get_thread_developer_workspace(thread_id: str) -> str:
+    """Return the linked Developer workspace id, or an empty string."""
+    _ensure_thread_db()
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT COALESCE(developer_workspace_id, '') FROM thread_meta WHERE thread_id = ?",
         (thread_id,),
     ).fetchone()
     conn.close()
@@ -454,15 +512,22 @@ def get_workflow_thread_ids() -> set[str]:
     return ids
 
 
-def classify_thread(project_id: str, thread_id: str,
-                    workflow_tids: set[str] | None = None) -> str:
-    """Return ``"designer"``, ``"workflow"``, or ``"chat"``.
+def classify_thread(
+    project_id: str,
+    thread_id: str,
+    workflow_tids: set[str] | None = None,
+    thread_type: str = "",
+    developer_workspace_id: str = "",
+) -> str:
+    """Return ``"designer"``, ``"code"``, ``"workflow"``, or ``"chat"``.
 
     Designer takes precedence over workflow (a thread shouldn't carry
     both, but if it does, the project view is the richer home).
     """
     if project_id:
         return "designer"
+    if thread_type == "code" or developer_workspace_id:
+        return "code"
     if workflow_tids is None:
         workflow_tids = get_workflow_thread_ids()
     if thread_id in workflow_tids:

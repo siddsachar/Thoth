@@ -813,7 +813,7 @@ async def index():
         if p.main_col is None:
             return
         # Designer needs full width; other views use centered max-w-7xl
-        if state.active_designer_project is not None:
+        if state.active_designer_project is not None or state.active_developer_workspace_id is not None:
             _outer.classes(remove="max-w-7xl mx-auto px-4", add="px-2")
         else:
             _outer.classes(remove="px-2", add="max-w-7xl mx-auto px-4")
@@ -843,6 +843,30 @@ async def index():
                         browse_file=browse_file,
                         open_settings=_open_settings,
                     )
+                elif state.active_developer_workspace_id is not None:
+                    from developer.ui import build_developer_workspace
+
+                    def _exit_developer():
+                        prev = state.thread_id
+                        state.active_developer_workspace_id = None
+                        state.thread_id = None
+                        state.thread_name = None
+                        state.messages = []
+                        set_active_thread(None, previous_id=prev)
+                        state.preferred_home_tab = "Developer"
+                        _rebuild_main()
+
+                    build_developer_workspace(
+                        state.active_developer_workspace_id,
+                        state=state,
+                        p=p,
+                        send_message=_send_message,
+                        add_chat_message=lambda msg: add_chat_message(msg, p, state.thread_id),
+                        browse_file=browse_file,
+                        open_settings=_open_settings,
+                        show_interrupt=cb.show_interrupt,
+                        on_back=_exit_developer,
+                    )
                 elif state.thread_id is None:
                     build_home(
                         state, p,
@@ -853,6 +877,7 @@ async def index():
                         build_graph_panel=build_graph_panel,
                         is_first_run=is_first_run,
                         mark_onboarding_seen=mark_onboarding_seen,
+                        load_thread_messages=load_thread_messages,
                         open_settings=_open_settings,
                     )
                 else:
@@ -889,6 +914,8 @@ async def index():
         p.main_col.clear()
         with p.main_col:
             if state.active_designer_project is not None:
+                show_generic_skeleton()
+            elif state.active_developer_workspace_id is not None:
                 show_generic_skeleton()
             elif state.thread_id is None:
                 # Home view — pick based on preferred tab
@@ -928,6 +955,22 @@ async def index():
     cb.update_token_counter = lambda: _update_token_counter()
     cb.add_chat_message = lambda msg: add_chat_message(msg, p, state.thread_id)
     cb.render_text_with_embeds = render_text_with_embeds
+
+    def _refresh_chat_messages() -> None:
+        """Rehydrate only the active transcript container."""
+        if p.chat_container is None:
+            return
+        p.chat_container.clear()
+        if state.messages:
+            for msg in state.messages:
+                add_chat_message(msg, p, state.thread_id)
+        else:
+            with p.chat_container:
+                ui.label("Ask anything...").classes("text-grey-5 text-sm q-pa-md")
+        if p.chat_scroll:
+            p.chat_scroll.scroll_to(percent=1.0)
+
+    cb.refresh_chat_messages = _refresh_chat_messages
 
     # ── Timers ───────────────────────────────────────────────────────────
 

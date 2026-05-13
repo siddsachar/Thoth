@@ -33,6 +33,7 @@ def build_home(
     build_graph_panel: Callable,
     is_first_run: Callable,
     mark_onboarding_seen: Callable,
+    load_thread_messages: Callable[[str], list[dict]] | None = None,
     open_settings: Callable | None = None,
 ) -> None:
     """Render the home screen with Tasks / Knowledge Graph / Activity tabs."""
@@ -57,12 +58,14 @@ def build_home(
     ).style("border-bottom: 1px solid rgba(255,255,255,0.08);") as home_tabs:
         tasks_tab = ui.tab("Workflows", icon="bolt")
         designer_tab = ui.tab("Designer", icon="design_services")
+        developer_tab = ui.tab("Developer", icon="code")
         graph_tab = ui.tab("Knowledge", icon="psychology")
         activity_tab = ui.tab("Activity", icon="assessment")
 
     # Choose initial tab (Designer after back / refresh, else Workflows)
     _tab_map = {"Workflows": tasks_tab, "Knowledge": graph_tab,
-                "Activity": activity_tab, "Designer": designer_tab}
+                "Activity": activity_tab, "Designer": designer_tab,
+                "Developer": developer_tab}
     _initial_tab = _tab_map.get(state.preferred_home_tab or "", tasks_tab)
     state.preferred_home_tab = None
 
@@ -528,6 +531,18 @@ def build_home(
                     ui.label("No workflows yet — click + New Workflow to get started.").classes(
                         "text-grey-6 text-sm q-mt-sm"
                     )
+
+        # ── Developer panel ──────────────────────────────────────────
+        with ui.tab_panel(developer_tab).classes("h-full").style("padding: 0;"):
+            from developer.ui import build_developer_tab
+
+            build_developer_tab(
+                state,
+                p,
+                rebuild_main=rebuild_main,
+                rebuild_thread_list=rebuild_thread_list,
+                load_thread_messages=load_thread_messages or (lambda _tid: []),
+            )
 
         # ── Designer panel ───────────────────────────────────────────
         with ui.tab_panel(designer_tab).classes("h-full").style("padding: 0;"):

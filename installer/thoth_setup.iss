@@ -155,6 +155,7 @@ Source: "..\tools\calculator_tool.py"; DestDir: "{app}\app\tools"; Flags: ignore
 Source: "..\tools\calendar_tool.py";   DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\chart_tool.py";      DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\conversation_search_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\custom_tool_builder_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\documents_tool.py";  DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\duckduckgo_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\filesystem_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
@@ -179,6 +180,7 @@ Source: "..\tools\video_gen_tool.py";  DestDir: "{app}\app\tools"; Flags: ignore
 Source: "..\tools\x_tool.py";         DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\thoth_status_tool.py"; DestDir: "{app}\app\tools"; Flags: ignoreversion
 Source: "..\tools\updater_tool.py";    DestDir: "{app}\app\tools"; Flags: ignoreversion
+Source: "..\tools\developer_tool.py";  DestDir: "{app}\app\tools"; Flags: ignoreversion
 
 ; ── Plugins package ──────────────────────────────────────────────────────────
 Source: "..\plugins\__init__.py";       DestDir: "{app}\app\plugins"; Flags: ignoreversion
@@ -196,6 +198,7 @@ Source: "..\plugins\ui_settings.py";    DestDir: "{app}\app\plugins"; Flags: ign
 
 ; ── Designer package ──────────────────────────────────────────────────────────
 Source: "..\designer\*";              DestDir: "{app}\app\designer"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\developer\*";             DestDir: "{app}\app\developer"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; ── Bundled Skills ───────────────────────────────────────────────────────────
 Source: "..\bundled_skills\*";         DestDir: "{app}\app\bundled_skills"; Flags: ignoreversion recursesubdirs createallsubdirs

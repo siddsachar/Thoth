@@ -31,6 +31,8 @@ _BENIGN_MARKERS = (
     "client is deleted",
     "element has been deleted",
     "has been deleted",
+    "current slot cannot be determined",
+    "slot stack",
 )
 
 

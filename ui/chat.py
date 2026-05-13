@@ -257,10 +257,14 @@ def build_chat(
                             sanitize=False,
                         )
                         _reattach_gen.tool_col = ui.column().classes("w-full gap-1")
-                        from ui.tool_trace import display_tool_content, group_tool_results
+                        from ui.tool_trace import display_tool_content, group_tool_results, tool_result_failed
                         for _group in group_tool_results(_reattach_gen.tool_results):
+                            _group_failed = any(tool_result_failed(_tr) for _tr in _group.results)
                             with _reattach_gen.tool_col:
-                                with ui.expansion(f"✅ {_group.label}", icon="check_circle").classes("w-full"):
+                                with ui.expansion(
+                                    f"{'❌' if _group_failed else '✅'} {_group.label}",
+                                    icon="error" if _group_failed else "check_circle",
+                                ).classes("w-full"):
                                     for _idx, _tr in enumerate(_group.results, start=1):
                                         with ui.expansion(
                                             f"#{_idx}" if _group.count > 1 else _group.name,

@@ -50,7 +50,9 @@ class AppState:
         set_vision_service(self.vision_service)
         self.attached_data_cache: dict[str, bytes] = {}
         self.active_designer_project = None  # DesignerProject | None
+        self.active_developer_workspace_id: str | None = None
         self.preferred_home_tab: str | None = None  # tab to select on next rebuild
+        self.preferred_developer_tab: str | None = None  # Developer subtab to select on next rebuild
         # Per-thread message cache — avoids reading the LangGraph checkpoint
         # on every thread switch.  Keys are thread_ids; values are the
         # hydrated ``messages`` lists.  ``message_cache_dirty`` marks
@@ -112,6 +114,7 @@ class GenerationState:
     captured_videos_persist: list = field(default_factory=list)
     browser_step_count: int = 0
     interrupt_data: Any = None
+    interrupt_rendered: bool = False
     status: str = "streaming"  # streaming | done | error | stopped
     error: str = ""
     # TTS / voice
@@ -185,6 +188,7 @@ class P:
     designer_preview_container: Any = None
     designer_chat_container: Any = None
     designer_page_nav: Any = None
+    developer_approval_container: Any = None
 
     def __init__(self) -> None:
         self.pending_files = []

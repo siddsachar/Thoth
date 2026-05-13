@@ -46,6 +46,18 @@ def build_plugins_tab(
     def _refresh_cards():
         cards_container.clear()
         manifests = plugin_registry.get_loaded_manifests()
+        def _is_custom_tool_manifest(manifest) -> bool:
+            tags = set(getattr(manifest, "tags", []) or [])
+            return bool({"custom-tool", "tool-capsule"} & tags)
+
+        capsule_manifests = [
+            manifest for manifest in manifests
+            if _is_custom_tool_manifest(manifest)
+        ]
+        regular_manifests = [
+            manifest for manifest in manifests
+            if not _is_custom_tool_manifest(manifest)
+        ]
 
         if not manifests:
             with cards_container:
@@ -65,8 +77,10 @@ def build_plugins_tab(
             return
 
         with cards_container:
-            for manifest in manifests:
+            for manifest in regular_manifests:
                 _build_plugin_card(manifest, _refresh_cards)
+            if capsule_manifests:
+                _build_tool_capsules_section(capsule_manifests, _refresh_cards)
 
     def _build_plugin_card(manifest, refresh_fn):
         plugin_id = manifest.id
@@ -127,7 +141,10 @@ def build_plugins_tab(
                 ).props("flat dense size=sm")
 
     def _toggle_plugin(plugin_id: str, enabled: bool, refresh_fn):
+        from agent import clear_agent_cache
+
         plugin_state.set_plugin_enabled(plugin_id, enabled)
+        clear_agent_cache()
         label = "enabled" if enabled else "disabled"
         ui.notify(f"Plugin {plugin_id} {label}", type="info")
         refresh_fn()
@@ -179,6 +196,80 @@ def build_plugins_tab(
                 ui.button(
                     "Uninstall", on_click=_do_uninstall
                 ).props("color=negative")
+        confirm_dlg.open()
+
+    def _build_tool_capsules_section(capsule_manifests, refresh_fn):
+        from developer import tool_capsules
+
+        ui.separator().classes("q-my-md")
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("extension").classes("text-blue-4")
+            ui.label("Custom Tools").classes("text-body1 text-weight-bold")
+            ui.badge(f"{len(capsule_manifests)} promoted", color="blue-grey").props("outline")
+        ui.label(
+            "Developer-created Custom Tools promoted into Thoth's normal plugin tool surface."
+        ).classes("text-grey-6 text-sm q-mb-sm")
+
+        capsules_by_plugin = {
+            capsule.promoted_plugin_id: capsule
+            for capsule in tool_capsules.list_promoted_capsules()
+        }
+        for manifest in capsule_manifests:
+            plugin_id = manifest.id
+            capsule = capsules_by_plugin.get(plugin_id)
+            enabled = plugin_state.is_plugin_enabled(plugin_id)
+            tools = plugin_registry.get_plugin_tools(plugin_id)
+
+            with ui.card().classes("w-full q-pa-sm"):
+                with ui.row().classes("w-full items-center no-wrap gap-2"):
+                    ui.switch(
+                        "",
+                        value=enabled,
+                        on_change=lambda e, pid=plugin_id: _toggle_plugin(
+                            pid, e.value, refresh_fn
+                        ),
+                    )
+                    ui.icon("extension").classes("text-blue-4")
+                    ui.label(manifest.name).classes("text-body1 text-weight-medium")
+                    ui.space()
+                    ui.badge(f"{len(tools)} tool{'s' if len(tools) != 1 else ''}", color="blue-grey").props("outline")
+                    ui.button(
+                        "Remove", icon="delete",
+                        on_click=lambda _, cid=(capsule.id if capsule else ""): _remove_capsule_tool(cid, refresh_fn),
+                    ).props("flat dense color=negative")
+                ui.label(manifest.description).classes("text-grey-6 text-sm q-pl-lg")
+                if capsule:
+                    ui.label(f"Source: {capsule.source_url}").classes("text-grey-6 text-xs q-pl-lg")
+                    ui.label(f"Path: {capsule.installed_path}").classes("text-grey-6 text-xs q-pl-lg")
+
+    def _remove_capsule_tool(capsule_id: str, refresh_fn):
+        if not capsule_id:
+            ui.notify("Custom Tool metadata was not found", type="warning")
+            return
+
+        with ui.dialog() as confirm_dlg, ui.card():
+            ui.label("Remove Custom Tool from chat tools?").classes("text-body1")
+            ui.label(
+                "This removes the plugin-style tool from Thoth. The source folder is not deleted."
+            ).classes("text-grey-6 text-sm")
+            with ui.row().classes("w-full justify-end gap-2 q-mt-md"):
+                ui.button("Cancel", on_click=confirm_dlg.close).props("flat")
+
+                def _do_remove():
+                    try:
+                        from developer.tool_capsules import remove_promoted_capsule_tool
+                        from agent import clear_agent_cache
+
+                        remove_promoted_capsule_tool(capsule_id)
+                        clear_agent_cache()
+                        ui.notify("Custom Tool removed from plugin tools", type="positive")
+                    except Exception as exc:
+                        logger.error("Custom Tool removal error: %s", exc, exc_info=True)
+                        ui.notify(f"Error removing Custom Tool: {exc}", type="negative")
+                    confirm_dlg.close()
+                    refresh_fn()
+
+                ui.button("Remove", on_click=_do_remove).props("color=negative")
         confirm_dlg.open()
 
     async def _reload_and_refresh():

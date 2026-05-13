@@ -350,11 +350,25 @@ def _query_tools() -> str:
         tools = get_all_tools()
         if not tools:
             return "**Tools**\nNo tools registered."
+        active_developer = False
+        try:
+            from developer.tool_context import get_thread_id, get_workspace_id, infer_workspace_id_from_thread
+            active_developer = bool(get_workspace_id() or infer_workspace_id_from_thread(get_thread_id()))
+        except Exception:
+            active_developer = False
+
         enabled = [t for t in tools if is_enabled(t.name)]
-        disabled = [t for t in tools if not is_enabled(t.name)]
-        lines = [f"**Tools** ({len(enabled)} enabled, {len(disabled)} disabled)"]
+        contextual = [t for t in tools if t.name == "developer" and active_developer and not is_enabled(t.name)]
+        disabled = [
+            t for t in tools
+            if not is_enabled(t.name) and not (t.name == "developer" and active_developer)
+        ]
+        suffix = f", {len(contextual)} contextual" if contextual else ""
+        lines = [f"**Tools** ({len(enabled)} enabled{suffix}, {len(disabled)} disabled)"]
         for t in enabled:
             lines.append(f"- ✅ {t.display_name}")
+        for t in contextual:
+            lines.append(f"- contextual: {t.display_name} (active for the current Developer workspace)")
         for t in disabled:
             lines.append(f"- ❌ {t.display_name}")
         return "\n".join(lines)

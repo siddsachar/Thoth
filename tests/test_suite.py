@@ -1692,7 +1692,11 @@ try:
 
     # 19j. Profile directory path is under ~/.thoth/
     assert "browser_profile" in str(_PROFILE_DIR)
-    assert ".thoth" in str(_PROFILE_DIR)
+    _data_dir_env = os.environ.get("THOTH_DATA_DIR")
+    if _data_dir_env:
+        assert str(Path(_data_dir_env).resolve()) in str(Path(_PROFILE_DIR).resolve())
+    else:
+        assert ".thoth" in str(_PROFILE_DIR)
     record("PASS", "browser: profile dir path correct")
 
     # 19k. History path is under ~/.thoth/
@@ -13401,7 +13405,7 @@ try:
         _active66.pop(_gen66c4.thread_id, None)
     record("PASS", "66c4: detached finalization clears active generation even without media sidecar attach")
 
-    # ── 66c4b. Active detached finalization reloads checkpoint messages ─
+    # ── 66c4b. Active detached finalization preserves optimistic messages ─
     _gen66c4b = _GenerationState66(
         thread_id="test-detached-active-reload-66c4b",
         q=_queue66.Queue(),
@@ -13416,28 +13420,29 @@ try:
     _state66c4b.thread_id = _gen66c4b.thread_id
     _state66c4b.messages = [{"role": "user", "content": "stale user-only state"}]
     _state66c4b.cache_active_messages()
-    _loaded66c4b = [
-        {"role": "user", "content": "fresh user"},
-        {"role": "assistant", "content": "Detached final answer"},
-    ]
     _orig_load66c4b = _helpers66.load_thread_messages
-    _helpers66.load_thread_messages = lambda thread_id: list(_loaded66c4b)
+    _helpers66.load_thread_messages = lambda thread_id: [
+        {"role": "user", "content": "checkpoint-only stale user"}
+    ]
     _cb66c4b = _streaming66.Callbacks()
-    _rebuilt66c4b = {"count": 0}
+    _refresh66c4b = {"count": 0}
     for _name66c4b in _cb66c4b.__slots__:
         setattr(_cb66c4b, _name66c4b, lambda *a, **k: None)
-    _cb66c4b.rebuild_main = lambda *a, **k: _rebuilt66c4b.update(count=_rebuilt66c4b["count"] + 1)
+    _cb66c4b.refresh_chat_messages = lambda *a, **k: _refresh66c4b.update(count=_refresh66c4b["count"] + 1)
     _active66[_gen66c4b.thread_id] = _gen66c4b
     try:
         _asyncio66.run(_streaming66.consume_generation(_gen66c4b, _state66c4b, _P66(), _cb66c4b))
-        assert _state66c4b.messages == _loaded66c4b
-        assert _state66c4b.message_cache[_gen66c4b.thread_id] == _loaded66c4b
+        assert _state66c4b.messages == [
+            {"role": "user", "content": "stale user-only state"},
+            {"role": "assistant", "content": "Detached final answer"},
+        ]
+        assert _state66c4b.message_cache[_gen66c4b.thread_id] == _state66c4b.messages
         assert _gen66c4b.thread_id not in _state66c4b.message_cache_dirty
-        assert _rebuilt66c4b["count"] >= 1
+        assert _refresh66c4b["count"] >= 1
     finally:
         _helpers66.load_thread_messages = _orig_load66c4b
         _active66.pop(_gen66c4b.thread_id, None)
-    record("PASS", "66c4b: active detached finalization reloads checkpoint messages before rebuild")
+    record("PASS", "66c4b: active detached finalization preserves optimistic messages")
 
     # ── 66c5. Stale terminal generations are recoverable; live ones stay blocked ──
     _done_gen66c5 = _GenerationState66("test-terminal-66c5", _queue66.Queue(), _threading66.Event(), {}, [])
@@ -19398,6 +19403,261 @@ try:
 
 except Exception as e:
     record("FAIL", "minimax-provider-75", f"{type(e).__name__}: {e}")
+    traceback.print_exc()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 76. DEVELOPER STUDIO FOUNDATIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+print()
+print("─" * 60)
+print("SECTION 76: Developer Studio Foundations")
+print("─" * 60)
+
+try:
+    from pathlib import Path as _P76
+
+    _dev_dir76 = _P76("developer")
+    assert (_dev_dir76 / "__init__.py").exists(), "developer package should exist"
+    assert (_dev_dir76 / "storage.py").exists(), "developer/storage.py should exist"
+    assert (_dev_dir76 / "ui.py").exists(), "developer/ui.py should exist"
+    assert (_dev_dir76 / "state.py").exists(), "developer/state.py should exist"
+    record("PASS", "76a: developer package files exist")
+
+    _threads_src76 = _P76("threads.py").read_text(encoding="utf-8")
+    assert '"thread_type": "TEXT DEFAULT \'\'' in _threads_src76, "threads.py should migrate thread_type"
+    assert '"developer_workspace_id": "TEXT DEFAULT \'\'' in _threads_src76, "threads.py should migrate developer_workspace_id"
+    assert 'return "code"' in _threads_src76, "classify_thread should support code threads"
+    assert "_set_thread_developer_workspace" in _threads_src76, "threads.py should link Developer workspaces"
+    record("PASS", "76b: thread metadata supports code workspace threads")
+
+    _storage_src76 = (_dev_dir76 / "storage.py").read_text(encoding="utf-8")
+    assert "destination_parent" in _storage_src76, "clone_repository should require explicit destination parent"
+    assert '["git", "clone", repo_url, str(target)]' in _storage_src76, "clone_repository should use git clone"
+    assert "ensure_workspace_thread" in _storage_src76, "storage should create/reuse code threads"
+    assert "DEVELOPER_DIR" in _storage_src76, "storage should use Developer app data for metadata only"
+    assert "Choose a workspace folder" in _storage_src76, "Developer storage should reject empty paths instead of opening cwd"
+    assert "def remove_workspace" in _storage_src76, "Developer storage should support safe metadata-only removal"
+    _clone_block76 = _storage_src76[_storage_src76.index("def clone_repository"): _storage_src76.index("def ensure_workspace_thread")]
+    assert "DEVELOPER_DIR" not in _clone_block76, "clone_repository must not clone into Developer app data by default"
+    record("PASS", "76c: Developer storage requires explicit clone destination")
+
+    _dev_ui_src76 = (_dev_dir76 / "ui.py").read_text(encoding="utf-8")
+    _home_src76 = _P76("ui/home.py").read_text(encoding="utf-8")
+    assert 'ui.tab("Developer", icon="code")' in _home_src76, "Home should expose Developer tab"
+    assert "build_developer_tab" in _home_src76, "Home should render Developer tab"
+    assert "New Workspace" in _dev_ui_src76, "Developer home should use a setup dialog CTA"
+    assert "remove_workspace" in _dev_ui_src76, "Developer UI should remove recent workspaces without touching files"
+    assert "browse_folder" in _dev_ui_src76 and "Select repository folder" in _dev_ui_src76, "Developer setup should offer a folder browser"
+    assert _dev_ui_src76.count('ui.button("New Workspace"') == 1, "Developer home should not show duplicate New Workspace buttons"
+    record("PASS", "76d: Home includes Developer tab")
+
+    _sidebar_src76 = _P76("ui/sidebar.py").read_text(encoding="utf-8")
+    assert '"code", "Code"' in _sidebar_src76, "Sidebar should expose Code filter"
+    assert "active_developer_workspace_id" in _sidebar_src76, "Sidebar should restore Developer workspace state"
+    assert '_thr_icon = "code"' in _sidebar_src76, "Sidebar should use code icon for code threads"
+    record("PASS", "76e: Sidebar classifies and restores code threads")
+
+    for _needle76 in [
+        "New Developer Workspace",
+        "Open Folder",
+        "Clone Repo",
+        "Clone into folder",
+        "Developer Inspector",
+        "Todos",
+        "Review this repo",
+    ]:
+        assert _needle76 in _dev_ui_src76, f"developer UI missing '{_needle76}'"
+    record("PASS", "76f: Developer UI includes workspace onboarding and inspector shell")
+
+    _sandbox_src76 = (_dev_dir76 / "sandbox.py").read_text(encoding="utf-8")
+    assert "def decide_action" in _sandbox_src76, "Developer sandbox should expose approval policy"
+    assert "read_only" in _sandbox_src76 and "agent_run" in _sandbox_src76, "Developer sandbox should support approval modes"
+    assert "git_push" in _sandbox_src76 and "run_install" in _sandbox_src76, "Developer sandbox should gate risky actions"
+    record("PASS", "76g: Developer approval policy exists")
+
+    _git_src76 = (_dev_dir76 / "git.py").read_text(encoding="utf-8")
+    assert "class GitStatus" in _git_src76, "Developer Git status object should exist"
+    assert "def create_branch" in _git_src76, "Developer Git helper should create branches"
+    assert "def create_worktree" in _git_src76, "Developer Git helper should create worktrees"
+    assert "parent_folder" in _git_src76, "worktree creation should require explicit parent folder"
+    record("PASS", "76h: Developer Git safety helpers exist")
+
+    assert "set_workspace_approval_mode" in _storage_src76, "Developer storage should persist approval mode"
+    assert "Safety Policy" in _dev_ui_src76, "Developer inspector should show policy decisions"
+    assert "Create branch" in _dev_ui_src76, "Developer UI should expose explicit branch creation"
+    assert ".disable()" not in _dev_ui_src76[_dev_ui_src76.index("value=workspace.approval_mode"): _dev_ui_src76.index('ui.badge("Developer Preview"')], "approval mode picker should be enabled"
+    record("PASS", "76i: Developer UI exposes persisted approval mode and safety state")
+
+    _ctx_src76 = (_dev_dir76 / "agent_context.py").read_text(encoding="utf-8")
+    _developer_tool_src76 = _P76("tools/developer_tool.py").read_text(encoding="utf-8")
+    _edits_src76 = (_dev_dir76 / "edits.py").read_text(encoding="utf-8")
+    _ledger_src76 = (_dev_dir76 / "change_ledger.py").read_text(encoding="utf-8")
+    assert "build_developer_agent_context" in _ctx_src76, "Developer context builder should exist"
+    assert "Do not clone repositories into Thoth app data" in _ctx_src76, "Developer context should preserve clone safety"
+    assert "Top-level files" in _ctx_src76, "Developer context should include compact repo inventory"
+    assert "maybe_answer_workspace_identity" in _ctx_src76, "Developer should answer repo/path/branch identity from context"
+    assert "do not call shell, git, filesystem, or browser tools" in _ctx_src76, "Developer identity questions should not trigger tools"
+    assert "developer_read_file" in _developer_tool_src76 and "developer_search" in _developer_tool_src76, "Developer native read/search tools should exist"
+    assert "developer_apply_patch" in _developer_tool_src76, "Developer native patch tool should exist"
+    assert "developer_write_file" in _developer_tool_src76, "Developer native write-file tool should exist"
+    assert "developer_run_command" in _developer_tool_src76, "Developer native shell command tool should exist"
+    assert "developer_revert_agent_changes" in _developer_tool_src76, "Developer native revert tool should exist"
+    assert "git\", \"apply\"" in _edits_src76, "Developer patch application should use git apply without shell composition"
+    assert "write_file_to_workspace" in _edits_src76, "Developer file writes should go through the edit ledger"
+    assert "record_change_set" in _ledger_src76 and "before_hash" in _ledger_src76, "Developer change ledger should record agent-owned edits"
+    _stream_src76 = _P76("ui/streaming.py").read_text(encoding="utf-8")
+    _profile_src76 = (_dev_dir76 / "profile.py").read_text(encoding="utf-8")
+    _agent_src76 = _P76("agent.py").read_text(encoding="utf-8")
+    assert "active_developer_workspace_id" in _stream_src76, "streaming should detect Developer workspace"
+    assert "build_developer_agent_context" in _stream_src76, "streaming should build Developer context"
+    assert "maybe_answer_workspace_identity" in _stream_src76, "streaming should short-circuit simple Developer identity questions"
+    assert "effective_tool_names" in _stream_src76, "Developer native tool profile should be applied for active Developer workspaces"
+    assert "DEVELOPER_CONFLICTING_TOOLS" in _profile_src76 and '"filesystem"' in _profile_src76 and '"shell"' in _profile_src76, "Developer profile should remove conflicting generic filesystem/shell tools"
+    assert '"developer_context": developer_context' in _stream_src76, "Developer context should be passed as hidden config"
+    assert 'agent_input = f"{developer_context}' not in _stream_src76, "Developer context should not be persisted in visible user input"
+    assert "_developer_context_var" in _agent_src76 and "SystemMessage(content=developer_context)" in _agent_src76, "agent should inject Developer context as a hidden system message"
+    record("PASS", "76j: Developer chat loop injects compact workspace context")
+
+    _todos_src76 = (_dev_dir76 / "todos.py").read_text(encoding="utf-8")
+    assert "DeveloperTodo" in _todos_src76, "Developer todos should use DeveloperTodo dataclass"
+    assert "list_todos" in _todos_src76 and "set_todo_status" in _todos_src76, "Developer todos should persist and update"
+    assert "thread_id" in _todos_src76, "Developer todos should be scoped to thread id"
+    record("PASS", "76k: Developer todo persistence exists")
+
+    _review_src76 = (_dev_dir76 / "review.py").read_text(encoding="utf-8")
+    assert "class ChangedFile" in _review_src76, "Developer review should expose changed file model"
+    assert "list_changed_files" in _review_src76, "Developer review should list changed files"
+    assert "get_file_diff" in _review_src76, "Developer review should expose file diffs"
+    assert "get_workspace_diff_stats" in _review_src76, "Developer review should expose line-count stats"
+    assert "read_file_preview" in _review_src76, "Developer review should expose file previews"
+    assert "--porcelain\", \"-uall\"" in _review_src76, "Developer review should expand untracked files"
+    assert "git\", \"-C\"" in _review_src76, "Developer review should scope git commands to workspace"
+    assert "Todos" in _dev_ui_src76 and "Changes" in _dev_ui_src76 and "Files" in _dev_ui_src76, "Developer inspector should render todos, changes, and files"
+    assert "get_file_diff" in _dev_ui_src76, "Developer inspector should render diffs"
+    assert "diff_stats.additions" in _dev_ui_src76 and "diff_stats.deletions" in _dev_ui_src76, "Developer inspector should render red/green line counts"
+    assert "min-width: 560px" in _dev_ui_src76, "Developer inspector should be wide enough for diffs"
+    assert "developer-inspector-resizer" in _dev_ui_src76, "Developer inspector should expose a left-edge resize handle"
+    assert "thothDeveloperInspectorWidth" in _dev_ui_src76, "Developer inspector width should persist after resizing"
+    assert "startX - ev.clientX" in _dev_ui_src76, "Developer inspector should expand left when dragged left"
+    assert "ui.tree(nodes, on_select=_select)" in _dev_ui_src76, "Developer file view should use native tree rendering"
+    assert "request_snapshot_refresh" in _dev_ui_src76 and "get_snapshot" in _dev_ui_src76, "Developer inspector should hydrate from background snapshots"
+    assert "section_bodies" in _dev_ui_src76 and "def _render_if_changed" in _dev_ui_src76, "Developer inspector should update sections without rebuilding the full panel"
+    assert "updater(snapshot)" in _dev_ui_src76, "Developer inspector should apply cached snapshots through the stable panel updater"
+    assert "from nicegui import ui" not in (_dev_dir76 / "inspector_snapshot.py").read_text(encoding="utf-8"), "Developer snapshot collector must stay UI-free"
+    record("PASS", "76l: Developer inspector surfaces todos, changes, and diffs")
+
+    _runtime_src76 = (_dev_dir76 / "runtime.py").read_text(encoding="utf-8")
+    _inspector_snapshot_src76 = (_dev_dir76 / "inspector_snapshot.py").read_text(encoding="utf-8")
+    assert "class CommandSpec" in _runtime_src76, "Developer runtime should model detected commands"
+    assert "class CommandResult" in _runtime_src76, "Developer runtime should model command results"
+    assert "detect_project_commands" in _runtime_src76, "Developer runtime should detect test commands"
+    assert "_detect_js_runner" in _runtime_src76, "Developer runtime should prefer project package manager locks"
+    assert "kind=\"server\"" in _runtime_src76 or '"server"' in _runtime_src76, "Developer runtime should classify dev servers"
+    assert "run_workspace_command" in _runtime_src76, "Developer runtime should run scoped commands"
+    assert "run_workspace_shell_command" in _runtime_src76, "Developer runtime should expose ledger-backed shell commands"
+    assert "_platform_shell_args" in _runtime_src76, "Developer runtime should use the platform shell deliberately for custom shell commands"
+    assert "cwd=str(root)" in _runtime_src76, "Developer runtime must run commands in workspace cwd"
+    assert "decide_action" in _runtime_src76, "Developer runtime must use approval policy"
+    assert "detect_project_commands" in _inspector_snapshot_src76 and "run_workspace_command" in _dev_ui_src76, "Developer inspector should wire command detection and execution"
+    assert "start_workspace_process" in _dev_ui_src76 and "Stop servers" in _dev_ui_src76, "Developer inspector should wire managed server start/stop"
+    record("PASS", "76m: Developer runtime scopes test commands through approval policy")
+
+    _github_src76 = (_dev_dir76 / "github.py").read_text(encoding="utf-8")
+    assert "get_gh_status" in _github_src76, "Developer GitHub integration should detect gh status"
+    assert "path: str" in _github_src76, "Developer GitHub status should report gh path"
+    assert "push_current_branch" in _github_src76, "Developer GitHub integration should expose branch push"
+    assert "create_pull_request" in _github_src76, "Developer GitHub integration should expose PR creation"
+    assert "suggest_pull_request_text" in _github_src76, "Developer GitHub integration should generate PR preview text"
+    assert "confirmed" in _github_src76 and "decide_action" in _github_src76, "GitHub actions must be approval-gated"
+    assert "Check gh status" in _dev_ui_src76 and "Create PR" in _dev_ui_src76, "Developer inspector should surface gh and PR actions"
+    assert "winget install --id GitHub.cli" in _dev_ui_src76, "Developer inspector should show gh install guidance"
+    assert "PR title" in _dev_ui_src76 and "PR body" in _dev_ui_src76, "Developer inspector should let users edit generated PR text"
+    assert '"git_pr"' in (_dev_dir76 / "sandbox.py").read_text(encoding="utf-8"), "Approval policy should include PR actions"
+    record("PASS", "76n: Developer GitHub gh integration is approval-gated")
+
+    assert "split_command" in _runtime_src76, "Developer runtime should split commands without shell execution"
+    assert "shell=False" in _runtime_src76, "Developer runtime should avoid implicit shell execution"
+    assert "has_shell_control_operator" in _runtime_src76, "Developer runtime should detect shell-control operators"
+    assert "start_workspace_process" in _runtime_src76 and "stop_workspace_processes" in _runtime_src76, "Developer runtime should track cleanup for launched processes"
+    record("PASS", "76o: Developer runtime hardens shell and process lifecycle")
+
+    _capsules_src76 = (_dev_dir76 / "tool_capsules.py").read_text(encoding="utf-8")
+    assert "community_tools_enabled" in _capsules_src76, "Custom Tools should require explicit public repo enablement"
+    assert "CAPSULE_INSTALL_ROOT" in _capsules_src76, "Custom Tools should use an isolated install root"
+    assert "CUSTOM_TOOL_DRAFTS_PATH" in _capsules_src76, "Custom Tools should persist draft builder state"
+    assert "parse_capsule_manifest" in _capsules_src76 and "commands" in _capsules_src76, "Custom Tools should parse declared commands from a config"
+    assert "propose_capsule_manifest" in _capsules_src76 and "write_capsule_manifest" in _capsules_src76, "Custom Tools should generate command configs from repos"
+    assert "custom_tool_builder" in _capsules_src76, "Custom Tools should expose one draft-based agent builder"
+    assert "clone_capsule_repository" in _capsules_src76, "Custom Tools should clone only into explicit user-chosen folders"
+    assert "run_capsule_command" in _capsules_src76 and "run_workspace_command" in _capsules_src76, "Custom Tools should run through Developer runtime policy"
+    assert "promote_capsule" in _capsules_src76 and "register_promoted_capsules_with_plugins" in _capsules_src76, "Custom Tools should promote into plugin-style tools"
+    assert "remove_promoted_capsule_tool" in _capsules_src76, "Promoted Custom Tools should be removable without deleting source files"
+    _plugins_ui_src76 = _P76("plugins/ui_settings.py").read_text(encoding="utf-8")
+    assert "Custom Tools" in _plugins_ui_src76 and "remove_promoted_capsule_tool" in _plugins_ui_src76, "Plugins settings should show a separate Custom Tools section"
+    assert "Custom Tools" in _dev_ui_src76 and "No commands found" in _dev_ui_src76, "Developer home should surface Custom Tools and commands"
+    assert "New Custom Tool" in _dev_ui_src76 and "Repo URL or local folder" in _dev_ui_src76, "Developer home should guide repo-to-custom-tool creation"
+    assert 'ui.stepper().props("vertical")' in _dev_ui_src76, "Custom Tool creation should use a wizard-style stepper"
+    assert '("capsules", "Custom Tools"' not in _dev_ui_src76, "Workspace inspector should not own the Custom Tools manager"
+    assert "Tool Capsules" not in _plugins_ui_src76 and "Tool Capsule" not in _dev_ui_src76, "User-facing Developer/Settings UI should use Custom Tool wording"
+    record("PASS", "76p: Developer Custom Tools are isolated and opt-in")
+
+    _devcontainer_src76 = (_dev_dir76 / "devcontainer.py").read_text(encoding="utf-8")
+    assert "detect_devcontainer" in _devcontainer_src76, "Developer Studio should detect devcontainer configs"
+    assert "detect_docker" in _devcontainer_src76, "Developer Studio should detect Docker availability"
+    assert "detect_devcontainer" in _inspector_snapshot_src76, "Developer snapshot collector may keep dormant devcontainer detection for a future upgrade"
+    assert "Devcontainer" not in _dev_ui_src76 and "Container launch is not enabled" not in _dev_ui_src76, "Developer inspector should not expose devcontainer UI until it is wired"
+    record("PASS", "76q: Developer devcontainer support is dormant and hidden")
+
+    _developer_guide76 = _P76("tool_guides/developer_guide/SKILL.md")
+    assert _developer_guide76.exists(), "Developer tool guide should be bundled"
+    for _skill76 in ["developer_coding", "developer_review", "developer_pr_prep", "developer_custom_tools"]:
+        assert (_P76("bundled_skills") / _skill76 / "SKILL.md").exists(), f"Developer bundled skill missing: {_skill76}"
+    _agent_src76 = _P76("agent.py").read_text(encoding="utf-8")
+    _skills_src76 = _P76("skills.py").read_text(encoding="utf-8")
+    assert "DEVELOPER_AUTO_SKILLS" in _agent_src76 and "active_tool_names" in _agent_src76, "Developer skills should be injected only for Developer active tools"
+    assert "developer_custom_tools" in _P76("developer/profile.py").read_text(encoding="utf-8"), "Developer Custom Tools skill should be auto-scoped to Developer mode"
+    assert "extra_skill_names" in _skills_src76, "Skills prompt should support Developer-only extra skills"
+    _custom_tool_builder_tool_src76 = _P76("tools/custom_tool_builder_tool.py").read_text(encoding="utf-8")
+    _custom_tool_builder_guide76 = _P76("tool_guides/custom_tool_builder_guide/SKILL.md").read_text(encoding="utf-8")
+    _settings_src76 = _P76("ui/settings.py").read_text(encoding="utf-8")
+    assert "custom_tool_builder" in _developer_guide76.read_text(encoding="utf-8"), "Developer guide should teach Custom Tool creation flow"
+    assert 'name="custom_tool_builder"' in _custom_tool_builder_tool_src76, "Custom Tool Builder should be a global utility tool"
+    assert "Use `custom_tool_builder` for lifecycle state" in _custom_tool_builder_guide76, "Custom Tool Builder should own Custom Tool lifecycle state"
+    assert "Shell can help with extra read-only inspection" in _custom_tool_builder_guide76, "Custom Tool Builder guide should permit shell for inspection/testing"
+    assert "Do not use shell to manually register" in _custom_tool_builder_guide76, "Custom Tool Builder guide should block shell lifecycle bypasses"
+    assert '"custom_tool_builder"' in _settings_src76, "Custom Tool Builder should be toggleable from Utilities"
+    assert "_tool_activity_line" in _stream_src76, "Streaming should add concise Developer progress narration"
+    assert 'expansion._props["label"]' in _stream_src76, "Streaming should update live tool expansion labels"
+    assert "Detached finalize refreshed transcript without full main rebuild" in _stream_src76, "Detached finalization should refresh only the transcript instead of rebuilding the workspace"
+    assert "Do not reload the active thread here" in _stream_src76, "Active detached finalization should preserve optimistic user messages"
+    assert "rebuild_main after detached finalize" not in _stream_src76, "Detached finalization should not rebuild the whole main area"
+    assert "refresh_chat_messages" in _stream_src76 and "cb.refresh_chat_messages = _refresh_chat_messages" in _P76("app.py").read_text(encoding="utf-8"), "Developer detached finalization should have a scoped transcript refresh callback"
+    _status_src76 = _P76("tools/thoth_status_tool.py").read_text(encoding="utf-8")
+    assert "active for the current Developer workspace" in _status_src76, "Tool status should treat Developer as contextual"
+    record("PASS", "76r: Developer guides, skills, progress, and contextual status are wired")
+
+    _sandbox_runtime_src76 = (_dev_dir76 / "sandbox_runtime.py").read_text(encoding="utf-8")
+    _state_src76 = (_dev_dir76 / "state.py").read_text(encoding="utf-8")
+    _developer_tool_src76 = _P76("tools/developer_tool.py").read_text(encoding="utf-8")
+    _developer_guide_src76 = _developer_guide76.read_text(encoding="utf-8")
+    assert "ExecutionMode" in _state_src76 and "execution_mode" in _state_src76, "Developer workspace should persist execution mode"
+    assert "Docker Sandbox" in _dev_ui_src76 and "set_workspace_execution_settings" in _dev_ui_src76, "Developer UI should expose Docker Sandbox mode"
+    assert "Sandbox" in _dev_ui_src76 and "Clean sandbox copy" in _dev_ui_src76, "Developer inspector should surface sandbox status and cleanup"
+    assert "detect_container_runtime" in _sandbox_runtime_src76, "Sandbox runtime should detect Docker/Podman availability"
+    assert "sandbox_shadow_path" in _sandbox_runtime_src76 and "copytree" in _sandbox_runtime_src76, "Docker Sandbox should use a shadow workspace"
+    assert "sandbox_container_name" in _sandbox_runtime_src76 and '"exec", container_name' in _sandbox_runtime_src76, "Docker Sandbox should use persistent workspace containers"
+    assert "sleep infinity" in _sandbox_runtime_src76 and '"start", container_name' in _sandbox_runtime_src76, "Docker Sandbox should create/resume persistent containers"
+    assert "start_docker_sandbox_process" in _sandbox_runtime_src76 and "stop_docker_sandbox_processes" in _sandbox_runtime_src76, "Docker Sandbox should support long-running processes"
+    assert "--network" in _sandbox_runtime_src76 and "sandbox_network" in _sandbox_runtime_src76, "Docker Sandbox should enforce network policy"
+    assert "pending_changes.json" in _sandbox_runtime_src76 and "SandboxPendingChange" in _sandbox_runtime_src76, "Sandbox edits should be recorded as pending patches"
+    assert "run_docker_sandbox_command" in _runtime_src76, "Developer runtime should route Docker mode commands through sandbox runtime"
+    assert "developer_import_sandbox_changes" in _developer_tool_src76, "Developer tools should import sandbox patches explicitly"
+    assert "Docker Sandbox mode" in _developer_guide_src76 and "developer_import_sandbox_changes" in _developer_guide_src76, "Developer guide should teach sandbox import flow"
+    record("PASS", "76s: Developer Docker Sandbox is optional, shadowed, and import-gated")
+
+except Exception as e:
+    record("FAIL", "developer-studio-foundations-76", f"{type(e).__name__}: {e}")
     traceback.print_exc()
 
 

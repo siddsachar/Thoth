@@ -18,6 +18,7 @@ import logging
 import os
 import pathlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -227,10 +228,13 @@ def is_tool_guide(skill: Skill) -> bool:
     return bool(skill.tools)
 
 
-def _is_tool_guide_active(skill: Skill) -> bool:
+def _is_tool_guide_active(skill: Skill, active_tool_names: Iterable[str] | None = None) -> bool:
     """True if a tool guide's linked tools are enabled in the tool registry."""
     if not skill.tools:
         return False
+    if active_tool_names is not None:
+        active = set(active_tool_names)
+        return any(t in active for t in skill.tools)
     try:
         from tools import registry
         return any(registry.is_enabled(t) for t in skill.tools)
@@ -290,7 +294,12 @@ def get_enabled_skill_names() -> list[str]:
     return [s.name for s in get_enabled_skills()]
 
 
-def get_skills_prompt(skill_names: Optional[list[str]] = None) -> str:
+def get_skills_prompt(
+    skill_names: Optional[list[str]] = None,
+    *,
+    active_tool_names: Iterable[str] | None = None,
+    extra_skill_names: Iterable[str] | None = None,
+) -> str:
     """Build the skills SystemMessage text for injection.
 
     Parameters
@@ -303,13 +312,24 @@ def get_skills_prompt(skill_names: Optional[list[str]] = None) -> str:
     """
     # Tool guides are ALWAYS injected based on which tools are enabled —
     # they cannot be toggled off via skill overrides.
-    guides = [s for s in get_all_skills() if is_tool_guide(s) and _is_tool_guide_active(s)]
+    guides = [
+        s for s in get_all_skills()
+        if is_tool_guide(s) and _is_tool_guide_active(s, active_tool_names)
+    ]
 
     if skill_names is not None:
         manual = [_skills_cache[n] for n in skill_names
                   if n in _skills_cache and not is_tool_guide(_skills_cache[n])]
     else:
         manual = [s for s in get_enabled_skills() if not is_tool_guide(s)]
+
+    if extra_skill_names:
+        existing = {skill.name for skill in manual}
+        for name in extra_skill_names:
+            skill = _skills_cache.get(name)
+            if skill and not is_tool_guide(skill) and skill.name not in existing:
+                manual.append(skill)
+                existing.add(skill.name)
 
     if not guides and not manual:
         return ""

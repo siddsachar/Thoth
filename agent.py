@@ -1,5 +1,6 @@
 import threading
 import time
+import re
 
 from models import get_llm, get_llm_for, get_context_size, get_current_model, is_model_local, is_cloud_model, get_cloud_provider, get_model_max_context, set_active_model_override, _active_model_override
 from api_keys import apply_keys
@@ -89,6 +90,39 @@ from datetime import datetime as _datetime
 # = 2 steps).  50 ≈ 25 tool invocations for interactive; 100 ≈ 50 for tasks.
 RECURSION_LIMIT_CHAT = 50
 RECURSION_LIMIT_TASK = 100
+
+
+def _looks_like_custom_tool_creation_request(text: str) -> bool:
+    """Return True for requests to create a Custom Tool from a repo/folder."""
+    normalized = " ".join(str(text or "").lower().split())
+    if "custom tool" not in normalized and "custom tools" not in normalized:
+        return False
+    if "into a custom tool" in normalized or "as a custom tool" in normalized:
+        return True
+    action_re = re.compile(r"\b(turn|convert|create|make|build|add|generate|register|promote|enable)\b")
+    source_re = re.compile(
+        r"(https?://|github\.com|git@|repo\b|repository\b|folder\b|directory\b|workspace\b|project\b)"
+    )
+    return bool(action_re.search(normalized) and source_re.search(normalized))
+
+
+def _custom_tool_builder_disabled_response(
+    user_input: str,
+    enabled_tool_names: list[str] | tuple[str, ...] | None,
+) -> str | None:
+    """Block DIY Custom Tool creation when the dedicated utility is disabled."""
+    enabled = set(enabled_tool_names or [])
+    if "custom_tool_builder" in enabled:
+        return None
+    if not _looks_like_custom_tool_creation_request(user_input):
+        return None
+    return (
+        "Custom Tool Builder is disabled in Settings -> Utilities, so I can't "
+        "create a Custom Tool from chat right now. I also won't use read_url or "
+        "shell commands as a workaround for this workflow. Enable Custom Tool "
+        "Builder, or open Developer -> Custom Tools -> New Custom Tool to do it "
+        "through the visual flow."
+    )
 
 def _content_to_str(content) -> str:
     """Normalise ``AIMessage.content`` to a plain string.
@@ -716,6 +750,10 @@ def _pre_model_trim(state: dict) -> dict:
     except Exception:
         pass
 
+    developer_context = _developer_context_var.get("")
+    if developer_context:
+        _injections.append(SystemMessage(content=developer_context))
+
     # Self-knowledge
     try:
         from self_knowledge import build_self_knowledge_block
@@ -726,6 +764,7 @@ def _pre_model_trim(state: dict) -> dict:
         pass
 
     # Designer mode prompt — injected when a designer project is active
+    _dp = None
     try:
         from designer.tool import get_active_project
         _dp = get_active_project()
@@ -757,13 +796,29 @@ def _pre_model_trim(state: dict) -> dict:
         skills_override = None
         if _thread_id:
             skills_override = get_thread_skills_override(_thread_id)
+        active_tool_names = _current_enabled_tool_names_var.get() or None
+        extra_skill_names = []
 
         # In designer mode, suppress manual skills — only tool guides
         # (like designer_guide) are injected automatically.
         if _dp is not None:
             skills_override = []
 
-        skills_text = get_skills_prompt(skills_override)
+        try:
+            from developer.tool_context import infer_workspace_id_from_thread
+            from developer.profile import DEVELOPER_AUTO_SKILLS
+
+            if _thread_id and infer_workspace_id_from_thread(_thread_id):
+                skills_override = skills_override if skills_override is not None else []
+                extra_skill_names = DEVELOPER_AUTO_SKILLS
+        except Exception:
+            pass
+
+        skills_text = get_skills_prompt(
+            skills_override,
+            active_tool_names=active_tool_names,
+            extra_skill_names=extra_skill_names,
+        )
         if skills_text:
             _injections.append(SystemMessage(content=skills_text))
     except Exception as exc:
@@ -1014,6 +1069,12 @@ _persistent_thread_var: _contextvars.ContextVar[bool] = _contextvars.ContextVar(
 # propagates to sync executor threads used by LangGraph for tools.
 _current_thread_id_var: _contextvars.ContextVar[str] = _contextvars.ContextVar(
     "current_thread_id", default=""
+)
+_current_enabled_tool_names_var: _contextvars.ContextVar[tuple[str, ...]] = _contextvars.ContextVar(
+    "current_enabled_tool_names", default=()
+)
+_developer_context_var: _contextvars.ContextVar[str] = _contextvars.ContextVar(
+    "developer_context", default=""
 )
 
 
@@ -1621,6 +1682,12 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         If the graph was paused by an ``interrupt()`` call (e.g. shell
         tool approval gate), returns ``{"type": "interrupt", "interrupts": [...]}``.
     """
+    _disabled_custom_tool_response = _custom_tool_builder_disabled_response(
+        user_input, enabled_tool_names
+    )
+    if _disabled_custom_tool_response:
+        return _disabled_custom_tool_response
+
     _model_ov = (config.get("configurable") or {}).get("model_override")
     _thread_id = (config.get("configurable") or {}).get("thread_id", "")
     agent = get_agent_graph(enabled_tool_names, model_override=_model_ov)
@@ -1637,6 +1704,10 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
     # Set thread-local so _pre_model_trim can find the summary cache
     _current_thread_id_var.set(_thread_id)
     _model_override_var.set(_model_ov or "")
+    _current_enabled_tool_names_var.set(tuple(enabled_tool_names or []))
+    _developer_context_var.set(
+        (config.get("configurable") or {}).get("developer_context", "") or ""
+    )
     set_active_model_override(_model_ov or "")
 
     # Summarize if context is above threshold
@@ -1831,6 +1902,14 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
     * ``"summarizing"`` – payload = ``None`` (condensing older context)
     * ``"done"``        – payload = full answer text (str)
     """
+    _disabled_custom_tool_response = _custom_tool_builder_disabled_response(
+        user_input, enabled_tool_names
+    )
+    if _disabled_custom_tool_response:
+        yield ("token", _disabled_custom_tool_response)
+        yield ("done", _disabled_custom_tool_response)
+        return
+
     _model_ov = (config.get("configurable") or {}).get("model_override")
     agent = get_agent_graph(enabled_tool_names, model_override=_model_ov)
 
@@ -1839,6 +1918,10 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         (config.get("configurable") or {}).get("thread_id", "")
     )
     _model_override_var.set(_model_ov or "")
+    _current_enabled_tool_names_var.set(tuple(enabled_tool_names or []))
+    _developer_context_var.set(
+        (config.get("configurable") or {}).get("developer_context", "") or ""
+    )
     set_active_model_override(_model_ov or "")
 
     # ── Context summarization (runs before the main agent stream) ────
@@ -1908,6 +1991,15 @@ def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: b
     """
     _model_ov = (config.get("configurable") or {}).get("model_override")
     agent = get_agent_graph(enabled_tool_names, model_override=_model_ov)
+    _current_thread_id_var.set(
+        (config.get("configurable") or {}).get("thread_id", "")
+    )
+    _model_override_var.set(_model_ov or "")
+    _current_enabled_tool_names_var.set(tuple(enabled_tool_names or []))
+    _developer_context_var.set(
+        (config.get("configurable") or {}).get("developer_context", "") or ""
+    )
+    set_active_model_override(_model_ov or "")
     if interrupt_ids and len(interrupt_ids) > 1:
         resume_val = {iid: approved for iid in interrupt_ids}
     else:
@@ -1931,6 +2023,10 @@ def resume_invoke_agent(enabled_tool_names: list[str], config: dict, approved: b
         (config.get("configurable") or {}).get("thread_id", "")
     )
     _model_override_var.set(_model_ov or "")
+    _current_enabled_tool_names_var.set(tuple(enabled_tool_names or []))
+    _developer_context_var.set(
+        (config.get("configurable") or {}).get("developer_context", "") or ""
+    )
     set_active_model_override(_model_ov or "")
 
     if interrupt_ids and len(interrupt_ids) > 1:

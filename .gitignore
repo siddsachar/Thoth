@@ -32,6 +32,7 @@ vector_store/
 .testtmp/
 .pytest_cache/
 pytest_tmp_codex/
+pytest_*/
 .backups/
 .copilot_backups/
 

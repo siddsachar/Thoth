@@ -30,6 +30,7 @@ from tools import chart_tool        # noqa: F401
 from tools import tracker_tool      # noqa: F401
 from tools import shell_tool        # noqa: F401
 from tools import task_tool         # noqa: F401
+from tools import custom_tool_builder_tool  # noqa: F401
 from tools import image_gen_tool     # noqa: F401
 from tools import video_gen_tool     # noqa: F401
 from tools import wiki_tool          # noqa: F401
@@ -37,6 +38,7 @@ from tools import x_tool             # noqa: F401
 from tools import thoth_status_tool  # noqa: F401
 from tools import updater_tool       # noqa: F401
 from tools import mcp_tool           # noqa: F401
+from tools import developer_tool     # noqa: F401
 import designer.tool                 # noqa: F401 — designer tool self-registers
 try:                                # browser_tool is still in development
     from tools import browser_tool  # noqa: F401

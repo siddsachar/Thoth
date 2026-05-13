@@ -33,7 +33,7 @@ from ui.constants import (
     IMAGE_EXTENSIONS,
 )
 from ui.render import autolink_urls, _auto_fence_mermaid, render_image_with_save
-from ui.tool_trace import canonical_tool_name, display_tool_content, is_browser_tool_name
+from ui.tool_trace import canonical_tool_name, display_tool_content, is_browser_tool_name, tool_result_failed
 
 logger = logging.getLogger(__name__)
 
@@ -144,14 +144,22 @@ def _handle_ui_runtime_error(
     if not isinstance(exc, RuntimeError):
         return False
     message = str(exc).strip().lower()
-    if "client" not in message or "deleted" not in message:
+    dead_client = "client" in message and "deleted" in message
+    missing_slot = "current slot cannot be determined" in message or "slot stack" in message
+    if not dead_client and not missing_slot:
         return False
     _detach_generation(gen, state, reason)
     return True
 
 
 def _ui_handle_client_deleted(handle: Any) -> bool:
-    client = getattr(handle, "client", None)
+    try:
+        client = getattr(handle, "client", None)
+    except RuntimeError as exc:
+        message = str(exc).lower()
+        if "client" in message and "deleted" in message:
+            return True
+        raise
     if client is None:
         return False
     return bool(getattr(client, "_deleted", False))
@@ -198,6 +206,7 @@ def _set_expansion_title(expansion: Any, title: str, icon: str) -> None:
 
     try:
         expansion._props["icon"] = icon
+        expansion._props["label"] = title
         expansion._text = title
         expansion.update()
     except Exception:
@@ -213,6 +222,9 @@ def _live_tool_group(gen: GenerationState, tool_name: str) -> dict[str, Any] | N
     if isinstance(group, dict):
         return group
     with gen.tool_col:
+        activity = _tool_activity_line(display_name)
+        if activity:
+            ui.label(activity).classes("text-xs text-grey-6 q-ml-sm")
         exp = ui.expansion(f"🔄 {display_name} · 0 calls", icon="hourglass_empty").classes("w-full")
     group = {
         "name": display_name,
@@ -223,6 +235,83 @@ def _live_tool_group(gen: GenerationState, tool_name: str) -> dict[str, Any] | N
     }
     gen.pending_tools[display_name] = group
     return group
+
+
+def _tool_activity_line(display_name: str) -> str:
+    name = str(display_name or "").lower()
+    if name == "developer":
+        return "Developer is working in the code workspace."
+    if name == "shell":
+        return "Running a workspace command."
+    if name == "browser activity":
+        return "Browser automation is stepping through the page."
+    if name in {"file", "document"}:
+        return "Reading local context."
+    return ""
+
+
+def _render_inline_interrupt_notice(
+    gen: GenerationState,
+    state: AppState,
+    p: P,
+    cb: _Callbacks,
+) -> bool:
+    """Render a redundant approval surface inside the active chat.
+
+    The modal dialog is still the primary approval UI. Developer Studio also
+    gets this inline banner so an approval remains visible if the dialog's
+    client/slot is unavailable during a long run.
+    """
+
+    if not state.active_developer_workspace_id or state.thread_id != gen.thread_id:
+        return False
+    target_container = getattr(p, "developer_approval_container", None) or p.chat_container
+    if gen.detached or target_container is None:
+        return False
+    try:
+        def _resume_inline(approved: bool) -> None:
+            try:
+                if p.interrupt_dlg is not None:
+                    p.interrupt_dlg.close()
+            except Exception:
+                logger.debug("Inline approval could not close modal dialog", exc_info=True)
+            asyncio.create_task(resume_after_interrupt(approved, state=state, p=p, cb=cb))
+
+        try:
+            target_container.clear()
+        except Exception:
+            logger.debug("Developer approval container clear failed", exc_info=True)
+        with target_container:
+            with ui.card().classes("w-full q-pa-md").style(
+                "border-radius: 8px; border: 1px solid rgba(245,158,11,0.55); "
+                "background: rgba(120, 53, 15, 0.20);"
+            ):
+                with ui.row().classes("w-full items-center justify-between gap-3"):
+                    with ui.row().classes("items-center gap-2"):
+                        ui.icon("warning_amber", color="amber", size="sm")
+                        ui.label("Developer approval pending").classes("text-sm text-amber-3")
+                    with ui.row().classes("items-center gap-2"):
+                        ui.button(
+                            "Deny",
+                            on_click=lambda: _resume_inline(False),
+                        ).props("flat dense no-caps")
+                        ui.button(
+                            "Approve",
+                            on_click=lambda: _resume_inline(True),
+                        ).props("color=amber dense no-caps")
+                data = gen.interrupt_data
+                items = data if isinstance(data, list) else [data]
+                first = items[0] if items else {}
+                if isinstance(first, dict):
+                    desc = first.get("description") or first.get("label") or first.get("tool") or "Approval required"
+                    ui.label(str(desc)).classes("text-xs text-grey-5")
+        if p.chat_scroll:
+            p.chat_scroll.scroll_to(percent=1.0)
+        return True
+    except Exception as exc:
+        _handle_ui_runtime_error(gen, state, exc, "developer inline interrupt render")
+        logger.debug("Developer inline interrupt render failed", exc_info=True)
+        return False
 
 
 def _add_live_tool_pending(gen: GenerationState, tool_name: str) -> None:
@@ -254,20 +343,24 @@ def _finish_live_tool_result(gen: GenerationState, tool_name: str, content: str)
     row = item.get("row") if item else None
     label = item.get("label") if item else None
     call_no = item.get("call_no") if item else group["done"]
+    failed = tool_result_failed(content)
     if row is None:
         with group["expansion"]:
             row = ui.column().classes("w-full gap-1 q-ml-sm")
     with row:
         if label is not None:
-            label.set_text(f"#{call_no} complete")
-            label.classes("text-xs text-positive")
+            label.set_text(f"#{call_no} {'failed' if failed else 'complete'}")
+            label.classes(f"text-xs {'text-negative' if failed else 'text-positive'}")
         else:
-            ui.label(f"#{call_no} complete").classes("text-xs text-positive")
+            ui.label(f"#{call_no} {'failed' if failed else 'complete'}").classes(
+                f"text-xs {'text-negative' if failed else 'text-positive'}"
+            )
         display = display_tool_content(content)
         if display:
             ui.code(display).classes("w-full text-xs")
-    icon = "check_circle" if group["done"] >= group["count"] else "hourglass_empty"
-    prefix = "✅" if icon == "check_circle" else "🔄"
+    group["failed"] = bool(group.get("failed")) or failed
+    icon = "error" if group.get("failed") else ("check_circle" if group["done"] >= group["count"] else "hourglass_empty")
+    prefix = "❌" if group.get("failed") else ("✅" if icon == "check_circle" else "🔄")
     _set_expansion_title(
         group["expansion"],
         f"{prefix} {group['name']} · {group['done']}/{group['count']} complete",
@@ -289,6 +382,7 @@ class _Callbacks:
         "update_token_counter",
         "add_chat_message",
         "render_text_with_embeds",
+        "refresh_chat_messages",
     )
 
     def __init__(self) -> None:
@@ -541,7 +635,18 @@ async def consume_generation(
         elif event_type == "interrupt":
             _buddy(BuddyEventType.APPROVAL_NEEDED, "Approval pending")
             gen.interrupt_data = payload
+            state.pending_interrupt = payload
             gen.status = "interrupted"
+            rendered_inline = _render_inline_interrupt_notice(gen, state, p, cb)
+            if not gen.detached and not _ui_handle_client_deleted(p.interrupt_dlg):
+                try:
+                    cb.show_interrupt(payload)
+                    gen.interrupt_rendered = True
+                except RuntimeError as exc:
+                    _handle_ui_runtime_error(gen, state, exc, "interrupt dialog render")
+                    logger.warning("Approval is pending but the interrupt dialog could not be rendered", exc_info=True)
+            elif rendered_inline:
+                gen.interrupt_rendered = True
             _break_loop = True
 
         elif event_type == "done":
@@ -593,9 +698,12 @@ async def consume_generation(
             if gen.tts_active:
                 state.tts_service.flush_streaming(gen.tts_buffer)
 
-            # Re-render the streamed content via render_text_with_embeds
-            # so code blocks get proper highlight.js and mermaid diagrams render.
-            if gen.accumulated:
+            # Re-render normal chat content via render_text_with_embeds so code
+            # blocks get proper highlight.js and mermaid diagrams render. Keep
+            # Developer Studio's streamed markdown node in place: deleting and
+            # recreating the final message is the path most likely to detach a
+            # still-active Developer workspace and collapse the inspector.
+            if gen.accumulated and not state.active_developer_workspace_id:
                 if gen.assistant_md:
                     try:
                         gen.assistant_md.delete()
@@ -650,7 +758,7 @@ async def consume_generation(
                     a_msg["_media_persist"] = True
         if gen.captured_videos:
             a_msg["videos"] = gen.captured_videos
-        if state.thread_id == gen.thread_id and not gen.detached:
+        if state.thread_id == gen.thread_id:
             state.messages.append(a_msg)
             persist_thread_media_state(state.thread_id, state.messages)
             state.cache_active_messages()
@@ -665,20 +773,17 @@ async def consume_generation(
                     image_persist_flags=gen.captured_images_persist,
                     videos=gen.captured_videos,
                 )
-            # Detached run wrote straight to the checkpoint; mark its
-            # cached message list stale so the next select re-reads.
+            # Detached run for a different thread wrote straight to the
+            # checkpoint; mark its cached message list stale so the next
+            # select re-reads.  Do not reload the active thread here: an
+            # active but UI-detached run may have newer optimistic user
+            # messages in memory than the checkpoint has flushed yet.
             state.mark_thread_dirty(gen.thread_id)
             if _has_detached_media and not _persisted_detached:
                 logger.warning(
                     "Detached generation for thread %s completed but media sidecar persistence did not attach anything",
                     gen.thread_id,
                 )
-            if state.thread_id == gen.thread_id:
-                try:
-                    state.messages = load_thread_messages(gen.thread_id)
-                    state.cache_active_messages()
-                except Exception:
-                    logger.debug("Failed to reload detached final messages for active thread %s", gen.thread_id, exc_info=True)
 
     # Cleanup
     if _active_generations.get(gen.thread_id) is gen:
@@ -690,13 +795,24 @@ async def consume_generation(
             _detach_if_ui_client_deleted(gen, state, "final active-thread UI update")
         # If we detached mid-stream but the client came back and is
         # still looking at this thread, the in-DOM element handles are
-        # stale.  Rebuild the chat view so the persisted final message
-        # renders without forcing the user to click the sidebar.
+        # stale. Refresh only the transcript container; rebuilding the
+        # whole main area causes visible flashes and can race optimistic
+        # user-message rendering.
         if gen.detached:
             try:
-                cb.rebuild_main()
+                cb.refresh_chat_messages()
+                logger.info(
+                    "Detached finalize refreshed transcript without full main rebuild for thread %s",
+                    gen.thread_id,
+                )
+            except RuntimeError as exc:
+                _handle_ui_runtime_error(gen, state, exc, "scoped transcript refresh")
+                logger.info(
+                    "Detached finalize could not refresh transcript because UI client is detached for thread %s",
+                    gen.thread_id,
+                )
             except Exception:
-                logger.debug("rebuild_main after detached finalize failed", exc_info=True)
+                logger.debug("Scoped transcript refresh failed", exc_info=True)
         if p.stop_btn and not _ui_handle_client_deleted(p.stop_btn):
             try:
                 p.stop_btn.props('icon=stop')
@@ -707,7 +823,24 @@ async def consume_generation(
             state.voice_service.unmute()
         if gen.interrupt_data:
             state.pending_interrupt = gen.interrupt_data
-            cb.show_interrupt(gen.interrupt_data)
+            if not gen.interrupt_rendered:
+                rendered_inline = _render_inline_interrupt_notice(gen, state, p, cb)
+            else:
+                rendered_inline = True
+            if gen.detached or _ui_handle_client_deleted(p.interrupt_dlg) or gen.interrupt_rendered:
+                logger.info(
+                    "Approval pending for thread %s; dialog render skipped because UI client is detached or approval was already rendered",
+                    gen.thread_id,
+                )
+            else:
+                try:
+                    cb.show_interrupt(gen.interrupt_data)
+                    gen.interrupt_rendered = True
+                except RuntimeError as exc:
+                    _handle_ui_runtime_error(gen, state, exc, "interrupt dialog render")
+                    logger.warning("Approval is pending but the interrupt dialog could not be rendered", exc_info=True)
+            if rendered_inline:
+                gen.interrupt_rendered = True
         try:
             cb.update_token_counter()
         except RuntimeError as exc:
@@ -719,6 +852,18 @@ async def consume_generation(
     except RuntimeError as exc:
         _handle_ui_runtime_error(gen, state, exc, "thread list rebuild")
         logger.debug("Client deleted during rebuild_thread_list", exc_info=True)
+
+    if state.active_developer_workspace_id and state.thread_id == gen.thread_id:
+        try:
+            from developer.inspector_snapshot import request_snapshot_refresh
+
+            request_snapshot_refresh(
+                state.active_developer_workspace_id,
+                gen.thread_id,
+                reason="developer_generation_final",
+            )
+        except Exception:
+            logger.debug("Developer inspector final refresh scheduling failed", exc_info=True)
 
 
 # ── Tool-done sub-handler ────────────────────────────────────────────
@@ -739,6 +884,19 @@ async def _handle_tool_done(
 
     if not gen.detached:
         _detach_if_ui_client_deleted(gen, state, f"tool {tool_name} result rendering")
+
+    if state.active_developer_workspace_id and state.thread_id == gen.thread_id:
+        try:
+            from developer.inspector_snapshot import request_snapshot_refresh
+
+            request_snapshot_refresh(
+                state.active_developer_workspace_id,
+                gen.thread_id,
+                reason=f"tool_done:{tool_name}",
+                debounce=0.8,
+            )
+        except Exception:
+            logger.debug("Developer inspector tool refresh scheduling failed", exc_info=True)
 
     # Chart detection
     if tool_content and tool_content.startswith("__CHART__:"):
@@ -802,6 +960,7 @@ async def _handle_tool_done(
 
     # Update the pending expansion or create a new one
     _grouped_live_result = False
+    failed = tool_result_failed(tool_content)
     if not gen.detached and gen.tool_col:
         try:
             _grouped_live_result = _finish_live_tool_result(gen, tool_name, tool_content)
@@ -815,8 +974,8 @@ async def _handle_tool_done(
             if _queue is not None and not _queue:
                 gen.pending_tools.pop(tool_name, None)
             if matched_exp:
-                matched_exp._props["icon"] = "check_circle"
-                matched_exp._text = f"\u2705 {tool_name}"
+                matched_exp._props["icon"] = "error" if failed else "check_circle"
+                matched_exp._text = f"{'❌' if failed else '✅'} {tool_name}"
                 matched_exp.update()
                 if tool_content:
                     display = tool_content[:5_000]
@@ -826,7 +985,10 @@ async def _handle_tool_done(
                         ui.code(display).classes("w-full text-xs")
             else:
                 with gen.tool_col:
-                    with ui.expansion(f"\u2705 {tool_name}", icon="check_circle").classes("w-full"):
+                    with ui.expansion(
+                        f"{'❌' if failed else '✅'} {tool_name}",
+                        icon="error" if failed else "check_circle",
+                    ).classes("w-full"):
                         if tool_content:
                             display = tool_content[:5_000]
                             if len(tool_content) > 5_000:
@@ -836,7 +998,7 @@ async def _handle_tool_done(
             _handle_ui_runtime_error(gen, state, exc, "tool expansion update")
             logger.debug("Tool expansion update failed for %s", tool_name, exc_info=True)
 
-    gen.tool_results.append({"name": tool_name, "content": tool_content})
+    gen.tool_results.append({"name": tool_name, "content": tool_content, "error": failed})
 
     # Vision capture
     if raw_tool_name in ("analyze_image",) or tool_name == "\U0001f441\ufe0f Vision":
@@ -1016,6 +1178,37 @@ async def send_message(
     state.cache_active_messages()
     cb.add_chat_message(user_msg)
 
+    if getattr(state, "active_developer_workspace_id", None) and not _files_snapshot:
+        try:
+            from developer.agent_context import maybe_answer_workspace_identity
+
+            direct_answer = await run.io_bound(
+                maybe_answer_workspace_identity,
+                state.active_developer_workspace_id,
+                text,
+            )
+        except Exception:
+            direct_answer = None
+            logger.debug("Failed to build Developer Studio direct identity answer", exc_info=True)
+        if direct_answer:
+            assistant_msg = {"role": "assistant", "content": direct_answer}
+            state.messages.append(assistant_msg)
+            persist_thread_media_state(state.thread_id, state.messages)
+            state.cache_active_messages()
+            cb.add_chat_message(assistant_msg)
+            if state.thread_name and (
+                state.thread_name.startswith("Thread ")
+                or state.thread_name.startswith("\U0001f4bb Thread ")
+            ):
+                state.thread_name = f"\U0001f4bb {display_content[:50]}"
+                _save_thread_meta(state.thread_id, state.thread_name)
+                cb.rebuild_thread_list()
+                if p.chat_header_label:
+                    p.chat_header_label.set_text(f"\U0001f4ac {state.thread_name}")
+            else:
+                _save_thread_meta(state.thread_id, state.thread_name)
+            return
+
     # ── Process attached files (slow — vision analysis etc.) ─────────
     file_context = ""
     file_warnings: list[str] = []
@@ -1058,6 +1251,17 @@ async def send_message(
     agent_input = text
     if file_context:
         agent_input = f"{file_context}\n\n{text}" if text else file_context
+    developer_context = ""
+    if getattr(state, "active_developer_workspace_id", None):
+        try:
+            from developer.agent_context import build_developer_agent_context
+
+            developer_context = await run.io_bound(
+                build_developer_agent_context,
+                state.active_developer_workspace_id,
+            )
+        except Exception:
+            logger.debug("Failed to build Developer Studio context", exc_info=True)
     logger.info("send_message: file_names=%s, file_context_len=%d, agent_input_len=%d",
                 file_names, len(file_context), len(agent_input))
 
@@ -1099,10 +1303,15 @@ async def send_message(
         "configurable": {
             "thread_id": gen_thread_id,
             **({"model_override": _thread_mo} if _thread_mo else {}),
+            **({"developer_workspace_id": state.active_developer_workspace_id} if getattr(state, "active_developer_workspace_id", None) else {}),
+            **({"developer_context": developer_context} if developer_context else {}),
         },
         "recursion_limit": RECURSION_LIMIT_CHAT,
     }
     enabled_tools = [t.name for t in tool_registry.get_enabled_tools()]
+    if getattr(state, "active_developer_workspace_id", None):
+        from developer.profile import effective_tool_names
+        enabled_tools = effective_tool_names(enabled_tools)
 
     if voice_mode:
         agent_input = (
@@ -1180,8 +1389,14 @@ async def resume_after_interrupt(
             item.get("__interrupt_id")
             for item in pending
             if isinstance(item, dict) and item.get("__interrupt_id")
-        ]
+    ]
     state.pending_interrupt = None
+    try:
+        approval_container = getattr(p, "developer_approval_container", None)
+        if approval_container is not None:
+            approval_container.clear()
+    except Exception:
+        logger.debug("Developer approval container clear after resume failed", exc_info=True)
 
     gen_thread_id = state.thread_id
     try:
@@ -1194,14 +1409,30 @@ async def resume_after_interrupt(
         logger.debug("Buddy approval resolution event failed", exc_info=True)
 
     _thread_mo = state.thread_model_override or ""
+    developer_context = ""
+    if getattr(state, "active_developer_workspace_id", None):
+        try:
+            from developer.agent_context import build_developer_agent_context
+
+            developer_context = await run.io_bound(
+                build_developer_agent_context,
+                state.active_developer_workspace_id,
+            )
+        except Exception:
+            logger.debug("Failed to build Developer Studio context for resume", exc_info=True)
     config = {
         "configurable": {
             "thread_id": gen_thread_id,
             **({"model_override": _thread_mo} if _thread_mo else {}),
+            **({"developer_workspace_id": state.active_developer_workspace_id} if getattr(state, "active_developer_workspace_id", None) else {}),
+            **({"developer_context": developer_context} if developer_context else {}),
         },
         "recursion_limit": RECURSION_LIMIT_CHAT,
     }
     enabled_tools = [t.name for t in tool_registry.get_enabled_tools()]
+    if getattr(state, "active_developer_workspace_id", None):
+        from developer.profile import effective_tool_names
+        enabled_tools = effective_tool_names(enabled_tools)
 
     stop_ev = threading.Event()
     gen = GenerationState(

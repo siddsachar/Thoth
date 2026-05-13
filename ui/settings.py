@@ -2806,7 +2806,17 @@ def open_settings(
             "Lightweight productivity tools available to the assistant.",
             "build",
         )
-        util_names = ["task", "timer", "url_reader", "calculator", "weather", "chart", "system_info", "conversation_search"]
+        util_names = [
+            "task",
+            "timer",
+            "url_reader",
+            "calculator",
+            "weather",
+            "chart",
+            "system_info",
+            "conversation_search",
+            "custom_tool_builder",
+        ]
         enabled_count = sum(1 for name in util_names if tool_registry.is_enabled(name))
         with ui.row().classes("items-center gap-2 q-mb-sm"):
             _metric_chip("enabled", enabled_count, icon="toggle_on")

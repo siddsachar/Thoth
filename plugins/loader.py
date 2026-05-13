@@ -80,7 +80,6 @@ def load_plugins() -> list[LoadResult]:
     if not PLUGINS_DIR.exists():
         PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
         logger.info("Created plugins directory: %s", PLUGINS_DIR)
-        return _load_results
 
     for entry in sorted(PLUGINS_DIR.iterdir()):
         if not entry.is_dir():
@@ -103,6 +102,29 @@ def load_plugins() -> list[LoadResult]:
 
         for w in result.warnings:
             logger.warning("⚠️  %s", w)
+
+    try:
+        from developer.tool_capsules import (
+            list_promoted_capsules,
+            register_promoted_capsules_with_plugins,
+        )
+
+        capsule_warnings = register_promoted_capsules_with_plugins()
+        for capsule in list_promoted_capsules():
+            _load_results.append(
+                LoadResult(
+                    plugin_id=capsule.promoted_plugin_id,
+                    success=True,
+                    manifest=plugin_registry.get_manifest(capsule.promoted_plugin_id),
+                    warnings=[
+                        "Custom Tool plugin wrapper; source files remain in the tool folder.",
+                    ],
+                )
+            )
+        for warning in capsule_warnings:
+            logger.warning("Custom Tool plugin warning: %s", warning)
+    except Exception as exc:
+        logger.debug("Custom Tool plugin registration skipped: %s", exc)
 
     loaded = sum(1 for r in _load_results if r.success)
     failed = sum(1 for r in _load_results if not r.success)

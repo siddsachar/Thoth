@@ -416,7 +416,7 @@ def render_text_with_embeds(text: str) -> None:
 
 def render_message_content(msg: dict, thread_id: str | None = None) -> None:
     """Render a single message's content inside the current parent element."""
-    from ui.tool_trace import display_tool_content, group_tool_results
+    from ui.tool_trace import display_tool_content, group_tool_results, tool_result_failed
 
     role = msg.get("role", "assistant")
 
@@ -433,7 +433,11 @@ def render_message_content(msg: dict, thread_id: str | None = None) -> None:
     tool_results_for_media = tool_results
     if tool_results:
         for group in group_tool_results(tool_results):
-            with ui.expansion(f"✅ {group.label}", icon="check_circle").classes("w-full"):
+            group_failed = any(tool_result_failed(item) for item in group.results)
+            with ui.expansion(
+                f"{'❌' if group_failed else '✅'} {group.label}",
+                icon="error" if group_failed else "check_circle",
+            ).classes("w-full"):
                 for idx, tr in enumerate(group.results, start=1):
                     title = f"#{idx}" if group.count > 1 else group.name
                     with ui.expansion(title, icon="subdirectory_arrow_right").classes("w-full"):
