@@ -71,6 +71,7 @@ plyer
 
 # ── YouTube Search ──────────────────────────────────────────────────────────
 youtube-search
+youtube-transcript-api
 
 # ── Common (used directly, also pulled transitively) ────────────────────────
 # NumPy 2.3+ Linux x86_64 wheels can require x86-64-v2 CPU instructions. Keep
