@@ -11331,10 +11331,15 @@ try:
 
     # ── 49l. Self-loop rejection functional test ─────────────────────
     # Create a temporary entity and try to self-link
-    _e49 = _kg49.save_entity("concept", "__test_selfloop_49", "test entity for self-loop check", source="test")
-    _r49 = _kg49.add_relation(_e49["id"], _e49["id"], "uses", source="test")
-    assert _r49 is None, "add_relation should return None for self-loop"
-    _kg49.delete_entity(_e49["id"])
+    _prev_skip49 = getattr(_kg49, "_skip_reindex", False)
+    _kg49._skip_reindex = True
+    try:
+        _e49 = _kg49.save_entity("concept", "__test_selfloop_49", "test entity for self-loop check", source="test")
+        _r49 = _kg49.add_relation(_e49["id"], _e49["id"], "uses", source="test")
+        assert _r49 is None, "add_relation should return None for self-loop"
+        _kg49.delete_entity(_e49["id"])
+    finally:
+        _kg49._skip_reindex = _prev_skip49
     record("PASS", "49l: self-loop rejection functional test")
 
     # ── 49m. _cross_window_dedup exists as safety net ────────────────
@@ -13865,8 +13870,8 @@ try:
     assert 'Source: "..\\providers\\*"' in _iss68 and "recursesubdirs" in _iss68, "providers package must be recursively included in Windows installer"
     assert 'Source: "..\\ui\\model_catalog.py"' in _iss68, "ui/model_catalog.py must be included in Windows installer"
     assert 'Source: "..\\ui\\provider_settings.py"' in _iss68, "ui/provider_settings.py must be included in Windows installer"
-    assert "for pkg in tools channels bundled_skills tool_guides ui plugins designer scripts utils providers mcp_client migration" in _mac68, "mac app bundle must copy providers package"
-    record("PASS", "68m2: Windows and mac packaging include provider runtime and UI files")
+    assert "for pkg in tools channels bundled_skills tool_guides ui plugins designer developer scripts utils providers mcp_client migration" in _mac68, "mac app bundle must copy providers and developer packages"
+    record("PASS", "68m2: Windows and mac packaging include provider runtime, Developer, and UI files")
 
     # ── 68m3. Clean data-dir first-run setup smoke ─────────────────
     import os as _os68m3

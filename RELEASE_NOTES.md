@@ -2,6 +2,173 @@
 
 ---
 
+## v3.22.0 — Developer Studio, Custom Tools, Workflow Delivery & Stability Overhaul
+
+This release turns Thoth into a broader **workbench for chat, workflows, code, documents, and user-built tools**. The headline feature is **Developer Studio**: a Codex-style coding workspace for connecting local Git repositories, reviewing code, planning and applying changes, running tests, preparing PRs, and working inside an optional Docker shadow sandbox. It also adds **Custom Tools**, letting users turn GitHub repos or local folders into reusable Thoth tools through a guided or conversational flow. Around that, v3.22.0 substantially improves workflow delivery defaults, Home status visibility, Settings organization, onboarding, model catalog performance, embedding provider choice, chat tool traces, and app stability diagnostics.
+
+### Developer Studio
+
+- **Developer workspace surface** — adds a new Developer home tab for code workspaces, recent repos, explicit local-folder linking, explicit clone destinations, and code-thread restoration from the sidebar.
+- **Code threads** — Developer conversations are marked as code threads, reopen directly into Developer Studio, keep workspace context, and preserve code-specific state separately from normal chat and Designer threads.
+- **Repository context injection** — Developer turns receive compact, authoritative workspace context including repo path, branch, dirty state, remote URL, top-level files, approval mode, execution mode, and shell guidance, without showing that context in the user message.
+- **Codex-style approval modes** — Developer Studio supports coding approval modes such as read-only, ask before changes, auto edit, and agent run. The mode is changeable at any time and reflected in the Developer Inspector safety policy.
+- **Developer-native tools** — adds workspace-scoped tools for repo info, file listing, file reads, search, git status, branch create/switch, commit, push, fast-forward merge, diffs, todos, detected test commands, shell commands, patch preview/apply, file writes, sandbox imports, and agent-owned change reverts.
+- **Developer skills and tool guides** — adds Developer-focused bundled skills for coding, review, PR prep, and Custom Tools, plus a concise Developer tool guide. These are wired for Developer context instead of bloating normal chat by default.
+- **Developer todo planning** — adds persistent visible todos for coding threads, with status updates surfaced in the inspector so long coding jobs can keep a checkpointed plan.
+- **Developer Inspector** — adds a right-side Developer Inspector with Overview, Safety Policy, Sandbox, Todos, Changes, Files, Agent Changes, Tests, and GitHub/PR sections.
+- **Live inspector snapshots** — the inspector refreshes from debounced background snapshots instead of full UI rebuilds, preserving expanded sections and reducing disconnect/crash risk during long runs.
+- **Resizable inspector** — the Developer Inspector can be widened for diffs, files, and test output without crowding the main chat.
+- **File tree view** — the Files section renders a tree-style repo view instead of a flat label list, making larger repos easier to scan.
+- **Diff and change review** — changed files show added/removed line counts, per-file diffs, and agent-owned change sets.
+- **Safe revert support** — agent-owned edits are recorded and can be reverted when files have not drifted.
+- **GitHub CLI integration** — Developer Studio detects `gh` from common Windows install paths and gates PR/push operations through Developer approval policy.
+- **Long coding turn budget** — Developer Studio now gets its own recursion/step budget, separate from normal chat and workflows, with Developer-specific wind-down prompts that checkpoint progress instead of failing with a generic tool-loop message.
+
+### Docker Sandbox
+
+- **Optional Docker execution mode** — Developer workspaces can run commands in a Docker shadow copy instead of the real repo folder.
+- **Persistent sandbox container** — Docker Sandbox uses a persistent per-workspace container and shadow workspace, so repeated commands share the same sandbox state until cleaned or rebuilt.
+- **Import-gated edits** — changes made in Docker Sandbox are recorded as pending patches and only affect the real repo after explicit import.
+- **Network policy** — Docker Sandbox can run with network off, ask, or on. Network commands and package installs are blocked early when network is off.
+- **Sandbox image selection** — users can choose the Docker image for a workspace; changing it cleans the current sandbox copy before the next Docker command.
+- **Sandbox process controls** — long-running sandbox processes can be started and stopped through Developer tooling.
+- **Clear Docker startup errors** — stopped Docker Desktop, missing images, and credential-helper failures now produce actionable messages instead of raw pipe/file-not-found errors.
+- **Local fallback remains available** — users who do not want Docker can keep using local execution with the existing Developer approval policy.
+
+### Custom Tools
+
+- **Custom Tools product surface** — Developer home now includes a Custom Tools area separate from code workspaces, with cards for created tools, commands, test output, enablement, promotion, and removal.
+- **Guided Custom Tool wizard** — adds a Source -> Inspect -> Test -> Enable flow for turning a repo URL, local folder, or current workspace into a reusable Thoth tool.
+- **Conversational Custom Tool Builder** — adds one agent-facing `custom_tool_builder` utility so users can ask Thoth to inspect a repo, draft commands, refine them, create the tool, and promote it without manually writing a manifest.
+- **LLM-assisted command proposals** — Custom Tool creation can use a lightweight model pass to infer useful read-only commands from a repository, with deterministic fallback when AI analysis is unavailable.
+- **Safety validation** — proposed Custom Tool commands are validated for dangerous shell patterns, unreviewed network use, write operations, and missing query placeholders.
+- **One-time command tests** — Custom Tools can be tested before enablement; local/read-only commands can run directly, while network or riskier commands route through the normal approval policy.
+- **Promotion to normal chat** — tested Custom Tools can be promoted into the plugin/tool surface and optionally made available in normal chat through the Utilities toggle.
+- **Plugin integration** — promoted Custom Tools register as synthetic plugin tools, appear in plugin/tool management, and can be disabled or removed safely.
+- **Source transparency** — Custom Tool cards show source URL, local install path, version, command count, availability, and enablement state.
+- **Terminology cleanup** — user-facing UI uses “Custom Tool” instead of the earlier “capsule” wording.
+
+### Workflow Delivery & Workflow Console
+
+- **Workflow-level delivery defaults** — adds a default delivery channel selector for background workflows so new workflows do not default to every channel.
+- **Multi-channel defaults** — default delivery can target multiple configured channels while every workflow still always reports run status to the web app.
+- **Per-workflow overrides** — workflows can inherit the global default or keep a specific override; changing the global default updates only workflows tied to default.
+- **No extra LLM delivery pass** — delivery defaults reuse existing workflow outputs instead of adding an extra model call.
+- **Delivery UI polish** — the workflow delivery control was moved and restyled so it no longer reads as part of the multi-select label.
+- **Collapsible workflow console** — the right workflow console can collapse/expand, persists its state, and works in browser and pywebview.
+- **Approval attention state** — collapsed workflow console shows an attention state when a workflow approval is waiting.
+- **Workflow console compact badges** — collapsed state shows compact badges for running workflows, approvals, and insights while expanded state keeps the normal console layout.
+- **Recent and upcoming runs** — workflow console surfaces running, approvals, upcoming scheduled runs, quick launch, and recent runs in a denser layout.
+- **Workflow Buddy sync** — Buddy state now clears correctly after workflow approval/denial, timeout, stop, cancel, and successful completion.
+
+### Home Status & Buddy Reliability
+
+- **Expanded Home health bar** — Home status now includes compact icon pills for Ollama, active model, cloud API, tunnel, Gmail OAuth, Calendar OAuth, X OAuth, workflows, knowledge, wiki vault, documents, search, skills, tracker, Buddy, MCP, plugins, network, tools, disk, threads DB, FAISS index, Dream Cycle, TTS, and logging.
+- **Accurate document/vector status** — document status pills now use the same indexed-file/vector metadata path as Settings.
+- **MCP and plugin visibility** — Home status now covers MCP and plugin health instead of only older core checks.
+- **Sleek icon-only pills** — status pills use compact icons with hover tooltips, plus amber/red warning indicators for degraded states.
+- **Background progress inside status bar** — document extraction and Buddy generation progress remain inside the Home status area while the icon row stays compact.
+- **Buddy state machine cleanup** — Buddy state transitions are more deterministic around workflow approvals, denials, pending states, and workflow endings.
+- **Desktop overlay focus behavior** — desktop Buddy more reliably appears when the app is minimized or unfocused and hides when the app returns to focus.
+
+### Chat, Streaming & Tool Traces
+
+- **Shift+Enter newline fix** — Shift+Enter now inserts a newline in chat inputs instead of sending the message, matching normal chat app behavior.
+- **Input-level model picker** — the main chat model selector moved into the chat input area to match Designer and reduce top-bar clutter.
+- **Cloud/privacy banner refresh** — the banner updates when the model changes from the input picker.
+- **Grouped tool calls** — repeated tool calls of the same type are grouped into a single expandable trace instead of flooding the transcript with long repeated lists.
+- **Balanced browser traces** — browser automation traces are less screenshot-heavy by default while still preserving final visual context when useful.
+- **Live tool-call rendering fixes** — tool-call counts and grouped trace state update during streaming instead of only after a later message or reload.
+- **Detached stream recovery** — long streams that detach because the client disconnects now persist media and refresh the transcript without forcing full chat rebuilds.
+- **Inline approval backup** — Developer approvals also render inline in the active thread when modal/dialog context is unavailable, reducing hidden approval states.
+- **NiceGUI timer hardening** — safe one-shot and polling timer helpers avoid creating UI from deleted slots or disconnected clients.
+
+### Settings & Onboarding
+
+- **Settings information architecture cleanup** — window mode moved from System to Preferences, Dream Cycle moved from Knowledge to Preferences, and tunnel settings moved from Channels to System.
+- **Settings polish pass** — remaining settings tabs were updated toward the denser Models/Providers/Buddy style, including Utilities, Search, Tracker, Documents, Voice, Vision, Knowledge, System, and related tabs.
+- **Model settings cache path** — Settings can render model selectors from cached catalog data while catalog refresh runs in the background.
+- **Single catalog refresh concept** — manual refresh is exposed as one model-catalog action instead of many provider-specific refresh buttons.
+- **Provider-first onboarding** — first-run onboarding now starts with model/provider choice before migration and setup checklist steps.
+- **Setup Center** — adds a resumable setup center reachable from the sidebar hello button, covering model/provider, migration, memory/docs, workflows, Designer, channels, voice, and related setup.
+- **Cleaner onboarding copy** — onboarding removes excessive explanatory text, uses quick setup actions, and routes users to Settings only where deeper configuration is needed.
+- **All provider coverage** — first setup includes the current provider family, including ChatGPT / Codex, API-key providers, Ollama/local, custom endpoints, and newer providers.
+- **Default workflow templates** — seeds five disabled real-world starter workflows, with three simpler and two advanced examples, so nothing runs on a schedule without user permission.
+- **Updated welcome message** — first-run welcome and starter prompts now reflect current Thoth features such as workflows, Designer, Developer, channels, documents, memory, voice, and Custom Tools.
+
+### Models, Providers & Embeddings
+
+- **Ollama Cloud support** — adds Ollama Cloud as a provider path with direct cloud API transport and support for Ollama daemon cloud-tagged models.
+- **Ollama daemon catalog improvements** — installed local models, cloud-tagged local daemon models, library models, families, vision capability, tool capability, and embedding markers are handled more consistently.
+- **Ollama vision support paths** — vision-capable Ollama models can be represented through both daemon and direct cloud paths where metadata supports it.
+- **Background model catalog cache** — provider and Ollama catalog rows are refreshed in the background and cached for faster Settings loads.
+- **Catalog age and refresh state** — model catalog refresh state, cache age, and warnings are tracked for diagnostics and UI display.
+- **Provider refresh log noise cleanup** — noisy but non-fatal provider refresh states are preserved without replacing working defaults.
+- **Codex SSE diagnostics** — Codex Responses streaming logs start, first delta, completion, and incomplete-stream states more clearly.
+- **Configurable embedding providers** — embeddings can now be configured separately from chat models.
+- **Local embedding choices** — adds local embedding provider configuration around Qwen, Nomic, and Mixedbread/MXBAI-style models.
+- **Cloud embedding option** — supports optional cloud embedding providers with privacy warning copy in Settings.
+- **Embedding metadata** — vector stores record embedding provider/dimension metadata and can detect stale indexes when the embedding config changes.
+- **Embedding memory release** — heavyweight document and memory extraction paths release cached embedding resources afterward to reduce memory pressure.
+- **Document dependency fixes** — adds missing document/embedding support dependencies needed by Markdown and local embedding flows.
+- **YouTube transcript packaging** — packages `youtube-transcript-api` so the YouTube transcript tool works in installed builds, not only on the build machine.
+
+### Stability, Startup & Shutdown
+
+- **Stability monitor module** — adds crash reports, UI callback error reports, client-side error capture, asyncio exception handling, thread/unraisable hooks, memory snapshots, and event-loop lag logging.
+- **Settings crash diagnostics** — model settings load, collect, and render phases log timings and memory snapshots so large-provider crashes are easier to diagnose.
+- **Startup sequencing** — startup now updates splash/status through cached model catalog loading, workflow scheduler start, MCP startup, plugin load, channel migration/autostart, tunnel startup, and knowledge graph load.
+- **Clean shutdown work** — app shutdown now attempts ordered channel, tunnel, MCP, and scheduler cleanup to reduce locked log files and lingering processes.
+- **Channel credential migration** — channel credentials are migrated into a channel-specific keyring path while preserving legacy fallback if migration fails.
+- **Channel status recovery** — channel auth status reporting distinguishes running channels from empty UI fields and legacy keyring fallback.
+- **Ngrok log noise handling** — tunnel info logs were reviewed and kept non-fatal while startup/status copy clarifies tunnel state.
+- **Windows installer channel inclusion** — installer regressions now ensure new channel auth files are included.
+- **Linux native baseline guard** — Linux package builds scan native libraries for unsupported CPU baselines before release upload.
+
+### Tests & Release Checks
+
+- **Developer Studio coverage** — adds phased Developer Studio tests covering workspace setup, approval policy, Git safety, context injection, UI wiring, todos, diffs, tools, Custom Tools, Docker Sandbox, GitHub/PR helpers, and recursion budget.
+- **Workflow delivery coverage** — tests default delivery inheritance, overrides, and web-app delivery guarantees.
+- **Channel auth coverage** — tests channel keyring migration, fallback, and packaging inclusion.
+- **Chat UI coverage** — tests Shift+Enter behavior, grouped tool traces, browser trace behavior, and streaming refresh contracts.
+- **Onboarding coverage** — tests setup wizard/center ordering, provider coverage, and starter workflow seeding.
+- **Embedding coverage** — tests embedding config, metadata, stale-index detection, and provider switching.
+- **Model catalog coverage** — tests background cache shape, refresh behavior, and Ollama/cloud catalog rows.
+- **Settings contract coverage** — tests tab moves, section labels, providers guide placement, tunnel relocation, and cloud banner expectations.
+- **Home status coverage** — tests expanded status checks, workflow console collapse state, Buddy state transitions, and status accuracy.
+- **Stability coverage** — tests performance/stability diagnostics, safe timer behavior, detached stream refresh, and callback error handling.
+- **Packaging coverage** — tests YouTube transcript dependency packaging, channel auth store inclusion, Linux native baseline guard, and Windows installer file coverage.
+- **Current validation** — the legacy release smoke suite passes with `1885 passed, 0 failed, 5 warnings` after the Developer recursion-budget merge; targeted Developer sandbox + recursion tests pass (`39 passed`).
+
+### Release Notes & Risk Notes
+
+- **Developer Studio is powerful by design** — coding tools can read, edit, run commands, and use Git inside the selected workspace according to the active approval mode. Users should connect only repositories they intend Thoth to inspect or modify.
+- **Docker Sandbox is optional** — local execution remains available. Docker Sandbox requires Docker Desktop or a compatible Docker/Podman runtime, a local sandbox image, and enough disk space for shadow workspaces.
+- **Custom Tools can execute repo-provided command logic** — Custom Tools are opt-in, testable, removable, and gated by normal tool enablement, but promoted tools should still be reviewed before broad chat availability.
+- **Cloud embeddings send text to the chosen provider** — local embeddings remain available for users who want document/vector indexing to stay local.
+- **Model catalog freshness is eventually consistent** — cached model rows make Settings faster and more stable, while manual/background refresh updates provider availability after the cache is built.
+- **Workflow delivery changes may alter notification volume** — workflows tied to default delivery now follow the workflow-level default instead of sending everywhere.
+- **Landing page has been updated for v3.21.0, not yet for v3.22.0 assets** — release download/version links should be updated after v3.22.0 artifacts are published.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `developer/`, `tools/developer_tool.py`, `tool_guides/developer_guide/`, `bundled_skills/developer_*` | Developer Studio workspace state, tools, approval policy, Git helpers, inspector snapshots, todos, diffs, Docker Sandbox, GitHub helpers, tool guide, and Developer skills |
+| `developer/tool_capsules.py`, `tools/custom_tool_builder_tool.py`, `tool_guides/custom_tool_builder_guide/`, `plugins/loader.py`, `plugins/ui_settings.py` | Custom Tool creation, testing, promotion, plugin registration, settings/plugin UI integration, and global builder utility |
+| `ui/home.py`, `ui/status_bar.py`, `ui/status_checks.py`, `ui/buddy.py`, `buddy/brain.py` | Home status-bar expansion, workflow console collapse/attention states, Buddy state cleanup, and desktop overlay focus behavior |
+| `tasks.py`, `ui/task_dialog.py` | Workflow delivery defaults, per-workflow overrides, web-app run status delivery, and workflow dialog UI polish |
+| `ui/chat.py`, `ui/chat_components.py`, `ui/streaming.py`, `ui/tool_trace.py`, `ui/timer_utils.py`, `agent.py` | Chat input model picker, Shift+Enter behavior, grouped tool traces, detached streaming recovery, inline approvals, safe timers, and Developer recursion budget |
+| `ui/settings.py`, `ui/setup_wizard.py`, `ui/onboarding_center.py`, `ui/onboarding_state.py`, `ui/model_catalog.py`, `ui/command_center.py`, `ui/sidebar.py` | Settings reorganization/polish, onboarding overhaul, setup center, cached model catalog UI, and Developer/sidebar routing |
+| `providers/ollama.py`, `providers/model_catalog.py`, `providers/model_catalog_cache.py`, `providers/transports/ollama_cloud.py`, `providers/runtime.py`, `providers/catalog.py` | Ollama Cloud support, improved Ollama/local/cloud catalog rows, background model catalog cache, and provider runtime wiring |
+| `embedding_config.py`, `embedding_providers.py`, `documents.py`, `document_extraction.py`, `memory_extraction.py`, `knowledge_graph.py` | Configurable embedding providers, embedding metadata/stale-index checks, local/cloud embedding support, and memory release after heavy extraction |
+| `channels/auth_store.py`, `channels/*.py`, `app.py` | Channel credential keyring migration, channel startup/status cleanup, startup sequencing, and shutdown cleanup |
+| `stability.py`, `launcher.py`, `ui/head_html.py` | Crash reporting, client-side error capture, performance snapshots, event-loop lag logging, startup/shutdown diagnostics, and frontend error reporting |
+| `installer/thoth_setup.iss`, `installer/build_linux_app.sh`, `.github/workflows/release.yml`, `scripts/check_linux_native_baseline.py`, `requirements.txt` | Packaging updates for channel auth, YouTube transcripts, embedding/document dependencies, and Linux native CPU-baseline guard |
+| `tests/`, `tests/test_suite.py` | New focused regressions for Developer Studio, Docker Sandbox, Custom Tools, workflow delivery, onboarding, model catalog cache, embeddings, settings contracts, status checks, channel auth, chat traces, stability, and packaging |
+
+---
+
 ## v3.21.0 — Buddy Companion, Model Picker Polish & Linux Startup Reliability
 
 This release adds Thoth's **Buddy companion foundation**, a local-first animated presence that can live in the app sidebar, move around the workspace, and optionally open as a native desktop overlay. It also tightens Settings -> Models behavior, improves provider and Vision model selection, and hardens packaged startup on Windows and Linux so optional native dependency failures are easier to diagnose and less likely to block launch.

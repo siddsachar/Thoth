@@ -413,7 +413,8 @@ async def show_setup_wizard(
 
                 async def _validate_cloud_keys():
                     oai_val = setup_openai_key.value.strip()
-                    ollama_cloud_val = setup_ollama_cloud_key.value.strip()
+                    from providers.transports.ollama_cloud import normalize_ollama_cloud_api_key
+                    ollama_cloud_val = normalize_ollama_cloud_api_key(setup_ollama_cloud_key.value)
                     anth_val = setup_anth_key.value.strip()
                     goog_val = setup_goog_key.value.strip()
                     xai_val = setup_xai_key.value.strip()

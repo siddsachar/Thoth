@@ -121,9 +121,9 @@ not the one-line bootstrapper. The bootstrapper always resolves published
 GitHub Release assets. From the repository root:
 
 ```bash
-bash installer/build_linux_app.sh 3.21.0
-tar -xzf dist/Thoth-3.21.0-Linux-*.tar.gz
-cd Thoth-3.21.0-Linux-*
+bash installer/build_linux_app.sh 3.22.0
+tar -xzf dist/Thoth-3.22.0-Linux-*.tar.gz
+cd Thoth-3.22.0-Linux-*
 ./install.sh
 ~/.local/bin/thoth
 ```

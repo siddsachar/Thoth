@@ -42,7 +42,7 @@ concurrency:
 # Tracks the version this workflow is currently shipping. Kept in sync with
 # `installer/thoth_setup.iss` (#define MyAppVersion) and `version.py`.
 env:
-  THOTH_VERSION: "3.21.0"
+  THOTH_VERSION: "3.22.0"
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════

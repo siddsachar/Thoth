@@ -167,6 +167,22 @@ def test_ollama_cloud_provider_runtime_constructs_native_client(monkeypatch):
     assert model.base_url == "https://ollama.com"
 
 
+def test_clear_llm_cache_drops_cached_provider_credentials(monkeypatch):
+    import models
+
+    models.clear_llm_cache()
+    keys = iter(["old-key", "new-key"])
+    monkeypatch.setattr("providers.runtime.get_provider_secret", lambda provider_id: next(keys))
+
+    first = models._get_cloud_llm("model:ollama_cloud:gpt-oss:20b")
+    models.clear_llm_cache()
+    second = models._get_cloud_llm("model:ollama_cloud:gpt-oss:20b")
+
+    assert first.api_key == "old-key"
+    assert second.api_key == "new-key"
+    models.clear_llm_cache()
+
+
 def test_ollama_cloud_runtime_posts_native_chat_request():
     from langchain_core.messages import HumanMessage
     from providers.transports.ollama_cloud import ChatOllamaCloud
@@ -192,8 +208,266 @@ def test_ollama_cloud_runtime_posts_native_chat_request():
     assert result.content == "hello"
     assert captured["url"] == "https://ollama.com/api/chat"
     assert captured["kwargs"]["headers"]["Authorization"] == "Bearer test-key"
-    assert captured["kwargs"]["json"]["model"] == "gpt-oss:120b-cloud"
+    assert captured["kwargs"]["json"]["model"] == "gpt-oss:120b"
     assert captured["kwargs"]["json"]["messages"] == [{"role": "user", "content": "Hi"}]
+
+
+def test_ollama_cloud_runtime_normalizes_cloud_suffix():
+    from providers.transports.ollama_cloud import normalize_ollama_cloud_model_name
+
+    assert normalize_ollama_cloud_model_name("gpt-oss:120b-cloud") == "gpt-oss:120b"
+    assert normalize_ollama_cloud_model_name("gemma4:31b-cloud") == "gemma4:31b"
+    assert normalize_ollama_cloud_model_name("gpt-oss:cloud") == "gpt-oss"
+    assert normalize_ollama_cloud_model_name("kimi-k2:thinking") == "kimi-k2:thinking"
+
+
+def test_ollama_cloud_runtime_normalizes_bearer_prefix():
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    model = ChatOllamaCloud(model_name="gpt-oss:120b", api_key="Bearer test-key")
+
+    assert model._headers()["Authorization"] == "Bearer test-key"
+
+
+def test_ollama_cloud_401_has_actionable_message():
+    from langchain_core.messages import HumanMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    class _Response:
+        status_code = 401
+        text = ""
+
+    class _Client:
+        def post(self, url, **kwargs):
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="gpt-oss:120b", api_key="bad-key", http_client=_Client())
+
+    try:
+        model.invoke([HumanMessage(content="Hi")])
+    except RuntimeError as exc:
+        assert "Ollama Cloud rejected the API key" in str(exc)
+        assert "Settings -> Providers" in str(exc)
+    else:
+        raise AssertionError("Expected Ollama Cloud 401 to raise")
+
+
+def test_ollama_cloud_403_has_actionable_message():
+    from langchain_core.messages import HumanMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    class _Response:
+        status_code = 403
+        text = ""
+
+        def json(self):
+            return {"error": "model requires access"}
+
+    class _Client:
+        def post(self, url, **kwargs):
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="gpt-oss:120b", api_key="test-key", http_client=_Client())
+
+    try:
+        model.invoke([HumanMessage(content="Hi")])
+    except RuntimeError as exc:
+        assert "Ollama Cloud refused this request" in str(exc)
+        assert "selected model" in str(exc)
+        assert "model requires access" in str(exc)
+    else:
+        raise AssertionError("Expected Ollama Cloud 403 to raise")
+
+
+def test_ollama_cloud_400_has_actionable_message():
+    from langchain_core.messages import HumanMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    class _Response:
+        status_code = 400
+        text = ""
+
+        def json(self):
+            return {"error": "invalid message payload"}
+
+    class _Client:
+        def post(self, url, **kwargs):
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="gpt-oss:120b", api_key="test-key", http_client=_Client())
+
+    try:
+        model.invoke([HumanMessage(content="Hi")])
+    except RuntimeError as exc:
+        assert "Ollama Cloud rejected the chat request" in str(exc)
+        assert "invalid message payload" in str(exc)
+    else:
+        raise AssertionError("Expected Ollama Cloud 400 to raise")
+
+
+def test_ollama_cloud_500_has_actionable_message():
+    from langchain_core.messages import HumanMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    class _Response:
+        status_code = 500
+        text = ""
+
+        def json(self):
+            return {"error": "upstream failed"}
+
+    class _Client:
+        def post(self, url, **kwargs):
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="gpt-oss:120b", api_key="test-key", http_client=_Client())
+
+    try:
+        model.invoke([HumanMessage(content="Hi")])
+    except RuntimeError as exc:
+        assert "Ollama Cloud returned a server error" in str(exc)
+        assert "selected model or request shape" in str(exc)
+        assert "upstream failed" in str(exc)
+    else:
+        raise AssertionError("Expected Ollama Cloud 500 to raise")
+
+
+def test_ollama_cloud_runtime_skips_tools_for_non_tool_models():
+    from langchain_core.messages import HumanMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    captured = {}
+
+    class _Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"message": {"role": "assistant", "content": "hello"}, "done": True}
+
+    class _Client:
+        def post(self, url, **kwargs):
+            captured["json"] = kwargs["json"]
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="kimi-k2:thinking", api_key="test-key", http_client=_Client())
+    model.invoke([HumanMessage(content="Hi")], tools=[{"type": "function", "function": {"name": "ping"}}])
+
+    assert "tools" not in captured["json"]
+
+
+def test_ollama_cloud_runtime_keeps_tools_for_tool_models():
+    from langchain_core.messages import HumanMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    captured = {}
+
+    class _Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"message": {"role": "assistant", "content": "hello"}, "done": True}
+
+    class _Client:
+        def post(self, url, **kwargs):
+            captured["json"] = kwargs["json"]
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="gpt-oss:120b", api_key="test-key", http_client=_Client())
+    model.invoke([HumanMessage(content="Hi")], tools=[{"type": "function", "function": {"name": "ping"}}])
+
+    assert "tools" in captured["json"]
+
+
+def test_ollama_cloud_runtime_serializes_tool_results_with_tool_name():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    captured = {}
+
+    class _Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"message": {"role": "assistant", "content": "hello"}, "done": True}
+
+    class _Client:
+        def post(self, url, **kwargs):
+            captured["messages"] = kwargs["json"]["messages"]
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="gpt-oss:120b", api_key="test-key", http_client=_Client())
+    model.invoke([
+        HumanMessage(content="weather"),
+        AIMessage(content="", tool_calls=[{"name": "get_weather", "args": {"city": "London"}, "id": "call_1"}]),
+        ToolMessage(content="rain", name="get_weather", tool_call_id="call_1"),
+    ])
+
+    assert captured["messages"][1]["tool_calls"][0]["type"] == "function"
+    assert captured["messages"][1]["tool_calls"][0]["function"]["index"] == 0
+    assert captured["messages"][2]["role"] == "tool"
+    assert captured["messages"][2]["tool_name"] == "get_weather"
+    assert "tool_call_id" not in captured["messages"][2]
+
+
+def test_ollama_cloud_runtime_flattens_tool_history_for_non_tool_models():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from providers.transports.ollama_cloud import ChatOllamaCloud
+
+    captured = {}
+
+    class _Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"message": {"role": "assistant", "content": "hello"}, "done": True}
+
+    class _Client:
+        def post(self, url, **kwargs):
+            captured["messages"] = kwargs["json"]["messages"]
+            return _Response()
+
+    model = ChatOllamaCloud(model_name="gemma3:4b", api_key="test-key", http_client=_Client())
+    model.invoke([
+        HumanMessage(content="weather"),
+        AIMessage(content="", tool_calls=[{"name": "get_weather", "args": {"city": "London"}, "id": "call_1"}]),
+        ToolMessage(content="rain", name="get_weather", tool_call_id="call_1"),
+    ])
+
+    assert "tool_calls" not in captured["messages"][1]
+    assert captured["messages"][2]["role"] == "user"
+    assert captured["messages"][2]["content"] == "[Tool result from get_weather]: rain"
+    assert "tool_name" not in captured["messages"][2]
+
+
+def test_ollama_cloud_key_validation_uses_authenticated_chat_probe(monkeypatch):
+    import models
+
+    calls = []
+
+    class _Response:
+        def __init__(self, status_code=200, payload=None, text=""):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+    def fake_post(url, **kwargs):
+        calls.append(("POST", url, kwargs))
+        return _Response(200, {})
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    assert models.validate_ollama_cloud_key("Bearer test-key") is True
+    post_call = next(call for call in calls if call[0] == "POST")
+    assert post_call[2]["headers"]["Authorization"] == "Bearer test-key"
+    assert post_call[2]["json"]["model"] == "gpt-oss:20b"
+    assert post_call[2]["json"]["options"]["num_predict"] == 1
 
 
 def test_ollama_cloud_runtime_serializes_vision_images():
