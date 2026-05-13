@@ -333,6 +333,13 @@ def get_llm():
 _override_llm_cache: dict[tuple[str, int], object] = {}  # model → ChatOllama or ChatOpenAI
 
 
+def clear_llm_cache() -> None:
+    """Drop cached chat model clients so provider credential changes take effect."""
+    global _llm_instance
+    _llm_instance = None
+    _override_llm_cache.clear()
+
+
 def get_llm_for(model_name: str, num_ctx: int | None = None):
     """Return an LLM for a specific model (not the global singleton).
 
@@ -945,14 +952,26 @@ def validate_openrouter_key(api_key: str) -> bool:
 
 
 def validate_ollama_cloud_key(api_key: str) -> bool:
-    """Validate an Ollama Cloud API key by listing available models."""
+    """Validate an Ollama Cloud API key with a tiny authenticated chat probe."""
     import httpx
+    from providers.transports.ollama_cloud import normalize_ollama_cloud_api_key
+
+    clean_key = normalize_ollama_cloud_api_key(api_key)
+    if not clean_key:
+        return False
 
     try:
-        resp = httpx.get(
-            f"{OLLAMA_CLOUD_BASE_URL}/api/tags",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=10,
+        probe_model = "gpt-oss:20b"
+        resp = httpx.post(
+            f"{OLLAMA_CLOUD_BASE_URL}/api/chat",
+            headers={"Authorization": f"Bearer {clean_key}"},
+            json={
+                "model": probe_model,
+                "messages": [{"role": "user", "content": "ok"}],
+                "stream": False,
+                "options": {"num_predict": 1},
+            },
+            timeout=20,
         )
         if resp.status_code == 200:
             return True
@@ -1101,11 +1120,14 @@ def _fetch_ollama_cloud_models(api_key: str) -> int:
     import httpx
     from providers.capabilities import model_supports_surface
     from providers.catalog import model_info_from_metadata, model_info_to_cache_entry
+    from providers.transports.ollama_cloud import normalize_ollama_cloud_api_key
+
+    clean_key = normalize_ollama_cloud_api_key(api_key)
 
     try:
         resp = httpx.get(
             f"{OLLAMA_CLOUD_BASE_URL}/api/tags",
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers={"Authorization": f"Bearer {clean_key}"} if clean_key else {},
             timeout=15,
         )
         resp.raise_for_status()

@@ -113,7 +113,7 @@ for f in "$PROJECT_DIR"/*.py; do
 done
 cp "$PROJECT_DIR/requirements.txt" "$APP_SRC/"
 
-for pkg in tools channels bundled_skills tool_guides ui plugins designer scripts utils providers mcp_client migration buddy; do
+for pkg in tools channels bundled_skills tool_guides ui plugins designer developer scripts utils providers mcp_client migration buddy; do
     if [ -d "$PROJECT_DIR/$pkg" ]; then
         rsync -a \
               --exclude='__pycache__' --exclude='*.pyc' \

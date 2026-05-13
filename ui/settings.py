@@ -113,6 +113,14 @@ def open_settings(
         from agent import clear_agent_cache as _cac
         _cac()
 
+    def clear_provider_runtime_cache():
+        clear_agent_cache()
+        try:
+            from models import clear_llm_cache
+            clear_llm_cache()
+        except Exception:
+            logger.debug("Could not clear cached LLM clients", exc_info=True)
+
     _model_tab_sync = {"callback": None}
 
     def _secret_status_text(env_var: str) -> str:
@@ -266,7 +274,7 @@ def open_settings(
 
     def _clear_secret(env_var: str, display: str, refresh: Callable[[], None] | None = None) -> None:
         delete_key(env_var)
-        clear_agent_cache()
+        clear_provider_runtime_cache()
         if refresh:
             refresh()
         provider_id = _PROVIDER_BY_SECRET_ENV.get(env_var)
@@ -1645,6 +1653,7 @@ def open_settings(
                 if not val:
                     return
                 set_key("OPENAI_API_KEY", val)
+                clear_provider_runtime_cache()
                 oai_input.value = ""
                 oai_input.update()
                 oai_refresh()
@@ -1662,11 +1671,14 @@ def open_settings(
                 val = _secret_value_or_notify(ollama_cloud_input.value, "Ollama Cloud key")
                 if not val:
                     return
+                from providers.transports.ollama_cloud import normalize_ollama_cloud_api_key
+                val = normalize_ollama_cloud_api_key(val)
                 valid = await run.io_bound(validate_ollama_cloud_key, val)
                 if not valid:
                     ui.notify("Invalid Ollama Cloud API key", type="negative")
                     return
                 set_key("OLLAMA_API_KEY", val)
+                clear_provider_runtime_cache()
                 ollama_cloud_input.value = ""
                 ollama_cloud_input.update()
                 ollama_cloud_refresh()
@@ -1689,6 +1701,7 @@ def open_settings(
                     ui.notify("❌ Invalid OpenRouter API key", type="negative")
                     return
                 set_key("OPENROUTER_API_KEY", val)
+                clear_provider_runtime_cache()
                 or_input.value = ""
                 or_input.update()
                 or_refresh()
@@ -1711,6 +1724,7 @@ def open_settings(
                     ui.notify("❌ Invalid Anthropic API key", type="negative")
                     return
                 set_key("ANTHROPIC_API_KEY", val)
+                clear_provider_runtime_cache()
                 anth_input.value = ""
                 anth_input.update()
                 anth_refresh()
@@ -1733,6 +1747,7 @@ def open_settings(
                     ui.notify("❌ Invalid Google AI API key", type="negative")
                     return
                 set_key("GOOGLE_API_KEY", val)
+                clear_provider_runtime_cache()
                 goog_input.value = ""
                 goog_input.update()
                 goog_refresh()
@@ -1756,6 +1771,7 @@ def open_settings(
                               "Models will appear if the key is valid.",
                               type="warning", timeout=5000)
                 set_key("XAI_API_KEY", val)
+                clear_provider_runtime_cache()
                 xai_input.value = ""
                 xai_input.update()
                 xai_refresh()
@@ -1779,6 +1795,7 @@ def open_settings(
                               "Models will appear if the key is valid.",
                               type="warning", timeout=5000)
                 set_key("MINIMAX_API_KEY", val)
+                clear_provider_runtime_cache()
                 minimax_input.value = ""
                 minimax_input.update()
                 minimax_refresh()

@@ -319,8 +319,8 @@ def test_release_workflows_reference_linux_artifact():
     assert "Thoth-*-Linux-*.tar.gz" in manifest
     assert "curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash" in installer_docs
     assert "published GitHub Release assets" in installer_docs
-    assert "bash installer/build_linux_app.sh 3.21.0" in installer_docs
-    assert "bash build_linux_app.sh 3.21.0" in installer_docs
+    assert "bash installer/build_linux_app.sh 3.22.0" in installer_docs
+    assert "bash build_linux_app.sh 3.22.0" in installer_docs
 
 
 def test_packagers_exclude_tests_directory():

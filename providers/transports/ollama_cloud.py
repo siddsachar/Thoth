@@ -13,6 +13,33 @@ from langchain_core.runnables import Runnable
 OLLAMA_CLOUD_BASE_URL = "https://ollama.com"
 
 
+def normalize_ollama_cloud_api_key(api_key: str | None) -> str:
+    """Return a bare Ollama Cloud API key suitable for a Bearer header."""
+    value = str(api_key or "").strip().strip('"').strip("'")
+    lower = value.lower()
+    if lower.startswith("bearer "):
+        value = value[7:].strip()
+    return value
+
+
+def normalize_ollama_cloud_model_name(model_name: str | None) -> str:
+    """Return the direct Ollama Cloud API model name.
+
+    The local Ollama daemon uses tags such as ``gpt-oss:120b-cloud`` for
+    cloud offload. The native ``https://ollama.com/api/chat`` endpoint uses
+    the corresponding direct model name without the ``-cloud`` suffix.
+    """
+    value = str(model_name or "").strip()
+    if ":" not in value:
+        return value
+    family, tag = value.rsplit(":", 1)
+    if tag.lower() == "cloud":
+        return family
+    if tag.lower().endswith("-cloud"):
+        return f"{family}:{tag[:-6]}"
+    return value
+
+
 class ChatOllamaCloud(BaseChatModel):
     """LangChain chat model backed by Ollama Cloud's native chat API."""
 
@@ -79,13 +106,14 @@ class ChatOllamaCloud(BaseChatModel):
         yield ChatGenerationChunk(message=AIMessageChunk(content="", chunk_position="last"))
 
     def _request_body(self, messages: list[BaseMessage], *, stream: bool, **kwargs: Any) -> dict[str, Any]:
+        accepts_tools = _model_accepts_tools(self.model_name)
         body: dict[str, Any] = {
-            "model": self.model_name,
-            "messages": [_ollama_message(message) for message in messages],
+            "model": normalize_ollama_cloud_model_name(self.model_name),
+            "messages": [_ollama_message(message, include_tool_fields=accepts_tools) for message in messages],
             "stream": stream,
         }
         tools = kwargs.get("tools") or []
-        if tools:
+        if tools and accepts_tools:
             body["tools"] = [_ollama_tool(tool) for tool in tools]
             tool_choice = kwargs.get("tool_choice")
             if tool_choice and tool_choice != "auto":
@@ -142,8 +170,9 @@ class ChatOllamaCloud(BaseChatModel):
                 client.close()
 
     def _headers(self) -> dict[str, str]:
+        api_key = normalize_ollama_cloud_api_key(self.api_key)
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
@@ -162,10 +191,55 @@ def _chat_url(base_url: str) -> str:
 def _raise_for_status(response: Any) -> None:
     status_code = int(getattr(response, "status_code", 0) or 0)
     if status_code < 200 or status_code >= 300:
+        if status_code == 401:
+            raise RuntimeError(
+                "Ollama Cloud rejected the API key (HTTP 401). "
+                "Update the Ollama Cloud API key in Settings -> Providers."
+            )
+        if status_code == 403:
+            detail = _safe_response_text(response)
+            suffix = f" Details: {detail}" if detail else ""
+            raise RuntimeError(
+                "Ollama Cloud refused this request (HTTP 403). "
+                "The API key is being sent, but this account may not have access to the selected model "
+                "or direct Ollama Cloud API usage. Try a different Ollama Cloud direct model, check the "
+                "Ollama account/API key, or use local Ollama :cloud models through the signed-in Ollama daemon."
+                f"{suffix}"
+            )
+        if status_code >= 500:
+            detail = _safe_response_text(response)
+            suffix = f" Details: {detail}" if detail else ""
+            raise RuntimeError(
+                f"Ollama Cloud returned a server error (HTTP {status_code}). "
+                "The key was accepted, but the selected model or request shape failed upstream. "
+                "Try a documented direct Ollama Cloud model such as gpt-oss:20b, or use local Ollama "
+                ":cloud models through the signed-in Ollama daemon."
+                f"{suffix}"
+            )
+        if status_code == 400:
+            detail = _safe_response_text(response)
+            suffix = f" Details: {detail}" if detail else ""
+            raise RuntimeError(
+                "Ollama Cloud rejected the chat request (HTTP 400). "
+                "The selected model may not accept this message/tool payload. "
+                "Try a simple chat with a direct Ollama Cloud model such as gpt-oss:20b, "
+                "or use local Ollama :cloud models through the signed-in Ollama daemon."
+                f"{suffix}"
+            )
         raise RuntimeError(f"Ollama Cloud request failed with HTTP {status_code}: {_safe_response_text(response)}")
 
 
 def _safe_response_text(response: Any) -> str:
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            for key in ("error", "message", "detail"):
+                value = payload.get(key)
+                if value:
+                    return str(value)[:300]
+            return str(payload)[:300]
+    except Exception:
+        pass
     try:
         return str(getattr(response, "text", "") or "")[:300]
     except Exception:
@@ -214,7 +288,7 @@ def _message_images(message: BaseMessage) -> list[str]:
     return images
 
 
-def _ollama_message(message: BaseMessage) -> dict[str, Any]:
+def _ollama_message(message: BaseMessage, *, include_tool_fields: bool = True) -> dict[str, Any]:
     role = "user"
     if isinstance(message, SystemMessage):
         role = "system"
@@ -224,23 +298,30 @@ def _ollama_message(message: BaseMessage) -> dict[str, Any]:
         role = "tool"
     elif isinstance(message, HumanMessage):
         role = "user"
-    payload: dict[str, Any] = {"role": role, "content": _message_text(message)}
+    content = _message_text(message)
+    if not include_tool_fields and isinstance(message, ToolMessage):
+        name = str(getattr(message, "name", "") or getattr(message, "tool_call_id", "") or "tool")
+        payload = {"role": "user", "content": f"[Tool result from {name}]: {content}"}
+        return payload
+    payload: dict[str, Any] = {"role": role, "content": content}
     images = _message_images(message)
     if images:
         payload["images"] = images
-    if isinstance(message, AIMessage) and getattr(message, "tool_calls", None):
+    if include_tool_fields and isinstance(message, AIMessage) and getattr(message, "tool_calls", None):
         payload["tool_calls"] = [
             {
+                "type": "function",
                 "function": {
+                    "index": index,
                     "name": call.get("name") or "",
                     "arguments": call.get("args") or {},
                 }
             }
-            for call in message.tool_calls
+            for index, call in enumerate(message.tool_calls)
             if isinstance(call, dict)
         ]
-    if isinstance(message, ToolMessage):
-        payload["tool_call_id"] = getattr(message, "tool_call_id", "")
+    if include_tool_fields and isinstance(message, ToolMessage):
+        payload["tool_name"] = str(getattr(message, "name", "") or getattr(message, "tool_call_id", "") or "")
     return payload
 
 
@@ -269,6 +350,16 @@ def _ollama_tool(tool: dict[str, Any] | type | Any) -> dict[str, Any]:
             "parameters": parameters,
         },
     }
+
+
+def _model_accepts_tools(model_name: str) -> bool:
+    normalized = normalize_ollama_cloud_model_name(model_name)
+    try:
+        from providers.ollama import is_ollama_tool_capable
+
+        return is_ollama_tool_capable(normalized)
+    except Exception:
+        return False
 
 
 def _tool_calls_from_ollama(calls: list[Any]) -> list[dict[str, Any]]:

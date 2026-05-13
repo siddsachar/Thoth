@@ -20,7 +20,7 @@ manifest, and then runs the tarball's bundled `install.sh`. For a pinned
 version, pass it as an argument:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.21.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.22.0
 ```
 
 The bootstrapper installs published GitHub Release assets. It is not a way to
@@ -33,23 +33,23 @@ tarball instead of a native app bundle:
 
 ```bash
 ./installer/build_linux_app.sh
-./installer/build_linux_app.sh 3.21.0
+./installer/build_linux_app.sh 3.22.0
 ```
 
 From a source checkout, this root-level wrapper is also supported for support
 snippets and maintainer hotfixes:
 
 ```bash
-bash build_linux_app.sh 3.21.0
+bash build_linux_app.sh 3.22.0
 ```
 
 To test an unreleased Linux fix locally, build the tarball from the checkout and
 install the tarball it produced:
 
 ```bash
-bash installer/build_linux_app.sh 3.21.0
-tar -xzf dist/Thoth-3.21.0-Linux-*.tar.gz
-cd Thoth-3.21.0-Linux-*
+bash installer/build_linux_app.sh 3.22.0
+tar -xzf dist/Thoth-3.22.0-Linux-*.tar.gz
+cd Thoth-3.22.0-Linux-*
 ./install.sh
 ~/.local/bin/thoth
 ```
@@ -108,7 +108,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 | Bundled in .exe | Downloaded or created outside install |
 |----------------|--------------------------------------|
 | Python 3.13 embeddable runtime | Ollama installer is optional for local models |
-| App source code, tools, providers, plugins, MCP client, migration wizard, UI, Designer, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use |
+| App source code, tools, providers, plugins, MCP client, migration wizard, UI, Designer, Developer Studio, bundled skills/tool guides, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use |
 | Python packages from `requirements.txt` | Playwright Chromium is bundled during build when available, otherwise installed on first browser use |
 
 ## Prerequisites
@@ -132,7 +132,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 This will:
 1. Download Python 3.13 embeddable package (~15 MB)
 2. Download `get-pip.py` (~2.5 MB)
-3. Compile everything into `dist\ThothSetup_3.21.0.exe`
+3. Compile everything into `dist\ThothSetup_3.22.0.exe`
 
 ### Options
 
@@ -195,16 +195,20 @@ C:\Program Files\Thoth\            # Installation directory
     ├── requirements.txt
     ├── thoth.ico
     ├── static/                     # Vendored JS libraries, fonts, and Designer runtime assets
-    ├── tools/                      # 30 core tool modules
+    ├── tools/                      # Core tool modules, Developer tool, and Custom Tool builder
     │   ├── __init__.py
     │   ├── base.py
     │   ├── registry.py
     │   ├── web_search_tool.py
     │   ├── ...
     │   └── youtube_tool.py
-    ├── providers/                  # Provider config, auth metadata, catalog, runtime, Quick Choices
+    ├── providers/                  # Provider config, auth metadata, catalog cache, runtime, Quick Choices
     ├── mcp_client/                 # External MCP server client/runtime
     ├── migration/                  # Hermes/OpenClaw migration wizard backend
+    ├── developer/                  # Developer Studio, Git helpers, Docker sandbox, Custom Tools
+    ├── designer/                   # Designer Studio projects, editor, exports, and publishing
+    ├── bundled_skills/             # Built-in manual skills
+    ├── tool_guides/                # Auto-activation tool guides
     └── plugins/                    # Plugin system & marketplace
         ├── __init__.py
         ├── api.py
@@ -228,6 +232,8 @@ C:\Program Files\Thoth\            # Installation directory
 ├── api_keys.json                   # API key metadata only; raw keys use the OS credential store when available
 ├── plugin_secrets.json             # Plugin API-key metadata only; raw keys use the OS credential store when available
 ├── providers.json                  # Provider metadata, status, Quick Choices, and masked fingerprints
+├── model_catalog_cache.json         # Cached provider/Ollama model catalog rows
+├── embedding_config.json            # Selected local/cloud embedding provider
 ├── cloud_config.json               # Legacy cloud model favorites/settings compatibility
 ├── app_config.json                 # Onboarding / first-run state
 ├── tools_config.json               # Tool enable/disable state
@@ -238,12 +244,15 @@ C:\Program Files\Thoth\            # Installation directory
 ├── processed_files.json            # Tracked indexed documents
 ├── tasks.db                        # Task definitions, schedules, run history & delivery config
 ├── channels_config.json            # Channel settings
+├── channel_secrets.json             # Channel credential metadata only; raw secrets use OS keyring when available
 ├── plugin_state.json               # Installed plugin state & settings
 ├── shell_history.json              # Shell command history per thread
 ├── skills_config.json              # Skill enable/disable state
 ├── user_config.json                # Avatar emoji & ring color preferences
 ├── thoth_app.log                   # Application log
+├── developer/                       # Developer workspace links, Custom Tools, drafts, sandboxes
 ├── vector_store/                   # FAISS index for uploaded documents
+│   └── embedding_metadata.json      # Vector-index embedding provider metadata
 ├── gmail/                          # Gmail OAuth tokens
 ├── calendar/                       # Calendar OAuth tokens
 ├── browser_profile/                # Playwright persistent browser profile
@@ -267,8 +276,8 @@ On repair/upgrade, Inno Setup deletes `{app}\python` before extraction. User dat
 
 ## End-User Experience
 
-1. Run `ThothSetup_3.21.0.exe`
-2. Follow the wizard — dependencies download and install automatically (5-15 min)
+1. Run `ThothSetup_3.22.0.exe`
+2. Follow the wizard — the app payload is already bundled; optional model/runtime assets download only when a feature needs them
 3. Launch Thoth from Start Menu or Desktop shortcut
 4. The system tray icon appears; the app opens on the first available local port, normally `http://localhost:8080`
 5. First launch shows a setup wizard — choose **Local** (download an Ollama model), **Providers** (enter an API key and pick a provider model), or **Custom/Self-hosted** (enter an OpenAI-compatible endpoint such as LM Studio, fetch models, and pick a default)
@@ -276,7 +285,8 @@ On repair/upgrade, Inno Setup deletes `{app}\python` before extraction. User dat
 ## Notes
 
 - **CPU-only PyTorch**: `requirements.txt` uses CPU-only torch. Users with NVIDIA GPUs can upgrade to CUDA torch after install.
-- **Ollama is optional**: `install_deps.bat` offers to install Ollama, but it can be skipped for provider-only setups. Thoth works with API-key provider models (OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter) and ChatGPT / Codex subscription models after in-app ChatGPT sign-in. Installed local Ollama chat models appear in Settings -> Models even when their family is newer than Thoth's curated capability lists; Vision stays conservative and requires known Vision metadata/families.
+- **Ollama is optional**: Thoth works with API-key provider models (OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, and Ollama Cloud) and ChatGPT / Codex subscription models after in-app ChatGPT sign-in. Installed local Ollama chat models appear in Settings -> Models even when their family is newer than Thoth's curated capability lists; Vision stays conservative and requires known Vision metadata/families.
+- **Developer Studio**: the packaged app includes the Developer workspace UI, repo-scoped tools, Git helpers, optional Docker shadow sandbox, and Custom Tool builder. Docker and GitHub CLI are optional external tools; when missing, the UI reports clear setup guidance instead of blocking normal chat.
 - **Model picker behavior**: Settings -> Models pickers show pinned catalog Quick Choices plus the current default. Pin Brain or Vision catalog rows before expecting them in the everyday pickers; ChatGPT / Codex Vision pins keep their provider-specific image-input capability metadata during refresh.
 - **Custom/self-hosted endpoints**: first-run setup can connect to OpenAI-compatible endpoints such as LM Studio, vLLM, LocalAI, or private gateways. LM Studio's local server commonly uses `http://127.0.0.1:1234/v1`; load the selected model with a larger context window, such as `32768`, so Thoth's agent prompt and enabled tools fit.
 - **Codex credential boundary**: external Codex CLI auth files are metadata/reference only. Direct ChatGPT / Codex runtime in the packaged app requires the in-app ChatGPT sign-in and stores Thoth-owned tokens in the OS credential store.

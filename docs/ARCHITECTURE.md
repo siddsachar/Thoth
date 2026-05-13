@@ -13,12 +13,15 @@
 - [Dream Cycle](#dream-cycle)
 - [Document Knowledge Extraction](#document-knowledge-extraction)
 - [Brain Model & Providers](#brain-model--providers)
+- [Embeddings & Vector Indexing](#embeddings--vector-indexing)
 - [Voice Input & Text-to-Speech](#voice-input--text-to-speech)
 - [Shell Access](#shell-access)
 - [Browser Automation](#browser-automation)
 - [Vision](#vision)
 - [Workflows & Scheduling](#workflows--scheduling)
 - [Designer Studio](#designer-studio)
+- [Developer Studio](#developer-studio)
+- [Custom Tools](#custom-tools)
 - [Thoth Status & Identity](#thoth-status--identity)
 - [Self-Knowledge & Insights](#self-knowledge--insights)
 - [Messaging Channels](#messaging-channels)
@@ -35,6 +38,7 @@
 - [Desktop App](#desktop-app)
 - [Chat & Conversations](#chat--conversations)
 - [Notifications](#notifications)
+- [Stability & Diagnostics](#stability--diagnostics)
 - [Bundled Skills](#bundled-skills)
 - [Core Modules](#core-modules)
 - [Data Storage](#data-storage)
@@ -45,16 +49,17 @@
 ## ReAct Agent Architecture
 
 - **Autonomous tool use** — the agent decides which tools to call, when, and how many times, based on your question
-- **30 core tools plus auto-generated channel tools** — web search, email, calendar, file management, shell access, browser automation, vision, image generation, video generation, X (Twitter), a personal knowledge graph, Designer Studio, scheduled workflows, habit tracking, Thoth Status self-inspection, external MCP tools, and more
+- **30+ core tools plus Developer, Custom Tool, and auto-generated channel tools** — web search, email, calendar, file management, shell access, browser automation, vision, image generation, video generation, X (Twitter), a personal knowledge graph, Designer Studio, Developer Studio, Custom Tool Builder, scheduled workflows, habit tracking, Thoth Status self-inspection, external MCP tools, and more
 - **Streaming responses** — tokens stream in real-time with a typing indicator
 - **Thinking indicators** — shows when the model is reasoning before responding
 - **Smart context management** — automatic conversation summarization compresses older turns when token usage exceeds 80% of the context window, preserving the 5 most recent turns and a running summary; a hard trim at 85% drops oldest messages as a safety net; oversized tool outputs are proportionally shrunk so multi-tool chains fit within context; accurate token counting via tiktoken (cl100k_base)
 - **Dynamic tool budgets** — the agent automatically adjusts how many tools are exposed to the model based on available context headroom; when context usage is high, lower-priority tools are temporarily hidden to prevent the system prompt from crowding out conversation history
 - **Centralized prompts plus self-knowledge injection** — base prompt templates live in `prompts.py`, while `self_knowledge.py` injects a dynamic identity line, capability manifest, and live runtime state so Thoth can describe itself accurately without stale hard-coded copy
 - **Live token counter** — progress bar in the sidebar shows real-time context window usage based on trimmed (model-visible) history
-- **Graceful stop & error recovery** — stop button cleanly halts generation with drain timeout; agent tool loops are caught automatically (50-step limit for chat, 100 for workflows) with a wind-down warning at 75%; orphaned tool calls are repaired; API errors are surfaced as persistent red toasts and saved to the conversation checkpoint so they survive thread refresh
+- **Graceful stop & error recovery** — stop button cleanly halts generation with drain timeout; agent tool loops are caught automatically with mode-aware budgets (normal chat, workflows, and long Developer turns have separate limits) and wind-down prompts; orphaned tool calls are repaired; API errors are surfaced as persistent red toasts and saved to the conversation checkpoint so they survive thread refresh
 - **Workflow cancellation** — running background workflows can be stopped from the chat header, activity panel, or workflow card; cancellation is checked between every LangGraph node for clean shutdown
 - **Displaced tool-call auto-repair** — if context trimming displaces tool-call/response pairs, the agent automatically detects and repairs the ordering before the next LLM call; orphaned tool calls trigger an automatic retry
+- **Grouped tool traces** — repeated tool calls of the same type are grouped into expandable transcript entries, keeping long research, browser, and Developer runs readable while preserving individual results
 - **Date/time awareness** — current date and time is injected into every LLM call so the model always knows "today"
 - **Destructive action confirmation** — dangerous operations (file deletion, sending emails, deleting calendar events, deleting memories, deleting workflows, selected settings changes) require explicit user approval via an interrupt mechanism
 - **Workflow-scoped background permissions** — background workflows use a tiered system: safe operations always run, low-risk operations (move file, move calendar, send email) are allowed with optional runtime guards, and irreversible operations (delete file, delete memory) are always blocked; shell commands and email recipients can be allowlisted per-workflow via the editor UI
@@ -78,7 +83,7 @@ Thoth doesn't just store isolated facts — it builds a **personal knowledge gra
 - **Relation pre-normalization** — alias forms are canonicalized before ban, confidence, and dedup checks
 - **67 valid relation types** — curated vocabulary with 60+ alias mappings plus document-specific relations like `extracted_from`, `uploaded`, `builds_on`, `cites`, `extends`, and `contradicts`
 - **Source tracking** — each entity is tagged with its origin (`live`, `extraction`, `dream_*`, or document-derived) for diagnostics
-- **Semantic recall** — FAISS vector index with Qwen3-Embedding-0.6B for similarity-based memory retrieval
+- **Semantic recall** — FAISS vector index backed by the configured embedding provider for similarity-based memory retrieval
 - **Memory IDs in context** — auto-recalled memories include their IDs so the agent can update or delete specific entries when the user corrects previously saved information
 - **Consolidation utilities** — built-in duplicate consolidation merges near-duplicate memories that may accumulate over time
 - **Local SQLite + NetworkX + FAISS storage** — entities and relations live in `~/.thoth/memory.db`, mirrored in a NetworkX graph for traversal, with FAISS vectors in `~/.thoth/memory_vectors/`
@@ -118,7 +123,7 @@ A 5-phase background daemon refines the knowledge graph during idle hours and en
 - **Dream journal** — all operations logged to `~/.thoth/dream_journal.json` with cycle ID, summary, duration, merges, enrichments, inferences, insights, and errors
 - **Post-cycle rebuilds** — FAISS is rebuilt after the cycle, and the wiki vault is regenerated when enabled so downstream views stay in sync
 - **Manual trigger** — a dedicated Dream button in the Knowledge surface can start the cycle immediately
-- **Settings UI** — enable/disable toggle, quiet window controls, and last-run summary in the Knowledge tab
+- **Settings UI** — enable/disable toggle, quiet window controls, and last-run summary in the Preferences tab
 
 ---
 
@@ -147,9 +152,9 @@ The brain model is Thoth's default LLM — the model used for conversations, mem
 
 Thoth is built and tested for local models first. Every feature supports local models, and that remains the priority. Local models already handle tool calling, multi-step reasoning, memory extraction, and long conversations well with a 14B+ model.
 
-Provider models are supported for users without a dedicated GPU, for frontier reasoning on demand, or for trying many providers without downloading large local weights. Thoth supports opt-in provider models through **OpenAI** (direct API), **Anthropic** (Claude), **Google AI** (Gemini), **xAI** (Grok), **MiniMax** (M2 models through the Anthropic-compatible API), **OpenRouter** (many third-party models), **ChatGPT / Codex** (subscription-backed Codex models), and Custom/Self-hosted OpenAI-compatible endpoints such as LM Studio, vLLM, LocalAI, or private gateways. Provider connections, health, and credential sources are configured from Settings -> Providers; model catalog browsing, pinning, and defaults live in Settings -> Models.
+Provider models are supported for users without a dedicated GPU, for frontier reasoning on demand, or for trying many providers without downloading large local weights. Thoth supports opt-in provider models through **OpenAI** (direct API), **Anthropic** (Claude), **Google AI** (Gemini), **xAI** (Grok), **MiniMax** (M2 models through the Anthropic-compatible API), **OpenRouter** (many third-party models), **Ollama Cloud** (direct API and local daemon cloud-tagged models), **ChatGPT / Codex** (subscription-backed Codex models), and Custom/Self-hosted OpenAI-compatible endpoints such as LM Studio, vLLM, LocalAI, or private gateways. Provider connections, health, and credential sources are configured from Settings -> Providers; model catalog browsing, pinning, and defaults live in Settings -> Models.
 
-The `providers/` subsystem now owns provider config, auth metadata, model catalog normalization, runtime construction, display-safe status, and Quick Choices. Existing public functions in `models.py` remain as compatibility facades while provider-backed selection is rolled through the app. Settings -> Models pickers are intentionally Quick Choice surfaces: catalog rows must be pinned before they become everyday Brain, Vision, Image, or Video choices, while the current default can still appear as a fallback value.
+The `providers/` subsystem now owns provider config, auth metadata, model catalog normalization, runtime construction, display-safe status, and Quick Choices. Existing public functions in `models.py` remain as compatibility facades while provider-backed selection is rolled through the app. Settings -> Models pickers are intentionally Quick Choice surfaces: catalog rows must be pinned before they become everyday Brain, Vision, Image, or Video choices, while the current default can still appear as a fallback value. `providers/model_catalog_cache.py` refreshes provider and Ollama catalog rows in the background so Settings can render from cache without blocking on large remote catalogs.
 
 ChatGPT / Codex is deliberately modeled as a subscription provider, not as another OpenAI API-key route. Direct Codex runtime requires Thoth's in-app ChatGPT device-flow sign-in so Thoth stores its own runnable OAuth tokens in the local OS credential store. Existing Codex CLI auth files can be referenced only as display-safe metadata: Thoth records that the external login exists, path/fingerprint metadata, and broad auth-file shape, but it does not copy runnable tokens from `~/.codex/auth.json`.
 
@@ -160,11 +165,26 @@ Codex runtime uses ChatGPT's subscription/internal Codex backend rather than the
 - **Quick Choices** — models pinned from the consolidated Models catalog appear in chat, workflow, channel, Designer, status-tool, and Vision pickers when their capability snapshot supports that surface
 - **Cost-efficient context management** — smart context trimming compresses older conversation turns and shrinks oversized tool outputs, reducing token usage and API costs for provider models
 - **Local catalog accuracy** — installed Ollama chat models remain visible even when their family is newer than Thoth's curated tool/vision heuristics, while embedding-like local models are kept out of chat choices and Vision support is only inferred from known metadata/families
+- **Ollama Cloud paths** — direct Ollama Cloud API keys and local daemon `:cloud` models are represented separately while sharing catalog normalization and display metadata; direct API errors are normalized into user-facing provider messages
 - **Tool-support validation** — unsupported local models are warned about and can be auto-reverted if they fail a live tool-call check
 - **Download buttons** — local models not yet present show download actions with progress
 - **Configurable context window** — local and provider context caps can be set independently; actual model limits are still respected
 - **Local & provider indicators** — the UI clearly distinguishes downloaded local models, missing local models, and connected provider models
 - **Provider vision detection** — provider models with image capability are detected and reused by the Vision feature when available
+
+---
+
+## Embeddings & Vector Indexing
+
+Embeddings are configured separately from chat models so users can choose the privacy/performance tradeoff that fits document search, memory recall, and knowledge graph rebuilds.
+
+- **`embedding_config.py`** — persists the selected embedding provider, model, dimension metadata, and privacy-related settings
+- **`embedding_providers.py`** — normalizes local and cloud embedding backends behind one interface used by document search, memory recall, and graph/vector rebuilds
+- **Local choices** — local embeddings keep vectorization on-device, with Qwen as the high-quality fallback and additional runtime-downloaded options such as Nomic and Mixedbread/MXBAI-style models
+- **Cloud option** — cloud embeddings can be enabled explicitly in Settings and show privacy copy because document or memory text is sent to the chosen embedding provider
+- **Stale-index detection** — vector stores record embedding provider and dimension metadata so Thoth can detect when a document or memory index was built with a different embedding configuration
+- **Memory release** — heavy document and extraction jobs release cached embedding resources after use to reduce long-session RSS growth
+- **Settings integration** — embedding provider controls live in the model/settings surfaces without overloading the chat model picker
 
 ---
 
@@ -234,7 +254,7 @@ Tasks have been renamed to **Workflows** throughout the application. The workflo
 - **Template variables** — prompts can use `{{date}}`, `{{day}}`, `{{time}}`, `{{month}}`, `{{year}}`, `{{task_id}}`, and `{{step.X.output}}`
 - **Per-workflow model override** — each workflow can force a different model, then restore the default after completion
 - **Skills and tools overrides** — workflows can narrow the skill set globally and the tool set per step
-- **Channel delivery** — workflow output can be delivered to any registered channel via `delivery_channel` and `delivery_target`
+- **Channel delivery** — workflow output can inherit the workflow-level default delivery channels or use a per-workflow override via `delivery_channel` and `delivery_target`; web-app run status is always preserved
 - **Persistent threads** — workflows can reuse the same thread across runs to preserve context
 - **Notify-only mode** — workflows can skip agent execution and just send notifications
 - **Webhook triggers** — workflows can be launched by HTTP webhook with per-workflow secrets
@@ -257,6 +277,7 @@ Tasks have been renamed to **Workflows** throughout the application. The workflo
 - **Variable insertion menu** — context variables and prior-step outputs can be inserted without hand typing placeholders
 - **Flow preview** — Mermaid diagram generated from the step graph with manual refresh
 - **Validation** — required-field checks, reference validation, and operator-specific rules run before save
+- **Delivery defaults UI** — the Workflows panel exposes a compact default-delivery selector; workflows tied to default update when the global default changes, while explicit overrides remain untouched
 
 ### Approval System
 
@@ -268,6 +289,7 @@ Tasks have been renamed to **Workflows** throughout the application. The workflo
 ### Workflow Console
 
 - **Right-side console** — `ui/command_center.py` exposes running work, approvals, upcoming runs, quick launch actions, recent history, and insights in one drawer
+- **Collapsible layout** — console expansion state persists in browser and pywebview; collapsed state shows compact running/approval/insight badges and attention styling when an approval is waiting
 - **Live operational view** — running workflows, background states, and recent outcomes stay visible while you continue chatting elsewhere in the app
 - **Insight actions** — insight cards support pin, dismiss, and apply actions directly from the console
 - **Journal access** — extraction and dream journals are accessible from the same workflow-centric monitoring surfaces
@@ -275,7 +297,7 @@ Tasks have been renamed to **Workflows** throughout the application. The workflo
 ### Existing Features
 
 - **Always-background execution** — workflows run without blocking the main chat UI
-- **Pre-built templates** — ships with starter workflows like daily briefings, research summaries, and reminders
+- **Pre-built templates** — seeds five disabled starter workflows across simple and advanced examples; nothing is scheduled or run until the user enables it
 - **Home screen dashboard** — Workflows and Activity tabs show tiles, upcoming runs, run history, channel status, pending approvals, extraction journal, and dream journal
 - **Persistent run history** — execution history survives workflow deletion for auditability
 - **Monitoring / polling** — interval schedules plus condition steps support ongoing monitors like price checks or release watchers
@@ -347,6 +369,81 @@ Interactive modes (`landing`, `app_mockup`, `storyboard`) do **not** allow free-
 
 ---
 
+## Developer Studio
+
+Developer Studio is Thoth's code-workspace subsystem. It is not a full IDE; it is a Codex-style agent workbench for connecting local Git repositories, reviewing code, making scoped edits, running tests, preparing branches/commits/PRs, and keeping the user in control through approval modes and an inspector.
+
+### Workspace Model
+
+- **`developer/` package** — owns workspace storage, Git helpers, runtime profiles, approval policy, sandbox state, tool context, todos, change ledger, inspector snapshots, GitHub helpers, and UI
+- **Explicit repo linking** — users open an existing local repo or clone into a folder they choose. Thoth stores a workspace link and metadata, not a copy of the repo in app data
+- **Code threads** — Developer conversations are tagged as code threads and reopen directly into Developer Studio with the associated workspace context
+- **Workspace context injection** — Developer turns receive compact hidden context with repo path, branch, dirty state, remote URL, top-level files, approval mode, execution mode, shell guidance, and sandbox state
+- **No user-message leakage** — Developer context is injected as model context and is not rendered as part of the visible user message
+
+### Approval Modes & Tooling
+
+- **Mode-specific policy** — read-only, ask-before-changes, auto-edit, and agent-run modes control file writes, shell commands, Git operations, commits, pushes, and PR preparation
+- **Native Developer tools** — `tools/developer_tool.py` exposes workspace-scoped operations for repo info, file listing, reads, search, git status, diffs, todos, detected tests, shell commands, patch preview/apply, file writes, branch create/switch, commit, push, fast-forward merge, sandbox imports, and safe revert of agent-owned changes
+- **Shell remains available** — Developer-native tools are preferred for repo work, but shell is still available for legitimate project commands and follows Developer approval policy
+- **Long coding budget** — Developer turns have a larger recursion/step budget than normal chat, with wind-down prompts that checkpoint progress before a generic recursion failure
+- **Tool guide and skills** — the Developer tool guide plus Developer coding/review/PR/custom-tool skills are injected for Developer context without bloating normal chat by default
+
+### Inspector & Live State
+
+- **Developer Inspector** — the right-side inspector shows Overview, Safety Policy, Sandbox, Todos, Changes, Files, Agent Changes, Tests, and GitHub/PR sections
+- **Debounced snapshots** — `developer/inspector_snapshot.py` builds lightweight snapshots that the UI can apply without fully rebuilding the chat transcript
+- **Resizable panel** — the inspector can be widened for diffs, files, and test output
+- **File tree** — Files render as a repo tree instead of a flat list, with generated/build/cache paths filtered out
+- **Change ledger** — `developer/change_ledger.py` tracks agent-owned edits, line counts, diffs, and revert eligibility
+- **Todo persistence** — `developer/todos.py` stores visible coding plans so long-running work can show current, pending, and completed steps
+
+### Docker Sandbox
+
+- **Execution modes** — Local runs commands in the selected repo folder; Docker Sandbox runs commands in an isolated shadow copy
+- **Persistent sandbox container** — `developer/sandbox_runtime.py` manages a per-workspace container and shadow workspace so repeated commands share sandbox state until rebuilt or cleaned
+- **Import-gated edits** — sandbox changes become pending patches and only modify the real repo after explicit import
+- **Network policy** — Docker Sandbox supports network off, ask, or on. Network/package-install attempts are blocked early when network is off and approval-gated when policy requires it
+- **Image selection** — workspaces can choose a Docker image; changing the image cleans the sandbox copy before the next Docker command
+- **Local fallback** — users who do not want Docker keep using local execution under the same Developer approval model
+- **Clear startup errors** — stopped Docker, missing local images, and Docker credential-helper problems are reported as actionable sandbox errors
+
+### GitHub & PR Flow
+
+- **GitHub CLI detection** — `developer/github.py` and `developer/executables.py` locate `gh` from common install paths, especially on Windows where PATH can differ between the app and a shell
+- **PR helpers** — branch, commit, push, and PR-prep tools are approval-gated and operate inside the selected workspace
+- **No hidden remotes** — cloning asks for an explicit destination, and push/PR operations are visible through the active approval mode
+
+---
+
+## Custom Tools
+
+Custom Tools let users convert a GitHub repo, local folder, or current Developer workspace into reusable Thoth tools without editing manifests by hand.
+
+### Product Surface
+
+- **Developer home surface** — Custom Tools live under Developer as a global area separate from workspaces, with cards for created tools, source, install path, command count, enablement, test output, and removal
+- **Wizard flow** — the guided flow is Source -> Inspect -> Test -> Enable. Users can review proposed commands, run a smoke test, then choose whether the tool is only available in Developer or promoted to normal chat
+- **Conversational builder** — `tools/custom_tool_builder_tool.py` exposes one compact agent-facing tool for clone/source setup, draft creation, command refinement, testing, creation, promotion, disable, and removal
+- **Settings integration** — the Custom Tool Builder appears as a Utilities toggle. Disabling it removes the builder from normal chat while keeping the Developer UI available for manual management
+
+### Command Generation & Validation
+
+- **`developer/tool_capsules.py`** — retained internal module name for compatibility; user-facing copy says Custom Tool
+- **LLM-assisted proposals** — a lightweight model pass inspects repo files and README content to propose useful, preferably read-only commands. Deterministic fallback remains available if AI analysis fails
+- **Draft management** — the builder stores draft IDs so users can review and refine proposed commands across turns before creating the tool
+- **Command classification** — commands are tagged by locality/risk and validated for dangerous shell patterns, unreviewed network behavior, write operations, missing placeholders, and malformed command templates
+- **One-time tests** — local/read-only tests can run directly; network or riskier tests route through the normal approval mechanism
+- **Promotion** — promoted Custom Tools register as synthetic plugin-style tools, inherit normal tool enablement, and can be disabled or removed without deleting the source repo
+
+### Trust Boundaries
+
+- **Source transparency** — cards show source URL, local install path, version, command count, and availability
+- **No automatic broad enablement** — generated tools are opt-in and are not silently made available to normal chat
+- **Repo code is not trusted by default** — proposed commands are reviewed and tested before promotion; users should only promote tools whose behavior they understand
+
+---
+
 ## Thoth Status & Identity
 
 Thoth now has a formal self-inspection and self-management surface: a tool for querying its own state, a controlled settings mutation API, and a Preferences UI for identity and self-improvement.
@@ -356,6 +453,7 @@ Thoth now has a formal self-inspection and self-management surface: a tool for q
 - **`thoth_status` tool** — read-only introspection across `overview`, `version`, `model`, `channels`, `memory`, `skills`, `tools`, `api_keys`, `identity`, `tasks`, `vision`, `image_gen`, `voice`, `config`, `logs`, `errors`, and `designer`
 - **Live runtime visibility** — the tool can report current model/provider, active channels, knowledge graph counts, enabled skills, configured APIs, task state, voice and image settings, and designer project counts
 - **Diagnostics access** — recent warnings, errors, and tracebacks can be summarized without opening log files manually
+- **Home health bar parity** — `ui/status_checks.py` and `ui/status_bar.py` expose compact health checks for Ollama, active model, cloud API, tunnel, OAuth accounts, workflows, knowledge, wiki vault, documents, search, skills, tracker, Buddy, MCP, plugins, network, tools, disk, threads DB, FAISS, Dream Cycle, TTS, and logging
 
 ### Controlled Self-Management
 
@@ -369,7 +467,7 @@ Thoth now has a formal self-inspection and self-management surface: a tool for q
 - **`identity.py`** — stores assistant name, personality text, and self-improvement flag; sanitizes personality input before save
 - **Preferences tab** — Settings exposes name, personality, preview, and self-improvement controls in one place
 - **Prompt integration** — the same identity settings are consumed by `self_knowledge.py` so the opening line seen by the model matches what the user configured
-- **Parallel UI surface** — the status monitor panel provides a visual health view for the user, while `thoth_status` exposes the same class of state to the agent
+- **Parallel UI surface** — the Home health/status bar provides a visual health view for the user, while `thoth_status` exposes the same class of state to the agent
 
 ---
 
@@ -404,6 +502,7 @@ Thoth uses a generic **Channel** abstraction. Any messaging platform can plug in
 - **`ChannelCapabilities`** — declarative feature flags describe what each channel supports: photos, documents, voice, buttons, streaming, typing, reactions, and commands
 - **Config schema** — each channel declares config fields so Settings can render the right form dynamically
 - **Channel registry** — adapters self-register; runtime helpers expose all channels, running channels, configured channels, and delivery routing
+- **Channel credential store** — `channels/auth_store.py` stores channel secrets through a channel-specific OS keyring path with legacy fallback so running channels survive migrations even if UI fields are intentionally blank
 - **Shared media pipeline** — inbound audio transcription, image analysis, document extraction, inbox persistence, and workspace copy helpers are centralized in `channels/media.py`
 - **Shared utilities** — auth, command handling, approval routing, media capture, and corrupt-thread repair live in reusable channel modules
 - **Tool factory** — running channels contribute auto-generated send/photo/document tools through `channels/tool_factory.py`
@@ -434,7 +533,7 @@ A provider-agnostic tunnel layer exposes local webhook ports to the internet whe
 - **`TunnelManager` singleton** — manages tunnel lifecycle, per-port allocation, cleanup, and status reporting
 - **Automatic use by channels** — channels that need a public callback request a tunnel on start and release it on shutdown
 - **Optional app tunneling** — the main Thoth UI can also be exposed intentionally for remote access
-- **Settings UI** — tunnel provider, auth token, and active-tunnel status live in the Channels settings surface
+- **Settings UI** — tunnel provider, auth token, and active-tunnel status live in the System settings surface
 - **Health checks** — tunnel status participates in the status monitor and diagnostics flows
 
 ---
@@ -463,7 +562,7 @@ Tool guides are lightweight `SKILL.md` packages that attach contextual instructi
 - **`tools:` activation field** — guides declare the tools they apply to; when any linked tool is in the active tool belt, the guide is injected automatically
 - **Prompt injection** — `prompts.py` discovers active guides and appends them to the system prompt at runtime
 - **Invisible to the manual skill toggles** — tool guides are auto-managed and do not clutter the user-facing skill list
-- **18 bundled guides** — Browser, Calendar, Chart, Designer, Email, Filesystem, Math, MCP, Shell, Telegram, Thoth Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X
+- **20 bundled guides** — Browser, Calendar, Chart, Custom Tool Builder, Designer, Developer, Email, Filesystem, Math, MCP, Shell, Telegram, Thoth Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X
 - **Consistency benefits** — guide content can evolve independently of the main prompt, reducing drift and duplicated instructions
 
 ---
@@ -608,6 +707,7 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 - **Browse dialog** — search, inspect, and install plugins from within the app
 - **Install / update / uninstall** — plugin archives are validated before install and reloaded immediately afterward
 - **Per-plugin settings UI** — each installed plugin gets config controls, secret inputs, and enable/disable toggles in Settings
+- **Custom Tool bridge** — promoted Custom Tools are registered through the plugin/tool surface as synthetic local tools so normal chat can use them without adding a separate extension mechanism
 
 ---
 
@@ -643,7 +743,7 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 - **System tray** — `launcher.py` exposes open and quit controls plus running-state feedback on Windows and macOS; Linux defaults to no tray and can opt into `--tray` when AppIndicator/desktop support is available
 - **Splash screen** — Tk-based splash with console fallback during startup
 - **Startup diagnostics** — `startup_diagnostics.py` runs early in `app.py` and probes fragile optional native packages. Missing optional packages are ignored; installed-but-broken packages such as TorchCodec are logged with recovery steps and patched out of optional Transformers availability checks where safe.
-- **First-launch setup wizard** — guides the user through migration, Local, Providers, or Custom/Self-hosted setup paths without touching config files
+- **First-launch setup wizard** — starts with model/provider choice, then migration and setup-center steps for Local, Providers, Custom/Self-hosted, memory/docs, workflows, Designer, Developer, channels, voice, and related setup without touching config files by hand
 - **Self-contained installers** — Windows and macOS releases bundle dependencies for one-click setup; Linux uses a one-line bootstrapper that verifies and installs the self-contained XDG tarball into user-owned paths
 - **Launcher identity and ports** — the launcher probes `/api/launcher-ping` before reusing port 8080, passes the chosen port through `THOTH_PORT`, and supports explicit `--browser`, `--native`, `--tray`, `--no-tray`, `--server`, `--no-open`, `--port`, and `--host` modes
 - **Launcher recovery hints** — when the managed server exits during startup, `launcher.py` tails `~/.thoth/thoth_app.log` and emits targeted recovery hints for recognized startup signatures, including broken optional TorchCodec DLL loads in the embedded Windows runtime.
@@ -657,12 +757,14 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 - **Multi-turn threads** — conversation history is stored in SQLite via LangGraph checkpointing and local thread metadata
 - **Auto-naming and switching** — threads are named from the conversation and can be reopened, exported, or deleted individually
 - **Per-thread model override** — conversations can pin a different local or provider model than the global default
+- **Input-level model picker** — the main chat model selector lives in the chat input area, matching Designer and Developer surfaces and keeping the top bar focused on thread state
 - **File attachments** — drag-and-drop, clipboard paste, and standard upload flows handle images, PDFs, spreadsheets, JSON, and text
 - **Media persistence** — chat media is stored per thread on disk with sidecar metadata; generated content persists more aggressively than transient capture artifacts
 - **Inline rich rendering** — Plotly charts, Mermaid diagrams, YouTube embeds, syntax-highlighted code, and images render directly in the transcript
-- **Shared chat components** — `ui/chat_components.py` provides the input bar, upload flow, and message container for both the main chat UI and Designer Studio
-- **Status monitor panel** — avatar, health-check pills, diagnosis action, and quick settings links surface runtime health at a glance
+- **Shared chat components** — `ui/chat_components.py` provides the input bar, upload flow, and message container for main chat, Designer Studio, and Developer Studio
+- **Status monitor panel** — Home health-check pills, diagnosis actions, and quick settings links surface runtime health at a glance
 - **Workflow Console integration** — approvals, recent runs, and insight actions are visible without leaving the conversation experience
+- **Streaming hardening** — detached streams persist final content and media, grouped tool-call counts update during streaming, and safe timer helpers avoid UI writes after clients disconnect
 - **Output truncation warnings** — the UI warns when a response was cut short by model token limits
 
 ---
@@ -677,11 +779,25 @@ A sandboxed, hot-reloadable extension system lets plugins add new tools and skil
 
 ---
 
+## Stability & Diagnostics
+
+Thoth includes a stability layer for the kinds of failures that are hard to catch from normal request logs: UI callback crashes, client-side JavaScript errors, event-loop stalls, memory spikes, and startup/shutdown issues.
+
+- **`stability.py`** — centralizes crash reporting, UI callback error reports, client-side error capture, asyncio exception handling, thread/unraisable hooks, memory snapshots, and event-loop lag logging
+- **Safe timers** — `ui/timer_utils.py` wraps deferred UI callbacks and polling timers so disconnected clients or deleted NiceGUI slots do not crash the app silently
+- **Settings diagnostics** — model settings collection/render phases log timings and memory snapshots, while cached model catalogs keep large provider refreshes off the critical UI path
+- **Startup sequencing** — startup status covers cached model catalog load, workflow scheduler, MCP, plugins, channel migration/autostart, tunnel startup, and knowledge graph load
+- **Clean shutdown** — app shutdown attempts ordered channel, tunnel, MCP, scheduler, and process cleanup to reduce locked logs and lingering child processes
+- **Frontend error reporting** — browser-side exceptions are reported back into the structured log with enough context to correlate with UI actions
+- **Performance probes** — memory RSS/VMS/thread counts, event-loop lag, token-counter refresh, model settings load, FAISS rebuild, and catalog refresh timings are logged for support investigations
+
+---
+
 ## Bundled Skills
 
 Skills are reusable instruction packs that shape how the agent thinks and responds. Each skill is a `SKILL.md` file with YAML frontmatter (display name, icon, description, required tools, tags) and freeform instructions injected into the system prompt when enabled.
 
-Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available.
+Thoth ships with **17 manual bundled skills** and **20 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available.
 
 | Skill | Description |
 |-------|-------------|
@@ -689,6 +805,10 @@ Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual ski
 | **💻 Claude Code Delegation** | Coordinate Claude Code CLI as an external coding agent through Thoth's approval-gated shell workflow |
 | **☀️ Daily Briefing** | Compile a morning briefing with weather, calendar, and news headlines |
 | **📊 Data Analyst** | Analyze datasets, produce statistical summaries, and create insightful charts |
+| **💻 Developer Coding** | Plan and implement scoped code changes in Developer Studio using repo-aware tools and approval policy |
+| **🔎 Developer Review** | Review code for bugs, regressions, missing tests, and risky behavior before summarizing |
+| **🚀 Developer PR Prep** | Prepare branch, test, commit, push, and PR-ready summaries for Developer workspaces |
+| **🧩 Developer Custom Tools** | Design, test, and promote Custom Tools from repos or folders without over-broad command surfaces |
 | **🔬 Deep Research** | Perform multi-source research on a topic and produce a structured report |
 | **🎨 Design Creator** | Structured workflow for presentations, one-pagers, reports, and visual layouts in Designer Studio |
 | **🗣️ Humanizer** | Write in a natural, human tone without AI-speak or corporate filler |
@@ -704,7 +824,7 @@ Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual ski
 - **In-app skill editor** — skills can be created and edited directly from Settings
 - **Per-skill enablement** — only enabled manual skills are injected into the system prompt
 - **Per-thread and per-workflow overrides** — skill selection can be narrowed for individual threads and workflows
-- **Tool guides remain automatic** — Browser, Calendar, Chart, Designer, Email, Filesystem, Math, MCP, Shell, Telegram, Thoth Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X guides are in the built-in set
+- **Tool guides remain automatic** — Browser, Calendar, Chart, Custom Tool Builder, Designer, Developer, Email, Filesystem, Math, MCP, Shell, Telegram, Thoth Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X guides are in the built-in set
 
 ---
 
@@ -712,10 +832,11 @@ Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual ski
 
 | File | Purpose |
 |------|---------|
-| **`app.py`** + **`ui/`** | NiceGUI application shell, chat surfaces, home tabs, status monitor, workflow console, settings dialog, and native-webview integration points |
+| **`app.py`** + **`ui/`** | NiceGUI application shell, chat surfaces, home tabs, health/status bar, workflow console, settings dialog, and native-webview integration points |
 | **`buddy/`** + **`ui/buddy.py`** | Buddy companion event bus, behavior brain, config, asset validation, Hatch generation, in-app docked/undocked presence, and optional desktop overlay helpers |
 | **`designer/`** | Designer Studio subsystem: gallery, editor, tooling, storage, exports, presentation mode, publishing, and asset hydration |
-| **`ui/chat_components.py`** | Shared chat input, upload, and message-area components reused by main chat and Designer Studio |
+| **`developer/`** | Developer Studio subsystem: workspace links, Git helpers, approval policy, Docker/local runtime, sandbox state, inspector snapshots, todos, file tree, diffs, GitHub helpers, Custom Tool internals, and UI |
+| **`ui/chat_components.py`** | Shared chat input, upload, and message-area components reused by main chat, Designer Studio, and Developer Studio |
 | **`agent.py`** | LangGraph ReAct agent, prompt assembly, streaming event generation, tool routing, interrupt handling, cache clearing, and background execution integration |
 | **`threads.py`** | SQLite-backed thread metadata, LangGraph checkpoint wiring, per-thread media storage, and thread-level overrides |
 | **`memory.py`** | Backward-compatible memory wrapper that maps legacy memory calls onto the knowledge graph implementation |
@@ -724,12 +845,15 @@ Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual ski
 | **`dream_cycle.py`** | Nightly graph refinement engine: merges, enrichment, decay, relation inference, insights analysis, and journal logging |
 | **`document_extraction.py`** | Background document map-reduce extraction pipeline with provenance-aware graph writes |
 | **`models.py`** | Local model management plus compatibility facades for provider model catalogs, context caps, Quick Choices, provider detection, and model factories |
+| **`providers/`** | Provider auth, normalized model catalogs, background catalog cache, runtime construction, Ollama Cloud transport, and display-safe provider status |
+| **`embedding_config.py`** + **`embedding_providers.py`** | Embedding provider selection, local/cloud embedding backends, vector metadata, and stale-index detection |
 | **`documents.py`** | Document ingestion, chunking, embedding, vector-store persistence, and per-document cleanup |
 | **`voice.py`** | Faster-whisper-based speech input pipeline and voice-state management |
 | **`tts.py`** | Kokoro text-to-speech integration, voice catalog, and streaming playback |
 | **`vision.py`** | Camera capture, screen capture, and workspace image analysis via local or provider vision models |
 | **`data_reader.py`** | Shared structured-data loader for CSV, TSV, Excel, JSON, and JSONL |
 | **`launcher.py`** | Desktop launcher, system tray, splash screen, app lifecycle, and logging bootstrap |
+| **`stability.py`** | UI callback/error capture, asyncio/thread exception hooks, memory snapshots, event-loop lag logging, and crash diagnostics |
 | **`startup_diagnostics.py`** | Early startup probes for optional native packages that can break app import/startup when partially installed |
 | **`api_keys.py`** + **`secret_store.py`** | API key storage and retrieval for tools and API-key providers, backed by OS keyring with metadata-only local files and legacy plaintext migration |
 | **`identity.py`** | Assistant name, personality, and self-improvement preference storage with sanitization |
@@ -738,13 +862,14 @@ Thoth ships with **13 manual bundled skills** and **18 tool guides**. Manual ski
 | **`prompts.py`** | Centralized prompt templates including summarization, extraction, and dream-insights analysis |
 | **`memory_extraction.py`** | Background conversation scan that extracts entities and relations the live agent did not save |
 | **`skills.py`** | Discovery, loading, activation, override, and prompt-building for manual skills and tool guides |
-| **`bundled_skills/`** | 13 built-in manual skills as `SKILL.md` packages |
-| **`tool_guides/`** | 18 built-in tool-specific auto-activation guides |
+| **`bundled_skills/`** | 17 built-in manual skills as `SKILL.md` packages |
+| **`tool_guides/`** | 20 built-in tool-specific auto-activation guides |
 | **`tasks.py`** | Workflow engine, SQLite persistence, APScheduler scheduling, pipeline execution, run history, safety mode, and delivery routing |
 | **`notifications.py`** | Unified desktop, sound, and toast notification system |
 | **`channels/`** | Channel ABC, registry, media helpers, auth helpers, approval routing, command handling, tool generation, and bundled channel adapters |
 | **`tunnel.py`** | Tunnel provider abstraction, ngrok integration, and lifecycle manager |
 | **`tools/thoth_status_tool.py`** | Self-introspection and controlled self-management tool, including optional self-improvement skill operations |
+| **`tools/developer_tool.py`** + **`tools/custom_tool_builder_tool.py`** | Developer workspace operations and conversational Custom Tool creation/testing/promotion surface |
 | **`tools/`** + **`designer/tool.py`** | Self-registering core tool modules, registry, base classes, and LangChain tool conversion |
 | **`plugins/`** | Plugin runtime, marketplace client, manifest validation, security scanner, and settings integration |
 | **`mcp_client/`** | External Model Context Protocol client: config, runtime sessions, marketplace search, requirements, safety classification, diagnostics, and result normalization |
@@ -773,9 +898,16 @@ All user data is stored under `~/.thoth/` (or `%USERPROFILE%\\.thoth\\` on Windo
 ├── api_keys.json                  # API key metadata only; raw key values live in the OS credential store when available
 ├── cloud_config.json              # Legacy provider-model pinning compatibility data
 ├── providers.json                 # Provider metadata, Quick Choices, routing profiles, and credential fingerprints only
+├── model_catalog_cache.json        # Background-refreshed provider/Ollama model catalog rows and refresh diagnostics
+├── embedding_config.json           # Active embedding provider/model settings
 ├── app_config.json                # Onboarding and first-run flags
 ├── user_config.json               # Avatar preferences, identity, and self-improvement settings
 ├── channels_config.json           # Channel enablement and per-channel config
+├── developer/
+│   ├── workspaces.json             # Developer workspace links, approval mode, execution mode, sandbox image/network settings
+│   ├── tool_capsules.json          # Registered Custom Tools and promotion/enablement metadata
+│   ├── custom_tool_drafts.json     # Conversational Custom Tool Builder draft state
+│   └── sandboxes/                  # Docker shadow workspaces and per-workspace sandbox state
 ├── shell_history.json             # Per-thread shell history
 ├── skills_config.json             # Manual skill enable/disable state
 ├── mcp_servers.json               # External MCP server config, global switch, tool enablement, approvals
@@ -798,6 +930,7 @@ All user data is stored under `~/.thoth/` (or `%USERPROFILE%\\.thoth\\` on Windo
 │   ├── tracker.db                 # Habit and health tracker database
 │   └── exports/                   # CSV exports for tracker charts
 ├── vector_store/                  # Uploaded document vector index
+│   └── embedding_metadata.json     # Embedding provider/dimension metadata for stale-index detection
 ├── gmail/                         # Gmail OAuth tokens
 ├── calendar/                      # Calendar OAuth tokens
 ├── wiki/                          # Obsidian-compatible markdown vault export
@@ -818,7 +951,7 @@ All user data is stored under `~/.thoth/` (or `%USERPROFILE%\\.thoth\\` on Windo
 
 Most open-source AI assistants are still **developer tools disguised as products** — CLI-first, config-file-driven, and built around Docker, YAML, and environment variables. Getting started often means cloning repos, editing configs, wiring databases, and debugging dependencies before you can ask a single useful question.
 
-**Thoth is different.** It is packaged as a native desktop experience with one-click installers for Windows and macOS, a one-line Linux installer backed by a verified XDG tarball, local-first defaults, and a GUI that exposes models, tools, workflows, channels, Designer Studio, and memory without requiring terminal fluency.
+**Thoth is different.** It is packaged as a native desktop experience with one-click installers for Windows and macOS, a one-line Linux installer backed by a verified XDG tarball, local-first defaults, and a GUI that exposes models, tools, workflows, channels, Designer Studio, Developer Studio, Custom Tools, and memory without requiring terminal fluency.
 
 ### Why not just use ChatGPT?
 
@@ -828,8 +961,8 @@ Most open-source AI assistants are still **developer tools disguised as products
 | **Conversations** | Provider-owned chat history | Local SQLite-backed threads, exportable anytime |
 | **Cost** | Subscription or provider billing | Free with local models; provider usage is upstream API billing or ChatGPT subscription access only when you opt in |
 | **Memory** | Limited, opaque, provider-controlled | Personal knowledge graph with entities, relations, visualization, wiki export, and background refinement |
-| **Tools** | Limited app integrations and provider-defined plug-ins | 30 core tools plus auto-generated channel tools: shell, browser, filesystem, Gmail, Calendar, memory graph, Designer Studio, Thoth Status, MCP external tools, image generation, video generation, research tools, and more |
-| **Customization** | Pick a model and maybe a custom instruction | Swap models per thread or workflow, configure name and personality, build workflows, toggle tools and skills, and enable self-improvement features |
+| **Tools** | Limited app integrations and provider-defined plug-ins | 30+ core tools plus Developer-native tools, Custom Tool Builder, promoted Custom Tools, and auto-generated channel tools: shell, browser, filesystem, Gmail, Calendar, memory graph, Designer Studio, Thoth Status, MCP external tools, image generation, video generation, research tools, and more |
+| **Customization** | Pick a model and maybe a custom instruction | Swap models per thread, workflow, or Developer workspace, configure name and personality, build workflows, toggle tools and skills, create Custom Tools from repos/folders, and enable self-improvement features |
 | **Voice** | Usually cloud-processed | Local faster-whisper STT plus Kokoro TTS |
 | **Availability** | Internet required | Local models work offline; provider models are optional |
 
@@ -847,10 +980,11 @@ Most open-source AI assistants are still **developer tools disguised as products
 | **Knowledge refinement** | 5-phase Dream Cycle with merge, enrich, decay, infer, and insight passes | Experimental dreaming-style memory promotion flows |
 | **Document intelligence** | Structured graph extraction with provenance, dedup, and relation typing | Strong workspace tools but less graph-centric document knowledge modeling |
 | **Designer / Canvas** | Designer Studio for decks, one-pagers, reports, published links, plus inline Mermaid and Plotly rendering | A2UI-style interactive workspace focus |
-| **Tools** | 30 core tools plus auto-generated channel send tools, including Designer Studio, Thoth Status, and MCP external tools | Broad built-in toolset with different emphasis |
+| **Developer / Code** | Developer Studio for Git workspaces with code threads, approval modes, file tree, todos, diffs, tests, GitHub/PR prep, and optional Docker shadow sandbox | Developer-heavy CLI and terminal-first workflows |
+| **Tools** | 30+ core tools plus Developer-native tools, Custom Tool Builder, promoted Custom Tools, and auto-generated channel send tools, including Designer Studio, Thoth Status, and MCP external tools | Broad built-in toolset with different emphasis |
 | **Messaging channels** | 5 bundled channels with streaming, media handling, approvals, and a sidebar monitor | Wider channel catalog and gateway focus |
 | **Autonomous workflows** | Step-based workflows with approvals, conditions, triggers, concurrency groups, and safety modes | Strong channel routing and automation, different orchestration model |
 | **Desktop experience** | Native Windows and macOS desktop app with tray, splash, and setup wizard; Linux browser-first package with optional native/tray modes | More developer-first and channel-first in practice |
 | **Privacy posture** | All durable state local; no Thoth servers | Self-hostable and privacy-conscious, but with a different operational model |
 
-> **In short:** OpenClaw is an excellent multi-channel gateway for developer-heavy setups. Thoth is optimized for **personal AI sovereignty** — local-first memory, structured knowledge, integrated design tools, configurable self-knowledge, and a native desktop experience that does not require living in a terminal.
+> **In short:** OpenClaw is an excellent multi-channel gateway for developer-heavy setups. Thoth is optimized for **personal AI sovereignty** — local-first memory, structured knowledge, integrated design and code workspaces, user-created tools, configurable self-knowledge, and a native desktop experience that does not require living in a terminal.
