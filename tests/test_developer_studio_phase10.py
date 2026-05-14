@@ -676,6 +676,35 @@ def test_docker_sandbox_missing_image_fails_before_container_run(tmp_path, monke
     assert calls["run"] == 0
 
 
+def test_docker_sandbox_status_requires_configured_image(tmp_path, monkeypatch):
+    storage, _tool_context, _edits, _ledger, sandbox_runtime, _developer_tool = _fresh_modules(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    workspace = storage.add_or_update_local_workspace(str(repo))
+    storage.set_workspace_execution_settings(workspace.id, execution_mode="docker", sandbox_image="missing/image:latest")
+    workspace = storage.get_workspace(workspace.id)
+
+    monkeypatch.setattr(
+        sandbox_runtime,
+        "detect_container_runtime",
+        lambda: sandbox_runtime.SandboxProbe(True, binary="docker", version="Docker version test"),
+    )
+
+    def fake_run(args, **_kwargs):
+        if args[:2] == ["docker", "inspect"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if args[:3] == ["docker", "image", "inspect"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="No such image")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sandbox_runtime.subprocess, "run", fake_run)
+
+    status = sandbox_runtime.get_docker_sandbox_status(workspace)
+
+    assert status.available is False
+    assert "not available locally" in status.message
+
+
 def test_docker_network_off_blocks_network_commands_before_docker(tmp_path, monkeypatch):
     storage, tool_context, _edits, _ledger, sandbox_runtime, developer_tool = _fresh_modules(tmp_path, monkeypatch)
     repo = tmp_path / "repo"
@@ -765,7 +794,7 @@ def test_docker_sandbox_recreates_container_when_network_policy_changes(tmp_path
     assert "none" in calls["run"][0]
 
 
-def test_developer_write_file_in_docker_mode_uses_shadow_without_starting_container(tmp_path, monkeypatch):
+def test_developer_write_file_in_docker_mode_requires_verified_sandbox(tmp_path, monkeypatch):
     storage, tool_context, _edits, _ledger, sandbox_runtime, developer_tool = _fresh_modules(tmp_path, monkeypatch)
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -775,10 +804,10 @@ def test_developer_write_file_in_docker_mode_uses_shadow_without_starting_contai
     workspace = storage.get_workspace(workspace.id)
     thread_id = storage.ensure_workspace_thread(workspace.id)
 
-    def fail_if_docker_starts(*_args, **_kwargs):
-        raise AssertionError("pure sandbox file writes should not start Docker")
+    def fail_docker_probe(*_args, **_kwargs):
+        raise RuntimeError("Docker image probe failed")
 
-    monkeypatch.setattr(sandbox_runtime.subprocess, "run", fail_if_docker_starts)
+    monkeypatch.setattr(sandbox_runtime.subprocess, "run", fail_docker_probe)
     tokens = tool_context.set_context(workspace_id=workspace.id, thread_id=thread_id)
     try:
         result = developer_tool._write_file("sandbox_only.txt", "sandbox hello\n", "Create sandbox probe")
@@ -787,8 +816,8 @@ def test_developer_write_file_in_docker_mode_uses_shadow_without_starting_contai
 
     pending = sandbox_runtime.list_pending_changes(workspace_id=workspace.id, thread_id=thread_id)
 
-    assert "Docker Sandbox as pending change" in result
-    assert pending and pending[0].files == ["sandbox_only.txt"]
+    assert "Docker Sandbox is not available" in result
+    assert not pending
     assert not (repo / "sandbox_only.txt").exists()
 
 

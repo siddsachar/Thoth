@@ -1806,7 +1806,8 @@ def _build_developer_inspector_static(
             with ui.row().classes("items-center gap-2 flex-wrap"):
                 ui.badge("Docker Sandbox" if workspace_now.execution_mode == "docker" else "Local", color="purple" if workspace_now.execution_mode == "docker" else "grey").props("outline")
                 if workspace_now.execution_mode == "docker":
-                    ui.badge("available" if sandbox_probe.available else "not available", color="green" if sandbox_probe.available else "red").props("outline")
+                    sandbox_ready = bool(sandbox_status and sandbox_status.available)
+                    ui.badge("available" if sandbox_ready else "not ready", color="green" if sandbox_ready else "orange").props("outline")
             if workspace_now.execution_mode == "local":
                 ui.label("Commands run in the selected repo folder, with Developer approval policy guarding changes.").classes("text-xs text-grey-6")
             else:
@@ -1841,6 +1842,8 @@ def _build_developer_inspector_static(
                     ui.label(sandbox_probe.version).classes("text-xs text-grey-7 ellipsis")
                 elif sandbox_probe.message:
                     ui.label(sandbox_probe.message).classes("text-xs text-red-4")
+                if sandbox_status and sandbox_status.message and not sandbox_status.available:
+                    ui.label(sandbox_status.message).classes("text-xs text-orange-4")
                 ui.select(
                     {"off": "Network Off", "ask": "Network Ask", "on": "Network On"},
                     value=workspace_now.sandbox_network,

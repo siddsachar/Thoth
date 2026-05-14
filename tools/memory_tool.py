@@ -221,7 +221,7 @@ def _save_memory(category: str, subject: str, content: str, tags: str = "") -> s
             f"Subject: {result['subject']}\n"
             f"Content: {result['content']}"
         )
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         return f"Error: {exc}"
 
 

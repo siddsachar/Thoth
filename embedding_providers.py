@@ -19,6 +19,8 @@ _provider_lock = threading.Lock()
 _provider = None
 _provider_key: tuple[Any, ...] | None = None
 
+_BASE_LOCAL_PACKAGES = ("sentence_transformers", "langchain_huggingface")
+
 
 class _DimensionAdapter(Embeddings):
     """Trim embedding vectors when a provider supports Matryoshka-like dimensions."""
@@ -43,6 +45,7 @@ def get_embedding_provider() -> Any:
     """Return the active embedding object with LangChain-compatible methods."""
     global _provider, _provider_key
     cfg = get_embedding_config()
+    ensure_embedding_runtime_available(cfg)
     meta = active_embedding_metadata(cfg)
     key = (
         cfg.get("provider"),
@@ -91,21 +94,33 @@ def _build_provider(cfg: dict[str, Any]) -> Any:
     return _build_local_provider(cfg)
 
 
+def ensure_embedding_runtime_available(cfg: dict[str, Any] | None = None) -> None:
+    """Raise a clear error if the configured embedding runtime cannot start."""
+    cfg = cfg or get_embedding_config()
+    if cfg.get("provider") == "cloud":
+        model_key = str(cfg.get("cloud_model") or "openai:text-embedding-3-small")
+        model_def = CLOUD_MODELS[model_key]
+        if not get_key(str(model_def["api_key"])):
+            raise RuntimeError(f"{model_def['api_key']} is required for {model_def['label']}")
+        return
+
+    model_key = str(cfg.get("local_model") or "qwen3-0.6b")
+    model_def = LOCAL_MODELS[model_key]
+    required = [*_BASE_LOCAL_PACKAGES, *model_def.get("required_packages", [])]
+    missing = [pkg for pkg in required if importlib.util.find_spec(str(pkg)) is None]
+    if missing:
+        package_list = ", ".join(missing)
+        raise RuntimeError(
+            f"{model_def['label']} cannot start because Python package(s) are missing: {package_list}. "
+            "Install Thoth dependencies from requirements.txt, then restart Thoth."
+        )
+
+
 def _build_local_provider(cfg: dict[str, Any]) -> Any:
     model_key = str(cfg.get("local_model") or "qwen3-0.6b")
     model_def = LOCAL_MODELS[model_key]
     dimension = int(active_embedding_metadata(cfg)["dimension"])
-    missing = [
-        pkg
-        for pkg in model_def.get("required_packages", [])
-        if importlib.util.find_spec(str(pkg)) is None
-    ]
-    if missing:
-        package_list = ", ".join(missing)
-        raise RuntimeError(
-            f"{model_def['label']} requires missing Python package(s): {package_list}. "
-            "Install dependencies from requirements.txt, then restart Thoth."
-        )
+    ensure_embedding_runtime_available(cfg)
     model_kwargs = {"device": "cpu"}
     if model_def.get("trust_remote_code"):
         model_kwargs["trust_remote_code"] = True

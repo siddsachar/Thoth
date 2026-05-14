@@ -34,7 +34,11 @@ from embedding_config import (
     read_index_metadata,
     write_index_metadata,
 )
-from embedding_providers import get_embedding_provider, release_embedding_resources
+from embedding_providers import (
+    ensure_embedding_runtime_available,
+    get_embedding_provider,
+    release_embedding_resources,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +172,7 @@ _vector_store = None
 def get_embedding_model():
     """Return the configured embedding provider (created on first call)."""
     with _embedding_lock:
+        ensure_embedding_runtime_available()
         return get_embedding_provider()
 
 
@@ -198,6 +203,7 @@ def get_vector_store():
 
 def load_and_vectorize_document(file_path, skip_if_processed=True, display_name=None):
     record_name = display_name or file_path
+    ensure_embedding_runtime_available()
     # Skip if already processed
     if skip_if_processed and is_file_processed(record_name):
         logger.info("Skipping already processed file: %s", record_name)

@@ -167,6 +167,7 @@ def test_setup_center_orders_steps_by_profile_intent():
         "knowledge",
         "workflows",
         "designer",
+        "developer",
         "channels",
         "accounts",
         "tools",
@@ -213,13 +214,13 @@ def test_onboarding_source_contracts_are_wired():
         "Starter workflows are added disabled",
         "Open Thoth",
         "Continue setup",
-        "Import existing setup?",
+        "Migrate from OpenClaw or Hermes Agent?",
     ):
         assert marker in setup_src
 
     assert "Recommended Setup" not in setup_src
-    assert setup_src.index("Connect your first model") < setup_src.index("Import existing setup?")
-    assert setup_src.index("Import existing setup?") < setup_src.index("You're ready")
+    assert setup_src.index("Connect your first model") < setup_src.index("Migrate from OpenClaw or Hermes Agent?")
+    assert setup_src.index("Migrate from OpenClaw or Hermes Agent?") < setup_src.index("You're ready")
     assert "INTENT_OPTIONS" in setup_src
     assert "save_onboarding_profile" in setup_src
     assert "request_setup_center_on_next_load" in setup_src

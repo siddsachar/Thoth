@@ -215,7 +215,7 @@ def get_docker_sandbox_status(workspace: DeveloperWorkspace) -> SandboxStatus:
     if not image_present:
         message = _missing_image_message(workspace.sandbox_image)
     return SandboxStatus(
-        available=True,
+        available=image_present,
         container_name=name,
         exists=exists,
         running=running,
@@ -341,6 +341,7 @@ def write_file_in_docker_sandbox(
     thread_id: str,
 ) -> SandboxCommandOutcome:
     try:
+        ensure_docker_sandbox(workspace)
         container_name, shadow = _ensure_shadow_workspace(workspace)
     except Exception as exc:
         return SandboxCommandOutcome(
@@ -385,6 +386,7 @@ def apply_patch_in_docker_sandbox(
     summary: str = "",
 ) -> SandboxCommandOutcome:
     try:
+        ensure_docker_sandbox(workspace)
         container_name, shadow = _ensure_shadow_workspace(workspace)
     except Exception as exc:
         return SandboxCommandOutcome(

@@ -83,6 +83,26 @@ def test_nomic_dependency_is_explicit():
     assert embedding_config.LOCAL_MODELS["nomic-v1.5"]["required_packages"] == ["einops"]
 
 
+def test_local_embedding_preflight_reports_missing_base_packages(monkeypatch):
+    import embedding_providers
+
+    def _missing_base_package(name):
+        if name == "sentence_transformers":
+            return None
+        return object()
+
+    monkeypatch.setattr(embedding_providers.importlib.util, "find_spec", _missing_base_package)
+
+    try:
+        embedding_providers.ensure_embedding_runtime_available(
+            {"provider": "local", "local_model": "mxbai-large-v1"}
+        )
+    except RuntimeError as exc:
+        assert "sentence_transformers" in str(exc)
+    else:
+        raise AssertionError("missing sentence_transformers should fail preflight")
+
+
 def test_dimension_adapter_trims_query_and_document_vectors():
     from langchain_core.embeddings import Embeddings
 

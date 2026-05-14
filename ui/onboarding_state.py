@@ -8,13 +8,14 @@ from typing import Any
 from ui.helpers import load_app_config, save_app_config
 
 
-ONBOARDING_VERSION = 2
+ONBOARDING_VERSION = 3
 
 INTENT_OPTIONS: dict[str, str] = {
     "chat": "Chat assistant",
     "research": "Research and documents",
     "workflows": "Workflow automation",
     "designer": "Designer Studio",
+    "developer": "Developer Studio",
     "channels": "Messaging channels",
     "local": "Local/private AI",
 }
@@ -35,6 +36,10 @@ SETUP_STEPS: dict[str, dict[str, str]] = {
     "designer": {
         "title": "Designer",
         "description": "Create design projects, decks, pages, and mockups.",
+    },
+    "developer": {
+        "title": "Developer",
+        "description": "Connect code workspaces and create Custom Tools.",
     },
     "channels": {
         "title": "Channels",

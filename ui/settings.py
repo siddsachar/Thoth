@@ -743,7 +743,6 @@ def open_settings(
                     tmp.write(data)
                     tmp_path = tmp.name
                 await run.io_bound(load_and_vectorize_document, tmp_path, True, name)
-                n.dismiss()
                 doc_upload.reset()
                 ui.notify(f"✅ {name} indexed", type="positive")
 
@@ -759,10 +758,11 @@ def open_settings(
                     ui.notify(f"🧠 Extracting knowledge from {name}…", type="info")
                 except Exception as exc:
                     logger.warning("Failed to queue document extraction for %s: %s", name, exc, exc_info=True)
-                n.dismiss()
+            except Exception as exc:
                 logger.error("Document upload/index failed for %s", name, exc_info=True)
                 ui.notify(f"Failed: {exc}", type="negative")
             finally:
+                n.dismiss()
                 if tmp_path:
                     with contextlib.suppress(FileNotFoundError):
                         os.unlink(tmp_path)
@@ -1179,7 +1179,16 @@ def open_settings(
             ).classes("text-grey-8 text-sm q-mb-xs")
             ui.label(_ollama_install_steps).classes("text-grey-8 text-xs").style("white-space: pre-line")
             ui.link("Download Ollama →", "https://ollama.com/download", new_tab=True).classes("text-sm text-weight-bold")
-        ollama_guide.visible = not _ollama_up
+        def _model_needs_ollama(value: object) -> bool:
+            selected = str(value or "")
+            if selected.startswith("model:"):
+                parts = selected.split(":", 2)
+                if len(parts) == 3 and parts[1] != "ollama":
+                    return False
+            runtime_model = model_id_from_choice_value(selected)
+            return bool(selected and not is_cloud_model(selected) and not is_model_local(runtime_model))
+
+        ollama_guide.visible = (not _ollama_up) and _model_needs_ollama(model_select.value)
 
         async def _download_brain(e=None):
             sel = model_select.value
@@ -1229,6 +1238,7 @@ def open_settings(
             brain_source_badge.update()
             brain_dl_btn.visible = _ollama_up and not is_cloud_model(current_model) and not is_model_local(current_model)
             brain_dl_btn.update()
+            ollama_guide.visible = (not _ollama_up) and _model_needs_ollama(model_choice_value(current_model))
             if _ctx_note_updater[0]:
                 _ctx_note_updater[0]()
 
@@ -1242,6 +1252,7 @@ def open_settings(
             brain_source_badge.text = _model_source_label(sel)
             brain_source_badge.update()
             brain_dl_btn.visible = _ollama_up and not is_cloud_model(sel) and not is_model_local(sel)
+            ollama_guide.visible = (not _ollama_up) and _model_needs_ollama(sel)
             if is_cloud_model(sel):
                 set_model(sel)
                 state.current_model = sel
@@ -3328,10 +3339,22 @@ def open_settings(
             )
             if not tts.is_installed():
                 async def _install_kokoro():
-                    ui.notify("Downloading Kokoro TTS model & voices...", type="ongoing", timeout=0)
-                    await run.io_bound(tts.download_model)
-                    ui.notify("Kokoro TTS installed", type="positive")
-                    _reopen("Voice")
+                    note = ui.notification(
+                        "Downloading Kokoro TTS model & voices...",
+                        type="ongoing",
+                        spinner=True,
+                        timeout=None,
+                    )
+                    try:
+                        await run.io_bound(tts.download_model)
+                    except Exception as exc:
+                        logger.error("Kokoro TTS install failed", exc_info=True)
+                        ui.notify(f"Kokoro TTS install failed: {exc}", type="negative", close_button=True)
+                    else:
+                        ui.notify("Kokoro TTS installed", type="positive")
+                        _reopen("Voice")
+                    finally:
+                        note.dismiss()
 
                 ui.button("Install Kokoro TTS", icon="download", on_click=_install_kokoro).classes("w-full").props("no-caps")
             else:

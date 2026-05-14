@@ -683,7 +683,8 @@ def test_minimax_validation_rejects_auth_failure(monkeypatch):
     assert models.validate_minimax_key("bad-key") is False
 
 
-def test_minimax_pre_model_trim_uses_anthropic_message_consolidation(monkeypatch):
+def test_minimax_pre_model_trim_uses_anthropic_message_consolidation(tmp_path, monkeypatch):
+    monkeypatch.setenv("THOTH_DATA_DIR", str(tmp_path / "data"))
     import agent
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 

@@ -464,7 +464,11 @@ class BrowserSession:
                         channel or "chromium", self._browser_pid)
             self._ready.set()
         except Exception as exc:
-            logger.error("Browser launch failed: %s", exc)
+            msg = str(exc).lower()
+            if "executable doesn't exist" in msg:
+                logger.warning("Chromium runtime missing; attempting first-run install")
+            else:
+                logger.error("Browser launch failed: %s", exc)
             self._launch_error = exc
             self._ready.set()  # unblock _run_on_pw_thread immediately
             # Clean up partial state

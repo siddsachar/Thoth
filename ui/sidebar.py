@@ -180,6 +180,15 @@ def build_sidebar(
                 for ch in channels:
                     is_on = ch.is_running()
                     is_cfg = ch.is_configured()
+                    if ch.name == "whatsapp" and is_cfg and not is_on:
+                        try:
+                            from channels.auth import get_approved_users
+                            from channels.whatsapp import SESSION_DIR, _get_user_phone
+
+                            has_session = SESSION_DIR.exists() and any(SESSION_DIR.iterdir())
+                            is_cfg = bool(has_session or _get_user_phone() or get_approved_users("whatsapp"))
+                        except Exception:
+                            is_cfg = False
 
                     if is_on:
                         dot_color = "#4caf50"

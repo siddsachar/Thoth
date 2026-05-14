@@ -206,6 +206,12 @@ def build_model_catalog_rows(
         if model_info:
             _add_model_info_row(rows, model_info, provider_status, pinned_by_ref, default_refs, installed=True)
 
+    if provider_status.get("minimax", {}).get("configured") and not any(
+        row.provider_id == "minimax" for row in rows.values()
+    ):
+        for model_info in _minimax_static_model_infos():
+            _add_model_info_row(rows, model_info, provider_status, pinned_by_ref, default_refs, installed=True)
+
     for model_info in _custom_model_infos():
         _add_model_info_row(rows, model_info, provider_status, pinned_by_ref, default_refs, installed=True)
 
@@ -229,6 +235,22 @@ def build_model_catalog_rows(
         _add_ollama_row(rows, row, provider_status, pinned_by_ref, default_refs)
 
     for model_info in _codex_model_infos():
+        _add_model_info_row(rows, model_info, provider_status, pinned_by_ref, default_refs, installed=True)
+
+    for surface, ref in default_refs.items():
+        if ref in rows:
+            continue
+        parsed = _parse_model_ref(ref)
+        if not parsed:
+            continue
+        provider_id, model_id = parsed
+        model_info = model_info_from_metadata(
+            provider_id,
+            model_id,
+            {},
+            display_name=model_id,
+            source=f"default_{surface}",
+        )
         _add_model_info_row(rows, model_info, provider_status, pinned_by_ref, default_refs, installed=True)
 
     return sorted(rows.values(), key=lambda row: (row.provider_display_name.lower(), row.display_name.lower()))
@@ -456,6 +478,31 @@ def _custom_model_infos() -> list[ModelInfo]:
                 source="custom_openai_catalog",
             ))
     return infos
+
+
+def _minimax_static_model_infos() -> list[ModelInfo]:
+    try:
+        from models import _MINIMAX_SUPPORTED_MODELS
+    except Exception:
+        return []
+    return [
+        model_info_from_metadata(
+            "minimax",
+            str(model_id),
+            {"max_input_tokens": int(context_window or 0)},
+            display_name=str(model_id),
+            context_window=int(context_window or 0),
+            source="provider_static_catalog",
+        )
+        for model_id, context_window in _MINIMAX_SUPPORTED_MODELS
+    ]
+
+
+def _parse_model_ref(ref: str) -> tuple[str, str] | None:
+    parts = str(ref or "").split(":", 2)
+    if len(parts) == 3 and parts[0] == "model" and parts[1] and parts[2]:
+        return parts[1], parts[2]
+    return None
 
 
 def _codex_model_infos() -> list[ModelInfo]:

@@ -423,6 +423,19 @@ async def show_setup_wizard(
                     if not oai_val and not ollama_cloud_val and not anth_val and not goog_val and not xai_val and not minimax_val and not or_val:
                         ui.notify("Enter at least one API key", type="warning")
                         return
+                    entered_providers = [
+                        provider_id
+                        for provider_id, value in (
+                            ("openai", oai_val),
+                            ("ollama_cloud", ollama_cloud_val),
+                            ("anthropic", anth_val),
+                            ("google", goog_val),
+                            ("xai", xai_val),
+                            ("minimax", minimax_val),
+                            ("openrouter", or_val),
+                        )
+                        if value
+                    ]
                     cloud_status.text = "⏳ Validating key(s)…"
                     cloud_status.visible = True
                     if ollama_cloud_val:
@@ -492,7 +505,11 @@ async def show_setup_wizard(
                         opts[value] = f"{get_provider_emoji(value)} {m}"
                     cloud_model_select.options = opts
                     cloud_model_select.visible = True
-                    first_model = "gpt-5" if "gpt-5" in models else models[0]
+                    preferred_models = [
+                        m for m in models
+                        if str((_cloud_model_cache.get(m) or {}).get("provider") or "") in entered_providers
+                    ]
+                    first_model = preferred_models[0] if preferred_models else ("gpt-5" if "gpt-5" in models else models[0])
                     first = model_choice_value(
                         first_model,
                         provider_id=str((_cloud_model_cache.get(first_model) or {}).get("provider") or ""),
@@ -506,13 +523,21 @@ async def show_setup_wizard(
                             value = model_choice_value(m, provider_id=provider_id)
                             v_opts[value] = f"{get_provider_emoji(value)} {m}"
                         cloud_vision_select.options = v_opts
-                        v_first_model = "gpt-5" if "gpt-5" in vision_models else vision_models[0]
-                        v_first = model_choice_value(
-                            v_first_model,
-                            provider_id=str((_cloud_model_cache.get(v_first_model) or {}).get("provider") or ""),
-                        )
-                        cloud_vision_select.set_value(v_first)
-                        cloud_vision_select.visible = True
+                        preferred_vision = [
+                            m for m in vision_models
+                            if str((_cloud_model_cache.get(m) or {}).get("provider") or "") in entered_providers
+                        ]
+                        if preferred_vision:
+                            v_first_model = preferred_vision[0]
+                            v_first = model_choice_value(
+                                v_first_model,
+                                provider_id=str((_cloud_model_cache.get(v_first_model) or {}).get("provider") or ""),
+                            )
+                            cloud_vision_select.set_value(v_first)
+                            cloud_vision_select.visible = True
+                        else:
+                            cloud_vision_select.set_value(None)
+                            cloud_vision_select.visible = False
                     cloud_status.text = f"✅ Found {count} models"
                     first_parsed = parse_model_ref(first)
                     if first_parsed:
@@ -833,9 +858,9 @@ async def show_setup_wizard(
             ui.separator()
 
             # ── Optional import ──────────────────────────────────────
-            ui.label("Import existing setup?").classes("text-h6")
+            ui.label("Migrate from OpenClaw or Hermes Agent?").classes("text-h6")
             ui.label(
-                "Bring over a previous setup now, or skip and import later from Settings."
+                "Bring over an OpenClaw or Hermes Agent setup now, or skip and import later from Settings."
             ).classes("text-grey-6 text-sm")
             with ui.row().classes("w-full gap-2 q-my-sm"):
                 ui.button(
@@ -854,7 +879,7 @@ async def show_setup_wizard(
             # ── Ready / setup checklist ──────────────────────────────
             ui.label("You're ready").classes("text-h6")
             ui.label(
-                "Open Thoth now, or continue into the Setup Center for documents, workflows, Designer Studio, channels, accounts, tools, plugins, and voice."
+                "Open Thoth now, or continue into the Setup Center for documents, workflows, Designer Studio, Developer Studio, channels, accounts, tools, plugins, and voice."
             ).classes("text-grey-6 text-sm")
             ui.label("What should Setup Center prioritize?").classes("text-subtitle2 q-mt-sm")
 
@@ -877,6 +902,7 @@ async def show_setup_wizard(
                     ("description", "Knowledge", "Upload docs and choose embeddings."),
                     ("bolt", "Workflows", "Starter workflows are added disabled."),
                     ("design_services", "Designer Studio", "Create decks, pages, and mockups."),
+                    ("code", "Developer Studio", "Connect repos and create Custom Tools."),
                     ("forum", "Channels", "Connect messaging channels when ready."),
                 ):
                     with ui.card().classes("q-pa-sm").style(

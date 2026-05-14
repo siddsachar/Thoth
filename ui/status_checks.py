@@ -71,12 +71,15 @@ class CheckResult:
 def check_ollama() -> CheckResult:
     """Check if Ollama server is reachable."""
     try:
-        from models import _ollama_reachable
+        from models import _ollama_reachable, get_current_model, is_cloud_model
         if _ollama_reachable(timeout=1.0):
             return CheckResult("Ollama", "ok", "Server reachable", settings_tab="Models")
-        return CheckResult("Ollama", "error", "Server unreachable", settings_tab="Models")
+        model = get_current_model()
+        if model and not is_cloud_model(model):
+            return CheckResult("Ollama", "warn", "Local model server unreachable", settings_tab="Models")
+        return CheckResult("Ollama", "inactive", "Not in use", settings_tab="Models")
     except Exception as exc:
-        return CheckResult("Ollama", "error", str(exc), settings_tab="Models")
+        return CheckResult("Ollama", "warn", str(exc), settings_tab="Models")
 
 
 def check_active_model() -> CheckResult:

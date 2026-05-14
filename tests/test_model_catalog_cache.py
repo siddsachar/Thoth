@@ -85,3 +85,18 @@ def test_settings_models_tab_is_cache_first():
     assert "Open only when you need to browse or pin models" in src
     assert "Model catalog refreshed: {rows} models" in src
     assert "start_model_catalog_refresh_background" in src
+
+
+def test_model_catalog_keeps_saved_minimax_default_visible():
+    from providers.model_catalog import build_model_catalog_rows
+
+    rows = build_model_catalog_rows(
+        cloud_cache={},
+        ollama_rows=[],
+        defaults={"chat": "model:minimax:MiniMax-M2.7"},
+    )
+
+    minimax = [row for row in rows if row.selection_ref == "model:minimax:MiniMax-M2.7"]
+    assert minimax
+    assert minimax[0].supports("chat")
+    assert "chat" in minimax[0].default_surfaces

@@ -19,6 +19,7 @@ _INTENT_STEP_PRIORITY: dict[str, tuple[str, ...]] = {
     "research": ("knowledge", "tools", "extensions"),
     "workflows": ("workflows", "channels", "accounts"),
     "designer": ("designer", "knowledge"),
+    "developer": ("developer", "tools"),
     "channels": ("channels", "accounts"),
     "local": ("models", "knowledge"),
 }
@@ -45,6 +46,7 @@ def _step_icon(step: str) -> str:
         "knowledge": "psychology",
         "workflows": "bolt",
         "designer": "design_services",
+        "developer": "code",
         "channels": "forum",
         "accounts": "group",
         "tools": "construction",
@@ -216,6 +218,23 @@ def show_setup_center(
                                             "Open Designer",
                                             icon="design_services",
                                             on_click=_go_designer,
+                                        ).props("flat dense no-caps color=primary")
+                                    elif step == "developer":
+                                        def _go_developer(s=step):
+                                            mark_onboarding_step(s)
+                                            if state is not None:
+                                                state.thread_id = None
+                                                state.thread_name = None
+                                                state.messages = []
+                                                state.preferred_home_tab = "Developer"
+                                            if rebuild_main:
+                                                rebuild_main()
+                                            dialog.close()
+
+                                        ui.button(
+                                            "Open Developer",
+                                            icon="code",
+                                            on_click=_go_developer,
                                         ).props("flat dense no-caps color=primary")
                                     elif tab and open_settings:
                                         def _open(tab_name=tab, s=step):
