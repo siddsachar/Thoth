@@ -18,12 +18,53 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+RUNTIME_DEPENDENCY_GROUPS = {
+    "embeddings": (
+        "sentence_transformers",
+        "langchain_huggingface",
+        "transformers",
+        "torch",
+    ),
+}
+
 
 @dataclass(frozen=True)
 class OptionalPackageIssue:
     package: str
     error: str
     recovery_hint: str
+
+
+def preflight_required_runtime_packages(
+    log: logging.Logger | None = None,
+    groups: tuple[str, ...] = ("embeddings",),
+) -> dict[str, list[str]]:
+    """Log missing required runtime packages without importing heavy modules."""
+    active_log = log or logger
+    missing_by_group: dict[str, list[str]] = {}
+    for group in groups:
+        packages = RUNTIME_DEPENDENCY_GROUPS.get(group, ())
+        missing = [
+            package
+            for package in packages
+            if importlib.util.find_spec(package) is None
+        ]
+        if missing:
+            missing_by_group[group] = missing
+
+    active_log.info(
+        "Runtime diagnostics: python=%s prefix=%s install_root=%s",
+        sys.executable,
+        sys.prefix,
+        _install_root_hint(),
+    )
+    for group, missing in missing_by_group.items():
+        active_log.error(
+            "Required %s runtime package(s) missing from active Python: %s",
+            group,
+            ", ".join(missing),
+        )
+    return missing_by_group
 
 
 def preflight_optional_native_packages(
@@ -60,6 +101,18 @@ def preflight_optional_native_packages(
                 issue.recovery_hint,
             )
     return issues
+
+
+def _install_root_hint() -> str:
+    import os
+
+    root = os.environ.get("THOTH_INSTALL_ROOT")
+    if root:
+        return root
+    try:
+        return str(Path(sys.executable).resolve().parents[2])
+    except Exception:
+        return ""
 
 
 def _clear_partial_import(package: str) -> None:

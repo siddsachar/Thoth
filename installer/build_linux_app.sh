@@ -292,6 +292,11 @@ find "$PACKAGE_ROOT" -name '*.so' -print0 | while IFS= read -r -d '' lib; do
 done
 ok "Package cleaned"
 
+info "Verifying assembled Linux runtime dependencies..."
+THOTH_INSTALL_ROOT="$PACKAGE_ROOT" PYTHONNOUSERSITE=1 \
+    "$PYTHON_PREFIX/bin/python3" "$APP_SRC/scripts/verify_runtime_dependencies.py" embeddings
+ok "Assembled Linux runtime dependencies verified"
+
 info "[6/6] Creating tarball..."
 rm -f "$TARBALL"
 tar -C "$BUILD_DIR" -czf "$TARBALL" "$PACKAGE_NAME"

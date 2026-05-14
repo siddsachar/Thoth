@@ -13883,8 +13883,15 @@ try:
     assert '"sentence_transformers"' in _verify68m2b and '"langchain_huggingface"' in _verify68m2b
     assert "verify_runtime_dependencies.py\" embeddings" in _mac68
     assert "verify_runtime_dependencies.py\" embeddings" in _linux68m2b
+    assert "Assembled app runtime dependencies verified" in _mac68
+    assert "Assembled Linux runtime dependencies verified" in _linux68m2b
+    assert "THOTH_INSTALL_ROOT=\"$RESOURCES\"" in _mac68
     assert "verify_runtime_dependencies.py\" embeddings" in _depsbat68m2b
     assert "verify_runtime_dependencies.py" in _iss68
+    assert "build\\python\\Lib\\site-packages\\sentence_transformers\\__init__.py" in _iss68
+    assert "build\\python\\Lib\\site-packages\\langchain_huggingface\\__init__.py" in _iss68
+    assert "build\\python\\Lib\\site-packages\\transformers\\__init__.py" in _iss68
+    assert "build\\python\\Lib\\site-packages\\torch\\__init__.py" in _iss68
     assert "verify_runtime_dependencies.py" in _P68("installer/build_installer.ps1").read_text(encoding="utf-8")
     record("PASS", "68m2b: packaged builds verify local embedding runtime imports")
 

@@ -209,6 +209,10 @@ DATA_DIR="$HOME/.thoth"
 # Ensure data directory exists
 mkdir -p "$DATA_DIR"
 
+export THOTH_INSTALL_ROOT="$RESOURCES"
+export PYTHONNOUSERSITE=1
+export PYTHONIOENCODING=utf-8
+
 # Prefer bundled Playwright browsers when present; otherwise use a writable user path
 BUNDLED_BROWSERS="$RESOURCES/python/playwright-browsers"
 USER_BROWSERS="$DATA_DIR/playwright-browsers"
@@ -305,6 +309,11 @@ ok "Stripped debug symbols from shared libraries"
 
 BUNDLE_SIZE=$(du -sh "$APP_BUNDLE" | cut -f1)
 ok "Bundle size: $BUNDLE_SIZE"
+
+info "Verifying assembled app runtime dependencies..."
+THOTH_INSTALL_ROOT="$RESOURCES" PYTHONNOUSERSITE=1 \
+    "$PYTHON_PREFIX/bin/python3" "$APP_SRC/scripts/verify_runtime_dependencies.py" embeddings
+ok "Assembled app runtime dependencies verified"
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  6. Code-sign and package

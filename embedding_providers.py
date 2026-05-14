@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import importlib.util
 import logging
+import sys
 import threading
 from typing import Any
 
@@ -112,7 +113,8 @@ def ensure_embedding_runtime_available(cfg: dict[str, Any] | None = None) -> Non
         package_list = ", ".join(missing)
         raise RuntimeError(
             f"{model_def['label']} cannot start because Python package(s) are missing: {package_list}. "
-            "Install Thoth dependencies from requirements.txt, then restart Thoth."
+            f"Active Python: {sys.executable}. "
+            "This packaged runtime is incomplete; reinstall Thoth from a build that passes runtime dependency verification."
         )
 
 

@@ -9,6 +9,22 @@
 ;
 ; Compile with:  iscc installer\thoth_setup.iss
 
+#ifnexist "build\python\Lib\site-packages\sentence_transformers\__init__.py"
+  #error Embedded Python is missing sentence_transformers. Run installer\build_installer.ps1 before compiling thoth_setup.iss.
+#endif
+
+#ifnexist "build\python\Lib\site-packages\langchain_huggingface\__init__.py"
+  #error Embedded Python is missing langchain_huggingface. Run installer\build_installer.ps1 before compiling thoth_setup.iss.
+#endif
+
+#ifnexist "build\python\Lib\site-packages\transformers\__init__.py"
+  #error Embedded Python is missing transformers. Run installer\build_installer.ps1 before compiling thoth_setup.iss.
+#endif
+
+#ifnexist "build\python\Lib\site-packages\torch\__init__.py"
+  #error Embedded Python is missing torch. Run installer\build_installer.ps1 before compiling thoth_setup.iss.
+#endif
+
 #define MyAppName      "Thoth"
 #define MyAppVersion   "3.22.0"
 #define MyAppPublisher "Thoth"

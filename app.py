@@ -238,6 +238,12 @@ async def on_startup():
     from logging_config import setup_file_logging
     setup_file_logging()
 
+    try:
+        from startup_diagnostics import preflight_required_runtime_packages
+        preflight_required_runtime_packages(logger)
+    except Exception:
+        logger.debug("Required runtime diagnostics failed", exc_info=True)
+
     # Kill orphaned ngrok processes from previous runs
     from tunnel import kill_stale_ngrok
     kill_stale_ngrok()

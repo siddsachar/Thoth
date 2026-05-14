@@ -98,9 +98,31 @@ def test_packaged_builds_verify_embedding_runtime_imports():
     assert '"langchain_huggingface"' in verifier
     assert "verify_runtime_dependencies.py" in windows_build
     assert "verify_runtime_dependencies.py" in windows_installer
+    assert "build\\python\\Lib\\site-packages\\sentence_transformers\\__init__.py" in windows_installer
+    assert "build\\python\\Lib\\site-packages\\langchain_huggingface\\__init__.py" in windows_installer
+    assert "build\\python\\Lib\\site-packages\\transformers\\__init__.py" in windows_installer
+    assert "build\\python\\Lib\\site-packages\\torch\\__init__.py" in windows_installer
     assert "verify_runtime_dependencies.py\" embeddings" in mac_build
     assert "verify_runtime_dependencies.py\" embeddings" in linux_build
+    assert "Assembled app runtime dependencies verified" in mac_build
+    assert "Assembled Linux runtime dependencies verified" in linux_build
+    assert "THOTH_INSTALL_ROOT=\"$RESOURCES\"" in mac_build
     assert "verify_runtime_dependencies.py\" embeddings" in legacy_deps
+
+
+def test_startup_diagnostics_reports_required_embedding_packages(monkeypatch):
+    import startup_diagnostics
+
+    def _missing_transformers(name):
+        if name == "transformers":
+            return None
+        return object()
+
+    monkeypatch.setattr(startup_diagnostics.importlib.util, "find_spec", _missing_transformers)
+
+    missing = startup_diagnostics.preflight_required_runtime_packages()
+
+    assert missing == {"embeddings": ["transformers"]}
 
 
 def test_local_embedding_preflight_reports_missing_base_packages(monkeypatch):
@@ -119,6 +141,7 @@ def test_local_embedding_preflight_reports_missing_base_packages(monkeypatch):
         )
     except RuntimeError as exc:
         assert "sentence_transformers" in str(exc)
+        assert "Active Python:" in str(exc)
     else:
         raise AssertionError("missing sentence_transformers should fail preflight")
 
