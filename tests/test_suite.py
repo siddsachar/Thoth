@@ -19610,7 +19610,7 @@ try:
     record("PASS", "76o: Developer runtime hardens shell and process lifecycle")
 
     _capsules_src76 = (_dev_dir76 / "tool_capsules.py").read_text(encoding="utf-8")
-    assert "community_tools_enabled" in _capsules_src76, "Custom Tools should require explicit public repo enablement"
+    assert "community_tools_enabled" not in _capsules_src76, "Custom Tools should not require a hidden public repo enablement gate"
     assert "CAPSULE_INSTALL_ROOT" in _capsules_src76, "Custom Tools should use an isolated install root"
     assert "CUSTOM_TOOL_DRAFTS_PATH" in _capsules_src76, "Custom Tools should persist draft builder state"
     assert "parse_capsule_manifest" in _capsules_src76 and "commands" in _capsules_src76, "Custom Tools should parse declared commands from a config"
@@ -19665,6 +19665,7 @@ try:
     record("PASS", "76r: Developer guides, skills, progress, and contextual status are wired")
 
     _sandbox_runtime_src76 = (_dev_dir76 / "sandbox_runtime.py").read_text(encoding="utf-8")
+    _executables_src76 = (_dev_dir76 / "executables.py").read_text(encoding="utf-8")
     _state_src76 = (_dev_dir76 / "state.py").read_text(encoding="utf-8")
     _developer_tool_src76 = _P76("tools/developer_tool.py").read_text(encoding="utf-8")
     _developer_guide_src76 = _developer_guide76.read_text(encoding="utf-8")
@@ -19672,6 +19673,9 @@ try:
     assert "Docker Sandbox" in _dev_ui_src76 and "set_workspace_execution_settings" in _dev_ui_src76, "Developer UI should expose Docker Sandbox mode"
     assert "Sandbox" in _dev_ui_src76 and "Clean sandbox copy" in _dev_ui_src76, "Developer inspector should surface sandbox status and cleanup"
     assert "detect_container_runtime" in _sandbox_runtime_src76, "Sandbox runtime should detect Docker/Podman availability"
+    assert "/Applications/Docker.app/Contents/Resources/bin/docker" in _executables_src76, "Developer should find Docker Desktop from macOS GUI launches"
+    assert "/opt/homebrew/bin/docker" in _executables_src76, "Developer should find Homebrew Docker from macOS GUI launches"
+    assert "def resolve_podman" in _executables_src76 and "/opt/homebrew/bin/podman" in _executables_src76, "Developer should find Podman from macOS GUI launches"
     assert "sandbox_shadow_path" in _sandbox_runtime_src76 and "copytree" in _sandbox_runtime_src76, "Docker Sandbox should use a shadow workspace"
     assert "sandbox_container_name" in _sandbox_runtime_src76 and '"exec", container_name' in _sandbox_runtime_src76, "Docker Sandbox should use persistent workspace containers"
     assert "sleep infinity" in _sandbox_runtime_src76 and '"start", container_name' in _sandbox_runtime_src76, "Docker Sandbox should create/resume persistent containers"

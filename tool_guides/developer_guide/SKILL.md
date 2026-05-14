@@ -55,7 +55,7 @@ Use Custom Tools when the user wants to turn a repo or local folder into a reusa
 - If the user asks naturally, e.g. "turn this repo into a tool" or "add this GitHub repo as a tool", handle it with the same inspect -> review -> create -> test -> enable/promote flow.
 - Use `custom_tool_builder` for the whole lifecycle when that utility is enabled: action `start` to create a draft, `show`/`list` to inspect drafts, `refine` or `update` to adjust commands, `test` to smoke-test a command, `create` to register, `enable` for Developer use, `promote` for normal chat/plugin tools, and `delete` to remove draft/tool metadata.
 - Explain draft commands clearly before action `create`. Use action `refine` for natural-language adjustments instead of creating multiple one-off tools.
-- Public repo Custom Tools require the user to explicitly allow public repo tools first. Do not silently enable that gate.
+- Public repo Custom Tools can be drafted from an explicit repo URL and clone destination; do not add hidden settings or edit internal JSON. Safety comes from command review, test approval/sandboxing, and separate enable/promote steps.
 - Do not ask the user to hand-write internal config files. If a repo needs command metadata, inspect it and generate the first config for review.
 - Removing a Custom Tool should remove Thoth metadata/plugin registration only; do not delete the source folder unless the user explicitly asks.
 

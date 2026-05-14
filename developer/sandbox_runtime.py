@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from developer.executables import resolve_docker, resolve_executable
+from developer.executables import resolve_docker, resolve_podman
 from developer.state import DeveloperWorkspace
 from developer.storage import DEVELOPER_DIR
 
@@ -146,7 +146,7 @@ class SandboxPendingChange:
 
 
 def detect_container_runtime() -> SandboxProbe:
-    for name, resolver in (("docker", resolve_docker), ("podman", lambda: resolve_executable("podman"))):
+    for name, resolver in (("docker", resolve_docker), ("podman", resolve_podman)):
         binary = resolver()
         if not binary:
             continue

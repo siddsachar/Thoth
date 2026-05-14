@@ -32,7 +32,6 @@ from developer.tool_capsules import (
     DEFAULT_CUSTOM_TOOL_TEST_QUERY,
     delete_custom_tool_draft,
     enable_created_custom_tool_from_draft,
-    community_tools_enabled,
     list_custom_tool_drafts,
     list_capsules,
     promote_capsule,
@@ -43,7 +42,6 @@ from developer.tool_capsules import (
     run_capsule_command,
     run_custom_tool_test_command,
     set_capsule_enabled,
-    set_community_tools_enabled,
     write_capsule_manifest,
 )
 from developer.git import create_branch, suggest_feature_branch
@@ -405,9 +403,6 @@ def _render_custom_tools_home(state: AppState, refresh: Callable) -> None:
 def _render_custom_tool_draft_card(draft, refresh: Callable) -> None:
     async def _create_from_draft() -> None:
         try:
-            public_source = str(draft.source_url or "").strip().startswith(("http://", "https://", "git@"))
-            if public_source and not community_tools_enabled():
-                raise PermissionError("Enable public repo Custom Tools before creating this draft.")
             await run.io_bound(create_tool_from_draft, draft.id)
         except Exception as exc:
             ui.notify(str(exc), type="negative", close_button=True)
@@ -724,7 +719,6 @@ def _show_custom_tool_wizard(state: AppState, refresh: Callable) -> None:
             stepper.next()
 
         async def _create() -> None:
-            allow_public_sw = _control("allow_public_sw")
             overwrite_sw = _control("overwrite_sw")
             status = _control("status")
             result_box = _control("result_box")
@@ -737,11 +731,6 @@ def _show_custom_tool_wizard(state: AppState, refresh: Callable) -> None:
             result_box.clear()
             status.clear()
             try:
-                public_source = str(draft.source_url or "").strip().startswith(("http://", "https://", "git@"))
-                if public_source and not (bool(allow_public_sw.value) or community_tools_enabled()):
-                    raise PermissionError("Turn on 'Allow tools from public repos' before creating a Custom Tool from a repo URL.")
-                if allow_public_sw.value:
-                    await run.io_bound(set_community_tools_enabled, True)
                 tool = await run.io_bound(
                     lambda: create_tool_from_draft(draft.id, overwrite=bool(overwrite_sw.value), community=True)
                 )
@@ -992,7 +981,6 @@ def _show_custom_tool_wizard(state: AppState, refresh: Callable) -> None:
                 ui.label("Choose where the tool comes from. Repo URLs are cloned only into a folder you choose.").classes("text-sm text-grey-6")
                 controls["source_in"] = ui.input("Repo URL or local folder").classes("w-full").props("dense outlined")
                 controls["clone_parent"] = ui.input("Clone into folder (only for repo URLs)").classes("w-full").props("dense outlined")
-                controls["allow_public_sw"] = ui.switch("Allow tools from public repos for this install", value=community_tools_enabled())
                 with ui.expansion("Advanced", icon="tune").classes("w-full"):
                     controls["overwrite_sw"] = ui.switch("Replace existing internal config after review", value=False)
                 with ui.row().classes("gap-2 flex-wrap"):

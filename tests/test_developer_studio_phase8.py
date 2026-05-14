@@ -23,15 +23,20 @@ def _fresh_modules(tmp_path, monkeypatch):
     return importlib.reload(capsules)
 
 
-def test_tool_capsules_require_explicit_community_enablement(tmp_path, monkeypatch):
+def test_tool_capsules_register_public_sources_without_hidden_gate(tmp_path, monkeypatch):
     capsules = _fresh_modules(tmp_path, monkeypatch)
+    install_path = tmp_path / "tool"
+    install_path.mkdir()
 
-    try:
-        capsules.register_capsule("https://github.com/example/tool")
-    except PermissionError as exc:
-        assert "disabled" in str(exc)
-    else:
-        raise AssertionError("community capsule should be rejected until explicitly enabled")
+    capsule = capsules.register_capsule(
+        "https://github.com/example/tool",
+        name="Example Tool",
+        installed_path=str(install_path),
+    )
+
+    assert capsule.enabled is False
+    assert capsule.community is True
+    assert capsules.list_capsules()[0].id == capsule.id
 
 
 def test_tool_capsules_register_disable_and_remove_in_isolated_state(tmp_path, monkeypatch):
@@ -39,7 +44,6 @@ def test_tool_capsules_register_disable_and_remove_in_isolated_state(tmp_path, m
     install_path = tmp_path / "capsule"
     install_path.mkdir()
 
-    capsules.set_community_tools_enabled(True)
     capsule = capsules.register_capsule(
         "https://github.com/example/tool",
         name="Example Tool",
@@ -71,7 +75,6 @@ def test_tool_capsules_parse_manifest_commands(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    capsules.set_community_tools_enabled(True)
     capsule = capsules.register_capsule(
         "https://github.com/example/repo-helper",
         installed_path=str(install_path),
@@ -114,7 +117,6 @@ def test_tool_capsule_generate_and_register_writes_manifest(tmp_path, monkeypatc
     install_path.mkdir()
     (install_path / "README.md").write_text("# Helper\n", encoding="utf-8")
 
-    capsules.set_community_tools_enabled(True)
     capsule = capsules.generate_and_register_capsule(
         str(install_path),
         source_url="https://github.com/example/repo-helper",
@@ -231,24 +233,20 @@ def test_custom_tool_ai_generator_uses_repo_brief_and_validates_commands(tmp_pat
     assert not any("\\bformat\\b" in warning for warning in proposal.warnings)
 
 
-def test_custom_tool_public_gate_fails_before_writing_manifest(tmp_path, monkeypatch):
+def test_custom_tool_public_source_writes_manifest_without_hidden_gate(tmp_path, monkeypatch):
     capsules = _fresh_modules(tmp_path, monkeypatch)
     install_path = tmp_path / "repo-helper"
     install_path.mkdir()
     (install_path / "README.md").write_text("# Helper\n", encoding="utf-8")
 
-    try:
-        capsules.generate_and_register_capsule(
-            str(install_path),
-            source_url="https://github.com/example/repo-helper",
-        )
-    except PermissionError as exc:
-        assert "Public repo Custom Tools are disabled" in str(exc)
-    else:
-        raise AssertionError("public repo Custom Tool should require explicit enablement")
+    capsule = capsules.generate_and_register_capsule(
+        str(install_path),
+        source_url="https://github.com/example/repo-helper",
+    )
 
-    assert not (install_path / "thoth-custom-tool.json").exists()
-    assert capsules.list_capsules() == []
+    assert (install_path / "thoth-custom-tool.json").exists()
+    assert capsule.enabled is False
+    assert capsules.list_capsules()[0].id == capsule.id
 
 
 def test_custom_tool_local_source_does_not_need_public_gate(tmp_path, monkeypatch):
@@ -436,7 +434,6 @@ def test_tool_capsule_runner_uses_capsule_path_and_policy(tmp_path, monkeypatch)
     install_path = tmp_path / "capsule"
     install_path.mkdir()
 
-    capsules.set_community_tools_enabled(True)
     capsule = capsules.register_capsule(
         "https://github.com/example/tool",
         name="Example Tool",
@@ -456,7 +453,6 @@ def test_custom_tool_card_test_runner_requires_one_time_approval(tmp_path, monke
     install_path = tmp_path / "capsule"
     install_path.mkdir()
 
-    capsules.set_community_tools_enabled(True)
     capsule = capsules.register_capsule(
         "https://github.com/example/tool",
         name="Example Tool",
@@ -496,7 +492,6 @@ def test_custom_tool_test_runner_substitutes_query_placeholder(tmp_path, monkeyp
     install_path = tmp_path / "capsule"
     install_path.mkdir()
 
-    capsules.set_community_tools_enabled(True)
     capsule = capsules.register_capsule(
         "https://github.com/example/tool",
         name="Example Tool",
@@ -568,7 +563,6 @@ def test_tool_capsule_promotion_registers_plugin_tool_and_removes_safely(tmp_pat
         encoding="utf-8",
     )
 
-    capsules.set_community_tools_enabled(True)
     capsule = capsules.register_capsule(
         "https://github.com/example/repo-helper",
         installed_path=str(install_path),
@@ -625,7 +619,7 @@ def test_tool_capsule_developer_ui_exposes_end_to_end_actions():
     assert "Test" in source
     assert "promote_created_custom_tool_from_draft" in source
     assert "remove_capsule" in source
-    assert "set_community_tools_enabled" in source
+    assert "set_community_tools_enabled" not in source
     assert "generate_and_register_capsule" in capsules_source
     assert "custom_tool_builder" in capsules_source
     assert 'name="custom_tool_builder"' in global_tool_source

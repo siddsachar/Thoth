@@ -561,11 +561,34 @@ def test_developer_executable_resolver_finds_standard_windows_installs(tmp_path,
     assert executables.resolve_github_cli().endswith(r"GitHub CLI\gh.exe")
 
 
+def test_developer_executable_resolver_finds_macos_gui_installs(tmp_path, monkeypatch):
+    _storage, _tool_context, _edits, _ledger, _sandbox_runtime, _developer_tool = _fresh_modules(tmp_path, monkeypatch)
+    import developer.executables as executables
+
+    def fake_which(_name):
+        return None
+
+    existing = {
+        pathlib.Path("/Applications/Docker.app/Contents/Resources/bin/docker"),
+        pathlib.Path("/opt/homebrew/bin/gh"),
+        pathlib.Path("/opt/homebrew/bin/podman"),
+    }
+
+    monkeypatch.setattr(executables.shutil, "which", fake_which)
+    monkeypatch.setattr(executables, "_is_windows", lambda: False)
+    monkeypatch.setattr(executables.Path, "exists", lambda self: self in existing)
+    monkeypatch.setattr(executables.Path, "is_file", lambda self: self in existing)
+
+    assert executables.resolve_docker() == "/Applications/Docker.app/Contents/Resources/bin/docker"
+    assert executables.resolve_github_cli() == "/opt/homebrew/bin/gh"
+    assert executables.resolve_podman() == "/opt/homebrew/bin/podman"
+
+
 def test_docker_runtime_reports_installed_but_engine_inaccessible(tmp_path, monkeypatch):
     _storage, _tool_context, _edits, _ledger, sandbox_runtime, _developer_tool = _fresh_modules(tmp_path, monkeypatch)
 
     monkeypatch.setattr(sandbox_runtime, "resolve_docker", lambda: r"C:\Program Files\Docker\Docker\resources\bin\docker.exe")
-    monkeypatch.setattr(sandbox_runtime, "resolve_executable", lambda _name: "")
+    monkeypatch.setattr(sandbox_runtime, "resolve_podman", lambda: "")
 
     def fake_run(args, **_kwargs):
         if args[1:] == ["--version"]:
@@ -593,7 +616,7 @@ def test_docker_runtime_reports_stopped_docker_desktop_clearly(tmp_path, monkeyp
     _storage, _tool_context, _edits, _ledger, sandbox_runtime, _developer_tool = _fresh_modules(tmp_path, monkeypatch)
 
     monkeypatch.setattr(sandbox_runtime, "resolve_docker", lambda: r"C:\Program Files\Docker\Docker\resources\bin\docker.exe")
-    monkeypatch.setattr(sandbox_runtime, "resolve_executable", lambda _name: "")
+    monkeypatch.setattr(sandbox_runtime, "resolve_podman", lambda: "")
 
     def fake_run(args, **_kwargs):
         if args[1:] == ["--version"]:
