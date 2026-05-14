@@ -83,6 +83,7 @@ ok "Python extracted"
 info "[2/6] Installing Python packages from requirements.txt..."
 "$PYTHON_PREFIX/bin/python3" -m pip install --upgrade pip setuptools wheel --quiet 2>&1 | tail -1 || true
 "$PYTHON_PREFIX/bin/python3" -m pip install -r "$PROJECT_DIR/requirements.txt" --quiet 2>&1 | tail -5
+"$PYTHON_PREFIX/bin/python3" "$PROJECT_DIR/scripts/verify_runtime_dependencies.py" embeddings
 ok "Python packages installed"
 
 if [ "$PACKAGE_ARCH" = "x86_64" ]; then

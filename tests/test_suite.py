@@ -13873,6 +13873,21 @@ try:
     assert "for pkg in tools channels bundled_skills tool_guides ui plugins designer developer scripts utils providers mcp_client migration" in _mac68, "mac app bundle must copy providers and developer packages"
     record("PASS", "68m2: Windows and mac packaging include provider runtime, Developer, and UI files")
 
+    # â”€â”€ 68m2b. Embedding runtime packaging guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    _req68m2b = _P68("requirements.txt").read_text(encoding="utf-8")
+    _verify68m2b = _P68("scripts/verify_runtime_dependencies.py").read_text(encoding="utf-8")
+    _linux68m2b = _P68("installer/build_linux_app.sh").read_text(encoding="utf-8")
+    _depsbat68m2b = _P68("installer/install_deps.bat").read_text(encoding="utf-8")
+    assert "sentence-transformers" in _req68m2b, "local embeddings require sentence-transformers in requirements.txt"
+    assert "langchain-huggingface" in _req68m2b, "local embeddings require langchain-huggingface in requirements.txt"
+    assert '"sentence_transformers"' in _verify68m2b and '"langchain_huggingface"' in _verify68m2b
+    assert "verify_runtime_dependencies.py\" embeddings" in _mac68
+    assert "verify_runtime_dependencies.py\" embeddings" in _linux68m2b
+    assert "verify_runtime_dependencies.py\" embeddings" in _depsbat68m2b
+    assert "verify_runtime_dependencies.py" in _iss68
+    assert "verify_runtime_dependencies.py" in _P68("installer/build_installer.ps1").read_text(encoding="utf-8")
+    record("PASS", "68m2b: packaged builds verify local embedding runtime imports")
+
     # ── 68m3. Clean data-dir first-run setup smoke ─────────────────
     import os as _os68m3
     import subprocess as _subprocess68m3
