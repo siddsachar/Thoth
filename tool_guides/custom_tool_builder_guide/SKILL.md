@@ -28,6 +28,6 @@ Rules:
 - Use `custom_tool_builder` for lifecycle state: clone/import source, draft, refine, create, enable, promote, delete.
 - Shell can help with extra read-only inspection or explicit user-approved command testing when the builder needs more evidence.
 - Do not use shell to manually register, enable, promote, delete, or edit Custom Tool metadata.
-- Public repo Custom Tools require explicit public/community-tool permission. Do not silently enable that gate.
+- Public repo Custom Tools do not have a separate hidden enablement gate. Safety comes from explicit clone destination, command review, test approval/sandboxing, and the separate enable/promote steps.
 - Explain that generated commands usually operate on the cloned/local repo files unless a command is clearly network-enabled.
 - Removing a Custom Tool should preserve source files unless the user explicitly asks to delete managed files.

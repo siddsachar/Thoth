@@ -19603,7 +19603,7 @@ try:
     record("PASS", "76o: Developer runtime hardens shell and process lifecycle")
 
     _capsules_src76 = (_dev_dir76 / "tool_capsules.py").read_text(encoding="utf-8")
-    assert "community_tools_enabled" in _capsules_src76, "Custom Tools should require explicit public repo enablement"
+    assert "community_tools_enabled" not in _capsules_src76, "Custom Tools should not require a hidden public repo enablement gate"
     assert "CAPSULE_INSTALL_ROOT" in _capsules_src76, "Custom Tools should use an isolated install root"
     assert "CUSTOM_TOOL_DRAFTS_PATH" in _capsules_src76, "Custom Tools should persist draft builder state"
     assert "parse_capsule_manifest" in _capsules_src76 and "commands" in _capsules_src76, "Custom Tools should parse declared commands from a config"

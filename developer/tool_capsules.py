@@ -94,7 +94,7 @@ def _now_iso() -> str:
 
 
 def _default_state() -> dict:
-    return {"community_tools_enabled": False, "capsules": []}
+    return {"capsules": []}
 
 
 def _load_state() -> dict:
@@ -106,7 +106,6 @@ def _load_state() -> dict:
         return _default_state()
     if not isinstance(data, dict):
         return _default_state()
-    data.setdefault("community_tools_enabled", False)
     data.setdefault("capsules", [])
     return data
 
@@ -179,16 +178,6 @@ def delete_custom_tool_draft(draft_id: str) -> None:
     data = _load_draft_state()
     data["drafts"] = [item for item in data.get("drafts", []) if item.get("id") != draft_id]
     _save_draft_state(data)
-
-
-def community_tools_enabled() -> bool:
-    return bool(_load_state().get("community_tools_enabled"))
-
-
-def set_community_tools_enabled(enabled: bool) -> None:
-    data = _load_state()
-    data["community_tools_enabled"] = bool(enabled)
-    _save_state(data)
 
 
 def _capsule_id(name_or_url: str) -> str:
@@ -737,8 +726,6 @@ def generate_and_register_capsule(
     overwrite: bool = False,
     community: bool = True,
 ) -> ToolCapsule:
-    if community and _is_public_source(source_url) and not community_tools_enabled():
-        raise PermissionError("Public repo Custom Tools are disabled. Enable them explicitly before adding public repo tools.")
     proposal = propose_capsule_manifest(installed_path, source_url=source_url)
     write_capsule_manifest(installed_path, proposal, overwrite=overwrite or proposal.existing_manifest)
     return register_capsule(
@@ -771,8 +758,6 @@ def create_custom_tool_from_source(
     community: bool = True,
     use_ai: bool = True,
 ) -> ToolCapsule:
-    if community and _is_public_source(source_url) and not community_tools_enabled():
-        raise PermissionError("Public repo Custom Tools are disabled. Enable them explicitly before adding public repo tools.")
     proposal = propose_capsule_manifest(path, source_url=source_url, use_ai=use_ai)
     write_capsule_manifest(path, proposal, overwrite=overwrite or proposal.existing_manifest)
     return register_capsule(proposal.source_url, installed_path=proposal.installed_path, community=community)
@@ -943,8 +928,6 @@ def test_custom_tool_draft_command(
 
 def create_tool_from_draft(draft_id: str, *, overwrite: bool = False, community: bool = True) -> ToolCapsule:
     draft = get_custom_tool_draft(draft_id)
-    if community and _is_public_source(draft.source_url) and not community_tools_enabled():
-        raise PermissionError("Public repo Custom Tools are disabled. Enable them explicitly before adding public repo tools.")
     proposal = draft.to_proposal()
     root = Path(draft.installed_path).expanduser().resolve()
     manifest_exists = any(
@@ -1291,9 +1274,6 @@ def register_capsule(
     community: bool = True,
 ) -> ToolCapsule:
     source = source_url.strip()
-    is_public_source = _is_public_source(source)
-    if community and is_public_source and not community_tools_enabled():
-        raise PermissionError("Public repo Custom Tools are disabled. Enable them explicitly before adding public repo tools.")
     if not source:
         raise ValueError("Custom Tool source URL is required.")
     capsule_name = name.strip() or Path(source.rstrip("/")).stem or "Custom Tool"
