@@ -107,6 +107,9 @@ def test_packaged_builds_verify_embedding_runtime_imports():
     assert "Assembled app runtime dependencies verified" in mac_build
     assert "Assembled Linux runtime dependencies verified" in linux_build
     assert "THOTH_INSTALL_ROOT=\"$RESOURCES\"" in mac_build
+    unsafe_tests_cleanup = "find \"$PYTHON_PREFIX/lib\" -type d -name 'tests'"
+    assert unsafe_tests_cleanup not in mac_build
+    assert unsafe_tests_cleanup not in linux_build
     assert "verify_runtime_dependencies.py\" embeddings" in legacy_deps
 
 

@@ -13886,6 +13886,9 @@ try:
     assert "Assembled app runtime dependencies verified" in _mac68
     assert "Assembled Linux runtime dependencies verified" in _linux68m2b
     assert "THOTH_INSTALL_ROOT=\"$RESOURCES\"" in _mac68
+    _unsafe_tests_cleanup68m2b = "find \"$PYTHON_PREFIX/lib\" -type d -name 'tests'"
+    assert _unsafe_tests_cleanup68m2b not in _mac68
+    assert _unsafe_tests_cleanup68m2b not in _linux68m2b
     assert "verify_runtime_dependencies.py\" embeddings" in _depsbat68m2b
     assert "verify_runtime_dependencies.py" in _iss68
     assert "build\\python\\Lib\\site-packages\\sentence_transformers\\__init__.py" in _iss68
