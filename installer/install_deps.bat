@@ -154,6 +154,15 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 :: ── 6. Install Playwright Chromium browser ──────────────────────────────────
+echo Verifying embedding runtime packages... >> "%LOG%" 2>&1
+"%PYTHON%" "%APP_DIR%\scripts\verify_runtime_dependencies.py" embeddings >> "%LOG%" 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Embedding runtime verification failed. >> "%LOG%" 2>&1
+    echo ERROR: Embedding runtime packages are missing. See install_log.txt for details.
+    pause
+    exit /b 1
+)
+
 echo Installing Playwright Chromium browser...
 "%PYTHON%" -m playwright install chromium >> "%LOG%" 2>&1
 if %ERRORLEVEL% NEQ 0 (

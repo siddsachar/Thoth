@@ -79,8 +79,28 @@ def test_nomic_dependency_is_explicit():
 
     import embedding_config
 
+    assert "sentence-transformers" in requirements
+    assert "langchain-huggingface" in requirements
     assert "einops" in requirements
     assert embedding_config.LOCAL_MODELS["nomic-v1.5"]["required_packages"] == ["einops"]
+
+
+def test_packaged_builds_verify_embedding_runtime_imports():
+    verifier = Path("scripts/verify_runtime_dependencies.py").read_text(encoding="utf-8")
+    windows_build = Path("installer/build_installer.ps1").read_text(encoding="utf-8")
+    mac_build = Path("installer/build_mac_app.sh").read_text(encoding="utf-8")
+    linux_build = Path("installer/build_linux_app.sh").read_text(encoding="utf-8")
+    legacy_deps = Path("installer/install_deps.bat").read_text(encoding="utf-8")
+    windows_installer = Path("installer/thoth_setup.iss").read_text(encoding="utf-8")
+
+    assert '"embeddings"' in verifier
+    assert '"sentence_transformers"' in verifier
+    assert '"langchain_huggingface"' in verifier
+    assert "verify_runtime_dependencies.py" in windows_build
+    assert "verify_runtime_dependencies.py" in windows_installer
+    assert "verify_runtime_dependencies.py\" embeddings" in mac_build
+    assert "verify_runtime_dependencies.py\" embeddings" in linux_build
+    assert "verify_runtime_dependencies.py\" embeddings" in legacy_deps
 
 
 def test_local_embedding_preflight_reports_missing_base_packages(monkeypatch):

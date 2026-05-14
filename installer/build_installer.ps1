@@ -179,6 +179,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "      All packages pre-installed" -ForegroundColor Green
 
+# Verify critical runtime imports before producing an installer. This catches
+# resolver/build issues where pip finishes but local AI packages are not
+# importable in the embedded Python.
+$VerifierFile = Join-Path (Split-Path $PSScriptRoot) "scripts\verify_runtime_dependencies.py"
+Write-Host "      Verifying embedding runtime packages..." -ForegroundColor Yellow
+& $PythonExe $VerifierFile embeddings
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Embedded Python is missing required embedding packages." -ForegroundColor Red
+    exit 1
+}
+Write-Host "      Embedding runtime verified" -ForegroundColor Green
+
 # Install Playwright Chromium into the embedded Python's cache
 Write-Host "      Installing Playwright Chromium browser..." -ForegroundColor Yellow
 $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $PythonDir "playwright-browsers"
