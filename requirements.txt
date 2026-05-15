@@ -102,7 +102,7 @@ kaleido
 python-telegram-bot
 slack-bolt>=1.28.0
 twilio
-discord.py>=2.7.0
+discord.py>=2.7.1
 
 # ── Tunnel / Webhook Exposure ──────────────────────────────────────────────
 pyngrok
