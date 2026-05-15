@@ -2,21 +2,22 @@
   <img src="docs/thoth_glyph_256.png" alt="Thoth" width="180">
 </p>
 
-<h1 align="center">𓁟 Thoth — Personal AI Sovereignty</h1>
+<h1 align="center">Thoth</h1>
 
 <p align="center">
    <a href="https://github.com/siddsachar/Thoth/releases"><img src="https://img.shields.io/github/v/release/siddsachar/Thoth?style=flat&label=release&color=c9a227" alt="Release"></a>
    <a href="https://github.com/siddsachar/Thoth/actions/workflows/ci.yml"><img src="https://github.com/siddsachar/Thoth/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
    <a href="LICENSE"><img src="https://img.shields.io/github/license/siddsachar/Thoth?style=flat" alt="License"></a>
    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-c9a227?style=flat" alt="Platform">
-   <img src="https://img.shields.io/badge/tests-All%20Pass-brightgreen?style=flat" alt="Tests">
 </p>
 
-Thoth is a **local-first AI assistant for personal AI sovereignty**: a desktop agent with memory, tools, workflows, Developer Studio, Designer Studio, Custom Tools, messaging, plugins, and optional cloud models while your durable data stays on your machine.
+Thoth is a local-first desktop AI assistant. It gives you chat, memory, tools, workflows, Developer Studio, Designer Studio, Custom Tools, plugins, messaging channels, and optional cloud models while keeping durable data on your machine.
 
-It runs fully local through [Ollama](https://ollama.com/) with 39 curated tool-calling models, local/daemon Ollama Cloud models, and configurable local embeddings, or you can opt into OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, Ollama Cloud direct API, and ChatGPT / Codex when you want frontier reasoning or do not have a GPU. API keys and in-app subscription tokens are stored in the OS credential store when available; Thoth has no account system, server, or telemetry pipeline.
+It can run fully local with [Ollama](https://ollama.com/), 39 curated tool-calling models, local embeddings, and Ollama Cloud models exposed through a signed-in daemon. You can also opt into OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, Ollama Cloud direct API, custom OpenAI-compatible endpoints, and ChatGPT / Codex subscription models.
 
-> **🖥️ One-click install on Windows & macOS; one-line install on Linux** — download, run, done. Docker is optional for Developer Studio's isolated sandbox. [Get it here.](https://github.com/siddsachar/Thoth/releases)
+The Thoth app has no account system, no Thoth-hosted server, and no telemetry pipeline. Provider keys and subscription tokens are stored in the OS credential store when available.
+
+Download the latest installer from [GitHub Releases](https://github.com/siddsachar/Thoth/releases). Windows and macOS use one-click installers. Linux has a one-line user installer.
 
 <table align="center">
   <tr>
@@ -29,170 +30,159 @@ It runs fully local through [Ollama](https://ollama.com/) with 39 curated tool-c
   </tr>
 </table>
 
-### Why the name "Thoth"?
+## What You Get
 
-In ancient Egyptian mythology, **Thoth** (𓁟) was the god of wisdom, writing, and knowledge — the divine scribe who recorded all human understanding. Like its namesake, this tool is built to gather, organize, and faithfully retrieve knowledge — while keeping everything under your control.
+| Area | Details |
+|------|---------|
+| Agent and models | LangGraph ReAct agent, streaming responses, thinking bubbles, smart context trimming, 39 curated Ollama models, local and daemon-backed Ollama Cloud models, Ollama Cloud direct API, provider models, custom endpoints, ChatGPT / Codex subscription models, background model catalog cache, and per-thread, per-workflow, and per-Developer model overrides. |
+| Memory and knowledge | Personal knowledge graph, 10 entity types, 67 typed relations, FAISS semantic recall, 1-hop graph expansion, graph visualization, Obsidian-compatible wiki export, document extraction with source provenance, Dream Cycle refinement, duplicate merging, stale-confidence decay, relationship inference, self-knowledge, insights, and conversation search. |
+| Tools | 30+ core tool modules for web search, DuckDuckGo, Wikipedia, arXiv, YouTube transcripts, URL reading, documents, wiki vault, Gmail, Google Calendar, filesystem, shell, browser automation, workflows, tracker, channels, X, image generation/editing, video generation, MCP, Developer Studio, Designer Studio, Custom Tool Builder, status, calculator, Wolfram Alpha, weather, vision, memory, system info, and charts. File tools read PDF, CSV, Excel, JSON, JSONL, TSV, and image files, with schema, stats, previews, and PDF export where supported. |
+| Developer Studio | Local Git workspace linking and cloning, code threads, repo inspector, file tree, diffs, todos, tests, branch, commit, push and PR prep, approval modes, and optional Docker Sandbox with a shadow workspace and explicit import back into the real repo. |
+| Designer Studio | Decks, documents, landing pages, app mockups, and storyboards with a sandboxed interactive runtime, templates, brand controls, critique and repair, AI image and video generation, chart insertion, Mermaid and Plotly rendering, shareable HTML, and export to PDF, HTML, PNG, and PPTX. |
+| Workflows | Scheduled runs, webhook triggers, task-completion triggers, step pipelines, conditions, approvals, subtasks, notification-only runs, concurrency groups, delivery defaults, per-workflow model/tool/skill overrides, safety modes, run status, run history, upcoming runs, and a Workflow Console. |
+| Channels and voice | Telegram, WhatsApp, Discord, Slack, and SMS with streaming, reactions, media intake, voice transcription, document extraction, approval routing, health checks, auto-generated send/photo/document tools, and optional tunnel support. Voice uses local faster-whisper STT and Kokoro TTS with 10 voices. |
+| Platform and app | Native desktop app, setup wizard, tray integration on Windows and macOS, desktop notifications, local browser-first Linux launch, optional Linux native window/tray mode, Home status bar for models, OAuth, MCP, plugins, documents, workflows, Buddy, logging, disk, and other local systems, plus verified auto-updates. |
+| Extensibility | Sandboxed plugin marketplace, bundled skills and tool guides, external MCP clients over stdio, Streamable HTTP, and SSE, Custom Tools from repos or folders, Claude Code Delegation through an approval-gated CLI worker, migration from selected Hermes/OpenClaw data, setup center, identity settings, and stability diagnostics. |
 
----
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full subsystem reference.
 
-## ✨ Why Thoth Stands Out
+## Install
 
-> Full subsystem details live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+### Windows
 
-### Memory That Becomes A Knowledge Graph
+1. Download the latest [Windows installer](https://github.com/siddsachar/Thoth/releases/latest).
+2. Run it. The installer bundles the embedded Python runtime, app source, and Python dependencies. Ollama is optional and only needed for local models.
+3. Launch Thoth from the Start Menu or desktop shortcut.
 
-Thoth stores durable knowledge as entities and typed relationships, not just chat snippets. It can save, search, link, explore, visualize, and export your knowledge graph as an Obsidian-compatible wiki vault, while background extraction and Dream Cycle refine duplicates, stale confidence, missing relationships, and actionable insights.
+User data lives in `%USERPROFILE%\.thoth`. Repairing or upgrading replaces the bundled runtime and preserves your data. Startup logs are written to `%USERPROFILE%\.thoth\thoth_app.log`, including recovery hints for known optional audio package issues such as TorchCodec.
 
-### Designer Studio, Media, And Documents
+### macOS
 
-Designer Studio creates decks, documents, landing pages, app mockups, and storyboards with a sandboxed interactive runtime, critique-repair loop, editable exports, and shareable HTML. The same media layer supports image generation/editing with OpenAI, Google, and xAI, plus video generation through Google Veo and xAI Grok Imagine Video.
+1. Download the latest [macOS DMG](https://github.com/siddsachar/Thoth/releases/latest).
+2. Drag `Thoth.app` into Applications.
+3. Launch Thoth from Applications or Launchpad.
 
-### Developer Studio And Custom Tools
+The first run may ask you to confirm that the app was downloaded from the internet. The packaged app uses its bundled Python runtime and dependencies, and it starts Ollama if Ollama is already installed. Apple Silicon and Intel Macs are supported on macOS 12+.
 
-Developer Studio adds a Codex-style workspace for local Git repos: review code, plan changes, edit files, run tests, manage branches, prepare PRs, and track todos with a dedicated inspector. Optional Docker Sandbox runs commands in a shadow copy and imports approved patches back into the real repo. Custom Tools let you turn a GitHub repo, local folder, or current workspace into reusable Thoth tools through a guided wizard or a conversational builder.
+If you only want provider models or a custom endpoint, you can skip model downloads during setup.
 
-### Real Computer Use, With Guardrails
+### Linux
 
-The LangGraph ReAct agent has 30+ core tool modules plus Developer-native tools, Custom Tools, and auto-generated channel tools. It can browse in a visible Chromium window, use the shell, manage files, search the web, read documents, send email, manage calendar events, create charts, inspect system status, and call external MCP tools. Destructive actions are approval-gated, shell commands are safety-classified, the filesystem is sandboxed, and tools can be disabled individually.
+Run:
 
-### Workflows That Run On Their Own
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash
+```
 
-Advanced workflows add schedules, webhook triggers, condition branches, approval steps, subtasks, notification-only runs, concurrency groups, per-workflow model/tool/skill overrides, delivery defaults, and background safety modes. The collapsible Workflow Console shows running jobs, approvals, upcoming runs, recent history, quick launch, and insights without leaving chat.
+To install a specific version:
 
-### Native, Multi-Channel, Local-First
+```bash
+curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.22.0
+```
 
-Thoth ships as a desktop app for Windows and macOS with one-click installers, tray integration, setup wizard, voice input, local Kokoro TTS, desktop notifications, and 5 bundled messaging channels: Telegram, WhatsApp, Discord, Slack, and SMS. Linux ships through a one-line installer backed by a verified self-contained XDG user-install tarball that opens in the system browser by default, with native window and tray support available when the required desktop libraries are installed. Channels share media handling, streaming, approvals, health checks, and optional tunnel support, while the Home status bar gives at-a-glance health for models, OAuth, MCP, plugins, documents, workflows, Buddy, logging, disk, and other local systems.
+The installer downloads the release tarball, verifies its SHA256 from the GitHub release manifest, installs under `~/.local/share/thoth`, creates `~/.local/bin/thoth`, and stores user data in `~/.thoth`. The default Linux build opens in your system browser. Native window and tray support are available when the required GTK, Qt, and AppIndicator libraries are installed.
 
-### Extensible Without Giving Up Control
+Manual tarball install:
 
-Plugins add tools and skills through a sandboxed marketplace; Custom Tools create reviewed local tools from repos and folders; MCP servers add external tools with per-server and per-tool review; Claude Code Delegation can coordinate Claude Code CLI as an approval-gated external coding worker; the migration wizard imports selected Hermes/OpenClaw data with backups and redacted reports. Core and plugin API keys use the OS credential store when available, with metadata-only files in Thoth's data directory.
+```bash
+tar -xzf Thoth-X.Y.Z-Linux-x86_64.tar.gz
+cd Thoth-X.Y.Z-Linux-x86_64
+./install.sh
+thoth
+```
 
-## Feature Map
+If `~/.local/bin` is not on `PATH`, run `~/.local/bin/thoth` or add it to your shell profile. On Linux, provider secrets use Secret Service or KWallet when available. WSL and headless systems can run without a keyring, but new secrets are session-only until secure storage is configured.
 
-| Area | What Thoth Includes |
-|------|---------------------|
-| **Agent & Models** | LangGraph ReAct agent, streaming, thinking bubbles, smart context trimming, 39 curated Ollama models, Ollama Cloud daemon/direct support, opt-in OpenAI/Anthropic/Google/xAI/MiniMax/OpenRouter provider models plus ChatGPT / Codex subscription models, background catalog cache, and per-thread/per-workflow/per-Developer model overrides |
-| **Memory & Knowledge** | Personal knowledge graph, FAISS semantic recall, 67 typed relations, graph visualization, Obsidian wiki export, document extraction, Dream Cycle refinement, self-knowledge, and insights |
-| **Design & Media** | Designer Studio, PDFs/HTML/PNG/PPTX export, published interactive links, image generation/editing, video generation, chart insertion, Mermaid/Plotly rendering, and media persistence |
-| **Developer & Code** | Developer Studio, code threads, Git workspace linking/cloning, approval modes, repo inspector, file tree, diffs, todos, tests, branch/commit/push/PR prep, optional Docker Sandbox, and Custom Tools |
-| **Tools** | 30+ core tools covering search, browser, shell, filesystem, documents, Gmail, Calendar, X, memory, workflows, tracker, image/video, vision, status, MCP, updates, computation, weather, charts, system info, Custom Tool Builder, and promoted Custom Tools |
-| **Automation** | Scheduled workflows, step pipelines, conditions, approvals, subtasks, webhooks, task-completion triggers, workflow-level delivery defaults, web-app run status, recent/upcoming runs, run history, and safety modes |
-| **Channels & Voice** | Telegram, WhatsApp, Discord, Slack, SMS, local faster-whisper STT, Kokoro TTS, media intake, reactions, streaming, approval routing, and tunnel manager |
-| **Platform & Extensibility** | Native desktop app, one-click Windows/macOS installers, one-line Linux installer, auto-updates, plugin marketplace, Custom Tools, MCP client, setup/migration centers, configurable identity, secure API-key storage, 40+ bundled skills/tool guides, and stability diagnostics |
+For browser automation, Chromium may need distro packages that the tarball cannot install. If Playwright reports missing dependencies, run the command it prints, or use `python -m playwright install --with-deps chromium` from a source checkout.
 
-[Detailed architecture and subsystem reference →](docs/ARCHITECTURE.md)
+## Quick Start
 
----
+On first launch, Thoth opens a setup wizard. Pick one of three paths:
 
-### How does Thoth compare to OpenClaw?
+| Mode | Use it when | Setup |
+|------|-------------|-------|
+| Local | You want models and embeddings on your machine. | Choose Ollama, download the default `qwen3:14b` brain model or a smaller model such as `qwen3:8b`, then start chatting. |
+| Providers | You do not have a local GPU or want frontier models. | Add an OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, or Ollama Cloud key, pick a default model, and save Quick Choices. ChatGPT / Codex sign-in is available in Settings after launch. |
+| Custom/Self-hosted | You run LM Studio, vLLM, LocalAI, or a private gateway. | Enter an OpenAI-compatible base URL such as `http://127.0.0.1:1234/v1`, add a key if your server requires one, fetch models, and choose a default. |
 
-[OpenClaw](https://github.com/openclaw/openclaw) is a popular open-source personal AI assistant. It's a powerful multi-channel gateway built for developers comfortable in the terminal. Here's how the two compare:
+Common first prompts:
 
-| | Thoth | OpenClaw |
-|---|---|---|
-| **Getting started** | **One-click installer** (`.exe` / `.dmg`) plus a one-line Linux installer backed by a verified XDG `.tar.gz`. Built-in setup wizard | `npm install -g openclaw@latest` → CLI onboarding. Requires Node.js 24. Windows needs WSL2 (no native Windows support) |
-| **Local AI (offline)** | **Local-first** — Ollama with 39 curated models out of the box, local embeddings, and optional Ollama Cloud daemon models. Works fully offline unless you opt into cloud paths | Cloud-first design — requires an API key to start. Local model support through provider config |
-| **Memory** | **Personal knowledge graph** — 10 entity types, typed directional relations, visual explorer, FAISS semantic search + 1-hop graph expansion, memory decay, orphan repair | Flat markdown files (`MEMORY.md` + daily notes) with semantic search. No structured graph |
-| **Knowledge refinement** | **Dream Cycle** — 5-phase nightly engine: duplicate merging (≥0.93 similarity), description enrichment, stale-confidence decay, relationship inference with hub diversity caps and rejection cache, and actionable insight generation. 3-layer anti-contamination system, dream journal | Dreaming (experimental) — Light/Deep/REM phases that promote short-term signals to long-term memory via scoring thresholds |
-| **Document intelligence** | **Map-reduce LLM pipeline** — extracts structured entities and relations into the knowledge graph with source provenance. Curated 67-type relation vocabulary, entity caps, self-loop rejection. Supports PDF, DOCX, EPUB, HTML, Markdown | File read/write/edit operations in the workspace |
-| **Wiki vault** | **Obsidian-compatible export** — one `.md` per entity with `[[wiki-links]]`, YAML frontmatter, and per-type indexes | Not available |
-| **Voice** | **Fully local** — faster-whisper STT + Kokoro TTS with 10 voices. Audio never leaves your machine | ElevenLabs (cloud TTS) + system fallback. Voice Wake on macOS/iOS |
-| **Health tracking** | **Built-in tracker** — medications, symptoms, exercise, mood, sleep, periods. Streak analysis, CSV export, Plotly charts | Not available |
-| **Tools** | 30+ core tools plus Developer-native tools, Custom Tool Builder, promoted Custom Tools, and auto-generated channel send tools — shell, browser, filesystem, Gmail, Calendar, Designer Studio, Thoth Status, memory graph, MCP external tools, image + video generation, and research tools | ~20 built-in tools — exec, browser, web search, canvas, cron, image/music/video generation |
-| **Messaging channels** | **5 channels** — Telegram, WhatsApp, Discord, Slack, SMS — all with streaming, reactions, media, and approval routing. Auto-generated per-channel tools. Tunnel manager for webhooks | **23+ channels** — WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams, Matrix, IRC, and many more |
-| **Autonomous agents** | **Advanced workflows** — step-based pipelines with conditions, approval gates, webhook triggers, concurrency groups, and per-workflow safety mode. Multiple run in parallel with their own persistent threads | Multi-agent routing with isolated sessions per sender/channel |
-| **Desktop app** | Native window (pywebview) + system tray on **Windows & macOS**; Linux one-line install with browser-first launch and optional native window/tray when desktop deps exist | macOS menu bar app. No native Windows app (WSL2 required). iOS & Android companion apps |
-| **Designer / Canvas** | Designer Studio for decks, one-pagers, reports, published links, plus Mermaid diagrams and Plotly charts rendered inline | A2UI — agent-driven interactive visual workspace |
-| **Developer / Code** | Developer Studio for local Git repos with approval modes, code threads, diffs, todos, tests, GitHub/PR prep, and optional Docker shadow sandbox | Developer-heavy CLI tools and terminal-first workflows |
-| **Plugins** | Sandboxed plugin marketplace, MCP import, and Custom Tools generated from repos/folders with inspect/test/promote/remove flow | npm plugin ecosystem + ClawHub skill registry. Large community catalog |
-| **Privacy** | All data local. No account, no server, no telemetry. API keys use the OS credential store when available — Thoth has no servers | Self-hosted gateway. Data stays on your machine. Some channel integrations require external services |
-| **Cost** | **Free** with local models. Provider models use upstream API billing or ChatGPT subscription access only when you opt in | Free + open source. Requires a cloud API key to function |
+- `Remember that my mom's birthday is March 15`
+- `Search for recent papers on transformer architectures`
+- `Read report.pdf in my workspace`
+- `Run git status on my project`
+- `Create a six-slide pitch deck for my startup`
+- `Show my headache trends this month`
+- `Remind me to call the dentist tomorrow at 9am`
+- `Review this repo and suggest the highest-risk issues`
+- `Turn this GitHub repo into a Custom Tool`
+- `What did I ask about taxes last week?`
 
-> **In short:** OpenClaw is a powerful gateway for developers who want their AI assistant on every messaging platform. Thoth is built for people who want **personal AI sovereignty** — local-first intelligence, a structured knowledge graph that grows with you, one-click setup, and tools that work without touching a terminal. Different philosophies, both open source.
+For LM Studio and similar local servers, use a context window large enough for Thoth's agent prompt and tool schemas. A `4096` context can fail before the first chat turn with misleading prompt-template errors. `32768` is a practical starting point.
 
-> For comparisons with ChatGPT and other cloud assistants, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#comparison-with-other-tools).
+## Models, Keys, and Integrations
 
----
+Most tools work without API keys. Add keys only for the providers and integrations you use.
 
-## 🔧 Tools
+| Service | Key or setup | Used for |
+|---------|--------------|----------|
+| OpenAI | `OPENAI_API_KEY` | OpenAI models and image tools. |
+| ChatGPT / Codex | In-app ChatGPT sign-in | Subscription-backed Codex models through ChatGPT's internal backend. |
+| Anthropic | `ANTHROPIC_API_KEY` | Claude models through the direct API. |
+| Google AI | `GOOGLE_API_KEY` | Gemini models, Imagen, and Veo. |
+| xAI | `XAI_API_KEY` | Grok models, Grok Imagine, and Grok Imagine Video. |
+| MiniMax | `MINIMAX_API_KEY` | MiniMax M2 models through the Anthropic-compatible API. |
+| OpenRouter | `OPENROUTER_API_KEY` | Access to 100+ provider models. |
+| Ollama Cloud | `OLLAMA_CLOUD_API_KEY` or local daemon sign-in | Direct Ollama Cloud models and cloud-tagged daemon models. |
+| Tavily | `TAVILY_API_KEY` | Live web search. |
+| Wolfram Alpha | `WOLFRAM_ALPHA_APPID` | Symbolic math, unit conversion, and scientific data. |
+| Telegram | `TELEGRAM_BOT_TOKEN` | Telegram bot messaging. |
+| Discord | `DISCORD_BOT_TOKEN` | Discord DM messaging. |
+| Slack | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` | Slack DM messaging through Socket Mode. |
+| Twilio | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | SMS. |
+| X | `X_CLIENT_ID` / `X_CLIENT_SECRET` | X API v2 OAuth 2.0 PKCE for search, timeline, mentions, posting, replies, quotes, likes, reposts, bookmarks, and deletes. |
+| ngrok | `NGROK_AUTHTOKEN` | Tunnels for inbound webhooks. |
+| Gmail and Google Calendar | Google Cloud OAuth `credentials.json` | Email search/read/draft/send and calendar view/create/update/move/delete. |
 
-Thoth's agent has access to 30+ core tool modules. Many of them expose multiple operations, Developer Studio adds code-specific tools, Custom Tools can be promoted from reviewed repos/folders, and running messaging channels add extra send/photo/document tools automatically. Tools can be enabled or disabled from the Settings panel.
+Configure providers in Settings, Channels, and Accounts. Keys and in-app ChatGPT / Codex tokens are stored in Windows Credential Manager, macOS Keychain, or Linux Secret Service/KWallet when available. `~/.thoth/api_keys.json` and `~/.thoth/providers.json` keep metadata only, such as saved state, provider status, Quick Choices, and masked fingerprints.
 
-### Search & Knowledge
+Embedding providers are configured separately from chat models. Local embeddings are available for private document and vector indexing. Optional cloud embeddings show a privacy warning because document text is sent to the selected embedding provider.
 
-| Tool | Description | API Key? |
-|------|-------------|----------|
-| **🔍 Web Search** | Live web search via Tavily for current events, news, real-time data | `TAVILY_API_KEY` |
-| **🦆 DuckDuckGo** | Free web search — no API key needed | None |
-| **🌐 Wikipedia** | Encyclopedic knowledge with contextual compression | None |
-| **📚 Arxiv** | Academic paper search — newest-first sorting, full-text HTML links, arXiv query syntax (`ti:`, `au:`, `abs:`, `cat:`) | None |
-| **▶️ YouTube** | Search videos + fetch full transcripts/captions | None |
-| **🔗 URL Reader** | Fetch and extract text content from any URL | None |
-| **📄 Documents** | Semantic search over your uploaded files (FAISS vector store) | None |
-| **📚 Wiki Vault** | Search, read, rebuild, and export the knowledge graph as an Obsidian markdown vault | None |
+External Codex CLI login files are metadata/reference only. Thoth can detect that a CLI login exists, but direct Codex runtime requires the in-app ChatGPT sign-in and does not copy runnable tokens from `~/.codex/auth.json`.
 
-### Productivity
+## Tools and Safety
 
-| Tool | Description | API Key? |
-|------|-------------|----------|
-| **📧 Gmail** | Search, read, draft, and send emails with file attachments (Google OAuth) | OAuth credentials |
-| **📅 Google Calendar** | View, create, update, move, and delete events (Google OAuth) | OAuth credentials |
-| **📁 Filesystem** | Sandboxed file operations — read, write, copy, move, delete within a workspace folder; reads PDF, CSV, Excel (.xlsx/.xls), JSON/JSONL, TSV, and image files; images displayed inline in chat; structured data files return schema + stats + preview via pandas; PDF export via `export_to_pdf` (Playwright with fpdf2 fallback) | None |
-| **🖥️ Shell** | Execute shell commands with 3-tier safety (safe/moderate/blocked); persistent sessions per thread; user approval for destructive commands; inline terminal panel | None |
-| **🌐 Browser** | Autonomous web browsing in a visible Chromium window — navigate, click, type, scroll, snapshot, back, tab management; accessibility-tree snapshots with numbered element references; persistent profile for logins | None |
-| **📋 Workflows** | Create, list, update, delete, and run advanced workflows — step-based pipelines with conditions, approvals, triggers, 7 schedule types (daily, weekly, weekdays, weekends, interval, cron, delay), channel delivery, per-task model override | None |
-| **📋 Tracker** | Habit/health tracker — log meds, symptoms, exercise, periods; streak, adherence, trend analysis; CSV export | None |
-| **📬 Channels** | Auto-generated send/photo/document tools for each running channel (Telegram, WhatsApp, Discord, Slack, SMS); receive voice, photos, and documents with transcription, analysis, and text extraction | Per-channel config |
-| **🐦 X (Twitter)** | Grouped read, post, and engage operations for search, timeline, mentions, user info, posting, replies, quotes, likes, reposts, bookmarks, and deletes via OAuth 2.0 PKCE | X API keys |
-| **🖼️ Image Generation** | Generate images from text prompts and edit existing images via OpenAI, xAI (Grok Imagine), and Google (Imagen 4, Nano Banana); rendered inline in chat and deliverable to channels | Cloud API key |
-| **🎬 Video Generation** | Generate short video clips from text prompts or reference images via Google Veo and xAI Grok Imagine Video; rendered inline in chat, used by Designer storyboards, and deliverable to channels | Cloud API key |
-| **🔌 External MCP Tools** | Connect external Model Context Protocol servers as dynamic namespaced tools; supports stdio, Streamable HTTP, and SSE; per-server and per-tool toggles; destructive-tool approval gates; curated starter import and diagnostics | Optional per server |
-| **💻 Developer Studio** | Connect local Git repos, inspect code, edit files, manage todos, run tests, review diffs, create/switch branches, commit/push/prepare PRs, and use optional Docker Sandbox with import-gated patches | None |
+Thoth's tools can be enabled or disabled from Settings. Many tools expose multiple operations, Developer Studio adds code-specific tools, Custom Tools can be promoted after review, and running channels add send/photo/document tools automatically.
 
-### Design & Self-Management
+| Group | Included tools |
+|-------|----------------|
+| Search and knowledge | Tavily web search, DuckDuckGo, Wikipedia, arXiv, YouTube transcripts, URL reader, document search, wiki vault, memory graph, and conversation search. |
+| Productivity | Gmail, Google Calendar, filesystem, shell, visible Chromium browser automation, workflows, tracker, channel tools, and X. |
+| Media and design | Designer Studio, image generation/editing through OpenAI, Google, and xAI, video generation through Google Veo and xAI Grok Imagine Video, chart insertion, Mermaid, Plotly, and media persistence. |
+| Developer and extensibility | Developer Studio, Custom Tool Builder, promoted Custom Tools, external MCP tools, plugin tools, Claude Code Delegation, and Thoth Status. |
+| Analysis | Calculator, Wolfram Alpha, weather, vision for camera/screen/workspace images, system info, and Plotly charts with PNG export. |
 
-| Tool | Description | API Key? |
-|------|-------------|----------|
-| **🎨 Designer** | Five-mode design studio (deck / document / landing / app_mockup / storyboard) with interactive runtime bridge, curated templates, AI image + video generation, chart insertion, brand controls, critique-repair loop, published share links, and export to PDF / HTML / PNG / PPTX | None |
-| **🧩 Custom Tool Builder** | Turn a repo URL, local folder, or current workspace into a reviewed reusable tool; inspect proposed commands, run smoke tests, promote to chat, disable, or remove safely | None |
-| **🪞 Thoth Status** | Query version, model, channels, tools, memory, identity, logs, Designer projects, and more; controlled self-management for selected settings and optional skill creation/patching when self-improvement is enabled | None |
+Safety controls are built into the tool layer:
 
-### Computation & Analysis
+- Destructive operations require confirmation, including file delete/move, moderate-risk shell commands, Gmail send, calendar move/delete, memory delete, tracker delete, and task delete.
+- Filesystem access is sandboxed to the configured workspace folder, which defaults to `~/Documents/Thoth`.
+- Shell commands are classified as safe, moderate, or blocked. High-risk commands such as `shutdown`, `reboot`, and `mkfs` are blocked.
+- Background workflows can have per-task command prefix and email-recipient allowlists.
+- Browser tabs are isolated per thread and cleaned up when tasks or threads finish.
+- Developer Studio has its own approval modes for edits, commands, Git operations, commits, pushes, and PR prep.
+- Docker Sandbox is opt-in and runs commands in a shadow workspace until you explicitly import changes.
+- Custom Tools are reviewed, smoke-tested, enabled, promoted, disabled, and removed without deleting their source repos.
+- Gmail and Calendar permissions are tiered for read, compose/write, and destructive actions.
+- MCP servers stay disabled until tested. External tools are namespaced, destructive MCP tools require approval, and broken servers degrade to diagnostics instead of blocking startup.
+- Prompt-injection defense scans tool outputs and user inputs for instruction override attempts, role impersonation, data exfiltration, encoding evasion, and social engineering patterns.
 
-| Tool | Description | API Key? |
-|------|-------------|----------|
-| **🧮 Calculator** | Safe math evaluation — arithmetic, trig, logs, factorials, combinatorics | None |
-| **🔢 Wolfram Alpha** | Advanced computation, symbolic math, unit conversion, scientific data | `WOLFRAM_ALPHA_APPID` |
-| **🌤️ Weather** | Current conditions and multi-day forecasts via Open-Meteo | None |
-| **👁️ Vision** | Camera capture, screen capture, and workspace image file analysis via vision model | None |
-| **🧠 Memory** | Save, search, update, delete, **link**, and **explore** memories in the knowledge graph | None |
-| **🔍 Conversation Search** | Search past conversations by keyword or list all saved threads | None |
-| **🖥️ System Info** | OS, CPU, RAM, disk space, IP addresses, battery, and top processes | None |
-| **📊 Chart** | Interactive Plotly charts — bar, line, scatter, pie, histogram, box, area, heatmap from data files; PNG export via `save_to_file` | None |
+## Architecture
 
-### Safety & Permissions
+Thoth is organized around local orchestration, context assembly, memory, workflows, channels, Designer Studio, Developer Studio, plugin/MCP boundaries, and safety controls.
 
-- **Destructive operations require confirmation**: `workspace_file_delete`, `workspace_move_file`, `run_command` (moderate-risk), `send_gmail_message`, `move_calendar_event`, `delete_calendar_event`, `delete_memory`, `tracker_delete`, `task_delete`
-- **Filesystem is sandboxed**: only the configured workspace folder is accessible (defaults to `~/Documents/Thoth`, auto-created on first use)
-- **Shell commands are safety-classified**: safe (auto), moderate (confirm), blocked (rejected); high-risk commands like `shutdown`, `reboot`, `mkfs` are blocked outright; moderate commands in background tasks require per-task command prefix allowlists
-- **Browser tabs are isolated per thread**: each chat or background task gets its own browser tab; tabs are cleaned up on task completion or thread deletion
-- **Background task permissions are configurable per-task**: shell command prefixes and email recipients can be allowlisted in the task editor
-- **Developer Studio has its own approval modes**: read-only, ask before changes, auto edit, and agent run control how code edits, shell commands, Git operations, commits, pushes, and PR preparation behave
-- **Docker Sandbox is opt-in**: Developer commands can run in a persistent shadow workspace and only affect the real repo after an explicit import; local execution remains available when Docker is not wanted or not installed
-- **Custom Tools are reviewed before broad use**: generated commands can be inspected, tested, enabled, promoted to normal chat, disabled, and removed without deleting the source repo
-- **Gmail/Calendar operations are tiered**: read, compose/write, and destructive tiers can be toggled independently
-- **MCP tools are opt-in and isolated**: imported servers stay disabled until tested, external tools are namespaced, destructive MCP tools require approval, and broken MCP servers degrade to diagnostics instead of startup failure
-- **Prompt-injection defence** — 5-layer scanning protects against injection attacks in tool outputs and user inputs: instruction override detection, role impersonation, data exfiltration, encoding evasion, and social engineering patterns
-- **Tools can be individually disabled** from Settings to reduce model decision complexity
+Explore the visual architecture gallery: [docs/architecture.html](docs/architecture.html)
 
----
-
-## 🏗️ Architecture
-
-Thoth is organized as a local-first desktop agent with clear boundaries between orchestration, memory, context assembly, workflows, channels, Designer Studio, and safety controls. The diagrams below give a quick visual map of the major subsystems.
-
-> 📖 **Explore the visual architecture gallery →** [docs/architecture.html](docs/architecture.html)<br>
-> 📚 **Module descriptions, data storage layout, and full system internals →** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#core-modules)
+Read the full architecture reference: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#core-modules)
 
 <table>
    <tr>
@@ -213,294 +203,85 @@ Thoth is organized as a local-first desktop agent with clear boundaries between 
    </tr>
 </table>
 
----
+## System Requirements
 
-## 💻 System Requirements
+| Setup | Minimum | Recommended |
+|-------|---------|-------------|
+| Local Ollama models | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.11+; 8 GB RAM for 8B models; about 5 GB disk for the app and one small model; internet for install and model download. | 16 to 32 GB RAM for 14B to 30B models; NVIDIA GPU with 8+ GB VRAM or Apple Silicon for much faster inference; 20+ GB disk for multiple or larger models. |
+| Provider/custom models only | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.11+; 4 GB RAM; about 1 GB disk; internet for provider inference. | No GPU required. Use this path if you do not want local model downloads. |
+| Developer Sandbox | Docker Desktop or a compatible Docker/Podman runtime. | Optional. Developer Studio also works with local execution in the selected repo. |
 
-### For Local Models (Ollama)
+The default local brain model is `qwen3:14b`, about 9 GB. It works on CPU with 16 GB RAM, but a GPU is faster. Smaller models such as `qwen3:8b`, about 5 GB, are better for 8 GB machines.
 
-| | Minimum | Recommended |
-|--|---------|-------------|
-| **OS** | Windows 10/11 (64-bit), macOS 12+ (Apple Silicon & Intel), or glibc-based Linux x86_64 | Same |
-| **Python** | 3.11+ | 3.11+ |
-| **RAM** | 8 GB (for 8B models) | 16–32 GB (for 14B–30B models) |
-| **GPU** | Not required — Ollama runs on CPU | NVIDIA 8+ GB VRAM (CUDA) or Apple Silicon — dramatically faster |
-| **Disk** | ~5 GB (app + one small model like `qwen3:8b`) | 20+ GB for multiple or larger models |
-| **Internet** | Required for install and model download; optional at runtime | Same |
+## From Source
 
-> **Note:** The default local model (`qwen3:14b`, ~9 GB) runs well on CPU with 16 GB RAM, but a GPU makes responses significantly faster. Smaller models like `qwen3:8b` (~5 GB) work on 8 GB RAM machines.
-
-Ollama Cloud can also appear through a signed-in local Ollama daemon when cloud-tagged models are available. Those models use Ollama's cloud/offload path even though they are selected from the local Ollama catalog.
-
-### For Provider Models Only (No Local GPU Needed)
-
-| Requirement | Details |
-|-------------|---------|
-| **OS** | Windows 10/11 (64-bit), macOS 12+ (Apple Silicon & Intel), or glibc-based Linux x86_64 |
-| **Python** | 3.11+ |
-| **RAM** | 4 GB |
-| **Disk** | ~1 GB (app + packages, no model downloads) |
-| **GPU** | Not needed |
-| **Internet** | Required (LLM inference happens on the provider's servers) |
-
-> You still need an API key from [OpenAI](https://platform.openai.com/), [Anthropic](https://console.anthropic.com/), [Google AI](https://aistudio.google.com/), [xAI](https://console.x.ai/), [MiniMax](https://platform.minimax.io/), [OpenRouter](https://openrouter.ai/), or Ollama Cloud, or an in-app ChatGPT sign-in for ChatGPT / Codex. API providers are billed per-token by the upstream provider; ChatGPT / Codex uses your ChatGPT subscription access.
-
-### Optional Developer Sandbox
-
-Developer Studio works without Docker by using local execution inside the selected repo and the active approval policy. Install Docker Desktop or a compatible Docker/Podman runtime only if you want Docker Sandbox mode, which runs commands in a per-workspace shadow copy and imports approved changes back into the real repo.
-
----
-
-## 📥 One-Click Install
-
-### Windows
-
-1. Download the latest **[Windows installer (.exe)](https://github.com/siddsachar/Thoth/releases/latest)**
-2. Run the installer — it installs Python, Ollama, and all dependencies automatically
-3. Launch **Thoth** from the Start Menu or Desktop shortcut
-
-The Windows installer owns Thoth's embedded Python runtime. Repairing or upgrading Thoth replaces that bundled runtime while preserving user data in `%USERPROFILE%\.thoth`. If startup fails after experimenting with manually installed local audio/TTS packages, check `%USERPROFILE%\.thoth\thoth_app.log`; Thoth logs recovery hints for known broken optional native packages such as TorchCodec, which is not required for the built-in Kokoro TTS path.
-
-### macOS
-
-1. Download the latest **[macOS DMG](https://github.com/siddsachar/Thoth/releases/latest)**
-2. Open the DMG and drag **Thoth.app** into the **Applications** folder
-3. Launch **Thoth** from Applications or Launchpad
-   - First run may prompt "Thoth is an app downloaded from the internet" → click **Open**
-   - First run installs Homebrew (if needed), Python, Ollama, and all dependencies automatically
-   - Subsequent launches skip installation and start in ~3 seconds
-
-> **Works on Apple Silicon (M1/M2/M3/M4) and Intel Macs** (macOS 12+). No terminal, no manual setup — just double-click and go.
-
-> **Using provider or custom endpoint models only?** The installer still sets up Ollama by default, but you can skip model downloads. On first launch, choose **Providers** for API-key models or **Custom/Self-hosted** for an OpenAI-compatible endpoint such as LM Studio.
-
-### Linux
-
-Run the one-line installer:
+Install [Ollama](https://ollama.com/) first if you want local models. Provider-only and custom-endpoint setups can skip local model downloads.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash
+git clone https://github.com/siddsachar/Thoth.git
+cd Thoth
+python -m venv .venv
 ```
 
-The installer downloads the latest `Thoth-X.Y.Z-Linux-x86_64.tar.gz` release asset, verifies its SHA256 from the GitHub Release manifest, and installs it into your user account. To install a specific version, pass it after `bash -s --`:
+Activate the environment:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/Thoth/main/installer/install-linux.sh | bash -s -- 3.22.0
+# Windows
+.venv\Scripts\activate
+
+# macOS / Linux
+source .venv/bin/activate
 ```
 
-Manual tarball flow:
+Install dependencies and launch:
 
-1. Download the latest **Linux tarball** from [GitHub Releases](https://github.com/siddsachar/Thoth/releases/latest), named like `Thoth-X.Y.Z-Linux-x86_64.tar.gz`
-2. Extract it and run the bundled user installer:
-   ```bash
-   tar -xzf Thoth-X.Y.Z-Linux-x86_64.tar.gz
-   cd Thoth-X.Y.Z-Linux-x86_64
-   ./install.sh
-   ```
-3. Launch **Thoth** from your application menu, or run:
-   ```bash
-   thoth
-   ```
+```bash
+pip install -r requirements.txt
+python launcher.py
+```
 
-Linux installs under `~/.local/share/thoth`, creates `~/.local/bin/thoth`, and leaves user data in `~/.thoth`. The supported Linux baseline opens Thoth in your system browser and does not require a system tray or pywebview backend. Optional native window/tray mode depends on your desktop having the relevant GTK/Qt/AppIndicator libraries. In-app auto-update uses the same verified tarball format, installs the new version into the XDG release tree, and flips `~/.local/share/thoth/current`. Saved provider secrets use Linux Secret Service/KWallet when a desktop keyring is available; WSL and headless servers without a keyring still run, but new secrets are kept session-only until secure storage is configured.
+On Windows and macOS, `launcher.py` starts the tray icon and opens the app on the first available local port, normally `http://localhost:8080`. On Linux it opens in the browser without a tray by default. If port 8080 is busy, Thoth picks the next free port.
 
-If your shell does not include `~/.local/bin` on `PATH`, launch with `~/.local/bin/thoth` or add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open a new terminal.
+Headless Linux/server mode:
 
-For browser automation tools on Linux, Chromium may require distro packages the tarball cannot install automatically. If Playwright reports missing dependencies, run the command it prints, or use `python -m playwright install --with-deps chromium` from a source checkout.
+```bash
+python launcher.py --server --no-open --port 8080
+```
 
----
+Direct app launch:
 
-## 📦 Installation (From Source)
+```bash
+python app.py
+```
 
-> **Prefer a manual install?** A few commands from source:
+Direct launches default to `http://localhost:8080`. Set `THOTH_PORT` to choose a different port.
 
-1. **Install [Ollama](https://ollama.com/)** *(required for local models — skip if using provider models only)*
+## Privacy
 
-2. **Clone the repository**
-   ```bash
-   git clone https://github.com/siddsachar/Thoth.git
-   cd Thoth
-   ```
+Local models run through Ollama on your machine. Documents, memories, conversations, knowledge graph data, workflows, logs, and user settings are stored locally under `~/.thoth` or the platform-specific app data paths used by the installer.
 
-3. **Create and activate a virtual environment**
-   ```bash
-   python -m venv .venv
-   # Windows
-   .venv\Scripts\activate
-   # macOS / Linux
-   source .venv/bin/activate
-   ```
+Provider and custom models are opt-in. When selected, the current conversation, model-visible tool context, and tool results are sent to that endpoint. Memories, documents, files, graph data, and other conversations stay local unless you explicitly include them in the current conversation or expose them through a tool result.
 
-4. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+Developer Studio only touches repos you link or clone. Local execution runs in that repo. Docker Sandbox runs in a shadow copy and requires explicit import before changing the real repo. Custom Tools are opt-in, testable, removable, and only appear in normal chat after promotion.
 
-5. **Start Ollama** *(if using local models)*
-   ```bash
-   ollama serve
-   ```
+Thoth does not require a Thoth account, and there is no Thoth-hosted middleman for provider calls.
 
-6. **Launch Thoth**
-   ```bash
-   python launcher.py
-   ```
-   On Windows and macOS this starts the system tray icon and opens the app on the first available local port, normally `http://localhost:8080`. On Linux it opens in the browser without a tray by default. If another service is already using 8080, Thoth automatically picks the next free port.
+## Project Docs
 
-   Linux server/headless mode:
-   ```bash
-   python launcher.py --server --no-open --port 8080
-   ```
-
-   Alternatively, run directly without the tray:
-   ```bash
-   python app.py
-   ```
-   Direct app launches default to `http://localhost:8080`; set `THOTH_PORT` to choose a different port.
-
-> **First launch:** A setup wizard starts with model/provider choice, then migration and setup-center steps. Choose **Local** (Ollama), **Providers** (API key), or **Custom/Self-hosted**. For local, the default brain model (`qwen3:14b`, ~9 GB) is recommended. For Providers, enter your API key (OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, or Ollama Cloud), pick a default model, and seed Quick Choices for everyday pickers. For Custom/Self-hosted, enter an OpenAI-compatible base URL such as LM Studio's `http://127.0.0.1:1234/v1`, leave the API key blank for no-auth local servers, fetch models, and pick a default. ChatGPT / Codex sign-in is available after launch in **Settings → Providers**.
-
----
-
-## 🔑 API Key Setup (Optional)
-
-Most tools work without any API keys. For provider models and enhanced functionality:
-
-### LLM Providers
-
-| Service | Key | Purpose | How to Get |
-|---------|-----|---------|------------|
-| **OpenAI** | `OPENAI_API_KEY` | GPT and other OpenAI models | [platform.openai.com](https://platform.openai.com/) |
-| **ChatGPT / Codex** | In-app ChatGPT sign-in | Subscription-backed Codex models | **Settings → Providers → ChatGPT / Codex** |
-| **Anthropic** | `ANTHROPIC_API_KEY` | Claude models (direct API) | [console.anthropic.com](https://console.anthropic.com/) |
-| **Google AI** | `GOOGLE_API_KEY` | Gemini models (direct API) | [aistudio.google.com](https://aistudio.google.com/) |
-| **xAI** | `XAI_API_KEY` | Grok models (direct API) | [console.x.ai](https://console.x.ai/) |
-| **MiniMax** | `MINIMAX_API_KEY` | MiniMax M2 models through the Anthropic-compatible API | [platform.minimax.io](https://platform.minimax.io/) |
-| **OpenRouter** | `OPENROUTER_API_KEY` | 100+ models from all major providers (Claude, Gemini, Llama, etc.) | [openrouter.ai](https://openrouter.ai/) |
-| **Ollama Cloud** | `OLLAMA_CLOUD_API_KEY` or in-app key | Ollama Cloud direct API models; local daemon cloud-tagged models use your Ollama daemon sign-in | [ollama.com](https://ollama.com/) |
-
-Configure provider keys and subscription accounts in **Settings → Providers**. Keys and in-app ChatGPT / Codex tokens are stored in your OS credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service/KWallet where available); `~/.thoth/api_keys.json` and `~/.thoth/providers.json` keep only local metadata such as saved-state, provider status, Quick Choices, and masked fingerprints. Model catalogs refresh in the background and Settings can render from cache, so large provider catalogs do not need to block the dialog. External Codex CLI login files are metadata/reference only: Thoth can show that a CLI login exists, but direct Codex runtime requires the in-app ChatGPT sign-in and does not copy runnable tokens from `~/.codex/auth.json`.
-
-Embedding providers are configured separately from chat models in Settings. Local embeddings remain available for private document/vector indexing, while optional cloud embeddings show a privacy warning because document text is sent to the selected embedding provider.
-
-ChatGPT / Codex uses ChatGPT's subscription/internal Codex backend rather than the public OpenAI API. That backend may change upstream, including endpoint behavior, catalog shape, auth requirements, rate limits, and model availability.
-
-### Tool API Keys
-
-| Service | Key | Purpose | How to Get |
-|---------|-----|---------|------------|
-| **Tavily** | `TAVILY_API_KEY` | Web search (1,000 free searches/month) | [app.tavily.com](https://app.tavily.com/) |
-| **Wolfram Alpha** | `WOLFRAM_ALPHA_APPID` | Advanced computation & scientific data | [developer.wolframalpha.com](https://developer.wolframalpha.com/) |
-
-### Channel & Service Keys
-
-| Service | Key | Purpose | How to Get |
-|---------|-----|---------|------------|
-| **Telegram** | `TELEGRAM_BOT_TOKEN` | Telegram bot messaging | [BotFather](https://t.me/botfather) |
-| **Discord** | `DISCORD_BOT_TOKEN` | Discord DM messaging | [Discord Developer Portal](https://discord.com/developers/) |
-| **Slack** | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` | Slack DM messaging (Socket Mode) | [Slack API](https://api.slack.com/apps) |
-| **Twilio (SMS)** | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | SMS messaging | [twilio.com](https://www.twilio.com/) |
-| **X (Twitter)** | `X_CLIENT_ID` / `X_CLIENT_SECRET` | X API v2 (OAuth 2.0 PKCE) | [X Developer Portal](https://developer.x.com/) |
-| **ngrok** | `NGROK_AUTHTOKEN` | Tunnel for inbound webhooks (SMS, etc.) | [ngrok.com](https://ngrok.com/) |
-
-Configure channel keys in **⚙️ Settings → 📡 Channels** and **⚙️ Settings → 🔗 Accounts** tabs. Saved keys use the same local OS credential store when available.
-
-For **Gmail** and **Google Calendar**, you'll need a Google Cloud OAuth `credentials.json` — setup instructions are provided in the respective Settings tabs.
-
----
-
-## 🚀 Quick Start
-
-### Local Models (Default)
-
-1. **Launch Thoth** and wait for the default model to download (first time only)
-2. **Click "＋ New conversation"** in the sidebar
-3. **Ask anything** — the agent will automatically choose which tools to use:
-   - *"What's the weather in Tokyo?"* → uses Weather tool
-   - *"Search for recent papers on transformer architectures"* → uses Arxiv
-   - *"Remember that my mom's birthday is March 15"* → saves to Memory
-   - *"Read the file report.pdf in my workspace"* → uses Filesystem
-   - *"Run git status on my project"* → uses Shell (safe, auto-executes)
-   - *"Install pandas with pip"* → uses Shell (moderate, asks for approval)
-   - *"What's on my screen right now?"* → uses Vision (screen capture)
-   - *"I took my Lexapro"* → asks to log, then saves to Tracker
-   - *"Show my headache trends this month"* → uses Tracker + Chart
-   - *"Remind me to call the dentist tomorrow at 9am"* → uses Tasks with scheduling
-   - *"Create a 6-slide pitch deck for my startup"* → uses Designer
-   - *"Review this repo and suggest the highest-risk issues"* → opens Developer Studio for code work
-   - *"Turn this GitHub repo into a Custom Tool"* → uses Custom Tool Builder when enabled
-   - *"What did I ask about taxes last week?"* → uses Conversation Search
-4. **Open ⚙️ Settings** to configure models, enable/disable tools, and set up integrations
-
-### Provider Models (No GPU? Start Here)
-
-1. **Launch Thoth** → on the setup wizard, choose **Providers**
-2. **Enter your API key** (OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, or Ollama Cloud) → Thoth validates and fetches available models
-3. **Pick a default model** and add the models you actually use to Quick Choices — no downloads, no GPU needed
-4. Optional: open **Settings → Providers** to sign in to ChatGPT / Codex for subscription-backed Codex models
-5. Switch models per conversation anytime from the model picker in the chat input; raw provider catalogs and pinning live in **Settings → Models**
-
-### Custom/Self-hosted Models
-
-1. Start your OpenAI-compatible server, such as LM Studio, vLLM, LocalAI, or a private gateway
-2. On the setup wizard, choose **Custom/Self-hosted**
-3. Enter the base URL, for example `http://127.0.0.1:1234/v1` for LM Studio's local server
-4. Leave the API key blank for no-auth local servers, or enter the key required by your gateway
-5. Click **Connect & Fetch Models**, choose the model Thoth should use by default, then finish setup
-
-For LM Studio, load the model with a context window large enough for Thoth's agent prompt and enabled tool schemas. A `4096` context can fail before the first chat turn with a misleading prompt-template error such as `No user query found in messages`; `32768` is a practical starting point for normal agent use.
-
-### Developer Studio
-
-1. Open **Developer** from the sidebar
-2. Link an existing local repo or clone a repo into a folder you choose; Thoth stores only the workspace link
-3. Pick the approval mode and execution mode:
-   - **Local** runs commands in the selected repo folder under Developer approval policy
-   - **Docker Sandbox** runs commands in a shadow copy and imports approved patches back into the real repo
-4. Ask for a review, fix, test suite, branch, commit, PR prep, or repo explanation. The Developer Inspector tracks safety policy, files, todos, diffs, tests, GitHub/PR state, and sandbox status.
-
-### Custom Tools
-
-1. Open **Developer → Custom Tools** or enable the **Custom Tool Builder** utility in Settings
-2. Give Thoth a repo URL, local folder, or current workspace
-3. Review proposed commands, run smoke tests, then enable the tool
-4. Promote it to normal chat only when you want the new tool available outside Developer
-
----
-
-## 🔒 Privacy & Security — Personal AI Sovereignty
-
-**Local models (default):** All LLM inference runs on your machine via Ollama. Documents, memories, and conversations stored locally in `~/.thoth/`. External network calls only when using online tools (web search, Gmail, Calendar) — each individually disableable. No telemetry, no tracking.
-
-**Provider and custom models (opt-in):** The current conversation plus model-visible tool context and tool results are sent to the selected model endpoint (OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, Ollama Cloud, ChatGPT / Codex, or your configured OpenAI-compatible custom endpoint). Memories, knowledge graph, documents, files, and other conversations never leave your machine unless you explicitly include them in the active conversation or expose them through a tool result. API-key providers connect directly to the provider; ChatGPT / Codex uses your in-app ChatGPT sign-in and ChatGPT subscription/internal Codex backend; custom endpoints connect directly to the base URL you configure. Thoth has no servers and no middleman.
-
-**Developer and Custom Tools:** Developer Studio touches only repos you explicitly link or clone. Local execution operates in that repo; Docker Sandbox runs in a shadow copy and requires explicit import before changing the real repo. Custom Tools are opt-in, testable, removable, and only become available in normal chat after promotion and tool enablement.
-
-**Always:** Core, channel, provider, and plugin API keys are stored locally in your OS credential store when available, with only masked metadata in Thoth's data folder. No Thoth account required; no sign-up; no server to phone home to. Tools can be individually disabled to control what the agent can access and reduce model decision complexity.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the local setup, branch naming, commit format, PR process, and test expectations.
-
-Useful project docs:
-
-- [Branching strategy](docs/BRANCHING.md) — protected `main`, feature branches, hotfixes
-- [Release process](docs/RELEASING.md) — version bumps, tags, build artifacts, signing, publishing
-- [Security policy](SECURITY.md) — private vulnerability reporting
-- [Code of conduct](CODE_OF_CONDUCT.md) — community expectations
+- [Architecture](docs/ARCHITECTURE.md)
+- [Visual architecture gallery](docs/architecture.html)
+- [Contributing guide](CONTRIBUTING.md)
+- [Branching strategy](docs/BRANCHING.md)
+- [Release process](docs/RELEASING.md)
+- [Security policy](SECURITY.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
 
 All changes should go through a pull request. `main` is intended to stay releasable.
 
----
+## License
 
-## 📄 License
+Apache 2.0. See [LICENSE](LICENSE).
 
-Apache 2.0 — see [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Acknowledgements
+## Acknowledgements
 
 Built with [NiceGUI](https://nicegui.io/), [LangGraph](https://langchain-ai.github.io/langgraph/), [LangChain](https://python.langchain.com/), [Ollama](https://ollama.com/), [FAISS](https://github.com/facebookresearch/faiss), [Kokoro TTS](https://github.com/thewh1teagle/kokoro-onnx), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [HuggingFace](https://huggingface.co/), and [tiktoken](https://github.com/openai/tiktoken).
