@@ -124,6 +124,8 @@ For LM Studio and similar local servers, use a context window large enough for T
 
 Most tools work without API keys. Add keys only for the providers and integrations you use.
 
+Model catalog browsing, pinning, defaults, and Quick Choices live in Settings → Models.
+
 | Service | Key or setup | Used for |
 |---------|--------------|----------|
 | OpenAI | `OPENAI_API_KEY` | OpenAI models and image tools. |
