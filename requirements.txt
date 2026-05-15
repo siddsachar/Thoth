@@ -128,4 +128,4 @@ playwright
 pywebview
 
 # ── Interactive Terminal (PTY) ───────────────────────────────────────────────
-pywinpty>=2.0; sys_platform == "win32"
+pywinpty>=3.0.3; sys_platform == "win32"
