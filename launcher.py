@@ -27,6 +27,7 @@ import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import service
 from app_port import DEFAULT_APP_PORT, THOTH_HOST_ENV, THOTH_PORT_ENV, parse_app_port
 
 if TYPE_CHECKING:
@@ -1664,6 +1665,27 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-ollama", action="store_true", help="Do not try to auto-start Ollama")
     parser.add_argument("--port", type=int, default=_PORT, help=f"Preferred app port (default: {_PORT})")
     parser.add_argument("--host", default=None, help="Host/interface for the NiceGUI server")
+
+    svc = parser.add_argument_group("service mode (Linux/macOS)")
+    svc.add_argument(
+        "--run-as-service",
+        action="store_true",
+        help="Detach from the terminal and run Thoth in the background (writes PID and log files)",
+    )
+    svc.add_argument("--service-stop", action="store_true", help="Stop the running Thoth service")
+    svc.add_argument("--service-status", action="store_true", help="Print Thoth service status")
+    svc.add_argument(
+        "--service-restart",
+        action="store_true",
+        help="Stop the running Thoth service (if any) and start a new one as a daemon",
+    )
+    svc.add_argument(
+        "--install-systemd-service",
+        action="store_true",
+        help="Install a user-level systemd unit at ~/.config/systemd/user/thoth.service",
+    )
+    svc.add_argument("--pid-file", default=None, help="Override PID file path for service mode")
+    svc.add_argument("--service-log", default=None, help="Override log file path for service mode")
     return parser
 
 
@@ -1681,9 +1703,62 @@ def quit_for_update() -> None:
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+def _resolve_service_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    pid_path = Path(args.pid_file) if args.pid_file else service.default_pid_path()
+    log_path = Path(args.service_log) if args.service_log else service.default_log_path()
+    return pid_path, log_path
+
+
+def _handle_service_management(args: argparse.Namespace) -> bool:
+    """Run a stop/status/install command if requested. Returns True if handled."""
+    pid_path, _log_path = _resolve_service_paths(args)
+
+    if args.service_status:
+        print(service.status_message(pid_path))
+        return True
+    if args.service_stop:
+        print(service.stop_service(pid_path))
+        return True
+    if args.install_systemd_service:
+        unit = service.install_systemd_unit()
+        print(f"Wrote {unit}")
+        print("Enable with:")
+        print("  systemctl --user daemon-reload")
+        print("  systemctl --user enable --now thoth.service")
+        print("View logs with: journalctl --user -u thoth.service -f")
+        return True
+    return False
+
+
+def _force_service_flags(args: argparse.Namespace) -> None:
+    """Apply the implicit options that ``--run-as-service`` requires."""
+    args.no_tray = True
+    args.no_open = True
+    args.no_splash = True
+    args.server = True
+
+
 def main(argv: list[str] | None = None) -> None:
     global _ACTIVE_TRAY
     args = _build_arg_parser().parse_args(argv)
+
+    if _handle_service_management(args):
+        return
+
+    if args.service_restart:
+        pid_path, _ = _resolve_service_paths(args)
+        print(service.stop_service(pid_path))
+        args.run_as_service = True
+
+    if args.run_as_service:
+        pid_path, log_path = _resolve_service_paths(args)
+        print(f"Starting Thoth as a service (logs: {log_path}). Stop with: thoth --service-stop")
+        sys.stdout.flush()
+        service.daemonize(pid_path, log_path)
+        _force_service_flags(args)
+        service.install_signal_handlers(lambda: service.remove_pid(pid_path))
+        atexit.register(service.remove_pid, pid_path)
+
     preferred_mode = "browser" if args.browser else "native" if args.native else None
     linux_default_direct = sys.platform.startswith("linux") and not args.tray
     direct = args.server or args.no_tray or linux_default_direct

@@ -87,6 +87,7 @@ Source: "..\voice.py";                 DestDir: "{app}\app"; Flags: ignoreversio
 Source: "..\tts.py";                   DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\vision.py";                DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\launcher.py";              DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\service.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\notifications.py";         DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\prompts.py";               DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\requirements.txt";         DestDir: "{app}\app"; Flags: ignoreversion
