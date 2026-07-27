@@ -114,3 +114,25 @@ class VoiceOutputController:
             return self.realtime_speaker(text, origin=origin)
         except TypeError:
             return self.realtime_speaker(text)
+
+
+def speak_orchestration_final(
+    delivery_context: dict[str, Any],
+    text: str,
+    *,
+    tts_service: Any,
+    realtime_speaker: Callable[..., bool | None] | None,
+    now: Callable[[], float],
+) -> bool:
+    """Speak a detached orchestration final only for its originating voice turn."""
+
+    if not bool((delivery_context or {}).get("voice_mode")):
+        return False
+    controller = VoiceOutputController.for_generation(
+        voice_mode=True,
+        transport=str((delivery_context or {}).get("voice_transport") or "normal"),
+        tts_service=tts_service,
+        realtime_speaker=realtime_speaker,
+        now=now,
+    )
+    return controller.speak_final(text)

@@ -140,6 +140,81 @@ def test_child_dispatcher_queues_fifo_at_global_and_parent_capacity(tmp_path, mo
     assert order == [first["id"], second["id"]]
 
 
+def test_default_dispatcher_runs_cumulative_children_in_bounded_waves(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runner, _agent_runs, _profiles, _context, threads = _fresh_agent_runner_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    parents = [
+        threads.create_thread(f"Wave parent {index}")
+        for index in range(3)
+    ]
+    release = threading.Event()
+    started: list[tuple[str, str]] = []
+    started_lock = threading.Lock()
+
+    def fake_invoke(prompt, enabled_tool_names, config, *, stop_event):
+        del prompt, enabled_tool_names, stop_event
+        configurable = config["configurable"]
+        with started_lock:
+            started.append(
+                (
+                    str(configurable["agent_run_id"]),
+                    str(configurable["parent_thread_id"]),
+                )
+            )
+        assert release.wait(10)
+        return "done"
+
+    monkeypatch.setattr(agent_runner, "_invoke_agent", fake_invoke)
+    runs = []
+    for parent_index, count in enumerate((4, 3, 3)):
+        for child_index in range(count):
+            runs.append(
+                agent_runner.spawn_agent_run(
+                    f"Wave {parent_index}-{child_index}",
+                    parent_thread_id=parents[parent_index],
+                )
+            )
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        current = agent_runner.child_dispatch_state()
+        if current["active"] == 8 and current["active"] + current["queued"] == 10:
+            break
+        time.sleep(0.01)
+    state = agent_runner.child_dispatch_state()
+    parent_counts = {
+        parent: sum(
+            active_parent == parent
+            for active_parent in agent_runner._DISPATCH_ACTIVE.values()
+        )
+        for parent in parents
+    }
+    assert state == {
+        "queued": 2,
+        "active": 8,
+        "max_active": 8,
+        "max_per_parent": 3,
+    }, (started, agent_runner._DISPATCH_QUEUE, agent_runner._DISPATCH_ACTIVE)
+    assert parent_counts == {
+        parents[0]: 3,
+        parents[1]: 3,
+        parents[2]: 2,
+    }
+
+    release.set()
+    finals = [
+        agent_runner.wait_for_agent_run(run["id"], timeout=3)
+        for run in runs
+    ]
+    assert all(run["status"] == "completed" for run in finals)
+    assert len(started) == 10
+
+
 def test_nested_depth_is_trusted_and_configurable_without_run_override(tmp_path, monkeypatch):
     agent_runner, agent_runs, _profiles, _context, threads = _fresh_agent_runner_modules(
         tmp_path, monkeypatch
@@ -225,6 +300,37 @@ def test_child_active_time_timeout_is_opt_in_and_terminal(tmp_path, monkeypatch)
     assert run["status"] == "timed_out"
     assert run["terminal_reason"] == "timeout"
     assert run["active_seconds"] >= 0.9
+
+
+def test_default_child_has_no_timeout_even_after_large_fake_clock_jump(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runner, _agent_runs, _profiles, _context, threads = _fresh_agent_runner_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    parent_thread_id = threads.create_thread("No-timeout parent")
+    timer_calls: list[float] = []
+
+    class UnexpectedTimer:
+        def __init__(self, seconds, callback):
+            del callback
+            timer_calls.append(seconds)
+
+    monkeypatch.setattr(agent_runner.threading, "Timer", UnexpectedTimer)
+    monkeypatch.setattr(agent_runner.time, "monotonic", lambda: 60 * 60 * 6)
+    monkeypatch.setattr(agent_runner, "_invoke_agent", lambda *args, **kwargs: "done")
+
+    run = agent_runner.spawn_agent_run(
+        "Remain valid across a six-hour sleep/wake jump.",
+        parent_thread_id=parent_thread_id,
+        wait=True,
+    )
+
+    assert run["status"] == "completed"
+    assert run["settings_snapshot_json"]["child_timeout_seconds"] == 0
+    assert timer_calls == []
 
 
 def test_spawn_agent_run_marks_provider_error_text_failed(tmp_path, monkeypatch):
@@ -595,6 +701,69 @@ def test_stop_agent_run_preserves_stop_when_invocation_returns_late_success(tmp_
     assert agent_runner.list_active_agent_run_ids() == []
 
 
+def test_orchestration_guidance_is_applied_at_next_safe_boundary(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runner, _agent_runs, _profiles, _context, threads = _fresh_agent_runner_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    from row_bot.agent_orchestrator import (
+        create_or_get_orchestration,
+        list_messages,
+        message_orchestration,
+    )
+
+    parent_thread_id = threads.create_thread(
+        "Guidance parent",
+        model_override="provider:parent-model",
+    )
+    orchestration = create_or_get_orchestration(
+        parent_thread_id=parent_thread_id,
+        parent_generation_id="guidance-generation",
+        root_objective="Review the implementation.",
+        model_ref="provider:parent-model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+    )
+    started = threading.Event()
+    release = threading.Event()
+    prompts: list[str] = []
+
+    def fake_invoke(prompt, enabled_tool_names, config, *, stop_event):
+        del enabled_tool_names, config, stop_event
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            started.set()
+            assert release.wait(2)
+            return "Initial result"
+        return "Updated result"
+
+    monkeypatch.setattr(agent_runner, "_invoke_agent", fake_invoke)
+    run = agent_runner.spawn_agent_run(
+        "Review the implementation.",
+        parent_thread_id=parent_thread_id,
+        orchestration_id=orchestration["id"],
+    )
+    assert started.wait(1)
+    assert message_orchestration(
+        orchestration["id"],
+        "Also verify the rollback path.",
+        run_id=run["id"],
+    ) == 1
+    pending = list_messages(orchestration["id"], kinds=["steering"])
+    assert pending[0]["delivery_status"] == "pending"
+    release.set()
+    final = agent_runner.wait_for_agent_run(run["id"], timeout=2)
+
+    assert final["status"] == "completed"
+    assert final["summary"] == "Updated result"
+    assert "Also verify the rollback path." in prompts[1]
+    delivered = list_messages(orchestration["id"], kinds=["steering"])
+    assert delivered[0]["delivery_status"] == "delivered"
+
+
 def test_worktree_workspace_mode_allocates_child_workspace(tmp_path, monkeypatch):
     agent_runner, agent_runs, profiles, _context, threads = _fresh_agent_runner_modules(
         tmp_path,
@@ -725,6 +894,74 @@ def test_two_worktree_child_agents_receive_distinct_workspaces(tmp_path, monkeyp
     assert second["workspace_mode"] == "worktree"
     assert first["workspace_id"] != second["workspace_id"]
     assert first["workspace_path"] != second["workspace_path"]
+
+
+def test_orchestrated_write_children_are_forced_into_distinct_worktrees(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runner, _agent_runs, profiles, _context, threads = _fresh_agent_runner_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    from row_bot.agent_orchestrator import create_or_get_orchestration
+
+    parent_thread_id = threads.create_thread(
+        "Parent",
+        developer_workspace_id="dev_parent",
+        model_override="provider:parent-model",
+    )
+    writer = profiles.save_agent_profile(
+        slug="automatic_writer",
+        display_name="Automatic Writer",
+        instructions="Edit the assigned files.",
+        tool_policy_json={"capability": "write_capable"},
+        workspace_policy_json={"workspace_mode_default": "auto"},
+    )
+    orchestration = create_or_get_orchestration(
+        parent_thread_id=parent_thread_id,
+        parent_generation_id="generation",
+        root_objective="Implement two independent changes.",
+        model_ref="provider:parent-model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+    )
+
+    def fake_allocate(run_id, parent_workspace_id, **_kwargs):
+        return {
+            "status": "active",
+            "project_workspace_id": parent_workspace_id,
+            "worktree_workspace_id": f"workspace-{run_id}",
+            "worktree_path": str(tmp_path / f"worktree-{run_id}"),
+            "branch_name": f"row-bot/{run_id}",
+            "metadata_json": {},
+        }
+
+    import row_bot.developer.worktrees as worktrees
+
+    monkeypatch.setattr(worktrees, "allocate_agent_worktree", fake_allocate)
+    monkeypatch.setattr(agent_runner, "_invoke_agent", lambda *args, **kwargs: "done")
+
+    first = agent_runner.spawn_agent_run(
+        "Edit module A.",
+        parent_thread_id=parent_thread_id,
+        profile=writer["id"],
+        orchestration_id=orchestration["id"],
+        wait=True,
+    )
+    second = agent_runner.spawn_agent_run(
+        "Edit module B.",
+        parent_thread_id=parent_thread_id,
+        profile=writer["id"],
+        orchestration_id=orchestration["id"],
+        wait=True,
+    )
+
+    assert first["model_override"] == "provider:parent-model"
+    assert second["model_override"] == "provider:parent-model"
+    assert first["workspace_mode"] == second["workspace_mode"] == "worktree"
+    assert first["workspace_id"] != second["workspace_id"]
+    assert first["write_lock_key"] != second["write_lock_key"]
 
 
 def test_worktree_requires_developer_workspace(tmp_path, monkeypatch):

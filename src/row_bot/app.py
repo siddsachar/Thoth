@@ -344,6 +344,9 @@ async def _auto_start_channel_background(channel, _st) -> None:
                 from row_bot.channels.thread_notifications import reconcile_pending_channel_notifications
 
                 delivered = await asyncio.to_thread(reconcile_pending_channel_notifications, 25)
+                from row_bot.agent_orchestrator import retry_pending_deliveries
+
+                await asyncio.to_thread(retry_pending_deliveries, 25)
                 if delivered:
                     logger.info(
                         "startup.channel.pending_notifications_delivered channel=%s count=%d",
@@ -378,6 +381,9 @@ async def _auto_start_channels_background(channels: list, _st) -> None:
         from row_bot.channels.thread_notifications import reconcile_pending_channel_notifications
 
         delivered = await asyncio.to_thread(reconcile_pending_channel_notifications, 50)
+        from row_bot.agent_orchestrator import retry_pending_deliveries
+
+        await asyncio.to_thread(retry_pending_deliveries, 50)
         if delivered:
             logger.info("startup.channels.pending_notifications_delivered count=%d", delivered)
     except Exception:
@@ -1895,6 +1901,7 @@ async def index():
     # ── Timers ───────────────────────────────────────────────────────────
 
     _last_agent_run_refresh = {"thread_id": "", "key": ""}
+    _last_orchestration_transcript = {"thread_id": "", "key": ""}
 
     def _current_agent_run_refresh_key(tid: str) -> str:
         if not tid:
@@ -1923,7 +1930,117 @@ async def index():
                     "stop_requested",
                 )
             ))
+        try:
+            from row_bot.agent_orchestrator import list_messages, list_orchestrations
+
+            for orchestration in list_orchestrations(parent_thread_id=tid, limit=5):
+                parts.append("|".join(
+                    [
+                        "orchestration",
+                        str(orchestration.get("id") or ""),
+                        str(orchestration.get("status") or ""),
+                        str(orchestration.get("updated_at") or ""),
+                    ]
+                ))
+                for message in list_messages(str(orchestration.get("id") or "")):
+                    if str(message.get("kind") or "") not in {"acknowledgement", "final"}:
+                        continue
+                    parts.append("|".join(
+                        [
+                            "orchestration_message",
+                            str(message.get("id") or ""),
+                            str(message.get("kind") or ""),
+                            str(message.get("delivery_status") or ""),
+                            str(message.get("delivered_at") or ""),
+                        ]
+                    ))
+        except Exception:
+            logger.debug("Orchestration page refresh poll failed", exc_info=True)
         return "\n".join(parts)
+
+    def _reload_completed_orchestration_transcript(tid: str) -> bool:
+        try:
+            from row_bot.agent_orchestrator import (
+                list_messages,
+                list_orchestrations,
+                record_message,
+            )
+            from row_bot.ui.helpers import load_thread_messages
+
+            rows = list_orchestrations(parent_thread_id=tid, limit=1)
+            if not rows:
+                return False
+            orchestration = rows[0]
+            status = str(orchestration.get("status") or "")
+            if status not in {"completed", "completed_partial", "failed", "stopped"}:
+                return False
+            final_messages = list_messages(
+                str(orchestration.get("id") or ""),
+                kinds=["final"],
+            )
+            if not final_messages:
+                return False
+            final_key = str(final_messages[-1].get("id") or "")
+            if (
+                _last_orchestration_transcript.get("thread_id") == tid
+                and _last_orchestration_transcript.get("key") == final_key
+            ):
+                return False
+            state.messages = load_thread_messages(tid)
+            state.cache_active_messages()
+            _last_orchestration_transcript["thread_id"] = tid
+            _last_orchestration_transcript["key"] = final_key
+            delivery_context = orchestration.get("delivery_context_json") or {}
+            if delivery_context.get("voice_mode"):
+                spoken_rows = list_messages(
+                    str(orchestration.get("id") or ""),
+                    kinds=["voice_final"],
+                )
+                already_spoken = any(
+                    str(row.get("delivery_status") or "") == "delivered"
+                    for row in spoken_rows
+                )
+                if not already_spoken:
+                    from row_bot.voice.output_controller import speak_orchestration_final
+
+                    def _realtime_speaker(text: str, *, origin: str = "final") -> bool:
+                        from row_bot.ui.streaming import run_realtime_client_js
+                        from row_bot.voice.realtime_client import send_realtime_run_event_js
+
+                        return run_realtime_client_js(
+                            p,
+                            send_realtime_run_event_js(
+                                text,
+                                origin=origin,
+                                thread_id=tid,
+                                generation_id=str(
+                                    orchestration.get("parent_generation_id") or ""
+                                ),
+                            ),
+                            context="orchestration_final_voice",
+                        )
+
+                    spoken = speak_orchestration_final(
+                        delivery_context,
+                        str(final_messages[-1].get("content") or ""),
+                        tts_service=state.tts_service,
+                        realtime_speaker=_realtime_speaker,
+                        now=time.perf_counter,
+                    )
+                    if spoken:
+                        record_message(
+                            str(orchestration.get("id") or ""),
+                            kind="voice_final",
+                            content=str(final_messages[-1].get("content") or ""),
+                            message_id=(
+                                f"orchestration:{orchestration.get('id')}:voice_final"
+                            ),
+                            delivery_status="delivered",
+                        )
+            return True
+        except Exception:
+            logger.debug("Completed orchestration transcript reload failed", exc_info=True)
+            return False
 
     def _current_child_agent_run_ids(tid: str) -> list[str]:
         if not tid:
@@ -1961,6 +2078,7 @@ async def index():
             _last_agent_run_refresh["key"] = key
             if _thread_has_live_generation(tid):
                 return
+            _reload_completed_orchestration_transcript(tid)
             try:
                 completion_changed = _append_async_delegated_agent_completion_messages(
                     state.messages,
@@ -1985,6 +2103,7 @@ async def index():
             logger.debug("Parent Agent strip poll refresh failed", exc_info=True)
         if _thread_has_live_generation(tid):
             return
+        _reload_completed_orchestration_transcript(tid)
         try:
             if _append_async_delegated_agent_completion_messages(
                 state.messages,

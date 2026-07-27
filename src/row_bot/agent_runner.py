@@ -50,13 +50,23 @@ def _acquire_child_capacity(
         while not stop_event.is_set():
             settings = load_agent_runtime_settings()
             parent_active, global_active = _dispatch_counts(ticket[1])
-            is_head = bool(_DISPATCH_QUEUE and _DISPATCH_QUEUE[0] == ticket)
+            # Preserve FIFO within each parent while allowing another parent
+            # to use free global capacity when the queue head's parent is full.
+            eligible_ticket = next(
+                (
+                    queued
+                    for queued in _DISPATCH_QUEUE
+                    if _dispatch_counts(queued[1])[0]
+                    < settings.max_concurrent_children
+                ),
+                None,
+            )
             if (
-                is_head
+                eligible_ticket == ticket
                 and parent_active < settings.max_concurrent_children
                 and global_active < settings.max_active_children_global
             ):
-                _DISPATCH_QUEUE.pop(0)
+                _DISPATCH_QUEUE.remove(ticket)
                 _DISPATCH_ACTIVE[ticket[0]] = ticket[1]
                 return True
             _DISPATCH_CONDITION.wait(timeout=0.1)
@@ -402,6 +412,11 @@ def spawn_agent_run(
     developer_workspace_id: str = "",
     workspace_mode: str = "",
     use_worktree: bool = False,
+    orchestration_id: str = "",
+    orchestration_required: bool = True,
+    orchestration_dependencies: Sequence[str] | None = None,
+    orchestration_attempt: int = 1,
+    retry_of_run_id: str = "",
     wait: bool = False,
     timeout: float | None = None,
 ) -> dict[str, Any]:
@@ -437,6 +452,15 @@ def spawn_agent_run(
         default=profile_workspace_mode,
     )
     if use_worktree:
+        effective_workspace_mode = "worktree"
+    requires_write_lock = _profile_requires_write_lock(profile_snapshot)
+    if (
+        orchestration_id
+        and requires_write_lock
+        and parent_developer_workspace_id
+        and effective_workspace_mode != "worktree"
+    ):
+        # Parallel automatic writers must not share the parent checkout.
         effective_workspace_mode = "worktree"
 
     from row_bot.agent_context import build_child_agent_prompt
@@ -527,7 +551,6 @@ def spawn_agent_run(
         _enabled_tool_names(enabled_tool_names),
         profile_snapshot,
     )
-    requires_write_lock = _profile_requires_write_lock(profile_snapshot)
     write_lock_key = (
         _writer_lock_key(
             developer_workspace_id=effective_developer_workspace_id,
@@ -617,6 +640,17 @@ def spawn_agent_run(
         },
         visibility="internal",
     )
+    if orchestration_id:
+        from row_bot.agent_orchestrator import register_member
+
+        register_member(
+            orchestration_id,
+            run_id,
+            required=orchestration_required,
+            dependency_run_ids=orchestration_dependencies,
+            attempt=orchestration_attempt,
+            retry_of_run_id=retry_of_run_id,
+        )
 
     stop_event = threading.Event()
     thread = threading.Thread(
@@ -743,6 +777,18 @@ def _run_agent_thread(
     capacity_acquired = False
     timeout_timer: threading.Timer | None = None
     try:
+        try:
+            from row_bot.agent_orchestrator import wait_for_dependencies
+
+            if not wait_for_dependencies(run_id, stop_event):
+                finish_agent_run(
+                    run_id,
+                    "stopped",
+                    status_message="Stop requested while waiting for dependencies",
+                )
+                return
+        except ImportError:
+            pass
         configurable = config.get("configurable") or {}
         parent_key = str(
             configurable.get("parent_run_id")
@@ -786,12 +832,49 @@ def _run_agent_thread(
                 {"count": len(parent_messages)},
                 visibility="internal",
             )
+            try:
+                from row_bot.agent_orchestrator import mark_steering_delivered
+
+                mark_steering_delivered(run_id, parent_messages)
+            except Exception:
+                logger.debug("Could not acknowledge queued Agent guidance", exc_info=True)
+        applied_parent_message_count = len(parent_messages)
         result = _invoke_agent(
             prompt,
             enabled_tool_names,
             config,
             stop_event=stop_event,
         )
+        if not stop_event.is_set() and not (
+            isinstance(result, dict)
+            and result.get("type") in {"interrupt", "error", "terminal"}
+        ):
+            latest_parent_messages = get_agent_parent_messages(run_id)
+            follow_ups = latest_parent_messages[applied_parent_message_count:]
+            if follow_ups:
+                follow_up_prompt = (
+                    "[Parent guidance received at the next safe boundary]\n"
+                    + "\n".join(f"- {message}" for message in follow_ups[-5:])
+                    + "\n\nUpdate or verify your result in light of this guidance."
+                )
+                append_agent_event(
+                    run_id,
+                    "parent.messages.applied",
+                    {"count": len(follow_ups), "boundary": "post_turn"},
+                    visibility="internal",
+                )
+                try:
+                    from row_bot.agent_orchestrator import mark_steering_delivered
+
+                    mark_steering_delivered(run_id, follow_ups)
+                except Exception:
+                    logger.debug("Could not acknowledge Agent guidance", exc_info=True)
+                result = _invoke_agent(
+                    follow_up_prompt,
+                    enabled_tool_names,
+                    config,
+                    stop_event=stop_event,
+                )
         if _child_timed_out(run_id):
             finish_agent_run(
                 run_id,
@@ -994,6 +1077,29 @@ def _resume_agent_thread(
             interrupt_ids=interrupt_ids or None,
             stop_event=stop_event,
         )
+        if not stop_event.is_set() and not (
+            isinstance(result, dict)
+            and result.get("type") in {"interrupt", "error", "terminal"}
+        ):
+            try:
+                from row_bot.agent_orchestrator import (
+                    mark_steering_delivered,
+                    pending_steering_for_run,
+                )
+
+                follow_ups = pending_steering_for_run(run_id)
+                if follow_ups:
+                    result = _invoke_agent(
+                        "[Parent guidance received after approval]\n"
+                        + "\n".join(f"- {message}" for message in follow_ups[-5:])
+                        + "\n\nUpdate or verify your result in light of this guidance.",
+                        enabled_tool_names,
+                        config,
+                        stop_event=stop_event,
+                    )
+                    mark_steering_delivered(run_id, follow_ups)
+            except Exception:
+                logger.debug("Could not apply Agent guidance after approval", exc_info=True)
         if _child_timed_out(run_id):
             finish_agent_run(
                 run_id,

@@ -171,6 +171,15 @@ async def handle_plugin_channel_message(
         )
         generated_files.extend(turn.generated_files)
         await _deliver_generated_files(turn.generated_files, callbacks)
+        from row_bot.channels import runtime as channel_runtime
+
+        if channel_runtime.channel_turn_is_suspended(turn.answer):
+            return ChannelRunResult(
+                thread_id=thread_id,
+                answer="",
+                handled=True,
+                generated_files=generated_files,
+            )
         if turn.interrupt_data:
             await _send_approval_request(callbacks, turn.interrupt_data, config)
             return ChannelRunResult(
@@ -531,8 +540,10 @@ async def _collect_agent_turn(
     interrupt_ids: list[str] | None = None,
 ) -> _AgentTurn:
     import row_bot.agent as agent_mod
+    from row_bot.channels import runtime as channel_runtime
 
     enabled = _enabled_tools(enabled_tool_names)
+    config = channel_runtime.prepare_channel_turn_config(config, prompt)
 
     if resume_approved is None:
         def events_factory():
@@ -546,12 +557,31 @@ async def _collect_agent_turn(
                 interrupt_ids=interrupt_ids,
             )
 
-    return await _consume_stream_events(
+    orchestration_capable = bool(
+        deliver_final
+        and resume_approved is None
+        and "agents" in enabled
+    )
+    turn = await _consume_stream_events(
         events_factory,
         callbacks,
         use_stream=use_stream,
-        deliver_final=deliver_final,
+        # Buffer orchestration-capable turns until the required-child decision
+        # is durable; this prevents plugin callbacks from leaking a draft.
+        deliver_final=deliver_final and not orchestration_capable,
     )
+    if orchestration_capable:
+        if channel_runtime.finalize_channel_orchestration(
+            config,
+            turn.answer,
+            enabled,
+        ):
+            turn.answer = channel_runtime.orchestration_suspended_final()
+            turn.delivered_final = True
+        else:
+            await _send_text(callbacks, turn.answer)
+            turn.delivered_final = True
+    return turn
 
 
 def _enabled_tools(enabled_tool_names: list[str] | None) -> list[str]:

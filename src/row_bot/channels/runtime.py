@@ -99,6 +99,76 @@ def thread_id_from_config(config: dict | None) -> str:
     return str(configurable.get("thread_id") or "").strip()
 
 
+def prepare_channel_turn_config(config: dict, user_text: str) -> dict:
+    """Attach durable parent-generation identity to a channel turn."""
+
+    prepared = {
+        **dict(config or {}),
+        "configurable": dict((config or {}).get("configurable") or {}),
+    }
+    configurable = prepared["configurable"]
+    thread_id = str(configurable.get("thread_id") or "")
+    configurable.setdefault(
+        "generation_id",
+        f"{thread_id}:channel:{uuid.uuid4().hex[:12]}",
+    )
+    configurable.setdefault("root_objective", str(user_text or "").strip())
+    configurable.setdefault("runtime_surface", "channel")
+    configurable.setdefault("runtime_mode", "auto")
+    return prepared
+
+
+def finalize_channel_orchestration(
+    config: dict,
+    assistant_text: str,
+    enabled_tool_names: list[str],
+) -> bool:
+    """Suspend required channel work and let durable delivery own ack/final."""
+
+    configurable = config.get("configurable") or {}
+    thread_id = str(configurable.get("thread_id") or "")
+    generation_id = str(configurable.get("generation_id") or "")
+    if not thread_id or not generation_id:
+        return False
+    from row_bot.agent_orchestrator import (
+        finalize_parent_generation,
+        get_generation_orchestration,
+    )
+
+    orchestration = get_generation_orchestration(thread_id, generation_id)
+    if not orchestration or int(orchestration.get("required_total") or 0) <= 0:
+        return False
+    text = str(assistant_text or "")
+    if text.strip():
+        from row_bot.threads import remove_latest_checkpoint_ai_message
+
+        remove_latest_checkpoint_ai_message(thread_id, text)
+    return finalize_parent_generation(
+        str(orchestration["id"]),
+        continuation_state={
+            "config": config,
+            "enabled_tool_names": list(enabled_tool_names),
+            "provisional_text": text,
+            "channel_turn": True,
+        },
+        delivery_context={
+            "runtime_surface": "channel",
+            "runtime_channel": str(configurable.get("runtime_channel") or ""),
+            "plugin_id": str(configurable.get("plugin_id") or ""),
+        },
+    )
+
+
+def orchestration_suspended_final() -> str:
+    from row_bot.channels.streaming import ORCHESTRATION_SUSPENDED_FINAL
+
+    return ORCHESTRATION_SUSPENDED_FINAL
+
+
+def channel_turn_is_suspended(answer: Any) -> bool:
+    return str(answer or "").strip() == orchestration_suspended_final()
+
+
 def _has_assistant_after_latest_human(messages: list[object]) -> bool:
     start = 0
     for idx, message in enumerate(messages):
@@ -140,7 +210,7 @@ def persist_channel_assistant_message(
 
     thread_id = thread_id_from_config(config)
     text = str(assistant_text or "").strip()
-    if not thread_id or not text:
+    if not thread_id or not text or channel_turn_is_suspended(text):
         return False
     try:
         from langchain_core.messages import AIMessage
@@ -285,6 +355,12 @@ def run_channel_goal_sync(
         turns += 1
         result = run_turn(prompt, config)
         answer, interrupt_data = _extract_agent_result(result)
+        if channel_turn_is_suspended(answer):
+            return ChannelGoalRunResult(
+                turns=turns,
+                status="waiting_children",
+                reason="Required child Agents are still running.",
+            )
         if answer:
             send_text(answer)
         decision = _after_goal_turn(
@@ -374,6 +450,12 @@ async def run_channel_goal_async(
         turns += 1
         result = await _maybe_await(run_turn(prompt, config))
         answer, interrupt_data = _extract_agent_result(result)
+        if channel_turn_is_suspended(answer):
+            return ChannelGoalRunResult(
+                turns=turns,
+                status="waiting_children",
+                reason="Required child Agents are still running.",
+            )
         if answer:
             await _maybe_await(send_text(answer))
         decision = _after_goal_turn(

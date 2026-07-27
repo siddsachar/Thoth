@@ -26,6 +26,7 @@ AGENT_RUN_STATUSES = {
     "waiting_approval",
     "waiting_user",
     "paused",
+    "interrupted",
     "completed",
     "completed_delivery_failed",
     "failed",
@@ -174,6 +175,55 @@ _CREATE_TABLE_SQL: dict[str, str] = {
             continuation_key TEXT DEFAULT ''
         )
     """,
+    "agent_orchestrations": """
+        CREATE TABLE IF NOT EXISTS agent_orchestrations (
+            id TEXT PRIMARY KEY,
+            parent_thread_id TEXT NOT NULL,
+            parent_generation_id TEXT NOT NULL,
+            parent_run_id TEXT NOT NULL DEFAULT '',
+            root_objective TEXT NOT NULL,
+            status TEXT NOT NULL,
+            model_ref TEXT NOT NULL,
+            approval_mode TEXT NOT NULL,
+            runtime_surface TEXT NOT NULL,
+            required_total INTEGER NOT NULL DEFAULT 0,
+            optional_total INTEGER NOT NULL DEFAULT 0,
+            acknowledgement_sent INTEGER NOT NULL DEFAULT 0,
+            continuation_state_json TEXT NOT NULL DEFAULT '{}',
+            delivery_context_json TEXT NOT NULL DEFAULT '{}',
+            settings_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL DEFAULT '',
+            error_message TEXT NOT NULL DEFAULT ''
+        )
+    """,
+    "agent_orchestration_members": """
+        CREATE TABLE IF NOT EXISTS agent_orchestration_members (
+            orchestration_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            required INTEGER NOT NULL DEFAULT 1,
+            wave INTEGER NOT NULL DEFAULT 0,
+            sequence INTEGER NOT NULL,
+            attempt INTEGER NOT NULL DEFAULT 1,
+            retry_of_run_id TEXT NOT NULL DEFAULT '',
+            dependency_run_ids_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL,
+            PRIMARY KEY (orchestration_id, run_id)
+        )
+    """,
+    "agent_orchestration_messages": """
+        CREATE TABLE IF NOT EXISTS agent_orchestration_messages (
+            id TEXT PRIMARY KEY,
+            orchestration_id TEXT NOT NULL,
+            run_id TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            content TEXT NOT NULL,
+            delivery_status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            delivered_at TEXT NOT NULL DEFAULT ''
+        )
+    """,
 }
 
 _COLUMN_DEFINITIONS: dict[str, dict[str, str]] = {
@@ -277,6 +327,48 @@ _COLUMN_DEFINITIONS: dict[str, dict[str, str]] = {
         "active_run_id": "TEXT DEFAULT ''",
         "last_turn_id": "TEXT DEFAULT ''",
         "continuation_key": "TEXT DEFAULT ''",
+    },
+    "agent_orchestrations": {
+        "id": "TEXT PRIMARY KEY",
+        "parent_thread_id": "TEXT NOT NULL DEFAULT ''",
+        "parent_generation_id": "TEXT NOT NULL DEFAULT ''",
+        "parent_run_id": "TEXT NOT NULL DEFAULT ''",
+        "root_objective": "TEXT NOT NULL DEFAULT ''",
+        "status": "TEXT NOT NULL DEFAULT 'planning'",
+        "model_ref": "TEXT NOT NULL DEFAULT ''",
+        "approval_mode": "TEXT NOT NULL DEFAULT ''",
+        "runtime_surface": "TEXT NOT NULL DEFAULT 'chat'",
+        "required_total": "INTEGER NOT NULL DEFAULT 0",
+        "optional_total": "INTEGER NOT NULL DEFAULT 0",
+        "acknowledgement_sent": "INTEGER NOT NULL DEFAULT 0",
+        "continuation_state_json": "TEXT NOT NULL DEFAULT '{}'",
+        "delivery_context_json": "TEXT NOT NULL DEFAULT '{}'",
+        "settings_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
+        "created_at": "TEXT NOT NULL DEFAULT ''",
+        "updated_at": "TEXT NOT NULL DEFAULT ''",
+        "completed_at": "TEXT NOT NULL DEFAULT ''",
+        "error_message": "TEXT NOT NULL DEFAULT ''",
+    },
+    "agent_orchestration_members": {
+        "orchestration_id": "TEXT NOT NULL DEFAULT ''",
+        "run_id": "TEXT NOT NULL DEFAULT ''",
+        "required": "INTEGER NOT NULL DEFAULT 1",
+        "wave": "INTEGER NOT NULL DEFAULT 0",
+        "sequence": "INTEGER NOT NULL DEFAULT 0",
+        "attempt": "INTEGER NOT NULL DEFAULT 1",
+        "retry_of_run_id": "TEXT NOT NULL DEFAULT ''",
+        "dependency_run_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+        "status": "TEXT NOT NULL DEFAULT 'queued'",
+    },
+    "agent_orchestration_messages": {
+        "id": "TEXT PRIMARY KEY",
+        "orchestration_id": "TEXT NOT NULL DEFAULT ''",
+        "run_id": "TEXT NOT NULL DEFAULT ''",
+        "kind": "TEXT NOT NULL DEFAULT ''",
+        "content": "TEXT NOT NULL DEFAULT ''",
+        "delivery_status": "TEXT NOT NULL DEFAULT 'pending'",
+        "created_at": "TEXT NOT NULL DEFAULT ''",
+        "delivered_at": "TEXT NOT NULL DEFAULT ''",
     },
 }
 
@@ -411,6 +503,22 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_thread_goals_thread_status "
         "ON thread_goals(thread_id, status, updated_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_orchestrations_parent "
+        "ON agent_orchestrations(parent_thread_id, status, updated_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_orchestrations_generation "
+        "ON agent_orchestrations(parent_thread_id, parent_generation_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_orchestration_members_run "
+        "ON agent_orchestration_members(run_id, orchestration_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_orchestration_messages_delivery "
+        "ON agent_orchestration_messages(orchestration_id, delivery_status, created_at)"
     )
 
 
@@ -685,6 +793,12 @@ def start_agent_run(run_id: str) -> dict[str, Any] | None:
     if not changed:
         return None
     append_agent_event(run_id, "run.started", {}, visibility="internal")
+    try:
+        from row_bot.agent_orchestrator import handle_run_status
+
+        handle_run_status(run_id, "running")
+    except Exception:
+        pass
     return get_agent_run(run_id)
 
 
@@ -822,6 +936,12 @@ def update_agent_status(
             {"status": status, "status_message": status_message},
             visibility="internal",
         )
+    try:
+        from row_bot.agent_orchestrator import handle_run_status
+
+        handle_run_status(run_id, status)
+    except Exception:
+        pass
     return get_agent_run(run_id)
 
 
@@ -861,6 +981,12 @@ def save_agent_resume_state(
         {"status": status, "status_message": status_message},
         visibility="log",
     )
+    try:
+        from row_bot.agent_orchestrator import handle_run_status
+
+        handle_run_status(run_id, status)
+    except Exception:
+        pass
     return get_agent_run(run_id)
 
 
@@ -947,9 +1073,18 @@ def finish_agent_run(
         visibility="log",
     )
     final_run = get_agent_run(run_id)
+    orchestration_owned = False
+    try:
+        from row_bot.agent_orchestrator import handle_run_terminal
+
+        orchestration_owned = handle_run_terminal(final_run or run_id)
+    except Exception:
+        # A child result remains durable even if orchestration reconciliation
+        # needs startup repair or an explicit Resume.
+        orchestration_owned = False
     try:
         run_kind = str((final_run or {}).get("kind") or "").lower()
-        if run_kind != "goal":
+        if run_kind != "goal" and not orchestration_owned:
             from row_bot.channels.thread_notifications import notify_agent_run_terminal
 
             notify_agent_run_terminal(final_run or run_id)
@@ -1090,12 +1225,22 @@ def append_agent_parent_message(run_id: str, message: str) -> dict[str, Any] | N
 
 
 def get_agent_parent_messages(run_id: str, limit: int = 20) -> list[str]:
-    """Return parent steering messages in chronological order."""
+    """Return the newest parent steering messages in chronological order."""
+
+    ensure_agent_run_schema()
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT payload_json FROM agent_run_events "
+            "WHERE run_id = ? AND type = 'parent.message' "
+            "ORDER BY ts DESC, id DESC LIMIT ?",
+            (str(run_id), max(1, int(limit or 20))),
+        ).fetchall()
+    finally:
+        conn.close()
     messages: list[str] = []
-    for event in get_agent_events(run_id, limit=max(1, int(limit or 20))):
-        if event.get("type") != "parent.message":
-            continue
-        payload = event.get("payload_json") or {}
+    for row in reversed(rows):
+        payload = _parse_json(row["payload_json"])
         if isinstance(payload, dict):
             text = str(payload.get("message") or "").strip()
             if text:
@@ -1370,6 +1515,18 @@ def recover_stale_agent_runs() -> dict[str, int]:
     """
 
     ensure_agent_run_schema()
+    orchestration_recovery = {
+        "orchestrations_interrupted": 0,
+        "members_interrupted": 0,
+    }
+    try:
+        from row_bot.agent_orchestrator import recover_interrupted_orchestrations
+
+        orchestration_recovery = recover_interrupted_orchestrations()
+    except Exception:
+        # Legacy recovery remains available even when additive orchestration
+        # repair encounters an unexpected row.
+        pass
     now = _now()
     stopped: list[tuple[str, str]] = []
     kept_approvals: list[str] = []
@@ -1388,10 +1545,20 @@ def recover_stale_agent_runs() -> dict[str, int]:
             f"SELECT * FROM agent_runs WHERE status NOT IN ({placeholders})",
             tuple(TERMINAL_STATUSES),
         ).fetchall()
+        orchestration_run_ids = {
+            str(row["run_id"])
+            for row in conn.execute(
+                "SELECT run_id FROM agent_orchestration_members"
+            ).fetchall()
+        }
         for row in rows:
             run = _run_from_row(row) or {}
             run_id = str(run.get("id") or "")
             status = str(run.get("status") or "")
+            if run_id in orchestration_run_ids:
+                # Durable orchestrations are explicitly resumed by the user.
+                # Their interrupted rows must not be converted to legacy stops.
+                continue
             if status == "waiting_approval":
                 if run.get("resume_state_json"):
                     kept_approvals.append(run_id)
@@ -1435,6 +1602,7 @@ def recover_stale_agent_runs() -> dict[str, int]:
         "queued": 0,
         "waiting_approval": len(kept_approvals),
         "locks_released": len(released_locks),
+        **orchestration_recovery,
     }
 
 
@@ -1451,6 +1619,30 @@ def cleanup_thread_agent_runs(thread_id: str) -> dict[str, int]:
     now = _now()
     conn = _get_conn()
     try:
+        orchestration_rows = conn.execute(
+            "SELECT id FROM agent_orchestrations WHERE parent_thread_id = ?",
+            (thread_id,),
+        ).fetchall()
+        orchestration_ids = [
+            str(row["id"]) for row in orchestration_rows if str(row["id"] or "")
+        ]
+        if orchestration_ids:
+            orchestration_placeholders = _sql_placeholders(orchestration_ids)
+            conn.execute(
+                f"DELETE FROM agent_orchestration_messages "
+                f"WHERE orchestration_id IN ({orchestration_placeholders})",
+                orchestration_ids,
+            )
+            conn.execute(
+                f"DELETE FROM agent_orchestration_members "
+                f"WHERE orchestration_id IN ({orchestration_placeholders})",
+                orchestration_ids,
+            )
+            conn.execute(
+                f"DELETE FROM agent_orchestrations "
+                f"WHERE id IN ({orchestration_placeholders})",
+                orchestration_ids,
+            )
         rows = conn.execute(
             "SELECT * FROM agent_runs WHERE "
             "(kind = 'subagent' AND parent_thread_id = ?) "

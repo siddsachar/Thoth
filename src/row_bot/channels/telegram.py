@@ -333,6 +333,9 @@ def _run_agent_sync(user_text: str, config: dict,
     # Ensure recursion limit matches the web UI (default is too low)
     agent_mod = _agent_mod()
     config = build_channel_runtime_config(config, "message")
+    from row_bot.channels import runtime as orchestration_runtime
+
+    config = orchestration_runtime.prepare_channel_turn_config(config, user_text)
 
     tool_registry = _tool_registry()
     enabled = [t.name for t in tool_registry.get_enabled_tools()]
@@ -373,6 +376,12 @@ def _run_agent_sync(user_text: str, config: dict,
             event_queue.put((event_type, payload))
 
     answer = _assemble_telegram_agent_answer("".join(full_answer), tool_reports, setting_audits)
+    if interrupt_data is None and orchestration_runtime.finalize_channel_orchestration(
+        config,
+        answer,
+        enabled,
+    ):
+        answer = orchestration_runtime.orchestration_suspended_final()
 
     if event_queue is not None:
         event_queue.put(None)  # sentinel
@@ -1682,6 +1691,8 @@ async def _run_agent_for_message(
 
     # Extract YouTube URLs for separate messages (auto-preview)
     from row_bot.channels import extract_youtube_urls
+    if ch_runtime.channel_turn_is_suspended(answer):
+        return
     clean_answer, yt_urls = extract_youtube_urls(answer) if answer else ("", [])
 
     # If streaming/final delivery covered the response, skip re-sending text.
