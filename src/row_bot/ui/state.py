@@ -115,6 +115,9 @@ class GenerationState:
     enabled_tools: list
     cancel_scope: Any = None
     generation_id: str = ""
+    orchestration_id: str = ""
+    orchestration_required: bool = False
+    orchestration_suspended: bool = False
     stop_requested_at: float = 0.0
     stop_reason: str = ""
     stopped_marker_rendered: bool = False
@@ -234,6 +237,7 @@ class P:
     refresh_model_controls: Any = None
     parent_agent_strip_container: Any = None
     refresh_parent_agent_strip: Any = None
+    parent_agent_dialog_open: bool = False
     goal_strip_container: Any = None
     refresh_goal_strip: Any = None
     goal_strip_refresh_timer: Any = None
@@ -270,3 +274,4 @@ class P:
         self.streaming_callbacks = None
         self.chat_shell_generation = 0
         self.chat_upload_js_installed = False
+        self.parent_agent_dialog_open = False

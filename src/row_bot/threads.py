@@ -1319,6 +1319,96 @@ def append_checkpoint_messages(thread_id: str, messages: list) -> bool:
         return False
 
 
+def remove_latest_checkpoint_ai_message(thread_id: str, expected_text: str) -> bool:
+    """Remove the provisional assistant/tool suffix of the latest user turn.
+
+    Durable orchestration uses this before appending its acknowledgement. The
+    exact-content check on the latest AI answer prevents an older or concurrent
+    turn from being removed. Removing the whole suffix also keeps tool-call
+    drafts and raw Agent tool output out of the final parent transcript.
+    """
+
+    if not thread_id or not str(expected_text or "").strip():
+        return False
+    try:
+        from langgraph.checkpoint.base import empty_checkpoint
+
+        config = {"configurable": {"thread_id": str(thread_id), "checkpoint_ns": ""}}
+        checkpoint_tuple = checkpointer.get_tuple(config)
+        parent_config = getattr(checkpoint_tuple, "config", None) if checkpoint_tuple else None
+        checkpoint = getattr(checkpoint_tuple, "checkpoint", None) if checkpoint_tuple else None
+        checkpoint, _changed = _normalize_checkpoint_versions(checkpoint)
+        channel_values = dict(checkpoint.get("channel_values", {})) if isinstance(checkpoint, dict) else {}
+        existing = channel_values.get("messages", [])
+        if not isinstance(existing, list):
+            return False
+        remove_index = -1
+        for index in range(len(existing) - 1, -1, -1):
+            message = existing[index]
+            if str(getattr(message, "type", "") or "") != "ai":
+                continue
+            content = getattr(message, "content", "")
+            if isinstance(content, list):
+                content = "\n".join(
+                    str(item.get("text") or item.get("content") or "")
+                    if isinstance(item, dict)
+                    else str(item)
+                    for item in content
+                )
+            actual_text = str(content or "").strip()
+            expected = str(expected_text or "").strip()
+            if not actual_text:
+                continue
+            if actual_text != expected and not expected.endswith(actual_text):
+                return False
+            remove_index = index
+            break
+        if remove_index < 0:
+            return False
+        latest_human_index = -1
+        for index in range(remove_index - 1, -1, -1):
+            if str(getattr(existing[index], "type", "") or "") == "human":
+                latest_human_index = index
+                break
+        if latest_human_index < 0:
+            return False
+        removed_count = len(existing) - latest_human_index - 1
+        channel_values["messages"] = existing[: latest_human_index + 1]
+
+        next_checkpoint = empty_checkpoint()
+        next_checkpoint["channel_values"] = channel_values
+        channel_versions = dict(checkpoint.get("channel_versions", {})) if isinstance(checkpoint, dict) else {}
+        current_version = channel_versions.get("messages")
+        next_version = checkpointer.get_next_version(current_version, None)
+        channel_versions["messages"] = next_version
+        next_checkpoint["channel_versions"] = channel_versions
+        next_checkpoint["versions_seen"] = dict(checkpoint.get("versions_seen", {})) if isinstance(checkpoint, dict) else {}
+        next_checkpoint["pending_sends"] = list(checkpoint.get("pending_sends", [])) if isinstance(checkpoint, dict) else []
+
+        put_config = parent_config or config
+        put_config.setdefault("configurable", {})
+        put_config["configurable"].setdefault("thread_id", str(thread_id))
+        put_config["configurable"].setdefault("checkpoint_ns", "")
+        checkpointer.put(
+            put_config,
+            next_checkpoint,
+            {
+                "source": "orchestration_suspend",
+                "step": _version_to_int(next_version),
+                "writes": {"messages": -removed_count},
+            },
+            {"messages": next_version},
+        )
+        return True
+    except Exception:
+        logger.warning(
+            "Failed to remove provisional orchestration answer for thread %s",
+            thread_id,
+            exc_info=True,
+        )
+        return False
+
+
 def pick_or_create_thread() -> dict:
     """Interactive menu to resume an existing thread or start a new one."""
     threads = _list_threads()

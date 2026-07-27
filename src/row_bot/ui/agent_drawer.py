@@ -120,6 +120,46 @@ def open_agent_thread(
     )
 
 
+def _message_agent(orchestration_id: str, run_id: str, *, p: P) -> None:
+    p.parent_agent_dialog_open = True
+    with ui.dialog() as dialog, ui.card().classes("w-full").style("max-width: 520px"):
+        ui.label("Message Agent").classes("text-subtitle2 font-bold")
+        message = ui.textarea(
+            "Guidance",
+            placeholder="This is queued for the next safe execution boundary.",
+        ).props("autogrow outlined").classes("w-full")
+
+        def submit() -> None:
+            text = str(message.value or "").strip()
+            if not text:
+                ui.notify("Enter guidance first.", type="warning")
+                return
+            try:
+                from row_bot.agent_orchestrator import message_orchestration
+
+                queued = message_orchestration(
+                    orchestration_id,
+                    text,
+                    run_id=run_id,
+                )
+                ui.notify(
+                    "Guidance queued." if queued else "Agent is no longer active.",
+                    type="positive" if queued else "warning",
+                )
+                dialog.close()
+            except Exception as exc:
+                ui.notify(str(exc), type="negative", close_button=True)
+
+        def cancel() -> None:
+            dialog.close()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=cancel).props("flat")
+            ui.button("Queue guidance", on_click=submit, icon="send").props("color=primary")
+    dialog.on("hide", lambda _event: setattr(p, "parent_agent_dialog_open", False))
+    dialog.open()
+
+
 def build_parent_agent_drawer(
     state: AppState,
     p: P,
@@ -138,15 +178,77 @@ def build_parent_agent_drawer(
             list_agent_runs,
             stop_agent_run,
         )
+        from row_bot.agent_orchestrator import list_orchestrations
 
         runs = list_agent_runs(parent_thread_id=state.thread_id, kind="subagent", limit=limit)
+        orchestrations = list_orchestrations(parent_thread_id=state.thread_id, limit=1)
     except Exception:
         logger.debug("Could not load parent Agent Runs", exc_info=True)
         return
-    if not runs:
+    if not runs and not orchestrations:
         return
 
     with ui.column().classes("w-full gap-1 q-px-md q-pb-xs row-bot-parent-agent-drawer"):
+        if orchestrations:
+            orchestration = orchestrations[0]
+            orchestration_id = str(orchestration.get("id") or "")
+            orchestration_status = str(orchestration.get("status") or "")
+            try:
+                from row_bot.agent_orchestrator import orchestration_overview
+
+                overview = orchestration_overview(orchestration_id)
+                counts = overview.get("counts") or {}
+            except Exception:
+                counts = {}
+            with ui.row().classes("w-full items-center gap-2").style(
+                "border: 1px solid rgba(59, 130, 246, 0.28); "
+                "border-radius: 8px; padding: 7px 9px; "
+                "background: rgba(59, 130, 246, 0.055);"
+            ):
+                ui.icon("account_tree", size="xs").classes("text-primary")
+                ui.label("Agent group").classes("text-xs font-bold")
+                ui.badge(
+                    orchestration_status,
+                    color=_agent_status_color(orchestration_status),
+                ).props("outline dense")
+                ui.label(
+                    f"{int(counts.get('running') or 0)} running Â· "
+                    f"{int(counts.get('completed') or 0)} complete Â· "
+                    f"{int(counts.get('failed') or 0)} failed"
+                ).classes("text-xs text-grey-6")
+                ui.space()
+                if orchestration_status == "interrupted":
+                    def _resume(oid=orchestration_id) -> None:
+                        try:
+                            from row_bot.agent_orchestrator import resume_orchestration
+
+                            resume_orchestration(oid)
+                            ui.notify("Agent group resumed.", type="positive")
+                            rebuild_main()
+                        except Exception as exc:
+                            ui.notify(str(exc), type="negative", close_button=True)
+
+                    ui.button("Resume", icon="play_arrow", on_click=_resume).props(
+                        "flat dense no-caps color=primary"
+                    )
+                elif orchestration_status not in {
+                    "completed",
+                    "completed_partial",
+                    "failed",
+                    "stopped",
+                }:
+                    def _stop_all(oid=orchestration_id) -> None:
+                        try:
+                            from row_bot.agent_orchestrator import stop_orchestration
+
+                            stop_orchestration(oid)
+                            rebuild_main()
+                        except Exception as exc:
+                            ui.notify(str(exc), type="negative", close_button=True)
+
+                    ui.button("Stop all", icon="stop", on_click=_stop_all).props(
+                        "flat dense no-caps color=orange"
+                    )
         with ui.row().classes("w-full items-center gap-2").style(
             "border: 1px solid rgba(148, 163, 184, 0.22); "
             "border-radius: 8px; padding: 6px 8px; "
@@ -193,6 +295,13 @@ def build_parent_agent_drawer(
             except Exception:
                 logger.debug("Could not load Agent parent messages", exc_info=True)
                 parent_notes = []
+            member = None
+            try:
+                from row_bot.agent_orchestrator import get_member_for_run
+
+                member = get_member_for_run(run_id)
+            except Exception:
+                member = None
             if parent_notes:
                 latest_note = str(parent_notes[-1])
                 note_preview = latest_note if len(latest_note) <= 80 else latest_note[:79].rstrip() + "..."
@@ -252,7 +361,35 @@ def build_parent_agent_drawer(
                         on_click=lambda row=agent_run: _show_agent_worktree_compare(row),
                     ).props("flat dense round size=xs").tooltip("Compare")
                 if status not in _TERMINAL_STATUSES:
+                    if member:
+                        ui.button(
+                            icon="message",
+                            on_click=lambda oid=str(member.get("orchestration_id") or ""), rid=run_id: _message_agent(
+                                oid,
+                                rid,
+                                p=p,
+                            ),
+                        ).props("flat dense round size=xs").tooltip(
+                            "Queue guidance for the next safe boundary"
+                        )
                     ui.button(
                         icon="stop",
                         on_click=lambda rid=run_id: (stop_agent_run(rid), rebuild_main()),
                     ).props("flat dense round size=xs color=orange").tooltip("Stop Agent")
+                elif member and status in {"failed", "blocked", "timed_out", "stopped"}:
+                    def _retry(rid=run_id) -> None:
+                        try:
+                            from row_bot.agent_orchestrator import retry_member
+
+                            retry_member(rid, force=True)
+                            ui.notify("Replacement Agent started.", type="positive")
+                            rebuild_main()
+                        except Exception as exc:
+                            ui.notify(str(exc), type="negative", close_button=True)
+
+                    ui.button(
+                        icon="refresh",
+                        on_click=_retry,
+                    ).props("flat dense round size=xs color=primary").tooltip(
+                        "Retry as a new Agent Run"
+                    )

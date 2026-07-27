@@ -222,6 +222,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "src/row_bot/agent_settings.py",
             "src/row_bot/agent_run_messages.py",
             "src/row_bot/agent_runner.py",
+            "src/row_bot/agent_orchestrator.py",
             "src/row_bot/agent_profiles.py",
             "src/row_bot/agent_runs.py",
             "src/row_bot/tools/agent_tool.py",
@@ -250,7 +251,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "tests/subsystem/channels/test_channel_thread_notifications.py",
             "tests/subsystem/workflows",
         ),
-        "Agent Profile, Agent Run, workflow UI, and agent-facing workflow tools need profile/runtime and workflow regressions.",
+        "Agent Profile, Agent Run/orchestration, workflow UI, and agent-facing workflow tools need profile/runtime and workflow regressions.",
     ),
     SourceTestRule(
         "mcp",

@@ -170,6 +170,9 @@ def _run_agent_sync(user_text: str, config: dict,
 
     agent_mod = _agent_mod()
     config = build_channel_runtime_config(config, "message")
+    from row_bot.channels import runtime as orchestration_runtime
+
+    config = orchestration_runtime.prepare_channel_turn_config(config, user_text)
     enabled = [t.name for t in tool_registry.get_enabled_tools()]
     full_answer: list[str] = []
     tool_reports: list[str] = []
@@ -206,6 +209,12 @@ def _run_agent_sync(user_text: str, config: dict,
     from row_bot.channels.agent_output import assemble_agent_answer
 
     answer = assemble_agent_answer("".join(full_answer), tool_reports)
+    if interrupt_data is None and orchestration_runtime.finalize_channel_orchestration(
+        config,
+        answer,
+        enabled,
+    ):
+        answer = orchestration_runtime.orchestration_suspended_final()
 
     if event_queue is not None:
         event_queue.put(None)  # sentinel
@@ -1214,7 +1223,7 @@ async def start_bot() -> bool:
                         new_interrupt,
                         config,
                     )
-                elif answer:
+                elif answer and not ch_runtime.channel_turn_is_suspended(answer):
                     thread_id = ch_runtime.thread_id_from_config(config)
                     if thread_id:
                         _goal_run_turn, _goal_send_text = _discord_goal_callbacks(message.channel)
@@ -1310,6 +1319,8 @@ async def start_bot() -> bool:
 
             # Extract YouTube URLs for separate messages (auto-preview)
             from row_bot.channels import extract_youtube_urls
+            if ch_runtime.channel_turn_is_suspended(answer):
+                return
             clean_answer, yt_urls = extract_youtube_urls(answer) if answer else ("", [])
 
             # If streaming/final delivery covered the response, skip re-sending.
@@ -1389,7 +1400,7 @@ async def start_bot() -> bool:
                         answer, _, _ = await asyncio.get_event_loop().run_in_executor(
                             None, _run_agent_sync, user_text, config
                         )
-                        if answer:
+                        if answer and not ch_runtime.channel_turn_is_suspended(answer):
                             for part in _split_message(answer):
                                 await message.channel.send(part)
 
@@ -1403,7 +1414,7 @@ async def start_bot() -> bool:
                         answer, _, _ = await asyncio.get_event_loop().run_in_executor(
                             None, _run_agent_sync, user_text, config
                         )
-                        if answer:
+                        if answer and not ch_runtime.channel_turn_is_suspended(answer):
                             for part in _split_message(answer):
                                 await message.channel.send(part)
 
@@ -1432,7 +1443,7 @@ async def start_bot() -> bool:
                     answer, _, _ = await asyncio.get_event_loop().run_in_executor(
                         None, _run_agent_sync, user_text, config
                     )
-                    if answer:
+                    if answer and not ch_runtime.channel_turn_is_suspended(answer):
                         for part in _split_message(answer):
                             await message.channel.send(part)
 

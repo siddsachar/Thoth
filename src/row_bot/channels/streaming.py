@@ -15,6 +15,8 @@ from row_bot.channels.agent_output import assemble_agent_answer
 
 log = logging.getLogger(__name__)
 
+ORCHESTRATION_SUSPENDED_FINAL = "__ROW_BOT_ORCHESTRATION_SUSPENDED__"
+
 
 @dataclass(frozen=True)
 class ChannelStreamConfig:
@@ -432,6 +434,15 @@ class ChannelStreamConsumer:
 
     async def _finalize(self, final_text: str) -> ChannelDeliveryResult:
         final_text = str(final_text or "").strip()
+        if final_text == ORCHESTRATION_SUSPENDED_FINAL:
+            await self._cleanup_preview()
+            return self._result(
+                delivered=True,
+                streamed=self._stream_started,
+                finalized=True,
+                fallback_sent=False,
+                final_text="",
+            )
         if not final_text:
             return self._result(
                 delivered=False,

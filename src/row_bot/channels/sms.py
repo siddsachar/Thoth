@@ -201,6 +201,9 @@ def _run_agent_sync(user_text: str, config: dict) -> tuple[str, dict | None, lis
 
     agent_mod = _agent_mod()
     config = build_channel_runtime_config(config, "message")
+    from row_bot.channels import runtime as orchestration_runtime
+
+    config = orchestration_runtime.prepare_channel_turn_config(config, user_text)
     enabled = [t.name for t in tool_registry.get_enabled_tools()]
     full_answer: list[str] = []
     tool_reports: list[str] = []
@@ -225,6 +228,12 @@ def _run_agent_sync(user_text: str, config: dict) -> tuple[str, dict | None, lis
     answer = "".join(full_answer)
     if tool_reports and answer:
         answer = "\n".join(tool_reports) + "\n\n" + answer
+    if interrupt_data is None and orchestration_runtime.finalize_channel_orchestration(
+        config,
+        answer,
+        enabled,
+    ):
+        answer = orchestration_runtime.orchestration_suspended_final()
     elif tool_reports:
         answer = "\n".join(tool_reports)
 
@@ -511,7 +520,7 @@ async def _handle_inbound_sms(request) -> Any:
                 config, approved, interrupt_ids=interrupt_ids
             ),
         )
-        if answer:
+        if answer and not ch_runtime.channel_turn_is_suspended(answer):
             _send_reply(from_number, answer)
         if new_interrupt:
             with _pending_lock:
@@ -520,7 +529,7 @@ async def _handle_inbound_sms(request) -> Any:
                 }
             detail = approval_helpers.format_interrupt_text(new_interrupt)
             _send_reply(from_number, detail + "\nReply YES or NO.")
-        elif answer:
+        elif answer and not ch_runtime.channel_turn_is_suspended(answer):
             thread_id = ch_runtime.thread_id_from_config(config)
             if thread_id:
                 goal_result = await loop.run_in_executor(
@@ -578,7 +587,7 @@ async def _handle_inbound_sms(request) -> Any:
             _send_reply(from_number, f"Error: {exc}")
             return Response("<Response/>", media_type=_XML)
 
-    if answer:
+    if answer and not ch_runtime.channel_turn_is_suspended(answer):
         _send_reply(from_number, answer)
 
     if interrupt_data:

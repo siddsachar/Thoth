@@ -8,17 +8,22 @@ tools:
 tags: []
 ---
 AGENTS:
-- Use Agents when the user explicitly asks you to delegate, parallelize, spawn helpers, review independently, research separately, test separately, or keep exploratory work out of the parent thread.
-- Do not delegate ordinary short questions or simple single-step edits unless the user asks for agents or parallel work.
+- Delegate automatically when two or more substantial workstreams can proceed independently, a bounded specialist review/research task protects parent context, comparison needs independent evidence, a long goal benefits from implementation/review/test roles, or write work can be isolated safely in Worktrees.
+- Also use Agents when the user explicitly asks you to delegate, parallelize, spawn helpers, review independently, research separately, test separately, or keep exploratory work out of the parent thread.
+- Do not delegate trivial or ordinary short questions, simple single-step edits, inherently sequential work, work whose delegation overhead exceeds its value, or requests where the user says not to delegate.
+- Automatic delegation is unavailable when the Agents tool is disabled or the active profile/tool policy forbids it. Do not try to work around that boundary.
 - Prefer focused profiles such as `research`, `plan`, `write`, `review`, or `develop` when they fit the task.
 - Use advanced/internal profiles such as `worker`, `synthesize`, or `verify` only for scoped orchestration, synthesis, implementation, or verification work, and respect the active approval/workspace policy.
 
 DELEGATING:
 - Call `delegate_work` with a precise objective, a focused context packet, and a profile when useful.
 - Give the child enough context to succeed without leaking the full parent transcript by default.
-- Prefer async delegation: call `delegate_work(wait=false)` for ordinary child Agent work so the parent thread stays responsive and the user can keep chatting while the child runs.
-- After `delegate_work(wait=false)`, tell the user the child Agent started. Use `agent_status` or `agent_wait` later only when the user asks what the child found or explicitly asks you to wait.
+- Use the smallest useful wave and avoid duplicate objectives. Ordinary automatic children are required: call `delegate_work(wait=false, required=true)`. Row-Bot suspends the parent at the generation boundary and automatically produces one consolidated answer after the required barrier.
+- `delegate_work(wait=false)` therefore defaults to required automatic orchestration unless you explicitly set `required=false`; the parent thread stays responsive while the durable barrier waits.
+- Use `delegate_work(wait=false, required=false)` only for explicitly requested background/fire-and-forget work. Optional work retains its independent completion update and does not block the parent.
+- Do not narrate each required child completion or manually poll it. Row-Bot's durable continuation supplies the ordered results when the barrier completes.
 - Use `wait=true` only when the user explicitly asks you to wait for the child before answering, or when same-turn synthesis is truly required and cannot be deferred to a follow-up.
+- Each automatic child inherits the parent model. Leave `model` empty for automatic work; explicit user-requested child model overrides remain supported.
 - Use `delegate_work(use_worktree=true)` only when the user asks for an isolated Worktree or when profile policy requires it for file-editing work. This creates a local git Worktree on its own branch and does not push, fetch, or send messages.
 - For natural child-agent model requests like "use gpt5.5 via codex" or "use qwen 3.6 27 B via ollama", the parent agent must reason before delegation: inspect the complete pinned Brain choices with row_bot_status category='model', select the closest active pinned choice, and pass its canonical ref to `delegate_work(model=...)`. Leave `model` empty when the child should inherit the parent model. Do not pass raw natural phrases or unpinned provider refs.
 - The `/agent` command is a direct command shortcut, not a natural-language planner. When a user explicitly types `/agent --model=model:provider:model-id ...`, the model value must be a strict active pinned Brain ref or exact pinned label.
@@ -29,8 +34,10 @@ DELEGATING:
 TRACKING:
 - Use `agent_status` to inspect running, waiting, stopped, failed, or completed child Agents.
 - Use `agent_wait` when the user explicitly asks for the child result or when a later parent turn genuinely needs the child result before answering.
-- Use `agent_message` to record a parent steering/follow-up message for a non-terminal child Agent. Messages sent while the child is queued are included before it starts; active model calls cannot be interrupted mid-call.
-- Use `agent_stop` when a child is obsolete, stuck, or the user asks to stop it.
+- Use `agent_status(orchestration_id=...)` to inspect a group, including its required barrier and attempts.
+- Use `agent_message` to queue parent guidance for one child or an orchestration. Active provider calls are not interrupted; guidance is applied at the next safe boundary.
+- Use `agent_stop` for one child or a complete orchestration when work is obsolete, stuck, or the user asks to stop it.
+- Use `agent_retry` for a terminal child when a user-requested replacement is appropriate. Row-Bot itself retries only classified transient failures and at most once.
 - Summarize child results for the user; do not dump long raw logs unless asked.
 
 PROFILES:

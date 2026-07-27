@@ -150,6 +150,27 @@ def test_agent_run_event_edge_crud(tmp_path, monkeypatch):
     assert {"run.created", "run.started", "tool.completed", "run.completed"} <= event_types
 
 
+def test_parent_messages_return_the_newest_limited_window(tmp_path, monkeypatch):
+    agent_runs, _profiles, _tasks, _data_dir = _fresh_agent_run_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    run = agent_runs.create_agent_run(run_id="guided-run", status="running")
+    for index in range(5):
+        agent_runs.append_agent_event(
+            run["id"],
+            "tool.completed",
+            {"index": index},
+        )
+    for message in ("first guidance", "second guidance", "latest guidance"):
+        agent_runs.append_agent_parent_message(run["id"], message)
+
+    assert agent_runs.get_agent_parent_messages(run["id"], limit=2) == [
+        "second guidance",
+        "latest guidance",
+    ]
+
+
 def test_agent_run_budget_progress_and_terminal_reason_are_additive(tmp_path, monkeypatch):
     agent_runs, _profiles, _tasks, _data_dir = _fresh_agent_run_modules(tmp_path, monkeypatch)
     run = agent_runs.create_agent_run(run_id="budget-run", status="running")

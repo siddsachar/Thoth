@@ -45,6 +45,41 @@ def test_single_interrupt_resume_is_bound_to_its_langgraph_id(monkeypatch) -> No
     assert inputs[0].resume == {"interrupt-one": True}
 
 
+def test_non_streaming_resume_without_root_objective_uses_empty_fallback(monkeypatch) -> None:
+    import row_bot.agent as agent
+
+    state = type("State", (), {"next": (), "tasks": (), "values": {}})()
+    fake_agent = type(
+        "FakeAgent",
+        (),
+        {
+            "stream": lambda self, *_args, **_kwargs: (),
+            "get_state": lambda self, _config: state,
+        },
+    )()
+    monkeypatch.setattr(agent, "get_agent_graph", lambda *_args, **_kwargs: fake_agent)
+    monkeypatch.setattr(
+        agent,
+        "_resume_agent_graph_config",
+        lambda _graph, config: config,
+    )
+
+    result = agent.resume_invoke_agent(
+        [],
+        {
+            "configurable": {
+                "thread_id": "thread",
+                "generation_id": "generation",
+            }
+        },
+        True,
+        interrupt_ids=["interrupt-one"],
+    )
+
+    assert result == "I wasn't able to generate a response."
+    assert agent.get_active_runtime_context()["root_objective"] == ""
+
+
 def test_consequential_approval_payload_is_redacted_and_resume_recaptures(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path))
     from row_bot.computer_use.readiness import acknowledge_disclosure

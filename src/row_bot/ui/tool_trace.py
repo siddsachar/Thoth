@@ -13,7 +13,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-AGENT_TOOL_NAMES = {"agents", "delegate_work", "agent_status", "agent_wait", "agent_stop"}
+AGENT_TOOL_NAMES = {
+    "agents",
+    "delegate_work",
+    "agent_status",
+    "agent_wait",
+    "agent_stop",
+    "agent_message",
+    "agent_retry",
+}
 
 
 @dataclass

@@ -404,6 +404,8 @@ def build_chat(
     def _refresh_parent_agent_strip() -> None:
         if p.parent_agent_strip_container is None:
             return
+        if p.parent_agent_dialog_open:
+            return
         try:
             p.parent_agent_strip_container.clear()
             with p.parent_agent_strip_container:
