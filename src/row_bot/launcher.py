@@ -19,6 +19,7 @@ import io
 import json
 import logging
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -35,9 +36,15 @@ from row_bot.app_port import (
     DEFAULT_APP_PORT,
     ROW_BOT_HOST_ENV,
     ROW_BOT_PORT_ENV,
-    get_app_host,
-    parse_app_host,
     parse_app_port,
+)
+from row_bot.access.launcher_control import (
+    LAUNCH_SECRET_ENV,
+    LauncherControlServer,
+)
+from row_bot.access.access_routes import (
+    AccessRouteConfigStore,
+    resolve_listen_host,
 )
 from row_bot.brand import (
     APP_AUTO_START_OLLAMA_ENV,
@@ -51,6 +58,7 @@ from row_bot.brand import (
 )
 from row_bot.data_paths import (
     describe_data_paths,
+    get_access_db_path,
     get_memory_db_path,
     get_tasks_db_path,
     get_threads_db_path,
@@ -71,10 +79,10 @@ _EARLY_SPLASH_PROC: subprocess.Popen | None = None
 
 # ── Constants ────────────────────────────────────────────────────────────────
 _PORT = DEFAULT_APP_PORT
-_OLLAMA_PORT = 11434          # Ollama default API port
-_STARTUP_GRACE = 15           # seconds to wait for NiceGUI before opening browser
+_OLLAMA_PORT = 11434  # Ollama default API port
+_STARTUP_GRACE = 15  # seconds to wait for NiceGUI before opening browser
 _STARTUP_TIMEOUT_ENV = APP_STARTUP_TIMEOUT_ENV
-_ICON_SIZE = 64               # px for generated tray icons
+_ICON_SIZE = 64  # px for generated tray icons
 _APP_ICON_PATH = app_icon_path()
 _APP_GLYPH_PATH = static_dir() / "row_bot_glyph_256.png"
 _APP_FAVICON_PATH = static_dir() / "favicon.ico"
@@ -99,9 +107,11 @@ _LEGACY_RUNTIME_ENV_VARS = frozenset(
 
 # ── Ollama auto-start ────────────────────────────────────────────────────────
 
+
 def _is_ollama_running() -> bool:
     """Return True if Ollama's API is reachable on its default port."""
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex(("127.0.0.1", _OLLAMA_PORT)) == 0
@@ -157,7 +167,13 @@ def _launch_event(event: str, **fields) -> None:
     }
     compact.setdefault("session", _LAUNCH_SESSION_ID)
     suffix = " ".join(f"{key}={value}" for key, value in compact.items())
-    logger.info("launcher.%s elapsed_ms=%.1f%s%s", event, elapsed_ms, " " if suffix else "", suffix)
+    logger.info(
+        "launcher.%s elapsed_ms=%.1f%s%s",
+        event,
+        elapsed_ms,
+        " " if suffix else "",
+        suffix,
+    )
 
 
 def _read_json_file(path: Path) -> dict:
@@ -248,16 +264,30 @@ def _model_ref_requires_ollama(model_name: str | None) -> bool:
         return True
 
     cloud_prefixes = (
-        "gpt-", "o1", "o3", "o4", "chatgpt-",
-        "claude", "gemini", "grok", "minimax",
+        "gpt-",
+        "o1",
+        "o3",
+        "o4",
+        "chatgpt-",
+        "claude",
+        "gemini",
+        "grok",
+        "minimax",
     )
     if lowered.startswith(cloud_prefixes):
         return False
 
     cloud_provider_slugs = (
-        "openai/", "anthropic/", "google/", "google-ai/",
-        "xai/", "x-ai/", "minimax/", "openrouter/",
-        "codex/", "chatgpt/",
+        "openai/",
+        "anthropic/",
+        "google/",
+        "google-ai/",
+        "xai/",
+        "x-ai/",
+        "minimax/",
+        "openrouter/",
+        "codex/",
+        "chatgpt/",
     )
     if lowered.startswith(cloud_provider_slugs):
         return False
@@ -292,7 +322,9 @@ def _maybe_start_ollama(*, no_ollama: bool = False) -> None:
         logger.info("Skipping Ollama auto-start (--no-ollama)")
         return
     if not _should_auto_start_ollama():
-        logger.info("Skipping Ollama auto-start; no saved local Ollama runtime selected")
+        logger.info(
+            "Skipping Ollama auto-start; no saved local Ollama runtime selected"
+        )
         return
     _start_ollama()
 
@@ -305,7 +337,12 @@ def _start_ollama() -> None:
 
     # --- Windows: prefer the GUI app (tray icon) for better UX ---
     if sys.platform == "win32":
-        app_exe = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama app.exe"
+        app_exe = (
+            Path(os.environ.get("LOCALAPPDATA", ""))
+            / "Programs"
+            / "Ollama"
+            / "ollama app.exe"
+        )
         if app_exe.exists():
             logger.info("Starting Ollama (Windows app)...")
             subprocess.Popen(
@@ -354,6 +391,7 @@ def _wait_for_ollama(timeout: float = 15.0) -> None:
 
 
 # ── Tray icon generation (branded Pillow image for pystray) ──────────────────
+
 
 def _make_status_dot_icon(colour: str) -> _PILImage.Image:
     """Create a solid circle icon with the given colour on a transparent bg."""
@@ -432,7 +470,12 @@ def _draw_status_badge(image: _PILImage.Image, state: str) -> None:
 
 def _use_branded_tray_icon() -> bool:
     if sys.platform == "darwin":
-        return os.environ.get("ROW_BOT_BRANDED_TRAY_ICON", "").strip().lower() in {"1", "true", "yes", "on"}
+        return os.environ.get("ROW_BOT_BRANDED_TRAY_ICON", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
     return True
 
 
@@ -445,7 +488,9 @@ def _get_icon(state: str) -> _PILImage.Image:
             icon = base_icon.copy()
             _draw_status_badge(icon, cache_key)
         else:
-            icon = _make_status_dot_icon("#22c55e" if cache_key == "running" else "#6b7280")
+            icon = _make_status_dot_icon(
+                "#22c55e" if cache_key == "running" else "#6b7280"
+            )
         _icons[cache_key] = icon
     return _icons[cache_key]
 
@@ -534,7 +579,9 @@ class _PystrayTrayBackend:
 
             def _setup(_icon) -> None:
                 self.visible = True
-                _launch_event("pystray_visible_set", backend=self.backend_name, visible=True)
+                _launch_event(
+                    "pystray_visible_set", backend=self.backend_name, visible=True
+                )
                 setup(self)
 
             self._icon.run(setup=_setup)
@@ -577,7 +624,9 @@ class _MacStatusItemBackend:
         except ImportError:
             raise
         except Exception as exc:
-            raise ImportError(f"could not import macOS AppKit tray dependencies: {exc}") from exc
+            raise ImportError(
+                f"could not import macOS AppKit tray dependencies: {exc}"
+            ) from exc
 
         self.backend_name = "appkit"
         self._AppKit = AppKit
@@ -604,7 +653,9 @@ class _MacStatusItemBackend:
         self._title = f"{APP_DISPLAY_NAME} - stopped"
 
         try:
-            activation_policy = getattr(AppKit, "NSApplicationActivationPolicyAccessory", 1)
+            activation_policy = getattr(
+                AppKit, "NSApplicationActivationPolicyAccessory", 1
+            )
             self._app.setActivationPolicy_(activation_policy)
         except Exception:
             logger.debug("Could not set macOS tray activation policy", exc_info=True)
@@ -632,8 +683,7 @@ class _MacStatusItemBackend:
                 item = self._AppKit.NSMenuItem.separatorItem()
             else:
                 item = (
-                    self._AppKit.NSMenuItem.alloc()
-                    .initWithTitle_action_keyEquivalent_(
+                    self._AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                         entry.label,
                         _MAC_MENU_ITEM_SELECTOR,
                         "",
@@ -731,9 +781,13 @@ class _MacStatusItemBackend:
         self._set_status_item_length_on_main()
         self._set_button_fallback_title_on_main()
         self._set_visible_on_main(True)
-        _launch_event("tray_status_item_visible", backend=self.backend_name, visible=True)
+        _launch_event(
+            "tray_status_item_visible", backend=self.backend_name, visible=True
+        )
         if setup is not None:
-            threading.Thread(target=lambda: setup(self), daemon=True, name="mac-tray-setup").start()
+            threading.Thread(
+                target=lambda: setup(self), daemon=True, name="mac-tray-setup"
+            ).start()
         self._app.run()
 
     def stop(self) -> None:
@@ -803,7 +857,10 @@ def _create_tray_backend(menu_entries: tuple[_TrayMenuEntry, ...]):
             try:
                 return _MacStatusItemBackend(menu_entries)
             except Exception as exc:
-                logger.warning("Native macOS tray backend unavailable; falling back to pystray: %s", exc)
+                logger.warning(
+                    "Native macOS tray backend unavailable; falling back to pystray: %s",
+                    exc,
+                )
                 if isinstance(exc, ImportError):
                     _launch_event(
                         "tray_backend_import_failed",
@@ -825,9 +882,11 @@ def _create_tray_backend(menu_entries: tuple[_TrayMenuEntry, ...]):
 
 # ── Port check ───────────────────────────────────────────────────────────────
 
+
 def _is_port_in_use(port: int = _PORT) -> bool:
     """Return True if something is already listening on *port*."""
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex(("127.0.0.1", port)) == 0
@@ -838,8 +897,13 @@ def _url_for_port(port: int) -> str:
 
 
 def _resolve_launch_host(cli_host: object) -> str:
-    """Resolve CLI-over-environment bind-host precedence for a launch."""
-    return parse_app_host(cli_host, default=get_app_host())
+    """Resolve CLI > environment > durable Remote Access > safe default."""
+    explicit = str(cli_host).strip() if cli_host is not None else ""
+    return resolve_listen_host(
+        explicit_host=explicit or None,
+        environ=os.environ,
+        config=AccessRouteConfigStore().load_or_default(),
+    ).host
 
 
 def _has_display_server() -> bool:
@@ -849,11 +913,18 @@ def _has_display_server() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
-def _is_row_bot_server(port: int, timeout: float = 0.25) -> bool:
+def _is_row_bot_server(
+    port: int,
+    timeout: float = 0.25,
+    *,
+    launch_secret: str | None = None,
+) -> bool:
     """Return True if *port* is serving this app."""
     url = f"http://127.0.0.1:{port}/api/launcher-ping"
+    headers = {"Authorization": f"Bearer {launch_secret}"} if launch_secret else {}
+    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             if getattr(response, "status", 200) != 200:
                 return False
             data = response.read(512).decode("utf-8", errors="replace")
@@ -875,10 +946,14 @@ def _find_free_port(start: int = _PORT, max_tries: int = 50) -> int:
     for port in range(start, start + max_tries):
         if not _is_port_in_use(port):
             return port
-    raise RuntimeError(f"No free {APP_DISPLAY_NAME} app port found in {start}-{start + max_tries - 1}")
+    raise RuntimeError(
+        f"No free {APP_DISPLAY_NAME} app port found in {start}-{start + max_tries - 1}"
+    )
 
 
-def _startup_failure_hints(log_text: str, python_executable: str | None = None) -> list[str]:
+def _startup_failure_hints(
+    log_text: str, python_executable: str | None = None
+) -> list[str]:
     """Return user-actionable recovery hints for known startup crashes."""
     text = (log_text or "").lower()
     python = python_executable or sys.executable
@@ -889,40 +964,55 @@ def _startup_failure_hints(log_text: str, python_executable: str | None = None) 
         or "could not find module" in text
     ):
         site_packages = Path(python).resolve().parent / "Lib" / "site-packages"
-        hints.extend([
-            f"Detected a broken optional TorchCodec install in {APP_DISPLAY_NAME}'s embedded Python.",
-            f"{APP_DISPLAY_NAME} does not require TorchCodec for built-in TTS.",
-            f'Recovery: close {APP_DISPLAY_NAME} and run "{python}" -m pip uninstall -y torchcodec',
-            f"If pip cannot remove it, delete torchcodec and torchcodec-*.dist-info from {site_packages}.",
-        ])
-    if "cv2" in text or "opencv" in text or "libgl.so" in text or "libglib" in text or "libgthread" in text or "xcb" in text:
-        hints.extend([
-            "Detected a likely OpenCV/Linux native dependency failure during startup.",
-            f"Camera and screenshot capture are optional; {APP_DISPLAY_NAME} should still start without them after the Linux startup hardening fix.",
-            "Recovery on Debian/Ubuntu: sudo apt-get install -y libgl1 libegl1 libglib2.0-0 libxcb-cursor0",
-            f"Then restart {APP_DISPLAY_NAME} and check ~/{DEFAULT_DATA_DIR_NAME}/"
-            f"{LAUNCHER_APP_LOG_FILENAME} if startup still fails.",
-        ])
+        hints.extend(
+            [
+                f"Detected a broken optional TorchCodec install in {APP_DISPLAY_NAME}'s embedded Python.",
+                f"{APP_DISPLAY_NAME} does not require TorchCodec for built-in TTS.",
+                f'Recovery: close {APP_DISPLAY_NAME} and run "{python}" -m pip uninstall -y torchcodec',
+                f"If pip cannot remove it, delete torchcodec and torchcodec-*.dist-info from {site_packages}.",
+            ]
+        )
+    if (
+        "cv2" in text
+        or "opencv" in text
+        or "libgl.so" in text
+        or "libglib" in text
+        or "libgthread" in text
+        or "xcb" in text
+    ):
+        hints.extend(
+            [
+                "Detected a likely OpenCV/Linux native dependency failure during startup.",
+                f"Camera and screenshot capture are optional; {APP_DISPLAY_NAME} should still start without them after the Linux startup hardening fix.",
+                "Recovery on Debian/Ubuntu: sudo apt-get install -y libgl1 libegl1 libglib2.0-0 libxcb-cursor0",
+                f"Then restart {APP_DISPLAY_NAME} and check ~/{DEFAULT_DATA_DIR_NAME}/"
+                f"{LAUNCHER_APP_LOG_FILENAME} if startup still fails.",
+            ]
+        )
     if (
         "faiss" in text
         and ("importerror" in text or "oserror" in text)
         and "successfully loaded faiss" not in text
     ):
-        hints.extend([
-            "Detected a FAISS native import failure during startup.",
-            f"Recovery: reinstall {APP_DISPLAY_NAME}'s packaged runtime or install the Linux libraries named in the traceback.",
-        ])
+        hints.extend(
+            [
+                "Detected a FAISS native import failure during startup.",
+                f"Recovery: reinstall {APP_DISPLAY_NAME}'s packaged runtime or install the Linux libraries named in the traceback.",
+            ]
+        )
     if (
         "numpy.dtype size changed" in text
         or "numpy.core.multiarray failed to import" in text
         or "numpy was built with baseline optimizations" in text
         or "x86_v2" in text
     ):
-        hints.extend([
-            "Detected a NumPy/native wheel startup failure.",
-            "On older x86_64 CPUs this can happen if the packaged NumPy wheel requires x86-64-v2 instructions.",
-            f"Recovery: install a {APP_DISPLAY_NAME} Linux build that pins NumPy below the x86-64-v2 wheel line, or rebuild the Linux tarball from this checkout.",
-        ])
+        hints.extend(
+            [
+                "Detected a NumPy/native wheel startup failure.",
+                "On older x86_64 CPUs this can happen if the packaged NumPy wheel requires x86-64-v2 instructions.",
+                f"Recovery: install a {APP_DISPLAY_NAME} Linux build that pins NumPy below the x86-64-v2 wheel line, or rebuild the Linux tarball from this checkout.",
+            ]
+        )
     return hints
 
 
@@ -944,7 +1034,7 @@ def _read_log_tail(log_path: Path | None, max_lines: int = 80) -> str:
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception:
         return ""
-    return "\n".join(lines[-max(1, max_lines):])
+    return "\n".join(lines[-max(1, max_lines) :])
 
 
 def _log_app_log_tail(log_path: Path | None, *, max_lines: int = 80) -> None:
@@ -958,9 +1048,16 @@ def _log_app_log_tail(log_path: Path | None, *, max_lines: int = 80) -> None:
     logger.error("--- end app startup log tail ---")
 
 
-def _log_startup_failure_context(server: "_RowBotProcess", port: int, reason: str) -> None:
+def _log_startup_failure_context(
+    server: "_RowBotProcess", port: int, reason: str
+) -> None:
     exit_code = server.returncode
-    logger.error("%s server failed to become ready on port %s: %s", APP_DISPLAY_NAME, port, reason)
+    logger.error(
+        "%s server failed to become ready on port %s: %s",
+        APP_DISPLAY_NAME,
+        port,
+        reason,
+    )
     if exit_code is not None:
         logger.error("%s app process exited with code %s", APP_DISPLAY_NAME, exit_code)
     logger.error("Python executable: %s", sys.executable)
@@ -971,7 +1068,9 @@ def _log_startup_failure_context(server: "_RowBotProcess", port: int, reason: st
         _log_startup_failure_hints(server._log_file, python_executable=sys.executable)
 
 
-def _log_startup_failure_hints(log_path: Path | None, python_executable: str | None = None) -> None:
+def _log_startup_failure_hints(
+    log_path: Path | None, python_executable: str | None = None
+) -> None:
     if not log_path or not log_path.exists():
         return
     try:
@@ -998,10 +1097,22 @@ def _select_app_port(preferred: int = _PORT, max_tries: int = 50) -> tuple[int, 
             return port, False
         if _is_row_bot_server(port):
             return port, True
-    raise RuntimeError(f"No free {APP_DISPLAY_NAME} app port found in {preferred}-{preferred + max_tries - 1}")
+    raise RuntimeError(
+        f"No free {APP_DISPLAY_NAME} app port found in {preferred}-{preferred + max_tries - 1}"
+    )
 
 
 # ── NiceGUI subprocess management ───────────────────────────────────────────
+
+
+def _set_process_launch_environment(
+    process: object,
+    values: dict[str, str],
+) -> None:
+    setter = getattr(process, "set_launch_environment", None)
+    if callable(setter):
+        setter(values)
+
 
 class _RowBotProcess:
     """Wraps the NiceGUI app subprocess."""
@@ -1010,8 +1121,19 @@ class _RowBotProcess:
         self._proc: subprocess.Popen | None = None
         self._log_file: Path | None = None
         self._log_handle = None
+        self._launch_environment: dict[str, str] = {}
         self.port = port
         self.host = _resolve_launch_host(host)
+
+    def set_launch_environment(self, values: dict[str, str]) -> None:
+        """Set ephemeral launcher-to-child values that are never persisted."""
+        self._launch_environment.update(
+            {
+                str(key): str(value)
+                for key, value in values.items()
+                if str(key) and str(value)
+            }
+        )
 
     def start(self, port: int | None = None, host: str | None = None) -> None:
         """Launch ``python app.py`` as a headless server.
@@ -1058,14 +1180,17 @@ class _RowBotProcess:
             for key, value in os.environ.items()
             if key not in _LEGACY_RUNTIME_ENV_VARS
         }
-        env.update({
-            "PYTHONNOUSERSITE": "1",
-            "PYTHONIOENCODING": "utf-8",
-            "ROW_BOT_LAUNCH_SESSION_ID": _LAUNCH_SESSION_ID,
-            APP_NATIVE_ENV: "1",
-            ROW_BOT_PORT_ENV: str(self.port),
-        })
+        env.update(
+            {
+                "PYTHONNOUSERSITE": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "ROW_BOT_LAUNCH_SESSION_ID": _LAUNCH_SESSION_ID,
+                APP_NATIVE_ENV: "1",
+                ROW_BOT_PORT_ENV: str(self.port),
+            }
+        )
         env[ROW_BOT_HOST_ENV] = self.host
+        env.update(self._launch_environment)
 
         try:
             self._proc = subprocess.Popen(
@@ -1080,9 +1205,14 @@ class _RowBotProcess:
         except Exception:
             self._close_log_handle()
             raise
-        logger.info("%s server started on %s:%s (PID %s, log=%s)",
-                     APP_DISPLAY_NAME,
-                     self.host, self.port, self._proc.pid, self._log_file)
+        logger.info(
+            "%s server started on %s:%s (PID %s, log=%s)",
+            APP_DISPLAY_NAME,
+            self.host,
+            self.port,
+            self._proc.pid,
+            self._log_file,
+        )
 
     def _close_log_handle(self) -> None:
         if self._log_handle is None:
@@ -1090,16 +1220,26 @@ class _RowBotProcess:
         try:
             self._log_handle.close()
         except Exception:
-            logger.debug("Could not close %s app log handle", APP_DISPLAY_NAME, exc_info=True)
+            logger.debug(
+                "Could not close %s app log handle", APP_DISPLAY_NAME, exc_info=True
+            )
         finally:
             self._log_handle = None
 
-    def _request_graceful_shutdown(self, timeout: float = _GRACEFUL_SHUTDOWN_REQUEST_TIMEOUT) -> bool:
+    def _request_graceful_shutdown(
+        self, timeout: float = _GRACEFUL_SHUTDOWN_REQUEST_TIMEOUT
+    ) -> bool:
         """Ask the app to run cleanup before the launcher falls back to killing it."""
         if self._proc is None or self._proc.poll() is not None:
             return True
         url = f"http://127.0.0.1:{self.port}/api/launcher-shutdown"
-        req = urllib.request.Request(url, data=b"", method="POST")
+        secret = self._launch_environment.get(LAUNCH_SECRET_ENV, "")
+        req = urllib.request.Request(
+            url,
+            data=b"",
+            method="POST",
+            headers={"Authorization": f"Bearer {secret}"},
+        )
         try:
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 status = getattr(response, "status", 200)
@@ -1108,11 +1248,13 @@ class _RowBotProcess:
             return False
 
     @staticmethod
-    def _terminate_process(proc: subprocess.Popen | None,
-                           *,
-                           label: str,
-                           timeout: float = 5.0,
-                           kill_tree: bool = False) -> None:
+    def _terminate_process(
+        proc: subprocess.Popen | None,
+        *,
+        label: str,
+        timeout: float = 5.0,
+        kill_tree: bool = False,
+    ) -> None:
         if proc is None or proc.poll() is not None:
             return
         try:
@@ -1169,7 +1311,10 @@ class _RowBotProcess:
                             time.monotonic() - shutdown_started,
                         )
                 else:
-                    logger.warning("%s graceful shutdown request failed; forcing stop", APP_DISPLAY_NAME)
+                    logger.warning(
+                        "%s graceful shutdown request failed; forcing stop",
+                        APP_DISPLAY_NAME,
+                    )
                 self._terminate_process(
                     proc,
                     label=f"{APP_DISPLAY_NAME} server",
@@ -1178,7 +1323,11 @@ class _RowBotProcess:
                 )
         finally:
             self._close_log_handle()
-        logger.info("%s stopped%s", APP_DISPLAY_NAME, " gracefully" if stopped_gracefully else "")
+        logger.info(
+            "%s stopped%s",
+            APP_DISPLAY_NAME,
+            " gracefully" if stopped_gracefully else "",
+        )
         self._proc = None
 
     @property
@@ -1203,7 +1352,9 @@ def _delete_if_exists(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
     except Exception:
-        logger.debug("Could not remove stale launcher helper artifact %s", path, exc_info=True)
+        logger.debug(
+            "Could not remove stale launcher helper artifact %s", path, exc_info=True
+        )
 
 
 def _launcher_helper_tail(log_path: Path, max_lines: int = 20) -> str:
@@ -1253,14 +1404,38 @@ def _start_launcher_helper(
         exit_code = proc.poll()
         if exit_code is not None:
             tail = _launcher_helper_tail(log_path)
-            logger.warning("%s helper exited before ready (code %s, log=%s): %s", name, exit_code, log_path, tail)
-            _launch_event("helper_exited_before_ready", status=name, exit_code=exit_code, log=str(log_path))
+            logger.warning(
+                "%s helper exited before ready (code %s, log=%s): %s",
+                name,
+                exit_code,
+                log_path,
+                tail,
+            )
+            _launch_event(
+                "helper_exited_before_ready",
+                status=name,
+                exit_code=exit_code,
+                log=str(log_path),
+            )
             return None
         time.sleep(0.05)
 
-    logger.warning("%s helper did not report ready within %.1fs; terminating (log=%s)", name, ready_timeout, log_path)
-    _launch_event("helper_ready_timeout", status=name, pid=proc.pid, duration_ms=round(ready_timeout * 1000.0, 1), log=str(log_path))
-    _RowBotProcess._terminate_process(proc, label=f"{name} helper", timeout=1.0, kill_tree=True)
+    logger.warning(
+        "%s helper did not report ready within %.1fs; terminating (log=%s)",
+        name,
+        ready_timeout,
+        log_path,
+    )
+    _launch_event(
+        "helper_ready_timeout",
+        status=name,
+        pid=proc.pid,
+        duration_ms=round(ready_timeout * 1000.0, 1),
+        log=str(log_path),
+    )
+    _RowBotProcess._terminate_process(
+        proc, label=f"{name} helper", timeout=1.0, kill_tree=True
+    )
     return None
 
 
@@ -1274,16 +1449,31 @@ def _wait_for_launcher_helper(
     try:
         return proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        logger.warning("%s helper interaction timed out after %.1fs; terminating (log=%s)", name, timeout, log_path)
-        _launch_event("helper_interaction_timeout", status=name, pid=proc.pid, duration_ms=round(timeout * 1000.0, 1), log=str(log_path))
-        _RowBotProcess._terminate_process(proc, label=f"{name} helper", timeout=1.0, kill_tree=True)
+        logger.warning(
+            "%s helper interaction timed out after %.1fs; terminating (log=%s)",
+            name,
+            timeout,
+            log_path,
+        )
+        _launch_event(
+            "helper_interaction_timeout",
+            status=name,
+            pid=proc.pid,
+            duration_ms=round(timeout * 1000.0, 1),
+            log=str(log_path),
+        )
+        _RowBotProcess._terminate_process(
+            proc, label=f"{name} helper", timeout=1.0, kill_tree=True
+        )
         return None
 
 
 def _stop_launcher_helper(proc: subprocess.Popen | None, *, name: str) -> None:
     if proc is None or proc.poll() is not None:
         return
-    _RowBotProcess._terminate_process(proc, label=f"{name} helper", timeout=1.0, kill_tree=True)
+    _RowBotProcess._terminate_process(
+        proc, label=f"{name} helper", timeout=1.0, kill_tree=True
+    )
 
 
 def _claim_early_splash() -> subprocess.Popen | None:
@@ -1296,7 +1486,7 @@ def _claim_early_splash() -> subprocess.Popen | None:
 # ── Splash screen (subprocess to avoid Tcl/pystray conflicts) ────────────────
 
 # Tkinter GUI splash — tried first.
-_SPLASH_TK = r'''
+_SPLASH_TK = r"""
 import os, sys, socket, time
 
 py_dir = os.path.dirname(sys.executable)
@@ -1363,10 +1553,10 @@ def _check():
     if time.monotonic() - _start > TIMEOUT or port_ready(): root.destroy(); return
     root.after(500, _check)
 root.after(500, _check); root.mainloop()
-'''
+"""
 
 # Console fallback — used when tkinter is unavailable.
-_SPLASH_CONSOLE = r'''
+_SPLASH_CONSOLE = r"""
 import sys, socket, time, os
 PORT, TIMEOUT = int(sys.argv[1]), float(sys.argv[2])
 if os.name == 'nt':
@@ -1385,7 +1575,7 @@ while time.monotonic() - _start < TIMEOUT:
     time.sleep(0.5)
 print("\r  Ready!       ")
 time.sleep(0.6)
-'''
+"""
 
 
 def _show_splash(port: int = _PORT, timeout: float = 60.0) -> subprocess.Popen | None:
@@ -1422,8 +1612,13 @@ def _show_splash(port: int = _PORT, timeout: float = 60.0) -> subprocess.Popen |
         if proc is not None and proc.poll() is None:
             _launch_event("splash_tk_running", port=port, pid=proc.pid)
             return proc  # tkinter splash is running
-        _launch_event("splash_tk_exited", port=port, status=_launcher_helper_tail(splash_log))
-        if sys.platform == "win32" and os.environ.get("ROW_BOT_SPLASH_CONSOLE_FALLBACK") != "1":
+        _launch_event(
+            "splash_tk_exited", port=port, status=_launcher_helper_tail(splash_log)
+        )
+        if (
+            sys.platform == "win32"
+            and os.environ.get("ROW_BOT_SPLASH_CONSOLE_FALLBACK") != "1"
+        ):
             logger.info("Tk splash exited; skipping Windows console splash fallback")
             return None
         # Tkinter often unavailable on macOS — silently fall back
@@ -1992,6 +2187,7 @@ def _load_window_mode() -> str:
     config_path = _row_bot_data_dir() / "app_config.json"
     try:
         import json
+
         cfg = json.loads(config_path.read_text())
         mode = cfg.get("window_mode", "ask")
         if mode in ("ask", "native", "browser"):
@@ -2002,7 +2198,7 @@ def _load_window_mode() -> str:
 
 
 # Tkinter chooser dialog — shown when window_mode is "ask".
-_CHOOSER_TK = r'''
+_CHOOSER_TK = r"""
 import os, sys
 
 py_dir = os.path.dirname(sys.executable)
@@ -2092,10 +2288,10 @@ except Exception:
     pass
 root.mainloop()
 print(choice[0])
-'''
+"""
 
 # Console fallback chooser — used when tkinter is unavailable.
-_CHOOSER_CONSOLE = r'''
+_CHOOSER_CONSOLE = r"""
 import sys, os
 RESULT_PATH = sys.argv[1] if len(sys.argv) > 1 else ""
 if os.name == 'nt':
@@ -2129,7 +2325,7 @@ if RESULT_PATH:
     except Exception:
         pass
 print(mode)
-'''
+"""
 
 
 def _ask_window_mode() -> str:
@@ -2162,7 +2358,11 @@ def _ask_window_mode() -> str:
             log_path=chooser_log,
         )
         if exit_code == 0 and result_path.exists():
-            result = result_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-1]
+            result = (
+                result_path.read_text(encoding="utf-8", errors="replace")
+                .strip()
+                .splitlines()[-1]
+            )
             if result in ("native", "browser"):
                 logger.info("User chose window mode: %s (GUI)", result)
                 return result
@@ -2173,10 +2373,17 @@ def _ask_window_mode() -> str:
             _launcher_helper_tail(chooser_log),
         )
     else:
-        logger.warning("Window mode GUI chooser unavailable; defaulting to native unless console fallback is explicitly enabled")
+        logger.warning(
+            "Window mode GUI chooser unavailable; defaulting to native unless console fallback is explicitly enabled"
+        )
 
-    if sys.platform == "win32" and os.environ.get("ROW_BOT_WINDOW_MODE_CONSOLE_FALLBACK") != "1":
-        logger.info("Skipping Windows console window mode fallback; defaulting to native")
+    if (
+        sys.platform == "win32"
+        and os.environ.get("ROW_BOT_WINDOW_MODE_CONSOLE_FALLBACK") != "1"
+    ):
+        logger.info(
+            "Skipping Windows console window mode fallback; defaulting to native"
+        )
         return "native"
 
     try:
@@ -2194,17 +2401,33 @@ def _ask_window_mode() -> str:
                 timeout=120.0,
                 log_path=chooser_log,
             )
-            result = result_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-1] if result_path.exists() else ""
+            result = (
+                result_path.read_text(encoding="utf-8", errors="replace")
+                .strip()
+                .splitlines()[-1]
+                if result_path.exists()
+                else ""
+            )
         else:
             completed = subprocess.run(
                 [sys.executable, "-c", _CHOOSER_CONSOLE, str(result_path)],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
                 creationflags=flags,
             )
             if result_path.exists():
-                result = result_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-1]
+                result = (
+                    result_path.read_text(encoding="utf-8", errors="replace")
+                    .strip()
+                    .splitlines()[-1]
+                )
             else:
-                result = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
+                result = (
+                    completed.stdout.strip().splitlines()[-1]
+                    if completed.stdout.strip()
+                    else ""
+                )
         if result in ("native", "browser"):
             logger.info("User chose window mode: %s (console)", result)
             return result
@@ -2224,7 +2447,9 @@ def _open_in_browser(port: int = _PORT) -> None:
     logger.info("Opened %s in system browser on port %s", APP_DISPLAY_NAME, port)
 
 
-def _open_window(port: int = _PORT, control_port: int | None = None) -> subprocess.Popen | None:
+def _open_window(
+    port: int = _PORT, control_port: int | None = None
+) -> subprocess.Popen | None:
     """Open a pywebview native window pointing at the running server.
 
     Returns the subprocess handle, or None on failure.
@@ -2232,7 +2457,9 @@ def _open_window(port: int = _PORT, control_port: int | None = None) -> subproce
     affect the server.
     """
     if not _has_display_server():
-        logger.warning("No display server detected; opening browser instead of native window")
+        logger.warning(
+            "No display server detected; opening browser instead of native window"
+        )
         webbrowser.open(_url_for_port(port))
         return None
     try:
@@ -2254,24 +2481,39 @@ def _open_window(port: int = _PORT, control_port: int | None = None) -> subproce
         )
         time.sleep(0.5)
         if proc.poll() is not None:
-            logger.warning("Native window exited during startup; falling back to browser")
+            logger.warning(
+                "Native window exited during startup; falling back to browser"
+            )
             webbrowser.open(_url_for_port(port))
             return None
         logger.info("Native window opened (PID %s, port %s)", proc.pid, port)
         return proc
     except Exception as exc:
-        logger.warning("Could not open native window: %s — falling back to browser", exc)
+        logger.warning(
+            "Could not open native window: %s — falling back to browser", exc
+        )
         webbrowser.open(_url_for_port(port))
         return None
 
 
-def _wait_for_server(port: int = _PORT, timeout: float | None = None, server: _RowBotProcess | None = None) -> bool:
+def _wait_for_server(
+    port: int = _PORT,
+    timeout: float | None = None,
+    server: _RowBotProcess | None = None,
+) -> bool:
     """Block until the NiceGUI server is reachable, or *timeout* expires."""
-    deadline = time.monotonic() + (timeout if timeout is not None else _startup_timeout())
+    deadline = time.monotonic() + (
+        timeout if timeout is not None else _startup_timeout()
+    )
     while time.monotonic() < deadline:
         if server is not None and not server.is_alive:
             return False
-        if _is_row_bot_server(port):
+        launch_secret = (
+            server._launch_environment.get(LAUNCH_SECRET_ENV)
+            if server is not None
+            else None
+        )
+        if _is_row_bot_server(port, launch_secret=launch_secret):
             return True
         time.sleep(0.3)
     return False
@@ -2279,20 +2521,33 @@ def _wait_for_server(port: int = _PORT, timeout: float | None = None, server: _R
 
 # ── Tray application ────────────────────────────────────────────────────────
 
+
 class RowBotTray:
     """System-tray icon that manages the NiceGUI server and native window."""
 
-    def __init__(self, *, preferred_port: int = _PORT, host: str | None = None,
-                 preferred_mode: str | None = None, no_splash: bool = False,
-                 no_ollama: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        preferred_port: int = _PORT,
+        host: str | None = None,
+        preferred_mode: str | None = None,
+        no_splash: bool = False,
+        no_ollama: bool = False,
+    ) -> None:
         self._preferred_port = preferred_port
         self._port = preferred_port
+        self._explicit_host = host
         self._host = _resolve_launch_host(host)
         self._preferred_mode = preferred_mode
         self._no_splash = no_splash
         self._no_ollama = no_ollama
         self._server = _RowBotProcess(self._port, host=self._host)
-        self._owns_server = False          # True if *we* started it
+        _set_process_launch_environment(
+            self._server, {"ROW_BOT_DEPLOYMENT_MODE": "desktop"}
+        )
+        self._owns_server = False  # True if *we* started it
+        self._restart_lock = threading.Lock()
+        self._launcher_control: LauncherControlServer | None = None
         self._window_proc: subprocess.Popen | None = None
         self._window_control_port: int | None = None
         self._stop_event = threading.Event()
@@ -2307,8 +2562,45 @@ class RowBotTray:
 
     def _ensure_window_control_port(self) -> int:
         if self._window_control_port is None:
-            self._window_control_port = _find_free_port(self._port + 10000, max_tries=50)
+            self._window_control_port = _find_free_port(
+                self._port + 10000, max_tries=50
+            )
         return self._window_control_port
+
+    def _ensure_launcher_control(self) -> None:
+        if self._launcher_control is not None:
+            return
+        control = LauncherControlServer(self._restart_child_from_control)
+        control.start()
+        self._launcher_control = control
+        _set_process_launch_environment(
+            self._server,
+            control.child_environment(),
+        )
+        atexit.register(control.stop)
+
+    def _restart_child_from_control(self) -> None:
+        """Restart only the child owned by this launcher."""
+        if not self._owns_server:
+            return
+        if not self._restart_lock.acquire(blocking=False):
+            return
+        try:
+            self._server.stop()
+            deadline = time.monotonic() + 10.0
+            while _is_port_in_use(self._port) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if _is_port_in_use(self._port):
+                logger.error("Launcher-controlled restart timed out waiting for port")
+                return
+            self._host = _resolve_launch_host(self._explicit_host)
+            self._server.start(self._port, self._host)
+            if not _wait_for_server(self._port, server=self._server):
+                logger.error("Launcher-controlled child restart failed readiness")
+        except Exception:
+            logger.exception("Launcher-controlled child restart failed")
+        finally:
+            self._restart_lock.release()
 
     def _send_window_command(self, action: str, timeout: float = 1.5) -> bool:
         port = self._window_control_port
@@ -2332,7 +2624,7 @@ class RowBotTray:
                     break
                 time.sleep(0.5)
             self._server.start(self._port)
-            if not _wait_for_server(self._port):
+            if not _wait_for_server(self._port, server=self._server):
                 return False
         elif not _is_row_bot_server(self._port):
             return False
@@ -2344,7 +2636,7 @@ class RowBotTray:
 
     # ── Menu callbacks ───────────────────────────────────────────────────
 
-    def _on_open(self, icon=None, item=None) -> None:   # noqa: ARG002
+    def _on_open(self, icon=None, item=None) -> None:  # noqa: ARG002
         """Open (or re-open) the native window."""
         if self._is_window_alive():
             # Window is running but may be behind other apps.  Try to bring
@@ -2354,11 +2646,15 @@ class RowBotTray:
             if sys.platform == "darwin":
                 try:
                     subprocess.run(
-                        ["osascript", "-e",
-                         "tell application \"System Events\" to set "
-                         "frontmost of every process whose unix id is "
-                         f"{self._window_proc.pid} to true"],
-                        timeout=3, capture_output=True,
+                        [
+                            "osascript",
+                            "-e",
+                            'tell application "System Events" to set '
+                            "frontmost of every process whose unix id is "
+                            f"{self._window_proc.pid} to true",
+                        ],
+                        timeout=3,
+                        capture_output=True,
                     )
                     _brought = True
                 except Exception:
@@ -2366,6 +2662,7 @@ class RowBotTray:
             elif sys.platform == "win32":
                 try:
                     import ctypes
+
                     hwnd = ctypes.windll.user32.FindWindowW(None, APP_DISPLAY_NAME)
                     if hwnd:
                         SW_RESTORE = 9
@@ -2379,15 +2676,17 @@ class RowBotTray:
                 try:
                     subprocess.run(
                         ["wmctrl", "-a", APP_DISPLAY_NAME],
-                        timeout=3, capture_output=True,
+                        timeout=3,
+                        capture_output=True,
                     )
                     _brought = True
                 except Exception:
                     pass
 
             if _brought:
-                logger.info("Brought existing window to front (pid %s)",
-                            self._window_proc.pid)
+                logger.info(
+                    "Brought existing window to front (pid %s)", self._window_proc.pid
+                )
                 return  # keep existing WebSocket connection alive
 
             # Platform trick failed — kill and spawn fresh window.
@@ -2408,7 +2707,7 @@ class RowBotTray:
                     break
                 time.sleep(0.5)
             self._server.start(self._port)
-            _wait_for_server(self._port)
+            _wait_for_server(self._port, server=self._server)
 
         if not self._owns_server and not _is_row_bot_server(self._port):
             # External server died — just open browser and hope
@@ -2419,7 +2718,7 @@ class RowBotTray:
         logger.info("Opening %s window", APP_DISPLAY_NAME)
         self._window_proc = _open_window(self._port, self._ensure_window_control_port())
 
-    def _on_open_browser(self, icon=None, item=None) -> None:   # noqa: ARG002
+    def _on_open_browser(self, icon=None, item=None) -> None:  # noqa: ARG002
         """Open the Row-Bot UI in the default system browser."""
         if _is_row_bot_server(self._port):
             _open_in_browser(self._port)
@@ -2431,7 +2730,7 @@ class RowBotTray:
                     break
                 time.sleep(0.5)
             self._server.start(self._port)
-            if _wait_for_server(self._port):
+            if _wait_for_server(self._port, server=self._server):
                 _open_in_browser(self._port)
                 _launch_event("browser_opened", port=self._port, mode="browser")
             else:
@@ -2439,21 +2738,21 @@ class RowBotTray:
         else:
             _open_in_browser(self._port)
 
-    def _on_show_buddy(self, icon=None, item=None) -> None:   # noqa: ARG002
+    def _on_show_buddy(self, icon=None, item=None) -> None:  # noqa: ARG002
         """Show the desktop Buddy overlay from the system tray."""
         if self._ensure_native_window_for_buddy() and self._send_window_command("show"):
             logger.info("Buddy overlay shown from tray")
         else:
             logger.warning("Could not show Buddy overlay from tray")
 
-    def _on_hide_buddy(self, icon=None, item=None) -> None:   # noqa: ARG002
+    def _on_hide_buddy(self, icon=None, item=None) -> None:  # noqa: ARG002
         """Hide the desktop Buddy overlay from the system tray."""
         if self._send_window_command("hide"):
             logger.info("Buddy overlay hidden from tray")
         else:
             logger.info("Buddy overlay was not open")
 
-    def _on_quit(self, icon=None, item=None) -> None:    # noqa: ARG002
+    def _on_quit(self, icon=None, item=None) -> None:  # noqa: ARG002
         logger.info("Quit requested")
         if self._quitting:
             logger.info("Quit already in progress")
@@ -2478,6 +2777,8 @@ class RowBotTray:
                     self._window_proc = None
                 if self._owns_server:
                     self._server.stop()
+                if self._launcher_control is not None:
+                    self._launcher_control.stop()
                 _clear_launcher_state()
             finally:
                 try:
@@ -2487,7 +2788,9 @@ class RowBotTray:
                 logger.info("Launcher quit complete")
                 os._exit(0)
 
-        threading.Thread(target=_quit_watchdog, daemon=True, name="quit-watchdog").start()
+        threading.Thread(
+            target=_quit_watchdog, daemon=True, name="quit-watchdog"
+        ).start()
         threading.Thread(target=_quit_worker, daemon=False, name="quit-worker").start()
         try:
             self._icon.stop()
@@ -2514,12 +2817,14 @@ class RowBotTray:
                 # Log once when the server process dies unexpectedly
                 if self._owns_server and not _crash_logged:
                     _crash_logged = True
-                    rc = (self._server._proc.returncode
-                          if self._server._proc else "?")
+                    rc = self._server._proc.returncode if self._server._proc else "?"
                     log_path = self._server._log_file or "?"
                     logger.error(
-                        "%s server exited (code %s). "
-                        "Check %s for details.", APP_DISPLAY_NAME, rc, log_path)
+                        "%s server exited (code %s). Check %s for details.",
+                        APP_DISPLAY_NAME,
+                        rc,
+                        log_path,
+                    )
                     if self._server._log_file and self._server._log_file.exists():
                         try:
                             log_text = self._server._log_file.read_text(
@@ -2546,7 +2851,10 @@ class RowBotTray:
         # Best-effort local runtime convenience. Provider-only and custom
         # endpoint setups should not pay an Ollama startup penalty.
         _maybe_start_ollama(no_ollama=self._no_ollama)
-        _launch_event("ollama_gate_done", duration_ms=round((time.perf_counter() - ollama_started) * 1000.0, 1))
+        _launch_event(
+            "ollama_gate_done",
+            duration_ms=round((time.perf_counter() - ollama_started) * 1000.0, 1),
+        )
 
         self._port, already_running = _select_app_port(self._preferred_port)
         self._server.port = self._port
@@ -2556,6 +2864,7 @@ class RowBotTray:
             _launch_event("server_already_running", port=self._port)
         else:
             server_started = time.perf_counter()
+            self._ensure_launcher_control()
             self._server.start(self._port, self._host)
             _launch_event(
                 "server_spawned",
@@ -2572,7 +2881,13 @@ class RowBotTray:
             if splash_proc is None and not self._no_splash and _has_display_server():
                 splash_started = time.perf_counter()
                 splash_proc = _show_splash(self._port)
-                _launch_event("splash_requested", port=self._port, duration_ms=round((time.perf_counter() - splash_started) * 1000.0, 1))
+                _launch_event(
+                    "splash_requested",
+                    port=self._port,
+                    duration_ms=round(
+                        (time.perf_counter() - splash_started) * 1000.0, 1
+                    ),
+                )
 
         # Start the status-polling thread
         poller = threading.Thread(target=self._poll_loop, daemon=True, name="tray-poll")
@@ -2580,8 +2895,12 @@ class RowBotTray:
 
         # Wait for server to be ready, then open UI in the preferred mode
         wait_started = time.perf_counter()
-        if _wait_for_server(self._port):
-            _launch_event("server_ready", port=self._port, duration_ms=round((time.perf_counter() - wait_started) * 1000.0, 1))
+        if _wait_for_server(self._port, server=self._server):
+            _launch_event(
+                "server_ready",
+                port=self._port,
+                duration_ms=round((time.perf_counter() - wait_started) * 1000.0, 1),
+            )
             mode = self._preferred_mode or _load_window_mode()
             _stop_launcher_helper(splash_proc, name="splash_tk")
             if mode == "ask":
@@ -2594,7 +2913,9 @@ class RowBotTray:
                     owns_server=self._owns_server,
                 )
             else:
-                self._window_proc = _open_window(self._port, self._ensure_window_control_port())
+                self._window_proc = _open_window(
+                    self._port, self._ensure_window_control_port()
+                )
                 if self._window_proc is None:
                     self._window_control_port = None
                 _launch_event(
@@ -2618,7 +2939,11 @@ class RowBotTray:
 
     def run(self) -> None:
         """Start the tray icon, the NiceGUI server, and a native window."""
-        _launch_event("tray_run_start", port=self._preferred_port, mode=self._preferred_mode or "auto")
+        _launch_event(
+            "tray_run_start",
+            port=self._preferred_port,
+            mode=self._preferred_mode or "auto",
+        )
 
         if sys.platform == "darwin":
             logger.info("Starting macOS tray run loop before launcher startup")
@@ -2631,7 +2956,10 @@ class RowBotTray:
                     try:
                         self._icon.stop()
                     except Exception:
-                        logger.debug("Could not stop macOS tray after startup failure", exc_info=True)
+                        logger.debug(
+                            "Could not stop macOS tray after startup failure",
+                            exc_info=True,
+                        )
 
             self._icon.run(setup=_setup)
             return
@@ -2642,15 +2970,43 @@ class RowBotTray:
 
 # ── Direct / headless launcher mode ─────────────────────────────────────────
 
-def _block_until_interrupted(server: _RowBotProcess | None, owns_server: bool) -> None:
+
+def _block_until_interrupted(
+    server: _RowBotProcess | None,
+    owns_server: bool,
+    *,
+    restart_in_progress: Callable[[], bool] | None = None,
+) -> None:
+    stop_requested = threading.Event()
+    previous_handlers: dict[int, object] = {}
+
+    def _request_stop(_signum, _frame) -> None:
+        stop_requested.set()
+
+    if threading.current_thread() is threading.main_thread():
+        for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+            signal_value = getattr(signal, signal_name, None)
+            if signal_value is None:
+                continue
+            try:
+                previous_handlers[signal_value] = signal.getsignal(signal_value)
+                signal.signal(signal_value, _request_stop)
+            except (OSError, ValueError):
+                continue
     try:
-        while True:
+        while not stop_requested.wait(1.0):
             if owns_server and server is not None and not server.is_alive:
+                if restart_in_progress is not None and restart_in_progress():
+                    continue
                 raise RuntimeError(f"{APP_DISPLAY_NAME} server exited unexpectedly")
-            time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Interrupted — shutting down")
     finally:
+        for signal_value, previous in previous_handlers.items():
+            try:
+                signal.signal(signal_value, previous)
+            except (OSError, ValueError):
+                pass
         if owns_server and server is not None:
             server.stop()
             _clear_launcher_state()
@@ -2658,23 +3014,55 @@ def _block_until_interrupted(server: _RowBotProcess | None, owns_server: bool) -
 
 def _run_direct(args: argparse.Namespace) -> None:
     """Run Row-Bot without a tray icon, for Linux/browser/server modes."""
-    resolved_host = _resolve_launch_host(args.host)
+    host_input = getattr(args, "_dynamic_host_input", args.host)
+    resolved_host = _resolve_launch_host(host_input)
     _launch_event("direct_run_start", port=args.port, host=resolved_host, mode="direct")
     ollama_started = time.perf_counter()
     _maybe_start_ollama(no_ollama=args.no_ollama)
-    _launch_event("ollama_gate_done", duration_ms=round((time.perf_counter() - ollama_started) * 1000.0, 1))
+    _launch_event(
+        "ollama_gate_done",
+        duration_ms=round((time.perf_counter() - ollama_started) * 1000.0, 1),
+    )
 
     preferred = parse_app_port(args.port, default=_PORT)
     port, already_running = _select_app_port(preferred)
     server = _RowBotProcess(port, host=resolved_host)
+    _set_process_launch_environment(
+        server,
+        {"ROW_BOT_DEPLOYMENT_MODE": ("server" if bool(args.server) else "desktop")},
+    )
     owns_server = False
+    restart_lock = threading.Lock()
+    launcher_control: LauncherControlServer | None = None
     splash_proc: subprocess.Popen | None = _claim_early_splash()
+
+    def _restart_direct_child() -> None:
+        if not owns_server or not restart_lock.acquire(blocking=False):
+            return
+        try:
+            server.stop()
+            deadline = time.monotonic() + 10.0
+            while _is_port_in_use(port) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if _is_port_in_use(port):
+                logger.error("Launcher-controlled restart timed out waiting for port")
+                return
+            server.start(port, _resolve_launch_host(host_input))
+            if not _wait_for_server(port, server=server):
+                logger.error("Launcher-controlled child restart failed readiness")
+        except Exception:
+            logger.exception("Launcher-controlled child restart failed")
+        finally:
+            restart_lock.release()
 
     if already_running:
         logger.info("%s already running on port %s", APP_DISPLAY_NAME, port)
         _launch_event("server_already_running", port=port)
     else:
         server_started = time.perf_counter()
+        launcher_control = LauncherControlServer(_restart_direct_child)
+        launcher_control.start()
+        _set_process_launch_environment(server, launcher_control.child_environment())
         server.start(port, resolved_host)
         _launch_event(
             "server_spawned",
@@ -2685,20 +3073,45 @@ def _run_direct(args: argparse.Namespace) -> None:
         )
         owns_server = True
         atexit.register(server.stop)
-        if splash_proc is None and not args.no_splash and _has_display_server() and not args.server:
+        if (
+            splash_proc is None
+            and not args.no_splash
+            and _has_display_server()
+            and not args.server
+        ):
             splash_started = time.perf_counter()
             splash_proc = _show_splash(port)
-            _launch_event("splash_requested", port=port, duration_ms=round((time.perf_counter() - splash_started) * 1000.0, 1))
+            _launch_event(
+                "splash_requested",
+                port=port,
+                duration_ms=round((time.perf_counter() - splash_started) * 1000.0, 1),
+            )
 
     wait_process = server if owns_server else None
     wait_started = time.perf_counter()
     if not _wait_for_server(port, server=wait_process):
+        if launcher_control is not None:
+            launcher_control.stop()
         _stop_launcher_helper(splash_proc, name="splash_tk")
-        _launch_event("server_ready_timeout", port=port, duration_ms=round((time.perf_counter() - wait_started) * 1000.0, 1))
-        reason = "app process exited before readiness" if owns_server and not server.is_alive else "readiness probe timed out"
+        _launch_event(
+            "server_ready_timeout",
+            port=port,
+            duration_ms=round((time.perf_counter() - wait_started) * 1000.0, 1),
+        )
+        reason = (
+            "app process exited before readiness"
+            if owns_server and not server.is_alive
+            else "readiness probe timed out"
+        )
         _log_startup_failure_context(server, port, reason)
-        raise RuntimeError(f"{APP_DISPLAY_NAME} server did not become ready on port {port}")
-    _launch_event("server_ready", port=port, duration_ms=round((time.perf_counter() - wait_started) * 1000.0, 1))
+        raise RuntimeError(
+            f"{APP_DISPLAY_NAME} server did not become ready on port {port}"
+        )
+    _launch_event(
+        "server_ready",
+        port=port,
+        duration_ms=round((time.perf_counter() - wait_started) * 1000.0, 1),
+    )
     _stop_launcher_helper(splash_proc, name="splash_tk")
 
     mode_for_state = "server" if args.server or args.no_open else "browser"
@@ -2736,7 +3149,15 @@ def _run_direct(args: argparse.Namespace) -> None:
     )
 
     if owns_server:
-        _block_until_interrupted(server, owns_server=True)
+        try:
+            _block_until_interrupted(
+                server,
+                owns_server=True,
+                restart_in_progress=restart_lock.locked,
+            )
+        finally:
+            if launcher_control is not None:
+                launcher_control.stop()
 
 
 def _timestamp() -> str:
@@ -2782,7 +3203,12 @@ def _reset_tasks_db() -> int:
 def _reset_all_local_dbs() -> int:
     data_dir = _row_bot_data_dir()
     backup_dir = data_dir / "recovery" / f"local-db-reset-{_timestamp()}"
-    dbs = [get_tasks_db_path(), get_memory_db_path(), get_threads_db_path()]
+    dbs = [
+        get_tasks_db_path(),
+        get_memory_db_path(),
+        get_threads_db_path(),
+        get_access_db_path(),
+    ]
     moved: list[tuple[Path, Path]] = []
     for db_path in dbs:
         moved.extend(_backup_family(db_path, backup_dir))
@@ -2800,7 +3226,7 @@ def _reset_all_local_dbs() -> int:
     for db_path in dbs:
         print(f"Reset target: {db_path}")
     print(f"Task schema: {result.get('status')}")
-    print("Memory and thread databases will be recreated on next app startup.")
+    print("Memory, thread, and access databases will be recreated on next app startup.")
     return 0
 
 
@@ -2816,7 +3242,9 @@ def _restore_data(selector: str | None = None) -> int:
             source_dir = recovery_root / selector
     else:
         candidates = [p for p in recovery_root.iterdir() if p.is_dir()]
-        source_dir = max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
+        source_dir = (
+            max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
+        )
     if not source_dir or not source_dir.exists():
         print(f"No restorable backup found under {recovery_root}")
         return 1
@@ -2824,9 +3252,18 @@ def _restore_data(selector: str | None = None) -> int:
     pre_restore = recovery_root / f"pre-restore-{_timestamp()}"
     restored: list[tuple[Path, Path]] = []
     for name in (
-        "tasks.db", "tasks.db-wal", "tasks.db-shm",
-        "memory.db", "memory.db-wal", "memory.db-shm",
-        "threads.db", "threads.db-wal", "threads.db-shm",
+        "tasks.db",
+        "tasks.db-wal",
+        "tasks.db-shm",
+        "memory.db",
+        "memory.db-wal",
+        "memory.db-shm",
+        "threads.db",
+        "threads.db-wal",
+        "threads.db-shm",
+        "mobile.db",
+        "mobile.db-wal",
+        "mobile.db-shm",
     ):
         src = source_dir / name
         if not src.exists():
@@ -2857,28 +3294,65 @@ def _restore_data(selector: str | None = None) -> int:
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=f"Launch {APP_DISPLAY_NAME}")
     subparsers = parser.add_subparsers(dest="command")
+    from row_bot.access.cli import add_remote_access_subcommands
+
+    add_remote_access_subcommands(subparsers)
     plugins_parser = subparsers.add_parser("plugins", help="Plugin developer utilities")
     plugin_sub = plugins_parser.add_subparsers(dest="plugins_command", required=True)
-    validate_parser = plugin_sub.add_parser("validate", help="Validate a plugin directory")
+    validate_parser = plugin_sub.add_parser(
+        "validate", help="Validate a plugin directory"
+    )
     validate_parser.add_argument("path")
     link_parser = plugin_sub.add_parser("link", help="Link a local plugin directory")
     link_parser.add_argument("path")
-    reload_parser = plugin_sub.add_parser("reload", help="Reload one linked or installed plugin")
+    reload_parser = plugin_sub.add_parser(
+        "reload", help="Reload one linked or installed plugin"
+    )
     reload_parser.add_argument("plugin_id")
-    doctor_parser = plugin_sub.add_parser("doctor", help="Validate setup and required config for a plugin")
+    doctor_parser = plugin_sub.add_parser(
+        "doctor", help="Validate setup and required config for a plugin"
+    )
     doctor_parser.add_argument("plugin")
 
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--browser", action="store_true", help=f"Open {APP_DISPLAY_NAME} in the system browser")
-    mode.add_argument("--native", action="store_true", help=f"Open {APP_DISPLAY_NAME} in a pywebview native window")
-    parser.add_argument("--tray", action="store_true", help="Force the system tray launcher")
-    parser.add_argument("--no-tray", action="store_true", help="Run without a system tray icon")
-    parser.add_argument("--server", action="store_true", help="Run the server without tray integration")
-    parser.add_argument("--no-open", action="store_true", help="Do not open a browser or native window")
-    parser.add_argument("--no-splash", action="store_true", help="Skip the launcher splash screen")
-    parser.add_argument("--no-ollama", action="store_true", help="Do not try to auto-start Ollama")
-    parser.add_argument("--reset-tasks-db", action="store_true", help="Back up and recreate tasks.db before launch")
-    parser.add_argument("--reset-db", action="store_true", help="Back up known local SQLite DBs before launch")
+    mode.add_argument(
+        "--browser",
+        action="store_true",
+        help=f"Open {APP_DISPLAY_NAME} in the system browser",
+    )
+    mode.add_argument(
+        "--native",
+        action="store_true",
+        help=f"Open {APP_DISPLAY_NAME} in a pywebview native window",
+    )
+    parser.add_argument(
+        "--tray", action="store_true", help="Force the system tray launcher"
+    )
+    parser.add_argument(
+        "--no-tray", action="store_true", help="Run without a system tray icon"
+    )
+    parser.add_argument(
+        "--server", action="store_true", help="Run the server without tray integration"
+    )
+    parser.add_argument(
+        "--no-open", action="store_true", help="Do not open a browser or native window"
+    )
+    parser.add_argument(
+        "--no-splash", action="store_true", help="Skip the launcher splash screen"
+    )
+    parser.add_argument(
+        "--no-ollama", action="store_true", help="Do not try to auto-start Ollama"
+    )
+    parser.add_argument(
+        "--reset-tasks-db",
+        action="store_true",
+        help="Back up and recreate tasks.db before launch",
+    )
+    parser.add_argument(
+        "--reset-db",
+        action="store_true",
+        help="Back up known local SQLite DBs before launch",
+    )
     parser.add_argument(
         "--restore-data",
         nargs="?",
@@ -2886,8 +3360,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Restore known SQLite DBs from a recovery backup directory or latest backup",
     )
-    parser.add_argument("--port", type=int, default=_PORT, help=f"Preferred app port (default: {_PORT})")
-    parser.add_argument("--host", default=None, help="Host/interface for the NiceGUI server")
+    parser.add_argument(
+        "--port", type=int, default=_PORT, help=f"Preferred app port (default: {_PORT})"
+    )
+    parser.add_argument(
+        "--host", default=None, help="Host/interface for the NiceGUI server"
+    )
     return parser
 
 
@@ -2905,6 +3383,7 @@ def quit_for_update() -> None:
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+
 def main(argv: list[str] | None = None) -> None:
     global _ACTIVE_TRAY, _EARLY_SPLASH_PROC
     _ensure_launcher_file_logging()
@@ -2917,10 +3396,44 @@ def main(argv: list[str] | None = None) -> None:
         frozen=getattr(sys, "frozen", False),
     )
     args = _build_arg_parser().parse_args(argv)
+    if getattr(args, "command", "") == "access":
+        from row_bot.access.cli import dispatch_access_command
+
+        raise SystemExit(dispatch_access_command(args))
     if getattr(args, "command", "") == "plugins":
         from row_bot.plugins import devtools as plugin_devtools
 
         raise SystemExit(plugin_devtools.run_cli(args))
+    if getattr(args, "command", "") == "serve":
+        from row_bot.access.access_routes import AccessRouteConfigStore
+        from row_bot.access.cli import resolve_serve_options, serve_startup_lines
+
+        saved_routes = AccessRouteConfigStore().load_or_default()
+        durable = {"host": ("0.0.0.0" if saved_routes.lan_enabled else "127.0.0.1")}
+        try:
+            serve_options = resolve_serve_options(
+                args,
+                durable=durable,
+            )
+        except ValueError as exc:
+            raise SystemExit(f"row-bot serve: {exc}") from exc
+        os.environ.update(serve_options.to_environment())
+        for line in serve_startup_lines(serve_options):
+            logger.info("%s", line)
+        args.host = serve_options.host
+        args.port = serve_options.port
+        args.server = True
+        args.no_open = True
+        args.no_tray = True
+        args.tray = False
+        args.no_splash = True
+        args.no_ollama = not serve_options.auto_start_ollama
+        args.browser = False
+        args.native = False
+        args.reset_tasks_db = False
+        args.reset_db = False
+        args.restore_data = None
+    args._dynamic_host_input = args.host
     args.host = _resolve_launch_host(args.host)
     preferred_mode = "browser" if args.browser else "native" if args.native else None
     linux_default_direct = sys.platform.startswith("linux") and not args.tray
@@ -2966,7 +3479,9 @@ def main(argv: list[str] | None = None) -> None:
         _ACTIVE_TRAY = tray
         tray.run()
     except ImportError as exc:
-        logger.warning("System tray unavailable (%s); falling back to browser mode", exc)
+        logger.warning(
+            "System tray unavailable (%s); falling back to browser mode", exc
+        )
         args.browser = True
         args.no_tray = True
         _run_direct(args)

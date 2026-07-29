@@ -143,6 +143,15 @@ def set_provider_secret(
     provider_id = str(provider_id).strip()
     name = _credential_name(credential_name)
     text = str(value)
+    if name == "api_key":
+        env_var = PROVIDER_API_KEY_ENV.get(provider_id)
+        if env_var and secret_store.read_server_secret(
+            env_var,
+            allowed_names=frozenset(PROVIDER_API_KEY_ENV.values()),
+        ):
+            raise secret_store.SecretStoreError(
+                "externally managed provider secret is read-only"
+            )
     storage_source = "keyring"
     metadata_source = source
     try:
@@ -187,6 +196,17 @@ def get_provider_secret(provider_id: str, credential_name: str = "api_key") -> s
     if name == "api_key":
         env_var = PROVIDER_API_KEY_ENV.get(provider_id)
         if env_var:
+            file_value = secret_store.read_server_secret(
+                env_var,
+                allowed_names=frozenset(PROVIDER_API_KEY_ENV.values()),
+            )
+            env_value = os.environ.get(env_var, "")
+            if file_value and env_value and file_value != env_value:
+                raise secret_store.SecretStoreError(
+                    "provider secret file conflicts with environment"
+                )
+            if file_value:
+                return file_value
             legacy_value = api_keys.get_key(env_var)
             if legacy_value:
                 return legacy_value
@@ -196,6 +216,15 @@ def get_provider_secret(provider_id: str, credential_name: str = "api_key") -> s
 def delete_provider_secret(provider_id: str, credential_name: str = "api_key") -> None:
     provider_id = str(provider_id).strip()
     name = _credential_name(credential_name)
+    if name == "api_key":
+        env_var = PROVIDER_API_KEY_ENV.get(provider_id)
+        if env_var and secret_store.read_server_secret(
+            env_var,
+            allowed_names=frozenset(PROVIDER_API_KEY_ENV.values()),
+        ):
+            raise secret_store.SecretStoreError(
+                "externally managed provider secret is read-only"
+            )
     _delete_session_provider_secret(provider_id, name)
     _delete_chunked_provider_secret(provider_id, name)
     try:
@@ -229,7 +258,35 @@ def provider_secret_status(provider_id: str, credential_name: str = "api_key") -
     source = ""
     if name == "api_key" and provider_id in PROVIDER_API_KEY_ENV:
         env_var = PROVIDER_API_KEY_ENV[provider_id]
+        try:
+            file_value = secret_store.read_server_secret(
+                env_var,
+                allowed_names=frozenset(PROVIDER_API_KEY_ENV.values()),
+            )
+        except secret_store.SecretStoreError as exc:
+            return {
+                "configured": False,
+                "source": "secret_file",
+                "fingerprint": "",
+                "externally_managed": True,
+                "error": str(exc),
+            }
         env_value = os.environ.get(env_var, "")
+        if file_value:
+            if env_value and env_value != file_value:
+                return {
+                    "configured": False,
+                    "source": "conflict",
+                    "fingerprint": "",
+                    "externally_managed": True,
+                    "error": "secret file conflicts with environment",
+                }
+            return {
+                "configured": True,
+                "source": "secret_file",
+                "fingerprint": secret_store.fingerprint(file_value),
+                "externally_managed": True,
+            }
         status = api_keys.key_status(env_var)
         value = api_keys.get_key(env_var)
         source = str(status.get("source") or "")

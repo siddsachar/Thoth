@@ -1,35 +1,72 @@
 ---
 title: CLI
-description: Generated reference for launcher and plugin command-line options.
+description: Generated reference for launcher, access, server, and plugin command-line options.
 ---
 
 import GeneratedNotice from '@site/src/components/GeneratedNotice';
 
 # CLI
 
-<!-- generated-from: src/row_bot/launcher.py -->
-<!-- inventory-hash: 0b5ce555d5b6e716 -->
+<!-- generated-from: src/row_bot/launcher.py, src/row_bot/access/cli.py -->
+<!-- inventory-hash: 02186cd999243265 -->
 
-<GeneratedNotice source="src/row_bot/launcher.py" />
+<GeneratedNotice source="src/row_bot/launcher.py, src/row_bot/access/cli.py" />
 
 ## Command-line Options
 
 | Command | Option | Purpose | Default | Source |
 | --- | --- | --- | --- | --- |
-| row-bot | --browser |  |  | `src/row_bot/launcher.py:2872` |
-| row-bot | --host | Host/interface for the Row-Bot local server |  | `src/row_bot/launcher.py:2890` |
-| row-bot | --native |  |  | `src/row_bot/launcher.py:2873` |
-| row-bot | --no-ollama | Do not try to auto-start Ollama |  | `src/row_bot/launcher.py:2879` |
-| row-bot | --no-open | Do not open a browser or native window |  | `src/row_bot/launcher.py:2877` |
-| row-bot | --no-splash | Skip the launcher splash screen |  | `src/row_bot/launcher.py:2878` |
-| row-bot | --no-tray | Run without a system tray icon |  | `src/row_bot/launcher.py:2875` |
-| row-bot | --port |  | _PORT | `src/row_bot/launcher.py:2889` |
-| row-bot | --reset-db | Back up known local SQLite DBs before launch |  | `src/row_bot/launcher.py:2881` |
-| row-bot | --reset-tasks-db | Back up and recreate tasks.db before launch |  | `src/row_bot/launcher.py:2880` |
-| row-bot | --restore-data | Restore known SQLite DBs from a recovery backup directory or latest backup |  | `src/row_bot/launcher.py:2882` |
-| row-bot | --server | Run the server without tray integration |  | `src/row_bot/launcher.py:2876` |
-| row-bot | --tray | Force the system tray launcher |  | `src/row_bot/launcher.py:2874` |
-| row-bot plugin doctor | plugin |  |  | `src/row_bot/launcher.py:2869` |
-| row-bot plugin link | path |  |  | `src/row_bot/launcher.py:2865` |
-| row-bot plugin reload | plugin_id |  |  | `src/row_bot/launcher.py:2867` |
-| row-bot plugin validate | path |  |  | `src/row_bot/launcher.py:2863` |
+| row-bot | --browser |  |  | `src/row_bot/launcher.py:3318` |
+| row-bot | --host | Host/interface for the Row-Bot local server |  | `src/row_bot/launcher.py:3366` |
+| row-bot | --native |  |  | `src/row_bot/launcher.py:3323` |
+| row-bot | --no-ollama | Do not try to auto-start Ollama |  | `src/row_bot/launcher.py:3343` |
+| row-bot | --no-open | Do not open a browser or native window |  | `src/row_bot/launcher.py:3337` |
+| row-bot | --no-splash | Skip the launcher splash screen |  | `src/row_bot/launcher.py:3340` |
+| row-bot | --no-tray | Run without a system tray icon |  | `src/row_bot/launcher.py:3331` |
+| row-bot | --port |  | _PORT | `src/row_bot/launcher.py:3363` |
+| row-bot | --reset-db | Back up known local SQLite DBs before launch |  | `src/row_bot/launcher.py:3351` |
+| row-bot | --reset-tasks-db | Back up and recreate tasks.db before launch |  | `src/row_bot/launcher.py:3346` |
+| row-bot | --restore-data | Restore known SQLite DBs from a recovery backup directory or latest backup |  | `src/row_bot/launcher.py:3356` |
+| row-bot | --server | Run the server without tray integration |  | `src/row_bot/launcher.py:3334` |
+| row-bot | --tray | Force the system tray launcher |  | `src/row_bot/launcher.py:3328` |
+| row-bot access doctor | --allowed-host |  |  | `src/row_bot/access/cli.py:196` |
+| row-bot access doctor | --data-dir | Persistent Row-Bot data directory |  | `src/row_bot/access/cli.py:224` |
+| row-bot access doctor | --deployment-mode |  |  | `src/row_bot/access/cli.py:189` |
+| row-bot access doctor | --ephemeral-data |  |  | `src/row_bot/access/cli.py:203` |
+| row-bot access doctor | --host |  |  | `src/row_bot/access/cli.py:193` |
+| row-bot access doctor | --json | Emit machine-readable JSON |  | `src/row_bot/access/cli.py:225` |
+| row-bot access doctor | --port |  |  | `src/row_bot/access/cli.py:194` |
+| row-bot access doctor | --public-url |  |  | `src/row_bot/access/cli.py:195` |
+| row-bot access doctor | --route-status |  |  | `src/row_bot/access/cli.py:204` |
+| row-bot access doctor | --tailscale-state |  |  | `src/row_bot/access/cli.py:208` |
+| row-bot access doctor | --trusted-proxy |  |  | `src/row_bot/access/cli.py:197` |
+| row-bot access doctor | --workers |  |  | `src/row_bot/access/cli.py:202` |
+| row-bot access invite | --data-dir | Persistent Row-Bot data directory |  | `src/row_bot/access/cli.py:224` |
+| row-bot access invite | --json | Emit machine-readable JSON |  | `src/row_bot/access/cli.py:225` |
+| row-bot access invite | --lifetime | Session lifetime preset (default: trusted) |  | `src/row_bot/access/cli.py:146` |
+| row-bot access invite | --name | Invitation label | Connected device | `src/row_bot/access/cli.py:151` |
+| row-bot access invite | --origin | Canonical Row-Bot origin |  | `src/row_bot/access/cli.py:139` |
+| row-bot access invite | --profile |  |  | `src/row_bot/access/cli.py:134` |
+| row-bot access invite | --temporary | Keep the resulting session for 12 hours |  | `src/row_bot/access/cli.py:141` |
+| row-bot access list | --active-only | Hide revoked devices and sessions |  | `src/row_bot/access/cli.py:158` |
+| row-bot access list | --data-dir | Persistent Row-Bot data directory |  | `src/row_bot/access/cli.py:224` |
+| row-bot access list | --json | Emit machine-readable JSON |  | `src/row_bot/access/cli.py:225` |
+| row-bot access revoke | --data-dir | Persistent Row-Bot data directory |  | `src/row_bot/access/cli.py:224` |
+| row-bot access revoke | --json | Emit machine-readable JSON |  | `src/row_bot/access/cli.py:225` |
+| row-bot access revoke | --session | Interpret target as a session ID |  | `src/row_bot/access/cli.py:167` |
+| row-bot access revoke | target | Device ID (or session ID with --session) |  | `src/row_bot/access/cli.py:166` |
+| row-bot access revoke-all | --data-dir | Persistent Row-Bot data directory |  | `src/row_bot/access/cli.py:224` |
+| row-bot access revoke-all | --json | Emit machine-readable JSON |  | `src/row_bot/access/cli.py:225` |
+| row-bot access revoke-all | --yes | Confirm revocation of every active session |  | `src/row_bot/access/cli.py:178` |
+| row-bot plugin doctor | plugin |  |  | `src/row_bot/launcher.py:3315` |
+| row-bot plugin link | path |  |  | `src/row_bot/launcher.py:3307` |
+| row-bot plugin reload | plugin_id |  |  | `src/row_bot/launcher.py:3311` |
+| row-bot plugin validate | path |  |  | `src/row_bot/launcher.py:3305` |
+| row-bot serve | --allowed-host | Allowed Host authority; repeat for multiple values |  | `src/row_bot/access/cli.py:94` |
+| row-bot serve | --auto-start-ollama | Explicitly opt in to local Ollama auto-start |  | `src/row_bot/access/cli.py:107` |
+| row-bot serve | --data-dir | Persistent Row-Bot data directory |  | `src/row_bot/access/cli.py:106` |
+| row-bot serve | --host | Listen host (safe default: 127.0.0.1) |  | `src/row_bot/access/cli.py:91` |
+| row-bot serve | --port | Listen port (default: 8080) |  | `src/row_bot/access/cli.py:92` |
+| row-bot serve | --public-url | Canonical public HTTP(S) origin |  | `src/row_bot/access/cli.py:93` |
+| row-bot serve | --trusted-proxy | Trusted reverse-proxy CIDR; repeat for multiple values |  | `src/row_bot/access/cli.py:100` |
+| row-bot serve | --workers | Worker count; Row-Bot requires exactly one |  | `src/row_bot/access/cli.py:113` |

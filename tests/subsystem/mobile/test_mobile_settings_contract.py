@@ -11,19 +11,22 @@ from row_bot.ui.mobile_access_settings import (
 )
 
 
-def test_system_settings_include_mobile_access_section() -> None:
+def test_system_settings_include_remote_access_section() -> None:
     settings_src = Path("src/row_bot/ui/settings.py").read_text(encoding="utf-8")
-    mobile_settings_src = Path("src/row_bot/ui/mobile_access_settings.py").read_text(encoding="utf-8")
+    access_settings_src = Path("src/row_bot/ui/remote_access_settings.py").read_text(
+        encoding="utf-8"
+    )
 
-    assert "build_mobile_access_settings_section" in settings_src
-    assert "Mobile Access" in mobile_settings_src
-    assert "Pair a phone" in mobile_settings_src
-    assert "Protected" in mobile_settings_src
-    assert "Manage devices" in mobile_settings_src
-    assert "Connection details" in mobile_settings_src
-    assert "generate_qr_png_b64" in mobile_settings_src
-    assert "qr_data_uri" not in mobile_settings_src
-    assert "store.revoke_device" in mobile_settings_src
+    assert "build_remote_access_settings_section" in settings_src
+    assert "Remote Access" in access_settings_src
+    assert "Create invitation" in access_settings_src
+    assert "Another computer" in access_settings_src
+    assert "Companion" in access_settings_src
+    assert "Connected devices and sessions" in access_settings_src
+    assert "Tailscale" in access_settings_src
+    assert "Local network" in access_settings_src
+    assert "generate_qr_png_b64" in access_settings_src
+    assert "service.revoke_device" in access_settings_src
     assert "mobile: bool = False" in settings_src
     assert "row-bot-settings-mobile-shell" in settings_src
     assert "data-mobile-settings=true" in settings_src
@@ -32,19 +35,27 @@ def test_system_settings_include_mobile_access_section() -> None:
 
 
 def test_mobile_access_settings_default_flow_hides_raw_connection_details() -> None:
-    mobile_settings_src = Path("src/row_bot/ui/mobile_access_settings.py").read_text(encoding="utf-8")
+    mobile_settings_src = Path("src/row_bot/ui/mobile_access_settings.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "Pair a phone" in mobile_settings_src
     assert "Advanced connection details" in mobile_settings_src
     assert "All access candidates" in mobile_settings_src
     assert "Access candidates" not in mobile_settings_src
-    assert mobile_settings_src.index("Pair a phone") < mobile_settings_src.index("All access candidates")
-    assert mobile_settings_src.index("Advanced connection details") < mobile_settings_src.index("Custom origin")
+    assert mobile_settings_src.index("Pair a phone") < mobile_settings_src.index(
+        "All access candidates"
+    )
+    assert mobile_settings_src.index(
+        "Advanced connection details"
+    ) < mobile_settings_src.index("Custom origin")
     assert "Create pairing QR" not in mobile_settings_src
 
 
 def test_mobile_access_settings_use_lan_terminology() -> None:
-    mobile_settings_src = Path("src/row_bot/ui/mobile_access_settings.py").read_text(encoding="utf-8")
+    mobile_settings_src = Path("src/row_bot/ui/mobile_access_settings.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "LAN" in mobile_settings_src
     assert "Wi-Fi" not in mobile_settings_src
@@ -55,8 +66,17 @@ def test_mobile_access_settings_use_lan_terminology() -> None:
 def test_mobile_access_route_helpers_use_plain_titles_and_lan_grouping() -> None:
     candidates = [
         {"access_mode": "localhost", "available": True, "url": "http://127.0.0.1:8080"},
-        {"access_mode": "lan", "available": False, "url": "http://192.168.68.87:8080", "requires_bind": True},
-        {"access_mode": "ngrok", "available": True, "url": "https://rowbot.ngrok-free.dev"},
+        {
+            "access_mode": "lan",
+            "available": False,
+            "url": "http://192.168.68.87:8080",
+            "requires_bind": True,
+        },
+        {
+            "access_mode": "ngrok",
+            "available": True,
+            "url": "https://rowbot.ngrok-free.dev",
+        },
     ]
 
     assert _route_kind(candidates[0]) == "desktop"
@@ -71,20 +91,26 @@ def test_mobile_access_route_helpers_use_plain_titles_and_lan_grouping() -> None
 
 def test_mobile_settings_use_mobile_safe_provider_skill_plugin_sections() -> None:
     settings_src = Path("src/row_bot/ui/settings.py").read_text(encoding="utf-8")
-    mobile_settings_src = Path("src/row_bot/ui/mobile_settings.py").read_text(encoding="utf-8")
+    mobile_settings_src = Path("src/row_bot/ui/mobile_settings.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "build_mobile_providers_settings" in settings_src
     assert "build_mobile_skills_settings" in settings_src
     assert "build_mobile_plugins_settings" in settings_src
-    assert "(\"Providers\", \"cloud\", lambda: build_mobile_providers_settings" in settings_src
-    assert "(\"Skills\", \"auto_fix_high\", build_mobile_skills_settings)" in settings_src
-    assert "(\"Plugins\", \"extension\", build_mobile_plugins_settings)" in settings_src
+    assert (
+        '("Providers", "cloud", lambda: build_mobile_providers_settings' in settings_src
+    )
+    assert '("Skills", "auto_fix_high", build_mobile_skills_settings)' in settings_src
+    assert '("Plugins", "extension", build_mobile_plugins_settings)' in settings_src
     assert "row-bot-mobile-provider-card" in mobile_settings_src
     assert "Secret values are never shown" in mobile_settings_src
 
 
 def test_mobile_settings_keep_marketplaces_desktop_only() -> None:
-    mobile_settings_src = Path("src/row_bot/ui/mobile_settings.py").read_text(encoding="utf-8")
+    mobile_settings_src = Path("src/row_bot/ui/mobile_settings.py").read_text(
+        encoding="utf-8"
+    )
     settings_src = Path("src/row_bot/ui/settings.py").read_text(encoding="utf-8")
 
     assert "Skills Hub is desktop-only in Mobile V1" in mobile_settings_src
@@ -96,23 +122,32 @@ def test_mobile_settings_keep_marketplaces_desktop_only() -> None:
 
 
 def test_mobile_settings_keep_local_skill_management_controls() -> None:
-    mobile_settings_src = Path("src/row_bot/ui/mobile_settings.py").read_text(encoding="utf-8")
+    mobile_settings_src = Path("src/row_bot/ui/mobile_settings.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "skills_mod.set_enabled" in mobile_settings_src
     assert "skills_mod.set_pinned" in mobile_settings_src
-    assert "ui.switch(\"\", value=is_enabled" in mobile_settings_src
-    assert "[\"All\", \"Enabled\", \"Pinned\", \"Custom\", \"Public\"]" in mobile_settings_src
-    assert "Mobile keeps local enable, disable, and pin controls." in mobile_settings_src
+    assert 'ui.switch("", value=is_enabled' in mobile_settings_src
+    assert '["All", "Enabled", "Pinned", "Custom", "Public"]' in mobile_settings_src
+    assert (
+        "Mobile keeps local enable, disable, and pin controls." in mobile_settings_src
+    )
 
 
 def test_mobile_settings_keep_local_plugin_enablement_controls() -> None:
-    mobile_settings_src = Path("src/row_bot/ui/mobile_settings.py").read_text(encoding="utf-8")
+    mobile_settings_src = Path("src/row_bot/ui/mobile_settings.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "_can_enable_plugin" in mobile_settings_src
     assert "plugin_state.set_plugin_enabled" in mobile_settings_src
-    assert "button_label = \"Disable\" if enabled else \"Enable\"" in mobile_settings_src
-    assert "[\"All\", \"Enabled\", \"Disabled\", \"Setup needed\"]" in mobile_settings_src
-    assert "Mobile keeps installed plugin enable and disable controls." in mobile_settings_src
+    assert 'button_label = "Disable" if enabled else "Enable"' in mobile_settings_src
+    assert '["All", "Enabled", "Disabled", "Setup needed"]' in mobile_settings_src
+    assert (
+        "Mobile keeps installed plugin enable and disable controls."
+        in mobile_settings_src
+    )
 
 
 def test_pairing_origin_prefers_reachable_remote_candidate() -> None:
@@ -134,7 +169,10 @@ def test_pairing_origin_prefers_reachable_remote_candidate() -> None:
         },
     ]
 
-    assert _preferred_pairing_origin(candidates) == "https://viability-pulverize-proxy.ngrok-free.dev"
+    assert (
+        _preferred_pairing_origin(candidates)
+        == "https://viability-pulverize-proxy.ngrok-free.dev"
+    )
 
 
 def test_pairing_origin_falls_back_to_localhost_when_no_remote_is_ready() -> None:
@@ -158,9 +196,21 @@ def test_pairing_origin_uses_full_mobile_route_priority() -> None:
     candidates = [
         {"access_mode": "localhost", "available": True, "url": "http://127.0.0.1:8080"},
         {"access_mode": "lan", "available": True, "url": "http://192.168.68.87:8080"},
-        {"access_mode": "tailscale-direct", "available": True, "url": "http://100.64.0.10:8080"},
-        {"access_mode": "ngrok", "available": True, "url": "https://rowbot.ngrok-free.dev"},
-        {"access_mode": "tailscale-serve", "available": True, "url": "https://rowbot.tail.ts.net"},
+        {
+            "access_mode": "tailscale-direct",
+            "available": True,
+            "url": "http://100.64.0.10:8080",
+        },
+        {
+            "access_mode": "ngrok",
+            "available": True,
+            "url": "https://rowbot.ngrok-free.dev",
+        },
+        {
+            "access_mode": "tailscale-serve",
+            "available": True,
+            "url": "https://rowbot.tail.ts.net",
+        },
     ]
 
     assert _preferred_pairing_origin(candidates) == "https://rowbot.tail.ts.net"

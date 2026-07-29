@@ -74,12 +74,24 @@ cd Row-Bot-4.5.0-Linux-*
 ~/.local/bin/row-bot
 ```
 
-Also smoke the server path explicitly:
+Also smoke the server path explicitly. Start it in one terminal:
 
 ```bash
-~/.local/bin/row-bot --server --no-open --port 8092 --no-ollama
-curl -fsS http://127.0.0.1:8092/api/launcher-ping
+ROW_BOT_DATA_DIR="$(mktemp -d)" ~/.local/bin/row-bot serve --port 8092
 ```
+
+Probe it from another terminal:
+
+```bash
+curl -fsS http://127.0.0.1:8092/healthz
+curl -fsS http://127.0.0.1:8092/readyz
+```
+
+Use an isolated data directory for package smoke tests and remove it after the
+process exits. A fresh server does not create an owner session automatically;
+bootstrap a real acceptance browser only with an explicit
+`row-bot access invite --profile computer --origin ...` command. Do not record
+that command's one-time link in CI logs or package artifacts.
 
 If the launcher starts a process but the app never becomes ready, inspect
 `~/.row-bot/row-bot_app.log` and `~/.row-bot/row-bot_app.log.prev`. The launcher prints
@@ -128,7 +140,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 | Bundled in .exe | Downloaded or created outside install |
 |----------------|--------------------------------------|
 | Python 3.13 embeddable runtime | Ollama installer is optional for local models |
-| App source code, Agent Profiles, Goal Mode, checkpointed Agent budgets and settings, child-agent runner, generation cancellation, Computer Use integration and pinned manifest, cache-only embedding fallback, mobile companion and access gate, channel streaming, tools, providers, plugins, MCP client, migration wizard, UI, Designer, Developer Studio, bundled skills/tool guides, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use |
+| App source code, authenticated access/server package, Remote Access UI, Agent Profiles, Goal Mode, checkpointed Agent budgets and settings, child-agent runner, generation cancellation, Computer Use integration and pinned manifest, cache-only embedding fallback, mobile companion, channel streaming, tools, providers, plugins, MCP client, migration wizard, UI, Designer, Developer Studio, bundled skills/tool guides, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use |
 | Python packages from locked `requirements.txt` export | Playwright Chromium is bundled during build when available, otherwise installed on first browser use |
 | Computer Use policy, private client, installer metadata, and platform checks | Pinned Cua Driver 0.7.1 is downloaded only after disclosure and explicit user consent |
 
@@ -314,7 +326,36 @@ The app payload includes `pyproject.toml`, `uv.lock`, and generated `requirement
 - **Agent orchestration**: the packaged app includes Agent Profiles, Goal Mode, child-agent delegation, profile/tool allowlists, profile-first workflow agents, Agent-run workflow promotion, checkpointed work-round budgets, repeat-stall protection, and application-wide nesting, concurrency, and timeout settings. These records live in Row-Bot's local data directory alongside workflow state.
 - **Computer Use beta**: Windows and macOS packages include Row-Bot's provider-neutral native-app tool, target-window safety policy, private Cua client, and pinned runtime manifest, but not the third-party executable. Computer Use is off by default, interactive-desktop only, and requires a separate telemetry acknowledgement and verified Cua Driver install. Linux, server, schedule, channel, workflow, and child-agent callers cannot acquire it.
 - **Local embeddings**: packaged local embedding paths are cache-only during normal startup. Missing or corrupted models stay repairable through explicit download actions, while memory and graph search fall back quickly instead of triggering a surprise model download.
-- **Mobile companion**: recursive `src/row_bot` packaging includes the mobile access gate, PWA/pairing routes, phone shell, workflow/activity surfaces, and phone-safe settings on Windows, macOS, and Linux. Mobile remains a companion to a running host; direct LAN/Tailscale access requires an explicit reachable bind or Tailscale Serve, while public tunnels remain pairing-gated.
+- **Remote Access and server mode**: recursive `src/row_bot` packaging includes
+  the versioned access store, migration bridge for the existing `mobile.db`,
+  request/origin/proxy policy, owner and companion capabilities, invitation
+  routes, Remote Access settings, `row-bot serve`, and
+  `row-bot access invite/list/revoke/revoke-all/doctor`. Desktop mode remains
+  local-first. Server mode requires an authenticated session even over
+  loopback and runs with one worker, no tray/splash/browser, and no automatic
+  Ollama startup by default.
+- **Mobile companion**: the phone shell, PWA routes, workflow/activity
+  surfaces, and phone-safe settings are a restricted profile of the shared
+  access system. Existing companion records migrate in place; packaging must
+  not introduce a second mobile-only credential or policy store.
+- **Tailscale boundary**: Tailscale remains an optional host dependency.
+  Packaged Row-Bot does not bundle or install Tailscale, sign the user in,
+  enable Funnel, reset Serve, alter firewall rules, or overwrite an unrelated
+  Serve route. Reachability still requires a Row-Bot invitation and revocable
+  session. After Row-Bot verifies a route it created, the launcher restarts the
+  child so startup can trust only the local loopback proxy for that exact app
+  port and allow only the verified owned `.ts.net` origin. A missing launcher
+  produces an explicit manual-restart instruction.
+- **Deployment artifacts**: source checkouts include hardened Docker/Compose,
+  Caddy, and systemd examples under `deploy/`. The Docker image contains no
+  invitations, sessions, or provider credentials and publishes only on host
+  loopback by default. The normal image includes all canonical server extras,
+  matching headless Chromium, native media libraries, `uv`/`uvx`, and pinned
+  Node.js tooling; voice and embedding models remain explicit persistent
+  downloads. Browser-local voice uses the remote browser's microphone and
+  speaker and requires HTTPS away from localhost. Review
+  [`../deploy/docker/README.md`](../deploy/docker/README.md) before building or
+  exposing a server image.
 - **Cancellation and channel streaming**: provider cancellation transports, subprocess cancellation, shared channel streaming/finalization, interactive approvals, and durable channel notification modules are part of the recursive runtime payload.
 - **Developer Studio**: the packaged app includes the Developer workspace UI, repo-scoped tools, Git helpers, durable worktree allocation, optional Docker shadow sandbox, and Custom Tool builder. Docker and GitHub CLI are optional external tools; when missing, the UI reports clear setup guidance instead of blocking normal chat.
 - **Plugin System v2**: the packaged app includes Plugin Center, marketplace install/update flows, manifest validation, native tools, plugin-packaged MCP tools, bundled plugin skills, plugin-owned channels, and plugin templates. Plugins install disabled by default and must pass review/configuration before contributing runtime tools or channels.

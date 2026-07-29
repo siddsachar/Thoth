@@ -5,22 +5,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from ipaddress import ip_address
 from typing import Any, Callable
 
 from nicegui import run as nicegui_run, ui
 
 from row_bot.brand import APP_DISPLAY_NAME
-from row_bot.mobile.access_info import build_access_info
-from row_bot.mobile.auth import create_pairing_ticket, validate_device_token
-from row_bot.mobile.cookies import extract_cookie_from_header, extract_mobile_cookie
-from row_bot.mobile.routes import FORWARDED_HEADERS
-from row_bot.mobile.store import MobileAuthStore
-from row_bot.mobile.tailscale import detect_tailscale
+from row_bot.access.models import AccessCapability
+from row_bot.ui.access_context import (
+    access_context_from_client,
+    current_access_context,
+    has_capability,
+    uses_compact_presentation,
+)
 from row_bot.ui.mobile_chat import build_mobile_chat, mobile_chat_mode, open_thread_on_mobile, set_mobile_chat_mode
 from row_bot.ui.mobile_workflows import build_mobile_workflows
 from row_bot.ui.state import AppState, P, _active_generations
-from row_bot.ui.mobile_access_settings import _preferred_pairing_origin
 
 logger = logging.getLogger(__name__)
 
@@ -347,37 +346,18 @@ body:has(.row-bot-mobile-root) main {
 
 
 def is_mobile_client(client: Any) -> bool:
-    """Return True when the request should use the mobile shell."""
+    """Return whether the centrally authorized request selected compact layout.
+
+    The query-string fallback exists only for small isolated UI tests where the
+    access middleware is not present. It never grants capabilities.
+    """
+    context = access_context_from_client(client)
+    if context is not None:
+        return uses_compact_presentation(context)
     request = getattr(client, "request", None)
     query_params = getattr(request, "query_params", {}) or {}
     value = str(query_params.get("mobile") or query_params.get("m") or "").strip().lower()
-    if value in {"1", "true", "yes"}:
-        return True
-    if request is None or _is_direct_local_request(request):
-        return False
-    scheme = str(getattr(getattr(request, "url", None), "scheme", "http") or "http")
-    token = extract_cookie_from_header(getattr(request, "headers", {}).get("cookie"), scheme=scheme)
-    if not token:
-        return False
-    try:
-        return validate_device_token(MobileAuthStore(), token) is not None
-    except Exception:
-        logger.debug("Could not validate mobile shell session cookie", exc_info=True)
-        return False
-
-
-def _is_direct_local_request(request: Any) -> bool:
-    client = getattr(request, "client", None)
-    host = str(getattr(client, "host", "") or "")
-    headers = getattr(request, "headers", {}) or {}
-    if any(name in headers for name in FORWARDED_HEADERS):
-        return False
-    if host == "localhost":
-        return True
-    try:
-        return ip_address(host).is_loopback
-    except ValueError:
-        return False
+    return value in {"1", "true", "yes", "compact"}
 
 
 def _mobile_view(state: AppState) -> str:
@@ -472,9 +452,6 @@ def _build_mobile_nav(
     with ui.row().classes("row-bot-mobile-nav w-full items-center justify-around no-wrap"):
         for name, icon in _MOBILE_TABS:
             def _switch(tab: str = name) -> None:
-                if tab == "Settings":
-                    open_settings("Providers")
-                    return
                 if tab == "Chat":
                     set_mobile_chat_mode(state, "threads")
                 _set_mobile_view(state, tab)
@@ -808,114 +785,58 @@ def _build_knowledge() -> None:
     _render_results()
 
 
-def _current_mobile_device() -> Any | None:
-    try:
-        request = ui.context.client.request
-        token = extract_mobile_cookie(request)
-        if not token:
-            return None
-        return validate_device_token(MobileAuthStore(), token)
-    except Exception:
-        logger.debug("Could not resolve current mobile device", exc_info=True)
-        return None
-
-
 def _build_settings(*, open_settings: Callable[..., None]) -> None:
-    store = MobileAuthStore()
-    store.ensure_schema()
-    device = _current_mobile_device()
+    """Render only controls allowed by the active access profile."""
+    context = current_access_context()
+    is_owner = bool(context and context.profile == "owner")
     with ui.element("div").classes("row-bot-mobile-card"):
-        ui.label("Mobile session").classes("text-subtitle2")
-        if device is None:
-            ui.label("This browser is not paired, or it is using localhost desktop access.").classes("text-grey-6 text-sm")
-        else:
-            ui.label(device.display_name).classes("text-sm")
-            ui.label(f"Access mode: {device.access_mode or 'mobile'}").classes("text-grey-6 text-xs")
-
-    try:
-        from row_bot.app_port import get_app_port
-        from row_bot.tunnel import tunnel_manager
-
-        port = get_app_port()
-        ngrok_url = tunnel_manager.get_url(port)
-    except Exception:
-        port = None
-        ngrok_url = None
-    tailscale_state = _safe_call("tailscale", lambda: detect_tailscale(port=port), None) if port else None
-    access_info = build_access_info(port=port, ngrok_url=ngrok_url, tailscale_state=tailscale_state)
-    with ui.element("div").classes("row-bot-mobile-card"):
-        ui.label("Access").classes("text-subtitle2")
+        ui.label("This device").classes("text-subtitle2")
         ui.label(
-            "Remote and forwarded routes require mobile pairing. Desktop localhost stays frictionless."
+            "Computer owner" if is_owner else "Companion"
         ).classes("text-grey-6 text-sm")
-        ui.label(f"Host mode: {access_info.get('bind_host')}").classes("text-grey-6 text-xs")
-        for candidate in list(access_info.get("candidates") or [])[:6]:
-            with ui.row().classes("w-full items-start gap-2 no-wrap q-mt-xs"):
-                color = "text-positive" if candidate.get("available") else "text-warning"
-                ui.icon("link").classes(color)
-                with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
-                    ui.label(str(candidate.get("label") or "Access")).classes("text-sm")
-                    url = str(candidate.get("url") or "")
-                    ui.label(url).classes("text-primary text-xs").style("word-break: break-all;")
-                    if candidate.get("warning"):
-                        ui.label(str(candidate["warning"])).classes("text-warning text-xs")
-                if candidate.get("url"):
-                    _copy_button(str(candidate["url"]))
+        if context and context.session_id:
+            ui.label("Authenticated session").classes("text-positive text-xs")
+        elif context and context.is_local_owner:
+            ui.label("Local desktop owner").classes("text-positive text-xs")
 
     with ui.element("div").classes("row-bot-mobile-card"):
-        ui.label("Pair another device").classes("text-subtitle2")
-        origin = _preferred_pairing_origin(list(access_info.get("candidates") or [])).rstrip("/")
-        origin_input = ui.input("Pairing origin", value=origin).classes("w-full").props("outlined dense")
-        pairing_col = ui.column().classes("w-full gap-2")
-
-        def _create_pairing() -> None:
-            pairing_col.clear()
-            selected_origin = str(origin_input.value or "").strip().rstrip("/")
-            if not selected_origin:
-                ui.notify("Enter an origin first", type="warning")
-                return
-            ticket = create_pairing_ticket(store, intended_origin=selected_origin, access_mode="mobile")
-            pair_url = ticket.pairing_url(selected_origin)
-            with pairing_col:
-                with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                    ui.label(pair_url).classes("text-primary text-xs").style("word-break: break-all;")
-                    _copy_button(pair_url, "Copy pairing URL")
-                try:
-                    from row_bot.designer.qr_utils import generate_qr_png_b64
-
-                    qr = generate_qr_png_b64(pair_url, box_size=8)
-                except Exception:
-                    qr = ""
-                if qr:
-                    ui.image(qr).style("width: 168px; height: 168px; image-rendering: pixelated;")
-                else:
-                    ui.label("QR generation unavailable. Use the pairing link above.").classes("text-warning text-xs")
-                ui.label(f"Expires at {ticket.expires_at}").classes("text-grey-6 text-xs")
-
-        ui.button("Create pairing QR", icon="qr_code_2", on_click=_create_pairing).props("flat dense no-caps color=primary")
-
-    devices = store.list_devices(include_revoked=True)
-    with ui.element("div").classes("row-bot-mobile-card"):
-        ui.label("Devices").classes("text-subtitle2")
-        if not devices:
-            ui.label("No paired devices yet.").classes("text-grey-6 text-sm")
-        for item in devices:
-            with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                ui.badge("revoked" if item.revoked_at else "active", color="grey" if item.revoked_at else "positive").props("outline")
-                with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
-                    ui.label(item.display_name).classes("text-sm ellipsis")
-                    ui.label(item.last_seen_at or "never seen").classes("text-grey-6 text-xs")
-                if not item.revoked_at:
+        ui.label("Presentation").classes("text-subtitle2")
+        if is_owner:
+            ui.label(
+                "Compact mode changes layout only. Your owner permissions stay the same."
+            ).classes("text-grey-6 text-sm")
+            with ui.row().classes("w-full gap-2"):
+                ui.button(
+                    "Desktop layout",
+                    icon="desktop_windows",
+                    on_click=lambda: ui.navigate.to("/?mobile=0"),
+                ).props("flat dense no-caps color=primary")
+                if has_capability(AccessCapability.SETTINGS, context):
                     ui.button(
-                        icon="block",
-                        on_click=lambda d=item: (
-                            store.revoke_device(d.id),
-                            store.log_event("revoked", device_id=d.id, detail={"source": "mobile"}),
-                            ui.notify("Device revoked", type="warning"),
-                        ),
-                    ).props("flat dense round color=negative").tooltip("Revoke")
+                        "Full settings",
+                        icon="settings",
+                        on_click=lambda: open_settings("Providers"),
+                    ).props("flat dense no-caps")
+        else:
+            ui.label(
+                "Companion sessions always use the restricted compact surface."
+            ).classes("text-grey-6 text-sm")
 
-        ui.button("Open settings", icon="open_in_new", on_click=lambda: open_settings("Providers")).props("flat dense no-caps")
+    if context and context.session_id:
+        with ui.element("div").classes("row-bot-mobile-card"):
+            ui.label("Session").classes("text-subtitle2")
+            ui.label(
+                "Signing out revokes this browser session on the server."
+            ).classes("text-grey-6 text-sm")
+            ui.button(
+                "Sign out",
+                icon="logout",
+                on_click=lambda: ui.run_javascript(
+                    "fetch('/api/access/logout',{method:'POST',headers:{"
+                    "'Content-Type':'application/json'},body:'{}'}).finally("
+                    "()=>window.location.replace('/connect'))"
+                ),
+            ).props("flat dense no-caps color=negative")
 
 
 def _build_desktop_only_notice(
@@ -1004,6 +925,6 @@ def build_mobile_shell(
                     elif view == "Knowledge":
                         _build_knowledge()
                     elif view == "Settings":
-                        open_settings("Providers")
+                        _build_settings(open_settings=open_settings)
         if not active_chat_detail:
             _build_mobile_nav(state, rebuild_main=rebuild_main, open_settings=open_settings)

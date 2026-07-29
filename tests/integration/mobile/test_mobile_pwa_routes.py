@@ -13,7 +13,11 @@ def _client(tmp_path) -> TestClient:
     store = MobileAuthStore(tmp_path / "mobile.db")
     register_mobile_routes(app, store=store)
     app.add_middleware(MobileAccessGate, store=store)
-    return TestClient(app, client=("192.168.1.25", 50000))
+    return TestClient(
+        app,
+        base_url="http://localhost:8080",
+        client=("192.168.1.25", 50000),
+    )
 
 
 def test_manifest_is_valid_and_publicly_pairing_gate_accessible(tmp_path) -> None:

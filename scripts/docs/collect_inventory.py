@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.docs.schemas import (
+from scripts.docs.schemas import (  # noqa: E402
     DocsPageRecord,
     public_route_for_doc,
     repo_path,
@@ -327,7 +327,7 @@ def collect_settings_controls() -> list[dict[str, Any]]:
         (ROOT / "src" / "row_bot" / "ui" / "buddy.py", "Buddy"),
         (ROOT / "src" / "row_bot" / "ui" / "mcp_settings.py", "MCP"),
         (ROOT / "src" / "row_bot" / "plugins" / "ui_settings.py", "Plugins"),
-        (ROOT / "src" / "row_bot" / "ui" / "mobile_access_settings.py", "System"),
+        (ROOT / "src" / "row_bot" / "ui" / "remote_access_settings.py", "System"),
         (ROOT / "src" / "row_bot" / "ui" / "computer_use.py", "System"),
         (ROOT / "src" / "row_bot" / "ui" / "update_dialog.py", "Preferences"),
     ]
@@ -462,12 +462,17 @@ def collect_settings_controls() -> list[dict[str, Any]]:
     return rows
 
 
-def collect_cli_options() -> list[dict[str, Any]]:
-    path = ROOT / "src" / "row_bot" / "launcher.py"
+def _cli_rows_for_path(
+    path: Path,
+    *,
+    command_by_receiver: dict[str, str] | None = None,
+    command_by_function: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     tree = _parse_ast(path)
     if tree is None:
         return []
     parser_commands: dict[str, str] = {"parser": "row-bot"}
+    parser_commands.update(command_by_receiver or {})
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
             continue
@@ -478,29 +483,87 @@ def collect_cli_options() -> list[dict[str, Any]]:
         if isinstance(command, str):
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    parser_commands[target.id] = f"row-bot plugin {command}"
+                    parser_commands.setdefault(target.id, f"row-bot plugin {command}")
     rows: list[dict[str, Any]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute) or node.func.attr != "add_argument":
+    function_commands = command_by_function or {}
+    for parent in ast.walk(tree):
+        if not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        receiver = node.func.value.id if isinstance(node.func.value, ast.Name) else "parser"
-        options = [value for value in (_literal_value(arg) for arg in node.args) if isinstance(value, str)]
-        if not options:
+        function_command = function_commands.get(parent.name)
+        for node in parent.body:
+            for candidate in ast.walk(node):
+                if not isinstance(candidate, ast.Call) or not isinstance(candidate.func, ast.Attribute) or candidate.func.attr != "add_argument":
+                    continue
+                receiver = candidate.func.value.id if isinstance(candidate.func.value, ast.Name) else "parser"
+                options = [value for value in (_literal_value(arg) for arg in candidate.args) if isinstance(value, str)]
+                if not options:
+                    continue
+                description = str(_control_value(candidate, "help") or "").replace("NiceGUI server", "Row-Bot local server")
+                if description == "SUPPRESS":
+                    continue
+                rows.append(
+                    {
+                        "id": slugify(
+                            "-".join(
+                                (
+                                    function_command or parser_commands.get(receiver, "row-bot"),
+                                    *options,
+                                )
+                            )
+                        ),
+                        "command": (function_command or parser_commands.get(receiver, "row-bot")),
+                        "option": ", ".join(options),
+                        "description": description,
+                        "default": _control_value(candidate, "default"),
+                        "source": f"{repo_path(ROOT, path)}:{candidate.lineno}",
+                    }
+                )
+    return rows
+
+
+def collect_cli_options() -> list[dict[str, Any]]:
+    rows = _cli_rows_for_path(ROOT / "src" / "row_bot" / "launcher.py")
+    access_path = ROOT / "src" / "row_bot" / "access" / "cli.py"
+    rows.extend(
+        _cli_rows_for_path(
+            access_path,
+            command_by_receiver={
+                "parser": "row-bot access",
+                "invite": "row-bot access invite",
+                "lifetime": "row-bot access invite",
+                "list_parser": "row-bot access list",
+                "revoke": "row-bot access revoke",
+                "revoke_all": "row-bot access revoke-all",
+                "doctor": "row-bot access doctor",
+            },
+            command_by_function={
+                "configure_serve_parser": "row-bot serve",
+                "_add_access_common": "row-bot access subcommands",
+            },
+        )
+    )
+    access_commands = (
+        "row-bot access invite",
+        "row-bot access list",
+        "row-bot access revoke",
+        "row-bot access revoke-all",
+        "row-bot access doctor",
+    )
+    expanded_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if row["command"] != "row-bot access subcommands":
+            expanded_rows.append(row)
             continue
-        description = str(_control_value(node, "help") or "").replace(
-            "NiceGUI server", "Row-Bot local server"
-        )
-        rows.append(
-            {
-                "id": slugify("-".join(options)),
-                "command": parser_commands.get(receiver, "row-bot"),
-                "option": ", ".join(options),
-                "description": description,
-                "default": _control_value(node, "default"),
-                "source": f"{repo_path(ROOT, path)}:{node.lineno}",
-            }
-        )
-    return sorted(rows, key=lambda row: (row["command"], row["option"]))
+        for command in access_commands:
+            expanded = dict(row)
+            expanded["command"] = command
+            expanded["id"] = slugify(f"{command}-{row['option']}")
+            expanded_rows.append(expanded)
+    unique_rows = {(row["command"], row["option"], row["source"]): row for row in expanded_rows}
+    return sorted(
+        unique_rows.values(),
+        key=lambda row: (row["command"], row["option"], row["source"]),
+    )
 
 
 def collect_environment() -> list[dict[str, Any]]:
@@ -509,6 +572,16 @@ def collect_environment() -> list[dict[str, Any]]:
         "ROW_BOT_WORKSPACE": "Override the default workspace used by file-oriented tools.",
         "ROW_BOT_HOST": "Choose the interface bound by the local application server.",
         "ROW_BOT_PORT": "Choose the preferred local application port.",
+        "ROW_BOT_DEPLOYMENT_MODE": "Choose desktop or authenticated server request policy.",
+        "ROW_BOT_PUBLIC_URL": "Set the canonical browser-facing origin for server mode.",
+        "ROW_BOT_PUBLIC_ORIGINS": "Set one or more allowed browser-facing origins.",
+        "ROW_BOT_ALLOWED_HOSTS": "Allow exact HTTP Host authorities accepted by the access gate.",
+        "ROW_BOT_TRUSTED_PROXY_CIDRS": "Trust forwarding headers only from exact connecting proxy networks.",
+        "ROW_BOT_UNTRUSTED_FORWARDED_ACTION": "Reject or ignore forwarding headers received from an untrusted peer.",
+        "ROW_BOT_WORKERS": "Set the server worker count; Row-Bot requires exactly one.",
+        "ROW_BOT_EPHEMERAL_DATA": "Tell access diagnostics that server data is intentionally ephemeral.",
+        "ROW_BOT_SECRETS_DIR": "Read allowlisted externally managed secrets from individual files.",
+        "ROW_BOT_BROWSER_HEADLESS": "Run bundled browser automation without an interactive display.",
         "ROW_BOT_NATIVE": "Select native-window behaviour for advanced launch scenarios.",
         "ROW_BOT_AUTO_START_OLLAMA": "Allow or suppress launcher attempts to start Ollama automatically.",
         "ROW_BOT_STARTUP_TIMEOUT": "Set the launcher startup timeout in seconds.",

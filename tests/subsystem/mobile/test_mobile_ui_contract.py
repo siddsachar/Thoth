@@ -26,35 +26,54 @@ def test_mobile_request_detection_is_explicit() -> None:
     assert state.mobile_view == "Chat"
 
 
-def test_paired_remote_mobile_cookie_defaults_to_mobile_shell(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path))
-    from row_bot.mobile.auth import confirm_pairing, create_pairing_ticket
-    from row_bot.mobile.cookies import HTTP_LAN_COOKIE_NAME
-    from row_bot.mobile.store import MobileAuthStore
+def test_access_context_controls_compact_shell_not_cookie_or_peer() -> None:
+    from row_bot.access.config import AccessConfig
+    from row_bot.access.models import AccessProfile, capabilities_for_profile
+    from row_bot.access.request_context import (
+        RequestContextResolver,
+        SessionIdentity,
+    )
     from row_bot.ui.mobile import is_mobile_client
 
-    store = MobileAuthStore(tmp_path / "mobile.db")
-    ticket = create_pairing_ticket(store, intended_origin="https://phone.test")
-    confirmation = confirm_pairing(store, code=ticket.code, display_name="Phone")
-    cookie = f"{HTTP_LAN_COOKIE_NAME}={confirmation.token}"
-
-    remote_request = SimpleNamespace(
-        query_params={},
-        client=SimpleNamespace(host="127.0.0.1"),
-        headers={
-            "cookie": cookie,
-            "x-forwarded-for": "198.51.100.23",
-            "x-forwarded-proto": "https",
-        },
+    resolver = RequestContextResolver(AccessConfig.build(deployment_mode="desktop"))
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "query_string": b"",
+        "scheme": "http",
+        "client": ("192.168.1.20", 51000),
+        "headers": [(b"host", b"localhost:8080")],
+    }
+    companion = resolver.resolve(
+        scope,
+        session=SessionIdentity(
+            profile=AccessProfile.COMPANION.value,
+            device_id="device",
+            session_id="session",
+            capabilities=frozenset(
+                capability.value
+                for capability in capabilities_for_profile(
+                    AccessProfile.COMPANION
+                )
+            ),
+        ),
     )
-    local_request = SimpleNamespace(
+    owner = resolver.resolve(
+        {**scope, "client": ("127.0.0.1", 51000)},
+        owner_capabilities=capabilities_for_profile(AccessProfile.OWNER),
+    )
+    companion_request = SimpleNamespace(
         query_params={},
-        client=SimpleNamespace(host="127.0.0.1"),
-        headers={"cookie": cookie},
+        state=SimpleNamespace(row_bot_access_context=companion),
+    )
+    owner_request = SimpleNamespace(
+        query_params={},
+        state=SimpleNamespace(row_bot_access_context=owner),
     )
 
-    assert is_mobile_client(SimpleNamespace(request=remote_request)) is True
-    assert is_mobile_client(SimpleNamespace(request=local_request)) is False
+    assert is_mobile_client(SimpleNamespace(request=companion_request)) is True
+    assert is_mobile_client(SimpleNamespace(request=owner_request)) is False
 
 
 def test_mobile_workflow_approval_uses_mobile_source(tmp_path, monkeypatch) -> None:
@@ -104,7 +123,8 @@ def test_app_routes_mobile_shell_without_desktop_chrome() -> None:
     app_src = Path("src/row_bot/app.py").read_text(encoding="utf-8")
     mobile_src = Path("src/row_bot/ui/mobile.py").read_text(encoding="utf-8")
 
-    assert "is_mobile_client(ui.context.client)" in app_src
+    assert "access_context_from_client(ui.context.client)" in app_src
+    assert '_access_context.presentation.value == "compact"' in app_src
     assert "build_mobile_shell(" in app_src
     assert "mobile=_mobile_client" in app_src
     assert "if not _mobile_client:" in app_src

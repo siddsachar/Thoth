@@ -29,11 +29,16 @@ uv run python launcher.py
 
 `pyproject.toml` owns direct dependencies and extras. `requirements.txt` is generated from `uv.lock` with `python scripts/export_locked_requirements.py` for pip-based installers and should not be edited by hand.
 
-Server/headless mode:
+Authenticated server/headless mode:
 
 ```powershell
-python launcher.py --server --no-open --port 8080
+uv run python launcher.py serve --port 8080
 ```
+
+The installed entry point is `row-bot serve`. The older
+`python launcher.py --server --no-open` combination remains a deprecated
+compatibility path; new scripts and service definitions should use the
+subcommand. Server mode requires an authenticated browser even over loopback.
 
 Direct NiceGUI launch remains supported through the root wrapper:
 
@@ -45,6 +50,42 @@ Tests import package modules through `pytest.ini`, which sets `pythonpath =
 src`. Ad hoc scripts that import `row_bot.*` directly should either run through
 the root launchers, set `PYTHONPATH=src`, or insert the checkout's `src/`
 directory explicitly.
+
+## Remote Access And Server Ownership
+
+Remote-access implementation is intentionally separated by responsibility:
+
+- `src/row_bot/access/` owns deployment configuration, request provenance,
+  origin/Host/proxy checks, invitations, devices, sessions, cookies,
+  capabilities, diagnostics, Tailscale Serve control, CLI helpers, and access
+  routes.
+- `src/row_bot/ui/remote_access_settings.py` owns the owner-facing Remote
+  Access settings surface. `src/row_bot/ui/access_context.py` exposes the
+  request-scoped capability boundary used by UI handlers.
+- `src/row_bot/mobile/` keeps the companion UI and compatibility imports. The
+  versioned access policy and durable store live under `row_bot.access`; do not
+  reintroduce a second mobile-only authorization policy.
+- `src/row_bot/app.py`, `src/row_bot/app_port.py`, and
+  `src/row_bot/launcher.py` are shared integration points for deployment mode,
+  middleware, child-process restart, and CLI dispatch.
+- `deploy/docker/` contains the hardened image, loopback-published Compose
+  example, and operator runbook. `deploy/reverse-proxy/` and `deploy/systemd/`
+  contain reviewed examples for operator-managed server deployments.
+- `scripts/smoke_remote_access.py` is the credential-leak-safe access smoke
+  harness. It must always use an isolated data directory.
+
+The physical access database remains `mobile.db` so existing companion records
+can migrate in place. `access_routes.json` stores the durable local/LAN listen
+choice. `tailscale_serve_ownership.json` stores no bearer credential; it proves
+the exact private Serve route Row-Bot created so startup can apply only the
+matching loopback proxy policy and disable only an unchanged owned route. All
+three files are private local state under `ROW_BOT_DATA_DIR`; none belongs in
+source control, images, or test fixtures containing real user data.
+
+Source-to-test ownership for these paths lives in
+`tests/helpers/source_test_map.py`. Focused coverage belongs in
+`tests/subsystem/access/`, `tests/integration/access/`, and the deployment
+contracts under `tests/contracts/installers/`.
 
 ## Packaging Payloads
 
@@ -69,10 +110,12 @@ assert those contracts.
 
 Because `src/row_bot` is recursive, the 4.5.0 Agent execution budget and
 settings modules, native Computer Use package and pinned runtime manifest,
-cache-only embedding fallback, mobile companion, cancellation helpers,
-provider transports, and channel streaming modules require no per-file
-installer entries. `tests/test_linux_support.py` keeps required runtime
-packages in the cross-platform payload inventory, while
+cache-only embedding fallback, access/server package, Remote Access UI, mobile
+companion, cancellation helpers, provider transports, and channel streaming
+modules require no per-file installer entries. Deployment examples under
+`deploy/` are source-distribution/operator artifacts rather than runtime Python
+packages. `tests/test_linux_support.py` keeps required runtime packages in the
+cross-platform payload inventory, while
 `tests/subsystem/installer/test_computer_use_package_data.py` verifies that the
 Computer Use JSON manifest survives both wheel and installer packaging.
 

@@ -1,0 +1,53 @@
+[Unit]
+Description=Row-Bot single-owner server
+Documentation=https://github.com/siddsachar/row-bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=row-bot
+Group=row-bot
+WorkingDirectory=/opt/row-bot
+
+# systemd creates /var/lib/row-bot with ownership for the service account.
+StateDirectory=row-bot
+StateDirectoryMode=0700
+Environment=ROW_BOT_DATA_DIR=/var/lib/row-bot
+Environment=ROW_BOT_DEPLOYMENT_MODE=server
+Environment=ROW_BOT_HOST=127.0.0.1
+Environment=ROW_BOT_PORT=8080
+Environment=PYTHONUNBUFFERED=1
+
+# Optional operator settings belong in this root-owned 0600 file. For a
+# reverse proxy, set ROW_BOT_PUBLIC_URL, ROW_BOT_ALLOWED_HOSTS, and the exact
+# ROW_BOT_TRUSTED_PROXY_CIDRS there. Do not put invitation links in it.
+EnvironmentFile=-/etc/row-bot/row-bot.env
+
+ExecStart=/opt/row-bot/.venv/bin/row-bot serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=90s
+TimeoutStopSec=45s
+KillSignal=SIGTERM
+
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

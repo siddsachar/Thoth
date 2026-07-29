@@ -7,6 +7,12 @@ description: "Back up, restore, update, repair, and uninstall Row-Bot without lo
 
 Row-Bot is local-first, so operational safety starts with knowing which data directory and workspace are active. Conversations, settings, memory, Knowledge, workflows, documents, Designer projects, Developer workspace records, skills, plugins, logs, channel state, and MCP configuration can live under that directory. Operating-system key stores may hold credentials separately.
 
+## Remote Access And Server Operations
+
+Use [Remote Access And Server Mode](/docs/operations/remote-access) for the complete guide to one-time invitations, computer and companion sessions, Tailscale Serve, LAN, SSH forwarding, Docker, HTTPS reverse proxies, browser-local voice, access recovery, and proxy error diagnostics.
+
+Remote access remains off by default in ordinary desktop launches. Server operators should back up access state with the rest of the active data directory, keep one worker, publish one canonical origin, terminate remote traffic with HTTPS, and trust only the exact reverse proxy that connects to Row-Bot.
+
 ## Back Up
 
 1. Open Settings and note the active data and workspace paths.

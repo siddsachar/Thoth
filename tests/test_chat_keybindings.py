@@ -40,7 +40,9 @@ def test_talk_status_uses_existing_composer_status_surface():
     assert "Thinking..." in app_src
     assert "VoiceAgentBridge" in app_src
     assert "submit_user_transcript" in app_src
-    assert "tts_active=voice_mode and (state.tts_service.enabled or state.voice_coordinator.transport == \"realtime\")" in streaming_src
+    assert "tts_active=voice_mode and (" in streaming_src
+    assert "state.tts_service.enabled" in streaming_src
+    assert 'state.voice_coordinator.transport in {"realtime", "browser"}' in streaming_src
     assert "state.voice_coordinator.unmute()" in streaming_src
 
 
@@ -234,9 +236,11 @@ def test_normal_chat_registers_active_voice_surface_binding():
     assert "active_voice_surface_bound" in chat_src
     assert "Smart Skills draft suggestions were not synced for voice text" in chat_src
     assert re.search(
-        r"def _start_local_talk\(\) -> None:\s+_register_active_voice_binding\(\)\s+"
+        r"def _start_local_talk\(\) -> None:.*?if _browser_voice_required\(\):.*?"
+        r"_start_browser_voice\(\"talk\"\).*?return.*?_register_active_voice_binding\(\).*?"
         r"state\.voice_input_mode = \"talk\"",
         chat_src,
+        re.S,
     )
     assert re.search(
         r"def _start_realtime_talk\(\) -> None:.*?state\.voice_input_mode = \"talk\".*?"

@@ -1,40 +1,28 @@
-"""SQLite storage for Row-Bot mobile companion sessions."""
+"""Compatibility adapters for the generalized Row-Bot access store."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-import json
+from datetime import datetime, timedelta
 from pathlib import Path
-import sqlite3
-import uuid
 from typing import Any
+import uuid
 
-from row_bot.data_paths import get_mobile_db_path
-
-
-def utc_now() -> datetime:
-    """Return the current timezone-aware UTC datetime."""
-    return datetime.now(timezone.utc)
-
-
-def to_iso(value: datetime | None = None) -> str:
-    """Serialize a datetime for SQLite storage."""
-    dt = value or utc_now()
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).isoformat()
-
-
-def parse_iso(value: str | None) -> datetime | None:
-    """Parse a stored UTC datetime."""
-    if not value:
-        return None
-    return datetime.fromisoformat(value)
+from row_bot.access.models import (
+    AccessDevice,
+    AccessEvent,
+    AccessProfile,
+    AccessSession,
+    SessionLifetime,
+    TokenFormat,
+)
+from row_bot.access.store import AccessStore, normalize_datetime, parse_iso, to_iso, utc_now
 
 
 @dataclass(frozen=True)
 class MobileDevice:
+    """Legacy mobile-facing view of an access device and one session."""
+
     id: str
     display_name: str
     token_hash: str
@@ -46,22 +34,6 @@ class MobileDevice:
     paired_from: str | None
     access_mode: str | None
     scopes: tuple[str, ...]
-
-    @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MobileDevice":
-        return cls(
-            id=str(row["id"]),
-            display_name=str(row["display_name"]),
-            token_hash=str(row["token_hash"]),
-            token_salt=str(row["token_salt"]),
-            created_at=str(row["created_at"]),
-            last_seen_at=row["last_seen_at"],
-            revoked_at=row["revoked_at"],
-            user_agent=row["user_agent"],
-            paired_from=row["paired_from"],
-            access_mode=row["access_mode"],
-            scopes=tuple(json.loads(row["scopes_json"] or "[]")),
-        )
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -90,21 +62,6 @@ class PairingCode:
     failed_attempts: int
     locked_until: str | None
 
-    @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "PairingCode":
-        return cls(
-            id=str(row["id"]),
-            code_hash=str(row["code_hash"]),
-            code_salt=str(row["code_salt"]),
-            created_at=str(row["created_at"]),
-            expires_at=str(row["expires_at"]),
-            claimed_at=row["claimed_at"],
-            intended_origin=row["intended_origin"],
-            access_mode=row["access_mode"],
-            failed_attempts=int(row["failed_attempts"]),
-            locked_until=row["locked_until"],
-        )
-
 
 @dataclass(frozen=True)
 class MobileAccessEvent:
@@ -115,18 +72,6 @@ class MobileAccessEvent:
     user_agent: str | None
     created_at: str
     detail: dict[str, Any]
-
-    @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MobileAccessEvent":
-        return cls(
-            id=str(row["id"]),
-            device_id=row["device_id"],
-            event_type=str(row["event_type"]),
-            ip=row["ip"],
-            user_agent=row["user_agent"],
-            created_at=str(row["created_at"]),
-            detail=json.loads(row["detail_json"] or "{}"),
-        )
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -141,73 +86,14 @@ class MobileAccessEvent:
 
 
 class MobileAuthStore:
-    """Persistent store for mobile devices, pairing codes, and access events."""
+    """Legacy call surface backed by :class:`row_bot.access.store.AccessStore`."""
 
     def __init__(self, db_path: str | Path | None = None) -> None:
-        self.db_path = Path(db_path) if db_path is not None else get_mobile_db_path()
-
-    def _connect(self) -> sqlite3.Connection:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        self.access_store = AccessStore(db_path)
+        self.db_path = self.access_store.db_path
 
     def ensure_schema(self) -> None:
-        with self._connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS mobile_devices(
-                  id TEXT PRIMARY KEY,
-                  display_name TEXT NOT NULL,
-                  token_hash TEXT NOT NULL UNIQUE,
-                  token_salt TEXT NOT NULL,
-                  created_at TEXT NOT NULL,
-                  last_seen_at TEXT,
-                  revoked_at TEXT,
-                  user_agent TEXT,
-                  paired_from TEXT,
-                  access_mode TEXT,
-                  scopes_json TEXT NOT NULL DEFAULT '["chat","workflows","approvals","settings"]'
-                );
-
-                CREATE TABLE IF NOT EXISTS mobile_pairing_codes(
-                  id TEXT PRIMARY KEY,
-                  code_hash TEXT NOT NULL UNIQUE,
-                  code_salt TEXT NOT NULL,
-                  created_at TEXT NOT NULL,
-                  expires_at TEXT NOT NULL,
-                  claimed_at TEXT,
-                  intended_origin TEXT,
-                  access_mode TEXT,
-                  failed_attempts INTEGER NOT NULL DEFAULT 0,
-                  locked_until TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS mobile_access_events(
-                  id TEXT PRIMARY KEY,
-                  device_id TEXT,
-                  event_type TEXT NOT NULL,
-                  ip TEXT,
-                  user_agent TEXT,
-                  created_at TEXT NOT NULL,
-                  detail_json TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS mobile_kv(
-                  key TEXT PRIMARY KEY,
-                  value_json TEXT NOT NULL,
-                  updated_at TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_mobile_devices_revoked
-                  ON mobile_devices(revoked_at);
-                CREATE INDEX IF NOT EXISTS idx_mobile_pairing_expires
-                  ON mobile_pairing_codes(expires_at);
-                CREATE INDEX IF NOT EXISTS idx_mobile_events_created
-                  ON mobile_access_events(created_at);
-                """
-            )
+        self.access_store.ensure_schema()
 
     def create_pairing_code(
         self,
@@ -220,33 +106,22 @@ class MobileAuthStore:
         code_id: str | None = None,
         now: datetime | None = None,
     ) -> PairingCode:
-        self.ensure_schema()
-        row_id = code_id or uuid.uuid4().hex
-        created = to_iso(now)
-        expires = to_iso(expires_at)
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO mobile_pairing_codes(
-                    id, code_hash, code_salt, created_at, expires_at,
-                    intended_origin, access_mode
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (row_id, code_hash, code_salt, created, expires, intended_origin, access_mode),
-            )
-        pairing = self.get_pairing_code(row_id)
-        assert pairing is not None
-        return pairing
+        invitation = self.access_store.create_invitation_record(
+            invitation_id=code_id or uuid.uuid4().hex,
+            secret_hash=code_hash,
+            secret_salt=code_salt,
+            profile=AccessProfile.COMPANION,
+            session_lifetime=SessionLifetime.TRUSTED,
+            intended_origin=intended_origin or "http://localhost",
+            expires_at=expires_at,
+            access_route=access_mode,
+            now=now,
+        )
+        return _pairing_code(invitation)
 
     def get_pairing_code(self, code_id: str) -> PairingCode | None:
-        self.ensure_schema()
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM mobile_pairing_codes WHERE id = ?",
-                (code_id,),
-            ).fetchone()
-        return PairingCode.from_row(row) if row else None
+        invitation = self.access_store.get_invitation(code_id)
+        return _pairing_code(invitation) if invitation else None
 
     def record_pairing_failure(
         self,
@@ -254,28 +129,31 @@ class MobileAuthStore:
         *,
         locked_until: datetime | None = None,
     ) -> PairingCode | None:
-        self.ensure_schema()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE mobile_pairing_codes
-                   SET failed_attempts = failed_attempts + 1,
-                       locked_until = COALESCE(?, locked_until)
-                 WHERE id = ?
-                """,
-                (to_iso(locked_until) if locked_until else None, code_id),
-            )
-        return self.get_pairing_code(code_id)
+        invitation = self.access_store.record_invitation_failure(code_id)
+        if invitation is not None and locked_until is not None:
+            with self.access_store._immediate_transaction() as connection:
+                connection.execute(
+                    "UPDATE access_invitations SET locked_until = ? WHERE id = ?",
+                    (to_iso(locked_until), code_id),
+                )
+            invitation = self.access_store.get_invitation(code_id)
+        return _pairing_code(invitation) if invitation else None
 
-    def mark_pairing_claimed(self, code_id: str, *, now: datetime | None = None) -> bool:
+    def mark_pairing_claimed(
+        self,
+        code_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
         self.ensure_schema()
-        with self._connect() as conn:
-            cursor = conn.execute(
+        with self.access_store._immediate_transaction() as connection:
+            cursor = connection.execute(
                 """
-                UPDATE mobile_pairing_codes
+                UPDATE access_invitations
                    SET claimed_at = ?
                  WHERE id = ?
                    AND claimed_at IS NULL
+                   AND cancelled_at IS NULL
                 """,
                 (to_iso(now), code_id),
             )
@@ -283,10 +161,10 @@ class MobileAuthStore:
 
     def clear_expired_pairing_codes(self, *, now: datetime | None = None) -> int:
         self.ensure_schema()
-        with self._connect() as conn:
-            cursor = conn.execute(
+        with self.access_store._immediate_transaction() as connection:
+            cursor = connection.execute(
                 """
-                DELETE FROM mobile_pairing_codes
+                DELETE FROM access_invitations
                  WHERE expires_at <= ?
                    AND claimed_at IS NULL
                 """,
@@ -307,74 +185,70 @@ class MobileAuthStore:
         device_id: str | None = None,
         now: datetime | None = None,
     ) -> MobileDevice:
-        self.ensure_schema()
+        del scopes  # Authorization is fixed by the companion profile.
+        current = normalize_datetime(now)
         row_id = device_id or uuid.uuid4().hex
-        scope_values = list(scopes or ("chat", "workflows", "approvals", "settings"))
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO mobile_devices(
-                    id, display_name, token_hash, token_salt, created_at,
-                    user_agent, paired_from, access_mode, scopes_json
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row_id,
-                    display_name,
-                    token_hash,
-                    token_salt,
-                    to_iso(now),
-                    user_agent,
-                    paired_from,
-                    access_mode,
-                    json.dumps(scope_values),
-                ),
+        device = self.access_store.create_device_record(
+            AccessDevice(
+                id=row_id,
+                display_name=(str(display_name or "").strip() or "Mobile device")[:80],
+                profile=AccessProfile.COMPANION,
+                created_at=current,
+                last_seen_at=None,
+                revoked_at=None,
+                user_agent=user_agent,
+                paired_from=paired_from,
+                access_route=access_mode,
+                legacy_source_id=None,
             )
-        device = self.get_device(row_id)
-        assert device is not None
-        return device
+        )
+        session = self.access_store.create_session_record(
+            AccessSession(
+                id=row_id,
+                device_id=row_id,
+                token_hash=token_hash,
+                token_salt=token_salt,
+                token_format=TokenFormat.SESSION_V1,
+                created_at=current,
+                last_seen_at=None,
+                expires_at=current + timedelta(days=30),
+                revoked_at=None,
+                lifetime=SessionLifetime.TRUSTED,
+                replaced_by_session_id=None,
+            )
+        )
+        return _mobile_device(device, session)
 
     def get_device(self, device_id: str) -> MobileDevice | None:
-        self.ensure_schema()
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM mobile_devices WHERE id = ?",
-                (device_id,),
-            ).fetchone()
-        return MobileDevice.from_row(row) if row else None
+        device = self.access_store.get_device(device_id)
+        if device is None:
+            session = self.access_store.get_session(device_id)
+            if session is not None:
+                device = self.access_store.get_device(session.device_id)
+        if device is None:
+            return None
+        sessions = self.access_store.list_sessions(device_id=device.id)
+        return _mobile_device(device, sessions[0] if sessions else None)
 
     def list_devices(self, *, include_revoked: bool = True) -> list[MobileDevice]:
-        self.ensure_schema()
-        query = "SELECT * FROM mobile_devices"
-        params: tuple[Any, ...] = ()
-        if not include_revoked:
-            query += " WHERE revoked_at IS NULL"
-        query += " ORDER BY created_at DESC"
-        with self._connect() as conn:
-            rows = conn.execute(query, params).fetchall()
-        return [MobileDevice.from_row(row) for row in rows]
+        devices = self.access_store.list_devices(include_revoked=include_revoked)
+        return [
+            _mobile_device(
+                device,
+                next(iter(self.access_store.list_sessions(device_id=device.id)), None),
+            )
+            for device in devices
+        ]
 
     def touch_device(self, device_id: str, *, now: datetime | None = None) -> None:
-        self.ensure_schema()
-        with self._connect() as conn:
-            conn.execute(
-                "UPDATE mobile_devices SET last_seen_at = ? WHERE id = ? AND revoked_at IS NULL",
-                (to_iso(now), device_id),
-            )
+        for session in self.access_store.list_sessions(
+            device_id=device_id,
+            include_revoked=False,
+        ):
+            self.access_store.touch_session(session.id, now=now)
 
     def revoke_device(self, device_id: str, *, now: datetime | None = None) -> bool:
-        self.ensure_schema()
-        with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE mobile_devices
-                   SET revoked_at = COALESCE(revoked_at, ?)
-                 WHERE id = ?
-                """,
-                (to_iso(now), device_id),
-            )
-            return cursor.rowcount == 1
+        return self.access_store.revoke_device(device_id, now=now)
 
     def log_event(
         self,
@@ -387,75 +261,97 @@ class MobileAuthStore:
         now: datetime | None = None,
         event_id: str | None = None,
     ) -> MobileAccessEvent:
-        self.ensure_schema()
-        row_id = event_id or uuid.uuid4().hex
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO mobile_access_events(
-                    id, device_id, event_type, ip, user_agent, created_at,
-                    detail_json
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row_id,
-                    device_id,
-                    event_type,
-                    ip,
-                    user_agent,
-                    to_iso(now),
-                    json.dumps(detail or {}),
-                ),
-            )
-        event = self.get_event(row_id)
-        assert event is not None
-        return event
+        event = self.access_store.log_event(
+            event_type,
+            device_id=device_id,
+            effective_client=ip,
+            user_agent=user_agent,
+            detail=detail,
+            now=now,
+            event_id=event_id,
+        )
+        return _mobile_event(event)
 
     def get_event(self, event_id: str) -> MobileAccessEvent | None:
-        self.ensure_schema()
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM mobile_access_events WHERE id = ?",
-                (event_id,),
-            ).fetchone()
-        return MobileAccessEvent.from_row(row) if row else None
+        event = self.access_store.get_event(event_id)
+        return _mobile_event(event) if event else None
 
     def recent_events(self, *, limit: int = 50) -> list[MobileAccessEvent]:
-        self.ensure_schema()
-        safe_limit = max(1, min(int(limit), 200))
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM mobile_access_events
-                 ORDER BY created_at DESC
-                 LIMIT ?
-                """,
-                (safe_limit,),
-            ).fetchall()
-        return [MobileAccessEvent.from_row(row) for row in rows]
+        return [
+            _mobile_event(event)
+            for event in self.access_store.recent_events(limit=limit)
+        ]
 
-    def set_kv(self, key: str, value: dict[str, Any], *, now: datetime | None = None) -> None:
-        self.ensure_schema()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO mobile_kv(key, value_json, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    value_json = excluded.value_json,
-                    updated_at = excluded.updated_at
-                """,
-                (key, json.dumps(value), to_iso(now)),
-            )
+    def set_kv(
+        self,
+        key: str,
+        value: dict[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        self.access_store.set_meta(f"mobile_kv:{key}", value, now=now)
 
-    def get_kv(self, key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
-        self.ensure_schema()
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT value_json FROM mobile_kv WHERE key = ?",
-                (key,),
-            ).fetchone()
-        if not row:
-            return dict(default or {})
-        return json.loads(row["value_json"] or "{}")
+    def get_kv(
+        self,
+        key: str,
+        default: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        value = self.access_store.get_meta(f"mobile_kv:{key}", default or {})
+        return dict(value) if isinstance(value, dict) else dict(default or {})
+
+
+def _mobile_device(
+    device: AccessDevice,
+    session: AccessSession | None,
+) -> MobileDevice:
+    return MobileDevice(
+        id=device.id,
+        display_name=device.display_name,
+        token_hash=session.token_hash if session else "",
+        token_salt=session.token_salt if session else "",
+        created_at=to_iso(device.created_at),
+        last_seen_at=to_iso(device.last_seen_at) if device.last_seen_at else None,
+        revoked_at=to_iso(device.revoked_at) if device.revoked_at else None,
+        user_agent=device.user_agent,
+        paired_from=device.paired_from,
+        access_mode=device.access_route,
+        scopes=("chat", "workflows", "approvals"),
+    )
+
+
+def _pairing_code(invitation) -> PairingCode:
+    return PairingCode(
+        id=invitation.id,
+        code_hash=invitation.secret_hash,
+        code_salt=invitation.secret_salt,
+        created_at=to_iso(invitation.created_at),
+        expires_at=to_iso(invitation.expires_at),
+        claimed_at=to_iso(invitation.claimed_at) if invitation.claimed_at else None,
+        intended_origin=invitation.intended_origin,
+        access_mode=invitation.access_route,
+        failed_attempts=invitation.failed_attempts,
+        locked_until=to_iso(invitation.locked_until) if invitation.locked_until else None,
+    )
+
+
+def _mobile_event(event: AccessEvent) -> MobileAccessEvent:
+    return MobileAccessEvent(
+        id=event.id,
+        device_id=event.device_id,
+        event_type=event.event_type,
+        ip=event.effective_client,
+        user_agent=event.user_agent,
+        created_at=to_iso(event.created_at),
+        detail=dict(event.detail),
+    )
+
+
+__all__ = [
+    "MobileAccessEvent",
+    "MobileAuthStore",
+    "MobileDevice",
+    "PairingCode",
+    "parse_iso",
+    "to_iso",
+    "utc_now",
+]

@@ -90,7 +90,12 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Operations And Safety',
       collapsed: false,
-      items: ['operations/index', 'privacy-safety/index', 'troubleshooting/index'],
+      items: [
+        'operations/index',
+        'operations/remote-access',
+        'privacy-safety/index',
+        'troubleshooting/index',
+      ],
     },
     {
       type: 'category',

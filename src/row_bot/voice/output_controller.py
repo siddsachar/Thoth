@@ -30,8 +30,8 @@ class VoiceOutputController:
     ) -> "VoiceOutputController":
         if not voice_mode:
             mode = "off"
-        elif transport == "realtime":
-            mode = "realtime"
+        elif transport in {"realtime", "browser"}:
+            mode = transport
         elif bool(getattr(tts_service, "enabled", False)):
             mode = "normal"
         else:
@@ -80,7 +80,7 @@ class VoiceOutputController:
         clean = str(text or "").strip()
         if not clean:
             return False
-        if self.mode == "realtime":
+        if self.mode in {"realtime", "browser"}:
             if not self.realtime_speaker:
                 return False
             origin = str(getattr(cue.type, "value", cue.type))
@@ -96,7 +96,7 @@ class VoiceOutputController:
         clean = str(text or "").strip()
         if not clean:
             return False
-        if self.mode == "realtime":
+        if self.mode in {"realtime", "browser"}:
             if not self.realtime_speaker:
                 return False
             return self._call_realtime_speaker(clean, origin="final") is not False

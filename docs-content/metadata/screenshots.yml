@@ -261,10 +261,36 @@ screenshots:
     route: /?settings_tab=System
     capture_selector: '[data-docs-id="settings-dialog"]'
     wait_for: '[data-docs-id="settings-dialog"]'
-    expected_text: [System, Mobile]
+    expected_text: [System, Remote Access]
     output: settings-system.png
-    alt: System settings showing isolated filesystem, shell, browser, mobile access, tunnel, logging, and update controls.
+    alt: System settings showing isolated filesystem, shell, browser, Remote Access, tunnel, logging, and update controls.
     docs_pages: [/docs/settings/system]
+  settings-remote-access:
+    <<: *desktop
+    title: Remote Access settings
+    route: /?settings_tab=System
+    actions:
+      - scroll_into_view: '[data-docs-id="remote-access-settings"]'
+    capture_selector: '[data-docs-id="remote-access-settings"]'
+    wait_for: '[data-docs-id="remote-access-settings"]'
+    expected_text: [Remote Access, Invite a device, Tailscale, Local network]
+    output: settings-remote-access.png
+    alt: Remote Access settings showing protected device access, invitation creation, Tailscale Serve, and explicit local-network controls.
+    docs_pages: [/docs/settings/system, /docs/operations/remote-access]
+  remote-access-invitation:
+    <<: *desktop
+    title: Remote Access device invitation
+    route: /?settings_tab=System
+    actions:
+      - scroll_into_view: '[data-docs-id="remote-access-settings"]'
+      - click_text: Invite a device
+      - wait_for_selector: '[data-docs-id="remote-access-invitation"]'
+    capture_selector: '[data-docs-id="remote-access-invitation"]'
+    wait_for: '[data-docs-id="remote-access-invitation"]'
+    expected_text: [Invite a device, Another computer, Phone or tablet, Connection route, Create invitation]
+    output: remote-access-invitation.png
+    alt: Device invitation dialog showing full-computer and companion profiles, trusted and temporary lifetimes, and a live connection-route selector.
+    docs_pages: [/docs/operations/remote-access, /docs/mobile-native/]
   settings-tracker:
     <<: *desktop
     title: Tracker settings

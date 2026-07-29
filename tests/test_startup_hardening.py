@@ -925,7 +925,11 @@ def test_direct_native_mode_writes_window_state(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "_has_display_server", lambda: True)
     monkeypatch.setattr(launcher, "_find_free_port", lambda start, max_tries=50: 18092)
     monkeypatch.setattr(launcher, "_RowBotProcess", FakeServer)
-    monkeypatch.setattr(launcher, "_block_until_interrupted", lambda server, owns_server: None)
+    monkeypatch.setattr(
+        launcher,
+        "_block_until_interrupted",
+        lambda server, owns_server, **_kwargs: None,
+    )
 
     def fake_open_window(port, control_port=None):
         opened.append((port, control_port))
@@ -956,6 +960,120 @@ def test_direct_native_mode_writes_window_state(tmp_path, monkeypatch):
         event == "server_spawned" and fields["host"] == "127.0.0.1"
         for event, fields in events
     )
+
+
+def test_direct_monitor_tolerates_launcher_controlled_restart(monkeypatch):
+    class FakeStopEvent:
+        def __init__(self):
+            self.waits = 0
+
+        def wait(self, _timeout):
+            self.waits += 1
+            return self.waits > 1
+
+    class RestartingServer:
+        is_alive = False
+
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    server = RestartingServer()
+    monkeypatch.setattr(launcher.threading, "Event", FakeStopEvent)
+
+    launcher._block_until_interrupted(
+        server,
+        owns_server=True,
+        restart_in_progress=lambda: True,
+    )
+
+    assert server.stopped is True
+
+
+def test_direct_restart_reloads_durable_host_when_cli_host_was_omitted(monkeypatch):
+    started = []
+    resolved_inputs = []
+    callbacks = []
+
+    class FakeServer:
+        def __init__(self, _port, host=None):
+            self._proc = SimpleNamespace(pid=1111)
+            self.is_alive = True
+            started.append(("init", host))
+
+        def start(self, port=None, host=None):
+            self.is_alive = True
+            started.append((port, host))
+
+        def stop(self):
+            self.is_alive = False
+
+    class FakeControl:
+        def __init__(self, callback):
+            callbacks.append(callback)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def child_environment(self):
+            return {}
+
+    def resolve_host(value):
+        resolved_inputs.append(value)
+        return "127.0.0.1" if len(resolved_inputs) == 1 else "0.0.0.0"
+
+    monkeypatch.setattr(launcher, "_resolve_launch_host", resolve_host)
+    monkeypatch.setattr(launcher, "_maybe_start_ollama", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        launcher,
+        "_select_app_port",
+        lambda preferred: (preferred, False),
+    )
+    monkeypatch.setattr(launcher, "_claim_early_splash", lambda: None)
+    monkeypatch.setattr(launcher, "_RowBotProcess", FakeServer)
+    monkeypatch.setattr(launcher, "LauncherControlServer", FakeControl)
+    monkeypatch.setattr(launcher, "_wait_for_server", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(launcher, "_is_port_in_use", lambda _port: False)
+    monkeypatch.setattr(
+        launcher,
+        "_write_launcher_state",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(launcher, "_clear_launcher_state", lambda: None)
+    monkeypatch.setattr(
+        launcher,
+        "_stop_launcher_helper",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_block_until_interrupted",
+        lambda *_args, **_kwargs: callbacks[0](),
+    )
+    args = SimpleNamespace(
+        port=18100,
+        host="127.0.0.1",
+        _dynamic_host_input=None,
+        no_ollama=True,
+        no_splash=True,
+        server=False,
+        no_open=True,
+        native=False,
+    )
+
+    launcher._run_direct(args)
+
+    assert resolved_inputs == [None, None]
+    assert started == [
+        ("init", "127.0.0.1"),
+        (18100, "127.0.0.1"),
+        (18100, "0.0.0.0"),
+    ]
 
 
 def test_windows_tray_keeps_pystray_backend_and_menu(monkeypatch):

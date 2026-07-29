@@ -2524,6 +2524,14 @@ async def consume_generation(
     def _speak_realtime_text(text: str, *, origin: str = "final") -> bool:
         from row_bot.voice.realtime_client import send_realtime_function_output_js, send_realtime_run_event_js
 
+        if state.voice_coordinator.transport == "browser":
+            from row_bot.voice.browser_client import speak_browser_voice_js
+
+            return run_realtime_client_js(
+                p,
+                speak_browser_voice_js(text),
+                context=f"browser_voice_{origin}",
+            )
         if (
             origin == "final"
             and realtime_speech_queue is not None
@@ -4624,7 +4632,10 @@ async def send_message(
         generation_id=generation_id,
         queued_message_ids=list(queued_message_ids or []),
         voice_mode=voice_mode,
-        tts_active=voice_mode and (state.tts_service.enabled or state.voice_coordinator.transport == "realtime"),
+        tts_active=voice_mode and (
+            state.tts_service.enabled
+            or state.voice_coordinator.transport in {"realtime", "browser"}
+        ),
         tts_allow_long=voice_mode and not internal_goal_continuation and user_requested_read_aloud(text),
         baseline_child_agent_run_ids=_child_agent_run_ids_for_thread(gen_thread_id),
     )

@@ -17,6 +17,18 @@ import row_bot.secret_store as secret_store
 log = logging.getLogger("row_bot.channels.auth_store")
 
 
+def _server_secret_names() -> frozenset[str]:
+    from row_bot.channels.registry import all_channels
+
+    return frozenset(
+        str(getattr(field, "env_key", "") or "").strip()
+        for channel in all_channels()
+        for field in getattr(channel, "config_fields", []) or []
+        if getattr(field, "storage", "") == "env"
+        and str(getattr(field, "env_key", "") or "").strip()
+    )
+
+
 def _namespace(channel_name: str) -> str:
     return f"channels:{str(channel_name).strip()}"
 
@@ -30,6 +42,17 @@ def get_channel_secret(channel_name: str, env_key: str) -> str:
     name = _credential_name(env_key)
     if not name:
         return ""
+    file_value = secret_store.read_server_secret(
+        name,
+        allowed_names=_server_secret_names(),
+    )
+    env_value = os.environ.get(name, "")
+    if file_value and env_value and file_value != env_value:
+        raise secret_store.SecretStoreError(
+            "channel secret file conflicts with environment"
+        )
+    if file_value:
+        return file_value
     try:
         value = secret_store.get_secret(name, namespace=_namespace(channel_name))
         if value:
@@ -47,6 +70,13 @@ def set_channel_secret(channel_name: str, env_key: str, value: str) -> None:
     text = str(value or "").strip()
     if not name:
         return
+    if secret_store.read_server_secret(
+        name,
+        allowed_names=_server_secret_names(),
+    ):
+        raise secret_store.SecretStoreError(
+            "externally managed channel secret is read-only"
+        )
     if not text:
         delete_channel_secret(channel_name, name)
         return
@@ -59,6 +89,13 @@ def delete_channel_secret(channel_name: str, env_key: str) -> None:
     name = _credential_name(env_key)
     if not name:
         return
+    if secret_store.read_server_secret(
+        name,
+        allowed_names=_server_secret_names(),
+    ):
+        raise secret_store.SecretStoreError(
+            "externally managed channel secret is read-only"
+        )
     try:
         secret_store.delete_secret(name, namespace=_namespace(channel_name))
     except secret_store.SecretStoreError:
@@ -109,11 +146,18 @@ def migrate_legacy_channel_secrets(channels: list[Any]) -> dict[str, int]:
                 continue
             namespace = _namespace(channel_name)
             try:
-                if secret_store.get_secret(env_key, namespace=namespace):
-                    stats["skipped"] += 1
-                    continue
                 legacy_value = secret_store.get_secret(env_key)
-                if not legacy_value:
+            except secret_store.SecretStoreError:
+                # A fresh server may not have a keyring backend at all. Without
+                # legacy evidence there is nothing to migrate and nothing worth
+                # warning about.
+                stats["skipped"] += 1
+                continue
+            if not legacy_value:
+                stats["skipped"] += 1
+                continue
+            try:
+                if secret_store.get_secret(env_key, namespace=namespace):
                     stats["skipped"] += 1
                     continue
                 secret_store.set_secret(env_key, legacy_value, namespace=namespace)
@@ -134,6 +178,35 @@ def channel_secret_status(channel_name: str, env_key: str) -> dict[str, Any]:
     name = _credential_name(env_key)
     if not name:
         return {"configured": False, "source": "", "fingerprint": ""}
+    try:
+        file_value = secret_store.read_server_secret(
+            name,
+            allowed_names=_server_secret_names(),
+        )
+    except secret_store.SecretStoreError as exc:
+        return {
+            "configured": False,
+            "source": "secret_file",
+            "fingerprint": "",
+            "externally_managed": True,
+            "error": str(exc),
+        }
+    env_value = os.environ.get(name, "")
+    if file_value:
+        if env_value and env_value != file_value:
+            return {
+                "configured": False,
+                "source": "conflict",
+                "fingerprint": "",
+                "externally_managed": True,
+                "error": "secret file conflicts with environment",
+            }
+        return {
+            "configured": True,
+            "source": "secret_file",
+            "fingerprint": secret_store.fingerprint(file_value),
+            "externally_managed": True,
+        }
     keyring_error = ""
     try:
         value = secret_store.get_secret(name, namespace=_namespace(channel_name))

@@ -2102,7 +2102,7 @@ async def start_bot() -> bool:
         return True
 
     if not is_configured():
-        log.warning("Telegram bot not configured — skipping start")
+        log.info("Telegram bot not configured — skipping start")
         return False
 
     token = _get_bot_token()

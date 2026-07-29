@@ -267,13 +267,33 @@ surfaces:
   settings_system:
     title: System settings
     app_route: /?settings_tab=System
-    state: isolated data and workspace paths
+    state: isolated data, workspace paths, and network-silent Remote Access status
     scenario: configured
     docs_page: /docs/settings/system
     screenshot_id: settings-system
     capture_type: automated
     status: ready
-    source_files: [src/row_bot/ui/settings.py, src/row_bot/ui/mobile_access_settings.py]
+    source_files: [src/row_bot/ui/settings.py, src/row_bot/ui/remote_access_settings.py]
+  settings_remote_access:
+    title: Remote Access settings
+    app_route: /?settings_tab=System
+    state: protected device access with no network probe until the owner requests it
+    scenario: configured
+    docs_page: /docs/operations/remote-access
+    screenshot_id: settings-remote-access
+    capture_type: automated
+    status: ready
+    source_files: [src/row_bot/ui/remote_access_settings.py, src/row_bot/access/]
+  remote_access_invitation:
+    title: Remote Access invitation
+    app_route: /?settings_tab=System
+    state: current route selector with computer and companion profiles
+    scenario: configured
+    docs_page: /docs/operations/remote-access
+    screenshot_id: remote-access-invitation
+    capture_type: automated
+    status: ready
+    source_files: [src/row_bot/ui/remote_access_settings.py, src/row_bot/access/service.py]
   settings_tracker:
     title: Tracker settings
     app_route: /?settings_tab=Tracker

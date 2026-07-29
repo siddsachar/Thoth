@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from nicegui import ui
 
+from row_bot.access.models import AccessCapability
 from row_bot.approval_policy import DEFAULT_APPROVAL_MODE, normalize_approval_mode
 from row_bot.memory_extraction import set_active_thread
 from row_bot.threads import (
@@ -27,6 +28,7 @@ from row_bot.threads import (
 )
 from row_bot.ui.chat_components import build_chat_messages, build_file_upload
 from row_bot.ui.chat_composer_extras import create_chat_composer_extras
+from row_bot.ui.access_context import has_capability
 from row_bot.ui.streaming import request_generation_stop
 from row_bot.ui.state import AppState, P, _active_generations
 from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
@@ -269,6 +271,7 @@ def _build_chat_controls_dialog(
     rebuild_main: Callable[..., None],
     composer_extras: Any | None = None,
 ) -> None:
+    owner_controls = has_capability(AccessCapability.SETTINGS)
     dialog = ui.dialog().props("position=bottom")
     with dialog:
         with ui.card().classes("row-bot-mobile-sheet w-full no-shadow").props(
@@ -277,6 +280,16 @@ def _build_chat_controls_dialog(
             with ui.row().classes("w-full items-center justify-between no-wrap"):
                 ui.label("Chat controls").classes("text-subtitle1")
                 ui.button(icon="close", on_click=dialog.close).props("flat dense round")
+            if not owner_controls:
+                ui.label(
+                    "Companion sessions use the owner's configured model and "
+                    "approval policy."
+                ).classes("text-grey-6 text-sm")
+                ui.button("Done", on_click=dialog.close).props(
+                    "flat dense no-caps color=primary"
+                )
+                dialog.open()
+                return
             ui.label("These apply to the active thread.").classes("text-grey-6 text-sm")
             policy_icon, policy_label, policy_detail = _model_policy_summary(state)
             with ui.element("div").classes("row-bot-mobile-policy-chip"):
@@ -341,11 +354,12 @@ def _build_chat_controls_dialog(
                 rebuild_main(immediate=True, reason="mobile_chat_controls")
 
             with ui.row().classes("w-full justify-between items-center gap-2"):
-                ui.button(
-                    "Full settings",
-                    icon="settings",
-                    on_click=lambda: (dialog.close(), open_settings("Providers")),
-                ).props("flat dense no-caps")
+                if owner_controls:
+                    ui.button(
+                        "Full settings",
+                        icon="settings",
+                        on_click=lambda: (dialog.close(), open_settings("Providers")),
+                    ).props("flat dense no-caps")
                 ui.button("Apply", icon="check", on_click=_save_controls).props(
                     "unelevated dense no-caps color=primary"
                 )
@@ -426,7 +440,7 @@ def _build_mobile_thread_composer(
             if not _mobile_generation_active(state):
                 p.stop_btn.disable()
 
-            async def _submit_async() -> None:
+            async def _submit_async(*, voice_mode: bool = False) -> None:
                 text = str(text_input.value or "").strip()
                 if not text and not p.pending_files:
                     return
@@ -441,13 +455,70 @@ def _build_mobile_thread_composer(
                         logger.debug("Mobile composer extras failed to clear draft", exc_info=True)
                 state.active_designer_project = None
                 state.active_developer_workspace_id = None
-                result = send_message(text)
+                result = (
+                    send_message(text, voice_mode=True)
+                    if voice_mode
+                    else send_message(text)
+                )
                 if inspect.isawaitable(result):
                     await result
                 set_mobile_chat_mode(state, "thread")
 
             def _submit() -> None:
                 asyncio.create_task(_submit_async())
+
+            async def _on_browser_voice_transcript(e) -> None:
+                payload = e.args if isinstance(e.args, dict) else {}
+                text = str(payload.get("text") or "").strip()
+                if not text:
+                    return
+                text_input.value = text
+                text_input.update()
+                await _submit_async(voice_mode=True)
+
+            def _on_browser_voice_error(e) -> None:
+                payload = e.args if isinstance(e.args, dict) else {}
+                code = str(payload.get("code") or "")
+                message = (
+                    "Browser microphone access requires HTTPS."
+                    if code == "secure_context_required"
+                    else "Browser voice is unavailable. Check microphone permission and local model status."
+                )
+                ui.notify(message, type="warning", close_button=True)
+                state.voice_enabled = False
+                state.voice_coordinator.stop()
+
+            browser_voice_sink = ui.element("div").style("display:none")
+            browser_voice_sink.on(
+                "row-bot-browser-voice-transcript",
+                _on_browser_voice_transcript,
+                js_handler="(e) => emit(e.detail)",
+            )
+            browser_voice_sink.on(
+                "row-bot-browser-voice-error",
+                _on_browser_voice_error,
+                js_handler="(e) => emit(e.detail)",
+            )
+            try:
+                p.realtime_client = ui.context.client
+            except Exception:
+                p.realtime_client = None
+
+            def _start_browser_voice() -> None:
+                from row_bot.ui.streaming import run_realtime_client_js
+                from row_bot.voice.browser_client import start_browser_voice_capture_js
+
+                state.voice_enabled = True
+                state.voice_input_mode = "talk"
+                state.voice_coordinator.start_browser("talk")
+                run_realtime_client_js(
+                    p,
+                    start_browser_voice_capture_js(
+                        sink_id=browser_voice_sink.id,
+                        mode="talk",
+                    ),
+                    context="start_mobile_browser_talk",
+                )
 
             text_input.on(
                 "keydown.enter",
@@ -459,6 +530,10 @@ def _build_mobile_thread_composer(
                     emit();
                 }""",
             )
+            ui.button(
+                icon="keyboard_voice",
+                on_click=_start_browser_voice,
+            ).props("flat dense round").tooltip("Talk using this browser")
             ui.button(icon="send", on_click=_submit).props("unelevated round color=primary").tooltip("Send")
 
 
@@ -477,10 +552,11 @@ def build_mobile_thread_list(
                 with ui.column().classes("gap-0").style("min-width: 0;"):
                     ui.label("Chats").classes("text-h6")
                     ui.label("Start something new or continue a thread.").classes("text-grey-6 text-xs")
-                ui.button(
-                    icon="settings",
-                    on_click=lambda: open_settings("Providers"),
-                ).props("flat dense round").tooltip("Settings")
+                if has_capability(AccessCapability.SETTINGS):
+                    ui.button(
+                        icon="settings",
+                        on_click=lambda: open_settings("Providers"),
+                    ).props("flat dense round").tooltip("Settings")
 
             ui.button(
                 "New thread",

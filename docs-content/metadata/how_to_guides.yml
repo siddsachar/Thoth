@@ -107,9 +107,18 @@ guides:
     title: Pair And Use Android
     route: /docs/mobile-native/
     sources:
+    - src/row_bot/access/
     - src/row_bot/mobile/auth.py
     - src/row_bot/ui/mobile.py
-    - src/row_bot/ui/mobile_access_settings.py
+    - src/row_bot/ui/remote_access_settings.py
+  configure-remote-access:
+    title: Configure Remote Access And Server Mode
+    route: /docs/operations/remote-access
+    sources:
+    - README.md
+    - src/row_bot/access/
+    - src/row_bot/ui/remote_access_settings.py
+    - deploy/docker/README.md
   extend-row-bot:
     title: Choose An Extension Type
     route: /docs/extending/

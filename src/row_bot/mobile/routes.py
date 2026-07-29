@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
-from html import escape
-from ipaddress import ip_address
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from starlette.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 
+from row_bot.access.models import AccessCapability, AccessProfile, SessionLifetime
+from row_bot.access.request_context import ACCESS_CONTEXT_SCOPE_KEY, AccessContext
+from row_bot.access.service import AccessService
 from row_bot.brand import APP_BRAND_ACCENT, APP_DISPLAY_NAME
-from row_bot.mobile.auth import PairingError, confirm_pairing, create_pairing_ticket, validate_device_token
-from row_bot.mobile.cookies import clear_mobile_session_cookies, extract_mobile_cookie, set_mobile_session_cookie
 from row_bot.mobile.store import MobileAuthStore
 
 FORWARDED_HEADERS = {
@@ -30,34 +36,24 @@ PAIRING_PAGE_HEADERS = {
     "X-Robots-Tag": "noindex",
 }
 
-PAIRING_ERROR_MESSAGES = {
-    "expired": "This pairing code has expired. Create a new QR from desktop Mobile Access and try again.",
-    "already_claimed": "This pairing code was already used. Create a new QR from desktop Mobile Access.",
-    "locked": "This pairing code is temporarily locked after repeated failed attempts. Create a new QR from desktop Mobile Access.",
-    "invalid_code": "This pairing link is invalid or incomplete. Create a new QR from desktop Mobile Access.",
-}
+
+def _access_context(request: Request) -> AccessContext | None:
+    context = request.scope.get(ACCESS_CONTEXT_SCOPE_KEY)
+    if isinstance(context, AccessContext):
+        return context
+    state_context = getattr(request.state, "row_bot_access_context", None)
+    return state_context if isinstance(state_context, AccessContext) else None
 
 
 def _client_ip(request: Request) -> str:
-    return (request.client.host if request.client else "") or ""
-
-
-def _has_forwarded_headers(request: Request) -> bool:
-    return any(name in request.headers for name in FORWARDED_HEADERS)
-
-
-def _is_loopback_host(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ip_address(host).is_loopback
-    except ValueError:
-        return False
+    context = _access_context(request)
+    return context.effective_client if context is not None else ""
 
 
 def is_true_local_request(request: Request) -> bool:
-    """Return True only for direct loopback requests without proxy headers."""
-    return _is_loopback_host(_client_ip(request)) and not _has_forwarded_headers(request)
+    """Compatibility helper backed by the central transport decision."""
+    context = _access_context(request)
+    return bool(context and context.direct_loopback and not context.forwarding_headers)
 
 
 def _safe_device(device) -> dict[str, Any]:
@@ -65,15 +61,14 @@ def _safe_device(device) -> dict[str, Any]:
 
 
 def _json_error(status_code: int, code: str, detail: str) -> JSONResponse:
-    return JSONResponse({"ok": False, "error": code, "detail": detail}, status_code=status_code)
-
-
-def _pairing_error_message(reason: str) -> str:
-    return PAIRING_ERROR_MESSAGES.get(reason, "Pairing code could not be confirmed. Create a new QR from desktop Mobile Access.")
+    return JSONResponse(
+        {"ok": False, "error": code, "detail": detail}, status_code=status_code
+    )
 
 
 def _request_origin(request: Request) -> str:
-    return f"{request.url.scheme}://{request.headers.get('host', request.url.netloc)}"
+    context = _access_context(request)
+    return context.origin if context is not None else ""
 
 
 def _mobile_store(request: Request) -> MobileAuthStore:
@@ -84,70 +79,45 @@ def _mobile_store(request: Request) -> MobileAuthStore:
     return store
 
 
+def _access_service(request: Request) -> AccessService:
+    service = getattr(request.app.state, "row_bot_access_service", None)
+    if isinstance(service, AccessService):
+        return service
+    return AccessService(_mobile_store(request).access_store)
+
+
 def _current_device(request: Request) -> Any | None:
-    token = extract_mobile_cookie(request)
-    if not token:
+    context = _access_context(request)
+    if context is None or context.device_id is None:
         return None
-    return validate_device_token(_mobile_store(request), token)
+    return _access_service(request).store.get_device(context.device_id)
 
 
 def _can_manage_mobile_access(request: Request) -> bool:
-    device = _current_device(request)
-    return is_true_local_request(request) or (device is not None and "settings" in device.scopes)
+    context = _access_context(request)
+    return bool(
+        context
+        and context.authenticated
+        and context.has_capability(AccessCapability.ACCESS_ADMIN)
+    )
 
 
-def _pairing_page(code: str = "", error: str = "", *, show_form: bool | None = None) -> str:
-    normalized_code = str(code or "").strip()
-    render_form = bool(normalized_code) if show_form is None else bool(show_form and normalized_code)
-    safe_code = escape(normalized_code)
-    safe_error = escape(error)
-    if render_form:
-        content_html = f"""
-    <p>Name this device to finish pairing. The session token is stored in an HttpOnly cookie and never appears in the URL.</p>
-    <p class="hint">Pairing links are single-use and expire after 10 minutes.</p>
-    <form method="post" action="/api/mobile/pair/confirm">
-      <input type="hidden" name="code" value="{safe_code}">
-      <label for="display_name">Device name</label>
-      <input id="display_name" name="display_name" autocomplete="nickname" placeholder="My phone">
-      <button type="submit">Pair device</button>
-    </form>"""
-    else:
-        recovery_message = safe_error or escape(PAIRING_ERROR_MESSAGES["invalid_code"])
-        content_html = f"""
-    <p class="error">{recovery_message}</p>
-    <p>Open Row-Bot on your desktop, go to Mobile Access, and create a new QR code. Scan the new QR to try again.</p>
-    <p class="hint">Pairing links are single-use and expire after 10 minutes.</p>"""
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pair Row-Bot Mobile</title>
-  <style>
-    :root {{ color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
-    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: #111719; color: #edf5f5; }}
-    main {{ width: min(92vw, 440px); padding: 24px; }}
-    h1 {{ font-size: 1.8rem; margin: 0 0 8px; }}
-    p {{ color: #a9b8ba; line-height: 1.45; }}
-    label {{ display: block; margin: 18px 0 8px; color: #c8d8da; }}
-    input {{ width: 100%; box-sizing: border-box; padding: 13px 14px; border-radius: 8px; border: 1px solid #375257; background: #172225; color: #edf5f5; font: inherit; }}
-    button {{ margin-top: 18px; width: 100%; border: 0; border-radius: 8px; padding: 13px 14px; background: #00b6c7; color: #061114; font-weight: 700; font: inherit; }}
-    .error {{ color: #ffb4a8; }}
-    .hint {{ font-size: 0.92rem; color: #7f9497; }}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Pair Row-Bot</h1>
-    {content_html}
-  </main>
-</body>
-</html>"""
-
-
-async def mobile_pair_page(request: Request) -> HTMLResponse:
-    code = request.query_params.get("code", "")
-    return HTMLResponse(_pairing_page(code=code), headers=PAIRING_PAGE_HEADERS)
+async def mobile_pair_page(request: Request) -> RedirectResponse:
+    """Redirect legacy links to the neutral, POST-to-claim connect flow."""
+    token = str(request.query_params.get("code") or "").strip()
+    if token.startswith("rbp_"):
+        token = f"rbi_{token[4:]}"
+    location = "/connect"
+    if token:
+        location = f"{location}?invitation={quote(token, safe='')}"
+        next_path = str(request.query_params.get("next") or "").strip()
+        if next_path:
+            location = f"{location}&next={quote(next_path, safe='')}"
+    return RedirectResponse(
+        location,
+        status_code=303,
+        headers=PAIRING_PAGE_HEADERS,
+    )
 
 
 async def mobile_manifest(request: Request) -> JSONResponse:  # noqa: ARG001
@@ -244,35 +214,45 @@ self.addEventListener('fetch', (event) => {
 
 
 async def mobile_pair_start(request: Request) -> JSONResponse:
-    if not is_true_local_request(request) and _current_device(request) is None:
-        return _json_error(403, "local_required", "Pairing codes can only be created from localhost or an existing paired device.")
+    context = _access_context(request)
+    if not _can_manage_mobile_access(request) or context is None:
+        return _json_error(
+            403,
+            "forbidden",
+            "Owner access is required to create an invitation.",
+        )
     try:
         payload = await request.json()
     except Exception:
         payload = {}
     origin = str(payload.get("intended_origin") or _request_origin(request)).rstrip("/")
     access_mode = str(payload.get("access_mode") or "localhost").strip()[:80]
-    ticket = create_pairing_ticket(
-        _mobile_store(request),
-        intended_origin=origin,
-        access_mode=access_mode,
-    )
+    try:
+        created = _access_service(request).create_invitation(
+            profile=AccessProfile.COMPANION,
+            intended_origin=origin,
+            session_lifetime=SessionLifetime.TRUSTED,
+            created_by=context.device_id or "local_owner",
+            access_route=access_mode,
+        )
+    except ValueError:
+        return _json_error(400, "invalid_origin", "Choose a canonical origin.")
     return JSONResponse(
         {
             "ok": True,
             "pairing": {
-                "id": ticket.id,
-                "code": ticket.code,
-                "expires_at": ticket.expires_at,
-                "pairing_url": ticket.pairing_url(origin),
-                "intended_origin": ticket.intended_origin,
-                "access_mode": ticket.access_mode,
+                "id": created.invitation.id,
+                "expires_at": created.invitation.expires_at.isoformat(),
+                "pairing_url": created.invitation_url(),
+                "intended_origin": created.invitation.intended_origin,
+                "access_mode": created.invitation.access_route,
             },
         }
     )
 
 
 async def mobile_pair_confirm(request: Request) -> Response:
+    """Never claim through the legacy endpoint; continue via `/connect`."""
     content_type = request.headers.get("content-type", "")
     is_json_request = content_type.startswith("application/json")
     if is_json_request:
@@ -287,112 +267,110 @@ async def mobile_pair_confirm(request: Request) -> Response:
         except Exception:
             payload = {}
     code = str(payload.get("code") or request.query_params.get("code") or "")
-    display_name = str(payload.get("display_name") or "").strip() or "Mobile device"
-    store = _mobile_store(request)
-    try:
-        confirmation = confirm_pairing(
-            store,
-            code=code,
-            display_name=display_name,
-            user_agent=request.headers.get("user-agent"),
-            paired_from=_client_ip(request),
-            access_mode=str(payload.get("access_mode") or "") or None,
-        )
-    except PairingError as exc:
-        message = _pairing_error_message(exc.reason)
-        store.log_event(
-            "pairing_failed",
-            ip=_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
-            detail={"reason": exc.reason},
-        )
-        if not is_json_request:
-            return HTMLResponse(
-                _pairing_page(code=code, error=message, show_form=False),
-                status_code=400,
-                headers=PAIRING_PAGE_HEADERS,
-            )
-        return _json_error(400, exc.reason, message)
-
-    store.log_event(
-        "paired",
-        device_id=confirmation.device.id,
-        ip=_client_ip(request),
-        user_agent=request.headers.get("user-agent"),
-        detail={"access_mode": confirmation.device.access_mode},
-    )
+    if code.startswith("rbp_"):
+        code = f"rbi_{code[4:]}"
+    location = f"/connect?invitation={quote(code, safe='')}" if code else "/connect"
     if is_json_request:
-        response = JSONResponse(
+        return JSONResponse(
             {
-                "ok": True,
-                "authenticated": True,
-                "device": _safe_device(confirmation.device),
-            }
+                "ok": False,
+                "error": "connect_flow_required",
+                "connect_url": location,
+            },
+            status_code=409,
+            headers=PAIRING_PAGE_HEADERS,
         )
-    else:
-        response = RedirectResponse("/?mobile=1", status_code=303)
-    set_mobile_session_cookie(response, confirmation.token, scheme=request.url.scheme)
-    return response
+    return RedirectResponse(location, status_code=303, headers=PAIRING_PAGE_HEADERS)
 
 
 async def mobile_session(request: Request) -> JSONResponse:
+    context = _access_context(request)
     device = _current_device(request)
-    if device is None:
+    if context is None or not context.authenticated:
         return JSONResponse({"ok": True, "authenticated": False, "device": None})
-    _mobile_store(request).log_event(
-        "session_validated",
-        device_id=device.id,
-        ip=_client_ip(request),
-        user_agent=request.headers.get("user-agent"),
+    return JSONResponse(
+        {
+            "ok": True,
+            "authenticated": True,
+            "profile": context.profile,
+            "device": _safe_device(device) if device is not None else None,
+        }
     )
-    return JSONResponse({"ok": True, "authenticated": True, "device": _safe_device(device)})
 
 
 async def mobile_devices(request: Request) -> JSONResponse:
     if not _can_manage_mobile_access(request):
-        return _json_error(403, "forbidden", "Mobile device management requires localhost or a paired settings session.")
-    devices = [_safe_device(device) for device in _mobile_store(request).list_devices(include_revoked=True)]
+        return _json_error(
+            403,
+            "forbidden",
+            "Mobile device management requires localhost or a paired settings session.",
+        )
+    devices = [
+        device.to_public_dict()
+        for device in _access_service(request).list_devices(include_revoked=True)
+    ]
     return JSONResponse({"ok": True, "devices": devices})
 
 
 async def mobile_revoke_device(request: Request) -> JSONResponse:
     if not _can_manage_mobile_access(request):
-        return _json_error(403, "forbidden", "Mobile device management requires localhost or a paired settings session.")
+        return _json_error(
+            403,
+            "forbidden",
+            "Mobile device management requires localhost or a paired settings session.",
+        )
     device_id = request.path_params.get("device_id", "")
-    store = _mobile_store(request)
-    revoked = store.revoke_device(device_id)
-    store.log_event(
-        "revoked",
-        device_id=device_id,
-        ip=_client_ip(request),
-        user_agent=request.headers.get("user-agent"),
-    )
+    service = _access_service(request)
+    revoked = service.revoke_device(device_id)
     response = JSONResponse({"ok": bool(revoked), "revoked": bool(revoked)})
-    current = _current_device(request)
-    if current and current.id == device_id:
-        clear_mobile_session_cookies(response)
+    context = _access_context(request)
+    if context and context.device_id == device_id:
+        cookies = getattr(
+            request.app.state,
+            "row_bot_access_cookie_manager",
+            None,
+        )
+        if cookies is not None:
+            cookies.clear(response)
     return response
 
 
 async def mobile_access_events(request: Request) -> JSONResponse:
     if not _can_manage_mobile_access(request):
-        return _json_error(403, "forbidden", "Mobile access events require localhost or a paired settings session.")
-    events = [event.to_public_dict() for event in _mobile_store(request).recent_events(limit=50)]
+        return _json_error(
+            403,
+            "forbidden",
+            "Mobile access events require localhost or a paired settings session.",
+        )
+    events = [
+        event.to_public_dict()
+        for event in _access_service(request).store.recent_events(limit=50)
+    ]
     return JSONResponse({"ok": True, "events": events})
 
 
 def build_mobile_router() -> APIRouter:
     router = APIRouter()
     router.add_api_route("/mobile/pair", mobile_pair_page, methods=["GET"])
-    router.add_api_route("/mobile/manifest.webmanifest", mobile_manifest, methods=["GET"])
+    router.add_api_route(
+        "/mobile/manifest.webmanifest", mobile_manifest, methods=["GET"]
+    )
     router.add_api_route("/mobile/offline", mobile_offline, methods=["GET"])
-    router.add_api_route("/mobile/service-worker.js", mobile_service_worker, methods=["GET"])
+    router.add_api_route(
+        "/mobile/service-worker.js", mobile_service_worker, methods=["GET"]
+    )
     router.add_api_route("/api/mobile/pair/start", mobile_pair_start, methods=["POST"])
-    router.add_api_route("/api/mobile/pair/confirm", mobile_pair_confirm, methods=["POST"])
+    router.add_api_route(
+        "/api/mobile/pair/confirm", mobile_pair_confirm, methods=["POST"]
+    )
     router.add_api_route("/api/mobile/session", mobile_session, methods=["GET"])
     router.add_api_route("/api/mobile/devices", mobile_devices, methods=["GET"])
-    router.add_api_route("/api/mobile/devices/{device_id}/revoke", mobile_revoke_device, methods=["POST"])
-    router.add_api_route("/api/mobile/access-events", mobile_access_events, methods=["GET"])
+    router.add_api_route(
+        "/api/mobile/devices/{device_id}/revoke", mobile_revoke_device, methods=["POST"]
+    )
+    router.add_api_route(
+        "/api/mobile/access-events", mobile_access_events, methods=["GET"]
+    )
     return router
 
 

@@ -109,8 +109,44 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
         "Startup host, app shell, and smoke harness changes need import, readiness, UI performance, and mobile exposure regressions.",
     ),
     SourceTestRule(
+        "remote_access_server",
+        (
+            "src/row_bot/access/**",
+            "src/row_bot/ui/access_context.py",
+            "src/row_bot/ui/remote_access_settings.py",
+            "src/row_bot/ui/settings.py",
+            "src/row_bot/voice/browser_local.py",
+            "src/row_bot/voice/browser_client.py",
+            "src/row_bot/voice/coordinator.py",
+            "src/row_bot/voice/output_controller.py",
+            "src/row_bot/tts.py",
+            "src/row_bot/secret_store.py",
+            "src/row_bot/providers/auth_store.py",
+            "src/row_bot/channels/auth_store.py",
+            "deploy/**",
+            "dockerignore",
+            "scripts/smoke_remote_access.py",
+        ),
+        (
+            "tests/subsystem/access",
+            "tests/integration/access",
+            "tests/subsystem/mobile",
+            "tests/integration/mobile",
+            "tests/contracts/installers/test_remote_access_deployment_contract.py",
+            "tests/test_browser_local_voice.py",
+            "tests/test_secret_store.py",
+            "tests/test_provider_auth_store.py",
+            "tests/test_channel_auth_store.py",
+        ),
+        "Remote access, server policy, deployment examples, and smoke changes need access security, companion compatibility, and deployment contracts.",
+    ),
+    SourceTestRule(
         "mobile_companion",
-        ("src/row_bot/mobile/**", "src/row_bot/ui/mobile*.py", "src/row_bot/ui/settings.py"),
+        (
+            "src/row_bot/mobile/**",
+            "src/row_bot/ui/mobile*.py",
+            "src/row_bot/ui/settings.py",
+        ),
         (
             "tests/subsystem/mobile",
             "tests/integration/mobile",
@@ -435,8 +471,12 @@ class ChangeSelection:
     reasons: tuple[str, ...]
 
 
-def select_tests_for_changes(changed_files: list[str] | tuple[str, ...]) -> ChangeSelection:
-    normalized_files = tuple(normalize_repo_path(path) for path in changed_files if str(path).strip())
+def select_tests_for_changes(
+    changed_files: list[str] | tuple[str, ...],
+) -> ChangeSelection:
+    normalized_files = tuple(
+        normalize_repo_path(path) for path in changed_files if str(path).strip()
+    )
     selected: list[str] = []
     matched_rules: list[str] = []
     reasons: list[str] = []
