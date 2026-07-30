@@ -269,6 +269,19 @@ def test_sitemap_source_includes_marketing_pages_without_shadow_copies() -> None
     assert not (ROOT / "docs-site" / "static" / "contact.html").exists()
 
 
+def test_docs_ci_build_regenerates_llm_exports_before_building() -> None:
+    package = json.loads(
+        (ROOT / "docs-site" / "package.json").read_text(encoding="utf-8")
+    )
+    scripts = package["scripts"]
+
+    assert scripts["generate:llms"] == (
+        "python ../scripts/docs/generate_llms_txt.py "
+        "--docs-root docs-site/docs --out-dir docs-site/static"
+    )
+    assert scripts["build:ci"].startswith("npm run generate:llms && ")
+
+
 def test_authoritative_surface_map_has_one_outcome_per_surface() -> None:
     data = yaml.safe_load(
         (ROOT / "docs-content" / "metadata" / "ui_surfaces.yml").read_text(encoding="utf-8")

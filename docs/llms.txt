@@ -39,7 +39,7 @@ Public documentation index for Row-Bot.
 - [Monitor](/docs/monitor/)
   Route: /docs/monitor/. Inspect Row-Bot logs, journals, workflow state, channels, and background activity.
 - [Android And Native Desktop](/docs/mobile-native/)
-  Route: /docs/mobile-native/. Pair an Android companion, use mobile Chat and Activity, and understand native-only desktop behaviour.
+  Route: /docs/mobile-native/. Use the full Row-Bot owner product from Android in a compact layout and understand native-only desktop behaviour.
 - [How Row-Bot Works](/docs/concepts/)
   Route: /docs/concepts/. Understand Row-Bot's request, knowledge, agent, workflow, and extension models before configuring them.
 - [How A Request Runs](/docs/concepts/request-lifecycle)
@@ -65,7 +65,7 @@ Public documentation index for Row-Bot.
 - [Settings: Voice](/docs/settings/voice)
   Route: /docs/settings/voice. Configure dictation, realtime talk, read-aloud, voice models, devices, and diagnostics.
 - [Settings: System](/docs/settings/system)
-  Route: /docs/settings/system. Configure local access, workspace paths, browser and Computer Use behavior, tunnels, logs, and updates.
+  Route: /docs/settings/system. Configure Remote Access, workspace paths, browser and Computer Use behavior, tunnels, logs, and updates.
 - [Settings: Tracker](/docs/settings/tracker)
   Route: /docs/settings/tracker. Configure recurring activity, habit, symptom, and health tracking surfaces.
 - [Settings: Documents](/docs/settings/documents)
@@ -102,6 +102,8 @@ Public documentation index for Row-Bot.
   Route: /docs/voice-and-buddy/. Configure Dictate, Talk, local voice, realtime voice, read-aloud, devices, and Buddy.
 - [Operations, Data, And Recovery](/docs/operations/)
   Route: /docs/operations/. Back up, restore, update, repair, and uninstall Row-Bot without losing track of local data and credentials.
+- [Remote Access And Server Mode](/docs/operations/remote-access)
+  Route: /docs/operations/remote-access. Use Row-Bot as one owner from trusted devices through Tailscale, LAN, SSH, Docker, or an HTTPS reverse proxy.
 - [Privacy And Safety](/docs/privacy-safety/)
   Route: /docs/privacy-safety/. Understand local data, provider calls, credentials, approvals, channels, MCP, plugins, and sharing.
 - [Troubleshooting](/docs/troubleshooting/)
@@ -133,7 +135,7 @@ Public documentation index for Row-Bot.
 - [Environment And Config](/docs/reference/generated/environment-and-config)
   Route: /docs/reference/generated/environment-and-config. Generated reference for important environment variables.
 - [CLI](/docs/reference/generated/cli)
-  Route: /docs/reference/generated/cli. Generated reference for launcher and plugin command-line options.
+  Route: /docs/reference/generated/cli. Generated reference for launcher, access, server, and plugin command-line options.
 - [Screenshots](/docs/reference/generated/screenshots)
   Route: /docs/reference/generated/screenshots. Generated reference for automated screenshot coverage.
 - [Agent Profiles](/docs/app-shell/agent-profiles)
