@@ -82,6 +82,11 @@ def _snapshot_element_cap() -> int:
 _VIEWPORT = {"width": 1280, "height": 900}
 
 
+def _browser_runs_headless() -> bool:
+    raw = str(os.environ.get("ROW_BOT_BROWSER_HEADLESS") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # BROWSER CHANNEL DETECTION
 # ═════════════════════════════════════════════════════════════════════════════
@@ -664,7 +669,7 @@ class BrowserSession:
 
             launch_kwargs: dict[str, Any] = {
                 "user_data_dir": str(_PROFILE_DIR),
-                "headless": False,
+                "headless": _browser_runs_headless(),
                 "viewport": _VIEWPORT,
                 "args": [
                     "--disable-blink-features=AutomationControlled",

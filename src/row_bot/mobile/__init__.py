@@ -1,4 +1,4 @@
-"""Browser-first mobile companion support for Row-Bot."""
+"""Browser-first compact owner support for Row-Bot."""
 
 from __future__ import annotations
 

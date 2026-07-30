@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from row_bot.tools.browser_tool import BrowserSession
+from row_bot.tools.browser_tool import BrowserSession, _browser_runs_headless
 
 
 def test_browser_startup_has_no_hidden_install_or_csp_bypass() -> None:
@@ -10,3 +10,13 @@ def test_browser_startup_has_no_hidden_install_or_csp_bypass() -> None:
     assert "playwright\", \"install" not in source
     assert "bypass_csp" not in source
     assert "explicit installation is required" in source
+
+
+def test_server_browser_headless_flag_is_explicit(monkeypatch) -> None:
+    monkeypatch.delenv("ROW_BOT_BROWSER_HEADLESS", raising=False)
+    assert _browser_runs_headless() is False
+    for value in ("1", "true", "YES", "on"):
+        monkeypatch.setenv("ROW_BOT_BROWSER_HEADLESS", value)
+        assert _browser_runs_headless() is True
+    monkeypatch.setenv("ROW_BOT_BROWSER_HEADLESS", "0")
+    assert _browser_runs_headless() is False

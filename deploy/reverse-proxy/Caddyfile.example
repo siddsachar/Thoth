@@ -1,0 +1,42 @@
+# Dedicated-origin HTTPS example for a host-installed Caddy and Row-Bot.
+#
+# Configure the Row-Bot service itself with these exact browser/proxy values:
+#   ROW_BOT_PUBLIC_URL=https://row-bot.example.com
+#   ROW_BOT_ALLOWED_HOSTS=row-bot.example.com
+#   ROW_BOT_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
+#
+# The trusted proxy values above are correct only when Caddy reaches Row-Bot
+# over host loopback. For another topology, use the exact connecting proxy
+# address/CIDR. Never trust arbitrary clients or a broad Docker range.
+
+row-bot.example.com {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+
+	reverse_proxy 127.0.0.1:8080 {
+		# Caddy handles HTTP Upgrade for NiceGUI WebSockets automatically.
+		# Remove caller-supplied standardized proxy metadata, then send one
+		# canonical X-Forwarded set from this trusted edge.
+		header_up -Forwarded
+		header_up -X-Real-IP
+		header_up Host {host}
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Port {server_port}
+
+		# Flush streaming responses promptly. Delay closure of upgraded
+		# connections during a config reload to reduce reconnect storms.
+		flush_interval -1
+		stream_close_delay 5m
+
+		health_uri /readyz
+		health_interval 30s
+		health_timeout 3s
+	}
+}

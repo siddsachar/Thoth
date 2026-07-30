@@ -426,7 +426,7 @@ def _build_mobile_thread_composer(
             if not _mobile_generation_active(state):
                 p.stop_btn.disable()
 
-            async def _submit_async() -> None:
+            async def _submit_async(*, voice_mode: bool = False) -> None:
                 text = str(text_input.value or "").strip()
                 if not text and not p.pending_files:
                     return
@@ -441,13 +441,70 @@ def _build_mobile_thread_composer(
                         logger.debug("Mobile composer extras failed to clear draft", exc_info=True)
                 state.active_designer_project = None
                 state.active_developer_workspace_id = None
-                result = send_message(text)
+                result = (
+                    send_message(text, voice_mode=True)
+                    if voice_mode
+                    else send_message(text)
+                )
                 if inspect.isawaitable(result):
                     await result
                 set_mobile_chat_mode(state, "thread")
 
             def _submit() -> None:
                 asyncio.create_task(_submit_async())
+
+            async def _on_browser_voice_transcript(e) -> None:
+                payload = e.args if isinstance(e.args, dict) else {}
+                text = str(payload.get("text") or "").strip()
+                if not text:
+                    return
+                text_input.value = text
+                text_input.update()
+                await _submit_async(voice_mode=True)
+
+            def _on_browser_voice_error(e) -> None:
+                payload = e.args if isinstance(e.args, dict) else {}
+                code = str(payload.get("code") or "")
+                message = (
+                    "Browser microphone access requires HTTPS."
+                    if code == "secure_context_required"
+                    else "Browser voice is unavailable. Check microphone permission and local model status."
+                )
+                ui.notify(message, type="warning", close_button=True)
+                state.voice_enabled = False
+                state.voice_coordinator.stop()
+
+            browser_voice_sink = ui.element("div").style("display:none")
+            browser_voice_sink.on(
+                "row-bot-browser-voice-transcript",
+                _on_browser_voice_transcript,
+                js_handler="(e) => emit(e.detail)",
+            )
+            browser_voice_sink.on(
+                "row-bot-browser-voice-error",
+                _on_browser_voice_error,
+                js_handler="(e) => emit(e.detail)",
+            )
+            try:
+                p.realtime_client = ui.context.client
+            except Exception:
+                p.realtime_client = None
+
+            def _start_browser_voice() -> None:
+                from row_bot.ui.streaming import run_realtime_client_js
+                from row_bot.voice.browser_client import start_browser_voice_capture_js
+
+                state.voice_enabled = True
+                state.voice_input_mode = "talk"
+                state.voice_coordinator.start_browser("talk")
+                run_realtime_client_js(
+                    p,
+                    start_browser_voice_capture_js(
+                        sink_id=browser_voice_sink.id,
+                        mode="talk",
+                    ),
+                    context="start_mobile_browser_talk",
+                )
 
             text_input.on(
                 "keydown.enter",
@@ -459,6 +516,10 @@ def _build_mobile_thread_composer(
                     emit();
                 }""",
             )
+            ui.button(
+                icon="keyboard_voice",
+                on_click=_start_browser_voice,
+            ).props("flat dense round").tooltip("Talk using this browser")
             ui.button(icon="send", on_click=_submit).props("unelevated round color=primary").tooltip("Send")
 
 

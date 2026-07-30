@@ -1847,7 +1847,7 @@ async def start_bot() -> bool:
     app_token = _get_app_token()
 
     if not bot_token or not app_token:
-        log.warning("Slack bot token or app token not configured")
+        log.info("Slack bot token or app token not configured")
         return False
 
     try:

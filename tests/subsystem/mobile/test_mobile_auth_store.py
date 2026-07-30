@@ -90,7 +90,7 @@ def test_pairing_code_is_single_use(tmp_path) -> None:
     assert len(store.list_devices()) == 1
 
 
-def test_bad_pairing_code_locks_after_failed_attempts(tmp_path) -> None:
+def test_bad_pairing_code_locks_only_the_failing_client(tmp_path) -> None:
     store = _store(tmp_path)
     ticket = auth.create_pairing_ticket(store)
     code_id, secret = auth.parse_pairing_code(ticket.code) or ("", "")
@@ -108,7 +108,11 @@ def test_bad_pairing_code_locks_after_failed_attempts(tmp_path) -> None:
     locked = store.get_pairing_code(code_id)
     assert locked is not None
     assert locked.failed_attempts == auth.PAIRING_FAILURE_LIMIT
-    assert locked.locked_until is not None
+    assert locked.locked_until is None
+    assert store.access_store.invitation_failure_locked(
+        code_id,
+        effective_client=None,
+    )
 
     try:
         auth.confirm_pairing(store, code=ticket.code, display_name="Real phone")
@@ -116,6 +120,14 @@ def test_bad_pairing_code_locks_after_failed_attempts(tmp_path) -> None:
         assert exc.reason == "locked"
     else:
         raise AssertionError("locked pairing code unexpectedly succeeded")
+
+    confirmation = auth.confirm_pairing(
+        store,
+        code=ticket.code,
+        display_name="Real phone",
+        paired_from="192.0.2.20",
+    )
+    assert confirmation.device.display_name == "Real phone"
 
 
 def test_revoked_device_stops_validating(tmp_path) -> None:

@@ -27,8 +27,8 @@ tabs:
     screenshot_id: settings-skills
     source: src/row_bot/ui/settings.py
   System:
-    description: Configure workspace paths, local access, shell/browser automation,
-      tunnels, logging, and updates.
+    description: Configure Remote Access, workspace paths, shell/browser automation,
+      local networking, logging, and updates.
     docs_route: /docs/settings/system
     screenshot_id: settings-system
     source: src/row_bot/ui/settings.py

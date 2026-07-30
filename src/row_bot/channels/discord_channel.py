@@ -1030,7 +1030,7 @@ async def start_bot() -> bool:
 
     bot_token = _get_bot_token()
     if not bot_token:
-        log.warning("Discord bot token not configured")
+        log.info("Discord bot token not configured")
         return False
 
     try:

@@ -11,6 +11,8 @@ import hashlib
 import logging
 import os
 import pathlib
+import re
+import stat
 from typing import Any
 
 from row_bot.brand import APP_DATA_DIR_ENV, KEYRING_SERVICE_PREFIX, default_data_dir
@@ -27,6 +29,10 @@ def service_name_for(data_dir: pathlib.Path | str) -> str:
 
 
 SERVICE_NAME = service_name_for(DATA_DIR)
+SERVER_SECRETS_DIR_ENV = "ROW_BOT_SECRETS_DIR"
+DEFAULT_SERVER_SECRETS_DIR = pathlib.Path("/run/secrets")
+MAX_SERVER_SECRET_BYTES = 64 * 1024
+_SERVER_SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 
 _backend_override: Any | None = None
 
@@ -37,6 +43,81 @@ def _docs_capture_active() -> bool:
 
 class SecretStoreError(RuntimeError):
     """Raised when the platform secret store cannot complete an operation."""
+
+
+def server_secrets_dir() -> pathlib.Path | None:
+    """Return the explicitly configured server secret directory, if active."""
+    configured = str(os.environ.get(SERVER_SECRETS_DIR_ENV) or "").strip()
+    if configured:
+        return pathlib.Path(configured)
+    deployment = str(os.environ.get("ROW_BOT_DEPLOYMENT_MODE") or "").lower()
+    if deployment == "server" and DEFAULT_SERVER_SECRETS_DIR.exists():
+        return DEFAULT_SERVER_SECRETS_DIR
+    return None
+
+
+def read_server_secret(
+    name: str,
+    *,
+    allowed_names: set[str] | frozenset[str],
+) -> str | None:
+    """Read an allowlisted regular secret file without copying it to data."""
+    secret_name = str(name or "").strip()
+    directory = server_secrets_dir()
+    if directory is None:
+        return None
+    allowed = frozenset(str(value) for value in allowed_names)
+    if not _SERVER_SECRET_NAME.fullmatch(secret_name) or secret_name not in allowed:
+        raise SecretStoreError("server secret name is not allowlisted")
+    try:
+        base = directory.resolve(strict=True)
+    except FileNotFoundError:
+        return None
+    candidate = base / secret_name
+    try:
+        if candidate.is_symlink():
+            raise SecretStoreError("server secret file must not be a symlink")
+        info = candidate.stat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise SecretStoreError("server secret file cannot be inspected") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise SecretStoreError("server secret file must be regular")
+    if info.st_size > MAX_SERVER_SECRET_BYTES:
+        raise SecretStoreError("server secret file is too large")
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(base)
+        raw = resolved.read_bytes()
+    except (OSError, ValueError) as exc:
+        raise SecretStoreError("server secret file is outside the configured directory") from exc
+    if len(raw) > MAX_SERVER_SECRET_BYTES:
+        raise SecretStoreError("server secret file is too large")
+    try:
+        value = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SecretStoreError("server secret file must be UTF-8") from exc
+    if value.endswith("\r\n"):
+        value = value[:-2]
+    elif value.endswith("\n"):
+        value = value[:-1]
+    return value or None
+
+
+def server_secret_status(
+    name: str,
+    *,
+    allowed_names: set[str] | frozenset[str],
+) -> dict[str, object]:
+    """Return value-free externally-managed secret status."""
+    value = read_server_secret(name, allowed_names=allowed_names)
+    return {
+        "configured": bool(value),
+        "source": "secret_file" if value else "",
+        "externally_managed": bool(value),
+        "fingerprint": fingerprint(value or ""),
+    }
 
 
 def _is_unavailable_error(exc: BaseException) -> bool:

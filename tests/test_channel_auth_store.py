@@ -251,7 +251,10 @@ def test_migrate_legacy_channel_secrets_never_persists_environment(
     ) not in backend.values
 
 
-def test_migrate_legacy_channel_secrets_is_failure_safe(data_dir, monkeypatch):
+def test_migrate_legacy_channel_secrets_is_quiet_without_legacy_evidence(
+    data_dir,
+    monkeypatch,
+):
     secret_store, _api_keys, channel_auth, _backend = _reload_auth_modules(
         monkeypatch, data_dir,
     )
@@ -265,7 +268,7 @@ def test_migrate_legacy_channel_secrets_is_failure_safe(data_dir, monkeypatch):
 
     stats = channel_auth.migrate_legacy_channel_secrets([channel])
 
-    assert stats == {"migrated": 0, "skipped": 0, "failed": 1}
+    assert stats == {"migrated": 0, "skipped": 1, "failed": 0}
 
 
 def test_channel_secret_delete_does_not_delete_legacy_key(data_dir, monkeypatch):

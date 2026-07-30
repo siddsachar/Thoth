@@ -377,6 +377,8 @@ def _custom_endpoint_edit_payload(
 def _source_label(source: str) -> str:
     labels = {
         "environment": "Using environment variable",
+        "secret_file": "Using read-only server secret",
+        "conflict": "Server secret configuration conflict",
         "keyring": "Saved in keyring",
         "session": "Using session key",
         "legacy_plaintext": "Using legacy plaintext key",
@@ -405,6 +407,7 @@ def _open_provider_api_key_dialog(card: dict, *, on_change: Callable[[], object]
     state_label = "Connected" if card.get("configured") or current_status.get("configured") else "Not connected"
     source = str(current_status.get("source") or "")
     fingerprint = str(current_status.get("fingerprint") or "")
+    externally_managed = bool(current_status.get("externally_managed"))
 
     def _queue_reload() -> None:
         if on_change:
@@ -440,6 +443,11 @@ def _open_provider_api_key_dialog(card: dict, *, on_change: Callable[[], object]
                 password=True,
                 password_toggle_button=True,
             ).props("outlined dense").classes("w-full")
+            if externally_managed:
+                key_input.disable()
+                ui.label(
+                    "This credential is mounted by the server operator and is read-only here."
+                ).classes("text-grey-6 text-xs")
             status_label = ui.label("").classes("text-grey-6 text-sm")
 
             async def _save_key() -> None:
@@ -517,10 +525,12 @@ def _open_provider_api_key_dialog(card: dict, *, on_change: Callable[[], object]
                 )
 
             with ui.row().classes("w-full items-center justify-end gap-2"):
-                ui.button("Clear key", icon="delete", on_click=_clear_key).props("flat dense color=negative")
-                ui.button("Cancel", icon="close", on_click=dialog.close).props("flat dense")
-                action = "Replace key" if current_status.get("configured") else "Save key"
-                ui.button(action, icon="save", on_click=_save_key).props("flat dense color=primary")
+                if not externally_managed:
+                    ui.button("Clear key", icon="delete", on_click=_clear_key).props("flat dense color=negative")
+                ui.button("Close" if externally_managed else "Cancel", icon="close", on_click=dialog.close).props("flat dense")
+                if not externally_managed:
+                    action = "Replace key" if current_status.get("configured") else "Save key"
+                    ui.button(action, icon="save", on_click=_save_key).props("flat dense color=primary")
     dialog.open()
 
 

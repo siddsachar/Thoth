@@ -44,10 +44,19 @@ def get_threads_db_path(*, create_parent: bool = True) -> Path:
     return data_dir / "threads.db"
 
 
-def get_mobile_db_path(*, create_parent: bool = True) -> Path:
-    """Return the mobile companion auth database path."""
+def get_access_db_path(*, create_parent: bool = True) -> Path:
+    """Return the access database path.
+
+    The physical filename remains ``mobile.db`` for a safe in-place migration
+    of existing companion devices.
+    """
     data_dir = get_row_bot_data_dir(create=create_parent)
     return data_dir / "mobile.db"
+
+
+def get_mobile_db_path(*, create_parent: bool = True) -> Path:
+    """Compatibility alias for :func:`get_access_db_path`."""
+    return get_access_db_path(create_parent=create_parent)
 
 
 def describe_data_paths() -> dict[str, str]:
@@ -58,6 +67,7 @@ def describe_data_paths() -> dict[str, str]:
         "tasks_db": str(data_dir / "tasks.db"),
         "memory_db": str(data_dir / "memory.db"),
         "threads_db": str(data_dir / "threads.db"),
+        "access_db": str(data_dir / "mobile.db"),
         "mobile_db": str(data_dir / "mobile.db"),
         "logs_dir": str(data_dir / "logs"),
     }

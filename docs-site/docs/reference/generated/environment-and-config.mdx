@@ -8,7 +8,7 @@ import GeneratedNotice from '@site/src/components/GeneratedNotice';
 # Environment And Config
 
 <!-- generated-from: src/row_bot/brand.py -->
-<!-- inventory-hash: 0b5ce555d5b6e716 -->
+<!-- inventory-hash: 3bf576cd02047b6d -->
 
 <GeneratedNotice source="src/row_bot/brand.py" />
 
@@ -16,12 +16,22 @@ import GeneratedNotice from '@site/src/components/GeneratedNotice';
 
 | Variable | Purpose | Source |
 | --- | --- | --- |
-| ROW_BOT_DATA_DIR | Override the local Row-Bot data directory for this process. | `src/row_bot/app.py, src/row_bot/brand.py, src/row_bot/docs_capture.py, src/row_bot/launcher.py, src/row_bot/tools/registry.py` |
+| ROW_BOT_DATA_DIR | Override the local Row-Bot data directory for this process. | `src/row_bot/access/cli.py, src/row_bot/access/diagnostics.py, src/row_bot/app.py, src/row_bot/brand.py, src/row_bot/docs_capture.py, src/row_bot/launcher.py, src/row_bot/tools/registry.py` |
 | ROW_BOT_WORKSPACE | Override the default workspace used by file-oriented tools. | `src/row_bot/brand.py, src/row_bot/designer/export.py` |
-| ROW_BOT_HOST | Choose the interface bound by the local application server. | `src/row_bot/app_port.py, src/row_bot/brand.py, src/row_bot/launcher.py, src/row_bot/ui/mobile_access_settings.py` |
-| ROW_BOT_PORT | Choose the preferred local application port. | `src/row_bot/app.py, src/row_bot/app_port.py, src/row_bot/brand.py, src/row_bot/launcher.py, src/row_bot/updater.py` |
+| ROW_BOT_HOST | Choose the interface bound by the local application server. | `src/row_bot/access/access_routes.py, src/row_bot/access/cli.py, src/row_bot/access/config.py, src/row_bot/access/diagnostics.py, src/row_bot/app_port.py, src/row_bot/brand.py, src/row_bot/launcher.py, src/row_bot/ui/mobile_access_settings.py` |
+| ROW_BOT_PORT | Choose the preferred local application port. | `src/row_bot/access/cli.py, src/row_bot/access/diagnostics.py, src/row_bot/app.py, src/row_bot/app_port.py, src/row_bot/brand.py, src/row_bot/launcher.py, src/row_bot/updater.py` |
+| ROW_BOT_DEPLOYMENT_MODE | Choose desktop or authenticated server request policy. | `src/row_bot/access/cli.py, src/row_bot/access/config.py, src/row_bot/access/diagnostics.py, src/row_bot/app.py, src/row_bot/launcher.py, src/row_bot/secret_store.py` |
+| ROW_BOT_PUBLIC_URL | Set the canonical browser-facing origin for server mode. | `src/row_bot/access/cli.py, src/row_bot/access/config.py, src/row_bot/access/diagnostics.py` |
+| ROW_BOT_PUBLIC_ORIGINS | Set one or more allowed browser-facing origins. | `src/row_bot/access/config.py` |
+| ROW_BOT_ALLOWED_HOSTS | Allow exact HTTP Host authorities accepted by the access gate. | `src/row_bot/access/cli.py, src/row_bot/access/config.py, src/row_bot/access/diagnostics.py, src/row_bot/app.py` |
+| ROW_BOT_TRUSTED_PROXY_CIDRS | Trust forwarding headers only from exact connecting proxy networks. | `src/row_bot/access/cli.py, src/row_bot/access/config.py, src/row_bot/access/diagnostics.py` |
+| ROW_BOT_UNTRUSTED_FORWARDED_ACTION | Reject or ignore forwarding headers received from an untrusted peer. | `src/row_bot/access/config.py` |
+| ROW_BOT_WORKERS | Set the server worker count; Row-Bot requires exactly one. | `src/row_bot/access/cli.py, src/row_bot/access/diagnostics.py` |
+| ROW_BOT_EPHEMERAL_DATA | Tell access diagnostics that server data is intentionally ephemeral. | `src/row_bot/access/diagnostics.py` |
+| ROW_BOT_SECRETS_DIR | Read allowlisted externally managed secrets from individual files. | `src/row_bot/secret_store.py` |
+| ROW_BOT_BROWSER_HEADLESS | Run bundled browser automation without an interactive display. | `src/row_bot/tools/browser_tool.py` |
 | ROW_BOT_NATIVE | Select native-window behaviour for advanced launch scenarios. | `src/row_bot/brand.py, src/row_bot/launcher.py` |
-| ROW_BOT_AUTO_START_OLLAMA | Allow or suppress launcher attempts to start Ollama automatically. | `src/row_bot/brand.py` |
+| ROW_BOT_AUTO_START_OLLAMA | Allow or suppress launcher attempts to start Ollama automatically. | `src/row_bot/access/cli.py, src/row_bot/brand.py` |
 | ROW_BOT_STARTUP_TIMEOUT | Set the launcher startup timeout in seconds. | `src/row_bot/brand.py` |
 | ROW_BOT_WEBVIEW_STORAGE_PATH | Override native webview storage for advanced troubleshooting. | `src/row_bot/brand.py, src/row_bot/launcher.py` |
 | ROW_BOT_INSTALL_ROOT | Identify the installed application root for updater and repair flows. | `src/row_bot/startup_diagnostics.py, src/row_bot/updater.py` |

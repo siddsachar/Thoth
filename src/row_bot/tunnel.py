@@ -25,6 +25,7 @@ import logging
 import os
 import threading
 from abc import ABC, abstractmethod
+from typing import Protocol
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,14 @@ def ngrok_configuration_status() -> tuple[str, str]:
 class TunnelError(Exception):
     """Raised when the tunnel provider cannot start or encounters a
     fatal configuration / connectivity problem."""
+
+
+class ManagedOriginRegistrar(Protocol):
+    """Runtime access-policy boundary used by managed tunnel lifecycles."""
+
+    def register_managed_origin(self, url: object) -> str: ...
+
+    def unregister_managed_origin(self, url: object) -> bool: ...
 
 
 # ── Provider ABC ─────────────────────────────────────────────────────
@@ -191,15 +200,38 @@ class TunnelManager:
     Channels interact with this class — never with providers directly.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        managed_origin_registrar: ManagedOriginRegistrar | None = None,
+    ) -> None:
         self._provider: TunnelProvider | None = None
+        self._managed_origin_registrar = managed_origin_registrar
+        self._registered_origins: dict[int, str] = {}
         self._lock = threading.Lock()
 
     # ── Provider management ──────────────────────────────────────────
 
     def set_provider(self, provider: TunnelProvider) -> None:
         with self._lock:
+            if self._registered_origins:
+                raise TunnelError(
+                    "cannot replace the tunnel provider while managed tunnels are active"
+                )
             self._provider = provider
+
+    def set_managed_origin_registrar(
+        self,
+        registrar: ManagedOriginRegistrar,
+    ) -> None:
+        """Inject the process-local access policy before any tunnel can start."""
+
+        with self._lock:
+            if self._registered_origins:
+                raise TunnelError(
+                    "cannot replace the access policy while managed tunnels are active"
+                )
+            self._managed_origin_registrar = registrar
 
     def _ensure_provider(self) -> None:
         """Lazy-init: create the default provider if none set yet."""
@@ -225,25 +257,71 @@ class TunnelManager:
         """
         with self._lock:
             self._ensure_provider()
-            return self._provider.start(port, label)
+            registrar = self._managed_origin_registrar
+            if registrar is None:
+                raise TunnelError(
+                    "managed tunnel access policy is unavailable; restart Row-Bot"
+                )
+
+            existing_origin = self._registered_origins.get(port)
+            existing_url = self._provider.get_url(port)
+            if existing_origin is not None and existing_url is not None:
+                return existing_origin
+
+            started_new = existing_url is None
+            public_url = self._provider.start(port, label)
+            try:
+                origin = registrar.register_managed_origin(public_url)
+            except Exception as exc:
+                if started_new:
+                    try:
+                        self._provider.stop(port)
+                    except Exception:
+                        log.warning(
+                            "Unable to close tunnel after access-policy rejection "
+                            "on port %d",
+                            port,
+                            exc_info=True,
+                        )
+                raise TunnelError(
+                    "managed tunnel URL was rejected by the access policy"
+                ) from exc
+
+            previous = self._registered_origins.get(port)
+            self._registered_origins[port] = origin
+            if previous is not None and previous != origin:
+                registrar.unregister_managed_origin(previous)
+            return origin
 
     def stop_tunnel(self, port: int) -> None:
         """Close the tunnel for *port* (no-op if not open)."""
         with self._lock:
-            if self._provider:
-                self._provider.stop(port)
+            origin = self._registered_origins.pop(port, None)
+            try:
+                if self._provider:
+                    self._provider.stop(port)
+            finally:
+                if origin is not None and self._managed_origin_registrar is not None:
+                    self._managed_origin_registrar.unregister_managed_origin(origin)
 
     def stop_all(self) -> None:
         """Close **all** active tunnels and kill the provider process."""
         with self._lock:
-            if self._provider:
-                self._provider.stop_all()
+            origins = tuple(self._registered_origins.values())
+            self._registered_origins.clear()
+            try:
+                if self._provider:
+                    self._provider.stop_all()
+            finally:
+                registrar = self._managed_origin_registrar
+                if registrar is not None:
+                    for origin in origins:
+                        registrar.unregister_managed_origin(origin)
 
     def get_url(self, port: int) -> str | None:
         """Return the current public URL for *port*, or ``None``."""
         with self._lock:
-            self._ensure_provider()
-            return self._provider.get_url(port)
+            return self._registered_origins.get(port)
 
     def is_available(self) -> bool:
         """``True`` if the provider is configured and ready to create
@@ -255,8 +333,7 @@ class TunnelManager:
     def active_tunnels(self) -> dict[int, str]:
         """Map of port → public URL for every open tunnel."""
         with self._lock:
-            self._ensure_provider()
-            return self._provider.active_tunnels()
+            return dict(self._registered_origins)
 
     def status(self) -> tuple[str, str]:
         """Return ``(status_code, detail)`` for health-check display.
@@ -269,7 +346,7 @@ class TunnelManager:
                 config_status, config_detail = ngrok_configuration_status()
                 if config_status != "ok":
                     return (config_status, config_detail)
-                active = self._provider.active_tunnels()
+                active = dict(self._registered_origins)
                 if active:
                     urls = ", ".join(f"{p}→{u}" for p, u in active.items())
                     return ("ok", f"{len(active)} active: {urls}")

@@ -350,7 +350,7 @@ PAGE_DEFS = [
     ("data-storage", "Data Storage", "Generated reference for local data paths and storage.", "src/row_bot/data_paths.py", _data_storage),
     ("safety-approvals", "Safety And Approvals", "Generated reference for approval policy and safety modes.", "src/row_bot/approval_policy.py", _safety),
     ("environment-and-config", "Environment And Config", "Generated reference for important environment variables.", "src/row_bot/brand.py", _environment),
-    ("cli", "CLI", "Generated reference for launcher and plugin command-line options.", "src/row_bot/launcher.py", _cli),
+    ("cli", "CLI", "Generated reference for launcher, access, server, and plugin command-line options.", "src/row_bot/launcher.py, src/row_bot/access/cli.py", _cli),
     ("screenshots", "Screenshots", "Generated reference for automated screenshot coverage.", "docs-content/metadata/screenshots.yml", _screenshots),
 ]
 

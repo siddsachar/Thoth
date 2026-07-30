@@ -1,15 +1,17 @@
 ---
 title: "Settings: System"
-description: "Configure local access, workspace paths, browser and Computer Use behavior, tunnels, logs, and updates."
+description: "Configure Remote Access, workspace paths, browser and Computer Use behavior, tunnels, logs, and updates."
 ---
 
 import Screenshot from '@site/src/components/Screenshot';
 
 # Settings: System
 
-System settings describe what the local app may access and how it runs on your machine. This is where you adjust the app window, workspace boundaries, shell behavior, browser automation, opt-in native Computer Use, tunnels, and diagnostics.
+System settings describe what the app may access, which trusted owner devices may connect, and how it runs on your machine. This is where you adjust Remote Access, workspace boundaries, shell behavior, browser automation, opt-in native Computer Use, tunnels, and diagnostics.
 
-<Screenshot id="settings-system" alt="Settings: System in Row-Bot." caption="The System tab contains local runtime choices, workspace access, window mode, tunnels, and diagnostic controls." />
+<Screenshot id="settings-system" alt="Settings: System in Row-Bot." caption="The System tab contains local runtime choices, workspace access, Remote Access, tunnels, and diagnostic controls." />
+
+<Screenshot id="settings-remote-access" alt="Remote Access controls in Row-Bot System settings." caption="Remote Access keeps private reachability, one-time owner invitations, connected devices, and explicit LAN access in one owner-only section." />
 
 ## Where To Find It
 
@@ -21,6 +23,7 @@ Open **Settings**, then choose **System** from the left tab list.
 - Shell and command controls affect whether command-running tools are available and how approvals apply.
 - Browser controls affect page-reading and browser automation features.
 - Computer Use controls keep native application automation separate, off by default, and gated by platform readiness, telemetry disclosure, and a verified optional runtime.
+- Remote Access creates one-time desktop or compact owner invitations, checks or configures an owned Tailscale Serve route, explicitly enables LAN listening, and revokes devices or sessions.
 - Window mode chooses whether Row-Bot opens in its own app window, the system browser, or asks at launch.
 - Tunnel settings are for external callback use cases such as channels that need a public webhook URL.
 - Log and diagnostic controls help support troubleshooting without changing your model setup.
@@ -30,16 +33,17 @@ Open **Settings**, then choose **System** from the left tab list.
 1. Keep workspace access narrow for everyday use.
 2. Enable shell or browser automation only when you intend to use those tools.
 3. Enable Computer Use only on an interactive Windows or macOS desktop after reviewing its separate setup and safety guide.
-4. Use tunnels only for channels or integrations that explicitly require inbound webhooks.
-5. Collect logs from this tab when troubleshooting startup or provider issues.
+4. Use [Remote Access](/docs/operations/remote-access) only after choosing the narrowest connection route and the presentation layout for the invited owner device.
+5. Use tunnels only for channels or integrations that explicitly require inbound webhooks.
+6. Collect logs from this tab when troubleshooting startup or provider issues.
 
 ## What Is Saved
 
-System settings are global for the local app. Workspace files are not uploaded to Row-Bot; external providers may still receive content when a model or tool request sends it.
+System settings are global for the active Row-Bot data directory. Remote Access stores hashed invitation and session secrets plus revocable owner-device records in the shared access database. Workspace files are not uploaded to Row-Bot; external providers may still receive content when a model or tool request sends it.
 
 ## Privacy And Safety
 
-Review credential, account, channel, provider, or tool settings before enabling features that can contact outside services. Local-only features stay on your machine until you ask Row-Bot to use a provider, account, channel, MCP server, plugin, or tool that sends data elsewhere.
+Remote reachability never grants access on its own. Every non-local browser needs a Row-Bot session. Treat unused invitation links as passwords, prefer Tailscale or HTTPS over remote LAN HTTP, and revoke lost or retired devices. Every authenticated browser is the same owner; compact and desktop layouts do not change authority. Review credential, account, channel, provider, or tool settings before enabling features that can contact outside services.
 
 ## Control-Level Reference
 
@@ -49,5 +53,6 @@ The [generated Settings Controls reference](/docs/reference/generated/settings-c
 
 - If Row-Bot cannot read a file, check whether it is inside the allowed workspace.
 - If Computer Use is unavailable, open its setup card and follow the reported runtime or operating-system permission recovery step.
+- If a remote URL shows a JSON access error, use the [Remote Access troubleshooting table](/docs/operations/remote-access#troubleshooting) instead of broadly trusting proxy headers or disabling the access gate.
 - If a tunnel URL is unavailable, check the tunnel provider credentials and whether the tunnel is running.
 - If the app opens in the wrong place, change Window mode and restart Row-Bot.

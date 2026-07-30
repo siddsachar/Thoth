@@ -637,7 +637,7 @@ async def start_bot() -> bool:
     number = _get_twilio_number()
 
     if not sid or not token or not number:
-        log.warning("Twilio credentials not configured")
+        log.info("Twilio credentials not configured")
         return False
 
     try:

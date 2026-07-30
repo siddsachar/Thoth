@@ -49,6 +49,19 @@ _DOCUMENT_JOB_STATUS_LABELS = {
     "skipped_duplicate": "Duplicate skipped",
 }
 
+_PROCESS_TAILSCALE_STATUS_CACHE: Any | None = None
+
+
+def _process_tailscale_status_cache() -> Any:
+    """Return the one command-free Tailscale status cache for this process."""
+
+    global _PROCESS_TAILSCALE_STATUS_CACHE
+    if _PROCESS_TAILSCALE_STATUS_CACHE is None:
+        from row_bot.access.tailscale import TailscaleStatusCache
+
+        _PROCESS_TAILSCALE_STATUS_CACHE = TailscaleStatusCache()
+    return _PROCESS_TAILSCALE_STATUS_CACHE
+
 
 def document_job_status_label(status: str) -> str:
     """Return the agreed user-facing document-ingestion milestone."""
@@ -437,6 +450,10 @@ def open_settings(
             return f"Saved securely ({fingerprint})"
         if source == "environment":
             return f"Set by environment ({fingerprint})"
+        if source == "secret_file":
+            return f"Mounted read-only secret ({fingerprint})"
+        if source == "conflict":
+            return "Secret file conflicts with the environment"
         if source == "legacy_plaintext":
             return f"Saved in legacy plaintext ({fingerprint})"
         return f"Saved for this session ({fingerprint})"
@@ -479,6 +496,9 @@ def open_settings(
         *,
         password: bool = True,
     ):
+        from row_bot.channels.auth_store import channel_secret_status
+
+        secret_status = channel_secret_status(channel_name, env_var)
         status_label = ui.label(
             _channel_secret_status_text(channel_name, env_var)
         ).classes("text-grey-6 text-xs")
@@ -490,6 +510,9 @@ def open_settings(
         if password:
             inp_kwargs.update({"password": True, "password_toggle_button": True})
         inp = ui.input(**inp_kwargs).classes("w-full")
+        if secret_status.get("externally_managed"):
+            inp.disable()
+            inp.props("hint='Managed by the server operator'")
 
         def refresh_status() -> None:
             status_label.text = _channel_secret_status_text(channel_name, env_var)
@@ -608,6 +631,7 @@ def open_settings(
         *,
         icon: str | None = None,
         tone: str = "default",
+        docs_id: str | None = None,
     ):
         border = "rgba(148, 163, 184, 0.22)"
         background = "rgba(148, 163, 184, 0.045)"
@@ -617,9 +641,14 @@ def open_settings(
         elif tone == "danger":
             border = "rgba(239, 68, 68, 0.42)"
             background = "rgba(239, 68, 68, 0.06)"
-        with ui.column().classes("w-full gap-3 q-pa-md rounded-borders q-mb-md").style(
+        section = ui.column().classes(
+            "w-full gap-3 q-pa-md rounded-borders q-mb-md"
+        ).style(
             f"border: 1px solid {border}; background: {background};"
-        ):
+        )
+        if docs_id:
+            section.props(f'data-docs-id="{docs_id}"')
+        with section:
             with ui.row().classes("items-start gap-2 w-full no-wrap"):
                 if icon:
                     ui.icon(icon, size="1.15rem").classes("text-grey-5 q-mt-xs")
@@ -3403,10 +3432,98 @@ def open_settings(
 
         _build_tunnel_settings_section()
 
-        from row_bot.ui.mobile_access_settings import build_mobile_access_settings_section
+        from row_bot.access.access_routes import (
+            AccessRouteConfigStore,
+            build_route_inventory,
+            discover_private_lan_addresses,
+        )
+        from row_bot.access.launcher_control import request_launcher_restart
+        from row_bot.access.tailscale import (
+            TailscaleOwnershipStore,
+            TailscaleServeController,
+        )
+        from row_bot.app_port import get_app_port
+        from row_bot.tunnel import tunnel_manager
+        from row_bot.ui.remote_access_settings import (
+            build_remote_access_settings_section,
+        )
 
-        build_mobile_access_settings_section(
+        _access_route_store = AccessRouteConfigStore()
+        _access_port = get_app_port()
+        _tailscale_ownership_store = TailscaleOwnershipStore()
+        _tailscale_instance_key = str(
+            _tailscale_ownership_store.path.resolve(strict=False)
+        )
+        _tailscale_status_cache = _process_tailscale_status_cache()
+        from row_bot.access.config import AccessConfig, DeploymentMode
+        from row_bot.ui.access_context import current_access_context
+
+        _validated_access_context = current_access_context()
+        _current_server_origin = (
+            _validated_access_context.origin
+            if _validated_access_context
+            and (
+                _validated_access_context.deployment_mode is DeploymentMode.SERVER
+                or not _validated_access_context.is_local_owner
+            )
+            else None
+        )
+        _public_access_origins = AccessConfig.from_env().public_origins
+
+        def _tailscale_status_snapshot():
+            return _tailscale_status_cache.get(
+                instance_key=_tailscale_instance_key,
+                port=_access_port,
+                ownership=_tailscale_ownership_store.load(),
+            )
+
+        def _remember_tailscale_status(status: object | None) -> None:
+            _tailscale_status_cache.remember(
+                instance_key=_tailscale_instance_key,
+                port=_access_port,
+                status=status,
+                ownership=_tailscale_ownership_store.load(),
+            )
+
+        def _route_inventory_provider():
+            tailscale_snapshot = _tailscale_status_snapshot()
+            return build_route_inventory(
+                port=_access_port,
+                config=_access_route_store.load_or_default(),
+                lan_addresses=discover_private_lan_addresses(),
+                tailscale_state=(
+                    tailscale_snapshot.status if tailscale_snapshot else None
+                ),
+                ngrok_url=tunnel_manager.get_url(_access_port),
+                reverse_proxy_origins=_public_access_origins,
+                current_server_origin=_current_server_origin,
+            )
+
+        _access_inventory = _route_inventory_provider()
+        _initial_tailscale_snapshot = _tailscale_status_snapshot()
+
+        def _request_access_restart() -> bool:
+            return request_launcher_restart().accepted
+
+        build_remote_access_settings_section(
             settings_section=_settings_section,
+            route_store=_access_route_store,
+            route_inventory=_access_inventory,
+            route_inventory_provider=_route_inventory_provider,
+            tailscale_status_sink=_remember_tailscale_status,
+            tailscale_status=(
+                _initial_tailscale_snapshot.status
+                if _initial_tailscale_snapshot
+                else None
+            ),
+            tailscale_verified_at=(
+                _initial_tailscale_snapshot.verified_at
+                if _initial_tailscale_snapshot
+                else None
+            ),
+            restart_child=_request_access_restart,
+            tailscale_controller=TailscaleServeController(),
+            port=_access_port,
             status_dot=_status_dot,
             metric_chip=_metric_chip,
         )

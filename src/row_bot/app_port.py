@@ -26,9 +26,23 @@ def get_app_host(
     default: str = DEFAULT_APP_HOST,
     environ: Mapping[str, str] | None = None,
 ) -> str:
-    """Return the active Row-Bot bind host without resolving it over the network."""
+    """Return environment host, then durable listen choice, then loopback."""
     env = os.environ if environ is None else environ
-    return parse_app_host(env.get(ROW_BOT_HOST_ENV), default=default)
+    explicit = str(env.get(ROW_BOT_HOST_ENV) or "").strip()
+    if explicit:
+        return parse_app_host(explicit, default=default)
+    try:
+        from row_bot.access.access_routes import (
+            AccessRouteConfigStore,
+            resolve_listen_host,
+        )
+
+        return resolve_listen_host(
+            environ=env,
+            config=AccessRouteConfigStore().load_or_default(),
+        ).host
+    except Exception:
+        return parse_app_host(None, default=default)
 
 
 def parse_app_port(value: object, default: int = DEFAULT_APP_PORT) -> int:

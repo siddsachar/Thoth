@@ -9,7 +9,7 @@ from row_bot.voice import VoiceService
 
 
 VoiceMode = Literal["talk", "dictate"]
-VoiceTransport = Literal["local", "realtime"]
+VoiceTransport = Literal["local", "browser", "realtime"]
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,8 @@ class VoiceSessionCoordinator:
     def is_running(self) -> bool:
         if self.transport == "realtime":
             return self._active and self.realtime_state not in {"stopped", "error"}
+        if self.transport == "browser":
+            return self._active
         return self._active and self.voice_service.is_running
 
     @property
@@ -64,6 +66,8 @@ class VoiceSessionCoordinator:
             return "stopped"
         if self.transport == "realtime":
             return self.realtime_state
+        if self.transport == "browser":
+            return "listening"
         return self.voice_service.state
 
     def start_talk(self) -> int:
@@ -83,6 +87,20 @@ class VoiceSessionCoordinator:
         self.mark_realtime_latency("talk_activation")
         self._emit("session_started")
         self._emit("realtime_connecting")
+        return self._session_id
+
+    def start_browser(self, mode: VoiceMode = "talk") -> int:
+        """Start browser capture without opening a server audio device."""
+        if self._active:
+            self.stop()
+        self._session_id += 1
+        self.mode = mode
+        self.transport = "browser"
+        self.realtime_state = "stopped"
+        self._active = True
+        self._last_activity_at = time.monotonic()
+        self._emit("session_started")
+        self._emit("browser_capture_started")
         return self._session_id
 
     def start_dictation(self) -> int:
@@ -111,7 +129,7 @@ class VoiceSessionCoordinator:
         self._active = False
         if self.transport == "local":
             self.voice_service.stop()
-        else:
+        elif self.transport == "realtime":
             self.realtime_state = "stopped"
             self._reset_realtime_runtime_state(keep_latency=True)
         if was_active:
