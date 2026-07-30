@@ -15,7 +15,7 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Re
 
 from row_bot.access.config import AccessConfig
 from row_bot.access.cookies import AccessCookieManager
-from row_bot.access.models import AccessCapability, AccessProfile, SessionLifetime
+from row_bot.access.models import SessionLifetime
 from row_bot.access.request_context import (
     ACCESS_CONTEXT_SCOPE_KEY,
     AccessContext,
@@ -104,11 +104,7 @@ def _error(status_code: int, code: str, detail: str) -> JSONResponse:
 
 def _owner_context(request: Request) -> AccessContext | None:
     context = _context(request)
-    if (
-        context is None
-        or not context.authenticated
-        or not context.has_capability(AccessCapability.ACCESS_ADMIN)
-    ):
+    if context is None or not context.authenticated:
         return None
     return context
 
@@ -175,7 +171,7 @@ def _neutral_connect_page() -> str:
 <h1>Connect to this Row-Bot</h1>
 <p>This Row-Bot requires approval from its owner.</p>
 <p class="detail">Open a one-time invitation link in this browser.</p>
-<p>Owner of this server? Run <code>row-bot access invite --profile computer --origin &lt;address&gt;</code>.</p>
+<p>Owner of this server? Run <code>row-bot access invite --layout desktop --origin &lt;address&gt;</code>.</p>
 """,
     )
 
@@ -197,18 +193,14 @@ def _terminal_connect_page(reason: str) -> str:
 def _available_connect_page(
     *,
     token: str,
-    profile: AccessProfile,
     lifetime: SessionLifetime,
     next_path: str,
 ) -> str:
-    full_access = profile is AccessProfile.OWNER
-    access_label = "Full Row-Bot" if full_access else "Companion"
     duration = "30 days" if lifetime is SessionLifetime.TRUSTED else "12 hours"
+    layout = "Compact" if next_path == "/?mobile=1" else "Desktop"
     warning = (
-        '<p class="warning">Full access can use the same files, tools, '
-        "providers, and settings as the owner.</p>"
-        if full_access
-        else "<p>The companion has limited settings and tools.</p>"
+        '<p class="warning">This authenticated browser receives full owner '
+        "access to Row-Bot, including files, tools, providers, and settings.</p>"
     )
     script = f"""<script>
 (() => {{
@@ -225,7 +217,7 @@ def _available_connect_page(
         "Connect to Row-Bot",
         f"""
 <h1>Connect this browser to Row-Bot?</h1>
-<p class="detail">Access: {access_label}<br>Duration: {duration}</p>
+<p class="detail">Access: Full owner access<br>Layout: {layout}<br>Duration: {duration}</p>
 {warning}
 <form method="post" action="/api/access/invitations/claim">
   <input id="invitation" name="invitation" type="hidden" value="">
@@ -346,7 +338,6 @@ def build_access_router(
         return HTMLResponse(
             _available_connect_page(
                 token=token,
-                profile=inspection.invitation.profile,
                 lifetime=inspection.invitation.session_lifetime,
                 next_path=next_path,
             ),
@@ -421,7 +412,6 @@ def build_access_router(
                 {
                     "ok": True,
                     "authenticated": False,
-                    "profile": None,
                     "device_id": None,
                     "session_id": None,
                 }
@@ -431,7 +421,6 @@ def build_access_router(
                 "ok": True,
                 "authenticated": True,
                 "authentication_kind": context.authentication_kind.value,
-                "profile": context.profile,
                 "device_id": context.device_id,
                 "session_id": context.session_id,
                 "presentation": context.presentation.value,
@@ -490,16 +479,21 @@ def build_access_router(
         if not _origin_ok(request, context):
             return _error(403, "origin_required", "Exact same origin is required.")
         payload = await _payload(request)
-        profile_text = str(payload.get("profile") or "computer").strip().lower()
-        if profile_text == "computer":
-            profile_text = AccessProfile.OWNER.value
+        if "profile" in payload or "access_profile" in payload:
+            return _error(
+                400,
+                "invalid_invitation_options",
+                "Authorization profiles are no longer supported; choose a layout.",
+            )
+        layout = str(payload.get("layout") or "desktop").strip().lower()
         lifetime_text = (
             str(payload.get("session_lifetime") or SessionLifetime.TRUSTED.value)
             .strip()
             .lower()
         )
         try:
-            profile = AccessProfile(profile_text)
+            if layout not in {"desktop", "compact"}:
+                raise ValueError
             lifetime = SessionLifetime(lifetime_text)
             if lifetime is SessionLifetime.MIGRATED:
                 raise ValueError
@@ -507,14 +501,14 @@ def build_access_router(
             return _error(
                 400,
                 "invalid_invitation_options",
-                "Choose computer or companion and a trusted or temporary session.",
+                "Choose desktop or compact layout and a trusted or temporary session.",
             )
         intended_origin = str(payload.get("origin") or context.origin).strip()
         try:
             created = service.create_invitation(
-                profile=profile,
                 intended_origin=intended_origin,
                 session_lifetime=lifetime,
+                next_path="/?mobile=1" if layout == "compact" else "/",
                 created_by=context.device_id or "local_owner",
                 access_route=str(payload.get("access_route") or "")[:80] or None,
             )
@@ -527,7 +521,10 @@ def build_access_router(
         return _json(
             {
                 "ok": True,
-                "invitation": _invitation_public(created.invitation),
+                "invitation": {
+                    **_invitation_public(created.invitation),
+                    "layout": layout,
+                },
                 "invitation_url": created.invitation_url(),
             },
             status_code=201,

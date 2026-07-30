@@ -28,7 +28,6 @@ def test_mobile_request_detection_is_explicit() -> None:
 
 def test_access_context_controls_compact_shell_not_cookie_or_peer() -> None:
     from row_bot.access.config import AccessConfig
-    from row_bot.access.models import AccessProfile, capabilities_for_profile
     from row_bot.access.request_context import (
         RequestContextResolver,
         SessionIdentity,
@@ -45,34 +44,26 @@ def test_access_context_controls_compact_shell_not_cookie_or_peer() -> None:
         "client": ("192.168.1.20", 51000),
         "headers": [(b"host", b"localhost:8080")],
     }
-    companion = resolver.resolve(
-        scope,
+    compact = resolver.resolve(
+        {**scope, "query_string": b"mobile=1"},
         session=SessionIdentity(
-            profile=AccessProfile.COMPANION.value,
             device_id="device",
             session_id="session",
-            capabilities=frozenset(
-                capability.value
-                for capability in capabilities_for_profile(
-                    AccessProfile.COMPANION
-                )
-            ),
         ),
     )
     owner = resolver.resolve(
         {**scope, "client": ("127.0.0.1", 51000)},
-        owner_capabilities=capabilities_for_profile(AccessProfile.OWNER),
     )
-    companion_request = SimpleNamespace(
+    compact_request = SimpleNamespace(
         query_params={},
-        state=SimpleNamespace(row_bot_access_context=companion),
+        state=SimpleNamespace(row_bot_access_context=compact),
     )
     owner_request = SimpleNamespace(
         query_params={},
         state=SimpleNamespace(row_bot_access_context=owner),
     )
 
-    assert is_mobile_client(SimpleNamespace(request=companion_request)) is True
+    assert is_mobile_client(SimpleNamespace(request=compact_request)) is True
     assert is_mobile_client(SimpleNamespace(request=owner_request)) is False
 
 
@@ -127,6 +118,8 @@ def test_app_routes_mobile_shell_without_desktop_chrome() -> None:
     assert '_access_context.presentation.value == "compact"' in app_src
     assert "build_mobile_shell(" in app_src
     assert "mobile=_mobile_client" in app_src
+    assert "_companion_client" not in app_src
+    assert "has_capability" not in app_src
     assert "if not _mobile_client:" in app_src
     assert "build_command_center(" in app_src
     assert "build_terminal_panel(p, state, _tool_registry)" in app_src
@@ -136,6 +129,8 @@ def test_app_routes_mobile_shell_without_desktop_chrome() -> None:
     assert "source=\"mobile\"" in mobile_src
     assert "(\"Chat\", \"chat\")" in mobile_src
     assert "open_settings(\"Providers\")" in mobile_src
+    assert 'if tab == "Settings":' in mobile_src
+    assert "def _build_settings(" not in mobile_src
 
 
 def test_mobile_shell_css_is_full_bleed() -> None:

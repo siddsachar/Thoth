@@ -21,7 +21,7 @@ from row_bot.access.config import (
     canonical_origin,
 )
 from row_bot.access.diagnostics import DoctorContext, DoctorReport, run_access_doctor
-from row_bot.access.models import AccessInvitation, AccessProfile, SessionLifetime
+from row_bot.access.models import AccessInvitation, SessionLifetime
 from row_bot.access.service import AccessService
 from row_bot.access.store import AccessStore, AccessStoreError, normalize_datetime
 from row_bot.data_paths import get_row_bot_data_dir
@@ -132,9 +132,10 @@ def add_access_parser(subparsers: Any) -> argparse.ArgumentParser:
     )
     _add_access_common(invite)
     invite.add_argument(
-        "--profile",
-        choices=("computer", "companion"),
-        required=True,
+        "--layout",
+        choices=("desktop", "compact"),
+        default="desktop",
+        help="Initial presentation only; every device receives owner access",
     )
     invite.add_argument("--origin", required=True, help="Canonical Row-Bot origin")
     lifetime = invite.add_mutually_exclusive_group()
@@ -377,7 +378,7 @@ def serve_startup_lines(options: ServeOptions) -> tuple[str, ...]:
     if options.public_url:
         lines.append(
             "Create the first owner invitation with: "
-            f"row-bot access invite --profile computer --origin {options.public_url}"
+            f"row-bot access invite --layout desktop --origin {options.public_url}"
         )
     else:
         lines.append(
@@ -468,12 +469,7 @@ def _dispatch_invite(
     json_output: bool,
     now: datetime | None,
 ) -> int:
-    external_profile = str(args.profile)
-    profile = (
-        AccessProfile.OWNER
-        if external_profile == "computer"
-        else AccessProfile.COMPANION
-    )
+    layout = str(args.layout)
     lifetime = (
         SessionLifetime.TEMPORARY
         if getattr(args, "temporary", False)
@@ -481,9 +477,9 @@ def _dispatch_invite(
         else SessionLifetime.TRUSTED
     )
     created = service.create_invitation(
-        profile=profile,
         intended_origin=args.origin,
         session_lifetime=lifetime,
+        next_path="/?mobile=1" if layout == "compact" else "/",
         created_by="local_operator",
         access_route="cli",
         now=now,
@@ -494,8 +490,8 @@ def _dispatch_invite(
         "invitation": {
             "id": created.invitation.id,
             "name": str(args.name)[:80],
-            "profile": external_profile,
-            "access_profile": created.invitation.profile.value,
+            "layout": layout,
+            "authority": "owner",
             "session_lifetime": created.invitation.session_lifetime.value,
             "origin": created.invitation.intended_origin,
             "expires_at": created.invitation.expires_at.isoformat(),
@@ -506,7 +502,8 @@ def _dispatch_invite(
     text = "\n".join(
         (
             f"Invitation: {args.name}",
-            f"Profile: {external_profile}",
+            f"Layout: {layout}",
+            "Access: full owner",
             f"Session: {created.invitation.session_lifetime.value}",
             f"Origin: {created.invitation.intended_origin}",
             f"Expires: {created.invitation.expires_at.isoformat()}",
@@ -551,7 +548,7 @@ def _dispatch_list(
     lines = [
         f"Devices: {len(devices)}",
         *[
-            f"  {device['id']}  {device['profile']}  "
+            f"  {device['id']}  "
             f"{'revoked' if device['revoked_at'] else 'active'}  "
             f"{device['display_name']}"
             for device in devices
@@ -565,7 +562,7 @@ def _dispatch_list(
         ],
         f"Invitations: {len(invitations)}",
         *[
-            f"  {invitation['id']}  {invitation['profile']}  "
+            f"  {invitation['id']}  "
             f"{invitation['status']}  expires={invitation['expires_at']}"
             for invitation in invitations
         ],

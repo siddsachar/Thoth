@@ -216,7 +216,7 @@ def test_startup_guidance_contains_recovery_but_no_invitation_secret(tmp_path) -
 
     output = "\n".join(serve_startup_lines(options))
 
-    assert "row-bot access invite --profile computer" in output
+    assert "row-bot access invite --layout desktop" in output
     assert "Health: /healthz" in output
     assert "rbi_" not in output
     assert "token" not in output.lower()

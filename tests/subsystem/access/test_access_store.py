@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import sqlite3
 
-from row_bot.access.models import AccessProfile, SessionLifetime
+from row_bot.access.models import SessionLifetime
 from row_bot.access.service import AccessService
 from row_bot.access.store import AccessStore, SCHEMA_VERSION
 from row_bot.data_paths import (
@@ -42,7 +42,6 @@ def test_fresh_schema_has_separate_records_and_persistent_instance_id(tmp_path) 
     assert AccessStore(store.db_path).instance_id == original_instance_id
 
     invitation = AccessService(store).create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin="https://row-bot.example",
         now=NOW,
     )
@@ -62,7 +61,6 @@ def test_fresh_schema_has_separate_records_and_persistent_instance_id(tmp_path) 
 def test_expiry_revocation_revoke_all_and_pruning(tmp_path) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
     first = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin="https://row-bot.example",
         session_lifetime=SessionLifetime.TEMPORARY,
         now=NOW,
@@ -74,7 +72,6 @@ def test_expiry_revocation_revoke_all_and_pruning(tmp_path) -> None:
         now=NOW,
     )
     second = service.create_invitation(
-        profile=AccessProfile.COMPANION,
         intended_origin="https://row-bot.example",
         now=NOW,
     )
@@ -98,7 +95,6 @@ def test_expiry_revocation_revoke_all_and_pruning(tmp_path) -> None:
     assert service.validate_session(second_claim.session_token, now=NOW) is None
 
     third = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin="https://row-bot.example",
         now=NOW,
     )
@@ -123,7 +119,6 @@ def test_expiry_revocation_revoke_all_and_pruning(tmp_path) -> None:
 def test_device_revoke_cascades_to_all_sessions(tmp_path) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
     invitation = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin="https://row-bot.example",
         now=NOW,
     )

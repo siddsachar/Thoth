@@ -25,13 +25,12 @@ def _session_authenticator(scope, provenance):  # noqa: ARG001
         bytes(name).lower(): bytes(value).decode("latin-1")
         for name, value in scope.get("headers", [])
     }
-    profile = headers.get(b"x-test-profile")
-    if profile not in {"owner", "companion"}:
+    device = headers.get(b"x-test-session")
+    if device not in {"desktop", "phone"}:
         return None
     return SessionIdentity(
-        profile=profile,
-        device_id=f"{profile}-device",
-        session_id=f"{profile}-session",
+        device_id=f"{device}-device",
+        session_id=f"{device}-session",
     )
 
 
@@ -88,7 +87,7 @@ def _app(
     async def context(request: Request):
         context = request.scope[ACCESS_CONTEXT_SCOPE_KEY]
         return {
-            "profile": context.profile,
+            "authentication_kind": context.authentication_kind.value,
             "origin": context.origin,
             "effective_client": context.effective_client,
         }
@@ -135,7 +134,7 @@ def test_desktop_loopback_passes_and_context_reaches_downstream() -> None:
     context = client.get("/context")
 
     assert response.status_code == 200
-    assert context.json()["profile"] == "owner"
+    assert context.json()["authentication_kind"] == "local_owner"
 
 
 def test_server_loopback_and_remote_browser_redirect_to_neutral_connect() -> None:
@@ -164,23 +163,20 @@ def test_unpaired_api_is_json_401_and_public_probes_are_minimal() -> None:
     assert "path" not in ready.text
 
 
-def test_owner_session_can_use_full_api_but_companion_cannot_administer_access() -> (
-    None
-):
+def test_desktop_and_phone_sessions_have_the_same_owner_access() -> None:
     client = _app(_server_config())
 
-    owner = client.get("/api/access/devices", headers={"x-test-profile": "owner"})
-    companion = client.get(
-        "/api/access/devices", headers={"x-test-profile": "companion"}
+    desktop = client.get(
+        "/api/access/devices", headers={"x-test-session": "desktop"}
     )
-    companion_private = client.get(
-        "/api/private", headers={"x-test-profile": "companion"}
+    phone = client.get(
+        "/api/access/devices", headers={"x-test-session": "phone"}
     )
+    phone_private = client.get("/api/private", headers={"x-test-session": "phone"})
 
-    assert owner.status_code == 200
-    assert companion.status_code == 403
-    assert companion.json()["error"] == "capability_required"
-    assert companion_private.status_code == 200
+    assert desktop.status_code == 200
+    assert phone.status_code == 200
+    assert phone_private.status_code == 200
 
 
 def test_state_changing_session_route_requires_exact_same_origin() -> None:
@@ -188,19 +184,19 @@ def test_state_changing_session_route_requires_exact_same_origin() -> None:
 
     missing = client.post(
         "/api/access/devices/device/revoke",
-        headers={"x-test-profile": "owner"},
+        headers={"x-test-session": "desktop"},
     )
     wrong = client.post(
         "/api/access/devices/device/revoke",
         headers={
-            "x-test-profile": "owner",
+            "x-test-session": "desktop",
             "origin": "https://attacker.example",
         },
     )
     allowed = client.post(
         "/api/access/devices/device/revoke",
         headers={
-            "x-test-profile": "owner",
+            "x-test-session": "desktop",
             "origin": "http://localhost:8080",
         },
     )
@@ -236,13 +232,13 @@ def test_trusted_proxy_supplies_validated_origin_and_effective_client() -> None:
         headers={
             "host": "rowbot.example.com",
             "forwarded": ("for=192.0.2.8;proto=https;host=rowbot.example.com"),
-            "x-test-profile": "owner",
+            "x-test-session": "desktop",
         },
     )
 
     assert response.status_code == 200
     assert response.json() == {
-        "profile": "owner",
+        "authentication_kind": "session",
         "origin": "https://rowbot.example.com",
         "effective_client": "192.0.2.8",
     }
@@ -272,13 +268,13 @@ def test_owned_tailscale_route_accepts_its_loopback_forwarding_headers() -> None
             "x-forwarded-for": "100.64.0.8",
             "x-forwarded-host": "rowbot-device.example.ts.net",
             "x-forwarded-proto": "https",
-            "x-test-profile": "owner",
+            "x-test-session": "desktop",
         },
     )
 
     assert response.status_code == 200
     assert response.json() == {
-        "profile": "owner",
+        "authentication_kind": "session",
         "origin": origin,
         "effective_client": "100.64.0.8",
     }
@@ -295,7 +291,6 @@ def test_http_uses_one_runtime_policy_snapshot_during_authentication() -> None:
         authentication_calls += 1
         policy.unregister_managed_origin(origin)
         return SessionIdentity(
-            profile="owner",
             device_id="owner-device",
             session_id="owner-session",
         )
@@ -337,7 +332,6 @@ def test_websocket_uses_one_runtime_policy_snapshot_for_admission() -> None:
             removed = True
             policy.unregister_managed_origin(origin)
         return SessionIdentity(
-            profile="owner",
             device_id="owner-device",
             session_id="owner-session",
         )
@@ -371,9 +365,9 @@ def test_websocket_uses_one_runtime_policy_snapshot_for_admission() -> None:
     assert rejected.value.code == 1008
 
 
-@pytest.mark.parametrize("profile", ["owner", "companion"])
+@pytest.mark.parametrize("device", ["desktop", "phone"])
 def test_launcher_operation_rejects_authenticated_remote_session(
-    profile: str,
+    device: str,
 ) -> None:
     remote = TestClient(
         AccessMiddleware(
@@ -388,7 +382,7 @@ def test_launcher_operation_rejects_authenticated_remote_session(
     response = remote.post(
         "/api/launcher-shutdown",
         headers={
-            "x-test-profile": profile,
+            "x-test-session": device,
             "origin": "http://localhost:8080",
         },
     )
@@ -451,7 +445,7 @@ def test_websocket_requires_session_and_exact_origin() -> None:
             headers={
                 "origin": "https://attacker.example",
                 "host": "localhost:8080",
-                "x-test-profile": "owner",
+                "x-test-session": "desktop",
             },
         ):
             pass
@@ -463,7 +457,7 @@ def test_websocket_requires_session_and_exact_origin() -> None:
         headers={
             "origin": "http://localhost:8080",
             "host": "localhost:8080",
-            "x-test-profile": "owner",
+            "x-test-session": "desktop",
         },
     ) as websocket:
         websocket.send_text("ok")

@@ -4,18 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 import uuid
 
 from row_bot.access.models import (
     AccessDevice,
     AccessInvitation,
-    AccessProfile,
     AccessSession,
     AuthenticatedSession,
     SessionLifetime,
     TokenFormat,
 )
+from row_bot.access.request_context import safe_relative_next
 from row_bot.access.store import (
     AccessStore,
     InvitationClaimError,
@@ -39,10 +39,14 @@ TEMPORARY_SESSION_TTL = timedelta(hours=12)
 class CreatedInvitation:
     invitation: AccessInvitation
     token: str
+    next_path: str = "/"
 
     def invitation_url(self, origin: str | None = None) -> str:
         selected_origin = canonicalize_origin(origin or self.invitation.intended_origin)
-        return f"{selected_origin}/connect?invitation={self.token}"
+        result = f"{selected_origin}/connect?invitation={self.token}"
+        if self.next_path != "/":
+            result += f"&next={quote(self.next_path, safe='')}"
+        return result
 
 
 @dataclass(frozen=True)
@@ -59,10 +63,6 @@ class InvitationClaim:
     device: AccessDevice
     session: AccessSession
     session_token: str
-
-    @property
-    def profile(self) -> AccessProfile:
-        return self.invitation.profile
 
     @property
     def session_lifetime(self) -> SessionLifetime:
@@ -86,16 +86,15 @@ class AccessService:
     def create_invitation(
         self,
         *,
-        profile: AccessProfile | str,
         intended_origin: str,
         session_lifetime: SessionLifetime | str = SessionLifetime.TRUSTED,
+        next_path: str = "/",
         ttl: timedelta = INVITATION_TTL,
         created_by: str | None = None,
         access_route: str | None = None,
         now: datetime | None = None,
     ) -> CreatedInvitation:
         current = normalize_datetime(now)
-        normalized_profile = AccessProfile(profile)
         normalized_lifetime = SessionLifetime(session_lifetime)
         if normalized_lifetime is SessionLifetime.MIGRATED:
             raise ValueError("migrated is reserved for legacy compatibility sessions")
@@ -110,7 +109,6 @@ class AccessService:
             invitation_id=invitation_id,
             secret_hash=issued.secret_hash,
             secret_salt=issued.secret_salt,
-            profile=normalized_profile,
             session_lifetime=normalized_lifetime,
             intended_origin=origin,
             expires_at=current + ttl,
@@ -122,12 +120,15 @@ class AccessService:
             "invitation_created",
             invitation_id=invitation.id,
             detail={
-                "profile": invitation.profile.value,
                 "session_lifetime": invitation.session_lifetime.value,
             },
             now=current,
         )
-        return CreatedInvitation(invitation=invitation, token=issued.token)
+        return CreatedInvitation(
+            invitation=invitation,
+            token=issued.token,
+            next_path=safe_relative_next(next_path),
+        )
 
     def inspect_invitation(
         self,
@@ -172,7 +173,6 @@ class AccessService:
         user_agent: str | None = None,
         effective_client: str | None = None,
         access_route: str | None = None,
-        profile: AccessProfile | str | None = None,
         session_lifetime: SessionLifetime | str | None = None,
         now: datetime | None = None,
     ) -> InvitationClaim:
@@ -184,7 +184,6 @@ class AccessService:
         invitation = self.store.get_invitation(invitation_id)
         if invitation is None:
             raise InvitationClaimError("invalid_invitation")
-        requested_profile = AccessProfile(profile) if profile is not None else None
         requested_lifetime = (
             SessionLifetime(session_lifetime) if session_lifetime is not None else None
         )
@@ -196,7 +195,6 @@ class AccessService:
         device = AccessDevice(
             id=device_id,
             display_name=(str(display_name or "").strip() or "Connected device")[:80],
-            profile=invitation.profile,
             created_at=current,
             last_seen_at=current,
             revoked_at=None,
@@ -226,7 +224,6 @@ class AccessService:
             expected_origin=canonicalize_origin(intended_origin),
             device=device,
             session=session,
-            requested_profile=requested_profile,
             requested_lifetime=requested_lifetime,
             effective_client=effective_client,
             user_agent=user_agent,
@@ -279,7 +276,7 @@ class AccessService:
         now: datetime | None = None,
         touch: bool = True,
     ) -> AuthenticatedSession | None:
-        """Validate only an explicitly migrated companion ``rbd`` session."""
+        """Validate only a reviewed, migrated legacy-mobile ``rbd`` session."""
         parsed = parse_legacy_device_token(token)
         if parsed is None:
             return None
@@ -300,7 +297,6 @@ class AccessService:
         device = self.store.get_device(session.device_id)
         if (
             device is None
-            or device.profile is not AccessProfile.COMPANION
             or device.legacy_source_id is None
             or device.revoked_at is not None
         ):

@@ -287,9 +287,9 @@ screenshots:
       - wait_for_selector: '[data-docs-id="remote-access-invitation"]'
     capture_selector: '[data-docs-id="remote-access-invitation"]'
     wait_for: '[data-docs-id="remote-access-invitation"]'
-    expected_text: [Invite a device, Another computer, Phone or tablet, Connection route, Create invitation]
+    expected_text: [Invite a device, Desktop layout, Compact layout, full owner access, Connection route, Create invitation]
     output: remote-access-invitation.png
-    alt: Device invitation dialog showing full-computer and companion profiles, trusted and temporary lifetimes, and a live connection-route selector.
+    alt: Device invitation dialog showing desktop and compact layout choices, full owner access disclosure, trusted and temporary lifetimes, and a live connection-route selector.
     docs_pages: [/docs/operations/remote-access, /docs/mobile-native/]
   settings-tracker:
     <<: *desktop
@@ -439,7 +439,7 @@ screenshots:
     wait_for: '[data-docs-id="mobile-shell"]'
     expected_text: [Chat, Demo launch checklist, Research digest]
     output: mobile-chat-list.png
-    alt: Android-sized Row-Bot companion showing the fictional conversation list and bottom navigation.
+    alt: Android-sized Row-Bot owner view showing the fictional conversation list and bottom navigation.
     docs_pages: [/docs/mobile-native/]
   mobile-chat-detail:
     <<: *mobile
@@ -484,7 +484,7 @@ screenshots:
   mobile-settings:
     <<: *mobile
     title: Android Settings
-    route: /?mobile=1&mobile_view=settings
+    route: /?mobile=1&settings_tab=Providers
     capture_selector: '[data-docs-id="settings-dialog"]'
     wait_for: '[data-docs-id="settings-dialog"]'
     expected_text: [Settings, Providers, Ollama Local]

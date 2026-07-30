@@ -1,4 +1,4 @@
-"""Typed records and fixed capability presets for Row-Bot access."""
+"""Typed records for authenticated Row-Bot owner access."""
 
 from __future__ import annotations
 
@@ -6,64 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
-
-
-class AccessProfile(StrEnum):
-    """Fixed authorization profiles for the single-owner application."""
-
-    OWNER = "owner"
-    COMPANION = "companion"
-
-
-class AccessCapability(StrEnum):
-    """Capabilities enforced by the central access policy."""
-
-    FULL_UI = "full_ui"
-    COMPACT_UI = "compact_ui"
-    CHAT = "chat"
-    ATTACHMENTS = "attachments"
-    WORKFLOWS_VIEW = "workflows_view"
-    WORKFLOWS_ACTION = "workflows_action"
-    APPROVALS = "approvals"
-    STATUS_VIEW = "status_view"
-    COMPANION_PREFERENCES = "companion_preferences"
-    SETTINGS = "settings"
-    ACCESS_ADMIN = "access_admin"
-    PROVIDER_ADMIN = "provider_admin"
-    CHANNEL_ADMIN = "channel_admin"
-    PLUGIN_ADMIN = "plugin_admin"
-    MCP_ADMIN = "mcp_admin"
-    DEVELOPER_STUDIO = "developer_studio"
-    DESIGNER_STUDIO = "designer_studio"
-    SHELL = "shell"
-    TERMINAL = "terminal"
-    TOOLS = "tools"
-    SCHEDULES = "schedules"
-
-
-OWNER_CAPABILITIES = frozenset(AccessCapability)
-COMPANION_CAPABILITIES = frozenset(
-    {
-        AccessCapability.COMPACT_UI,
-        AccessCapability.CHAT,
-        AccessCapability.ATTACHMENTS,
-        AccessCapability.WORKFLOWS_VIEW,
-        AccessCapability.WORKFLOWS_ACTION,
-        AccessCapability.APPROVALS,
-        AccessCapability.STATUS_VIEW,
-        AccessCapability.COMPANION_PREFERENCES,
-    }
-)
-
-
-def capabilities_for_profile(
-    profile: AccessProfile | str,
-) -> frozenset[AccessCapability]:
-    """Return the immutable capability preset for a profile."""
-    normalized = AccessProfile(profile)
-    if normalized is AccessProfile.OWNER:
-        return OWNER_CAPABILITIES
-    return COMPANION_CAPABILITIES
 
 
 class SessionLifetime(StrEnum):
@@ -86,7 +28,6 @@ class TokenFormat(StrEnum):
 class AccessDevice:
     id: str
     display_name: str
-    profile: AccessProfile
     created_at: datetime
     last_seen_at: datetime | None
     revoked_at: datetime | None
@@ -95,15 +36,10 @@ class AccessDevice:
     access_route: str | None
     legacy_source_id: str | None
 
-    @property
-    def capabilities(self) -> frozenset[AccessCapability]:
-        return capabilities_for_profile(self.profile)
-
     def to_public_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "display_name": self.display_name,
-            "profile": self.profile.value,
             "created_at": self.created_at.isoformat(),
             "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
             "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
@@ -148,7 +84,6 @@ class AccessInvitation:
     secret_hash: str
     secret_salt: str
     token_format: TokenFormat
-    profile: AccessProfile
     session_lifetime: SessionLifetime
     intended_origin: str
     created_at: datetime
@@ -163,7 +98,6 @@ class AccessInvitation:
     def to_public_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "profile": self.profile.value,
             "session_lifetime": self.session_lifetime.value,
             "intended_origin": self.intended_origin,
             "created_at": self.created_at.isoformat(),
@@ -208,11 +142,3 @@ class AuthenticatedSession:
 
     device: AccessDevice
     session: AccessSession
-
-    @property
-    def profile(self) -> AccessProfile:
-        return self.device.profile
-
-    @property
-    def capabilities(self) -> frozenset[AccessCapability]:
-        return self.device.capabilities

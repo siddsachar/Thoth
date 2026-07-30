@@ -54,7 +54,7 @@ def _start_invitation(client: TestClient) -> tuple[str, dict]:
     return token, pairing
 
 
-def test_pair_start_creates_companion_invitation_without_duplicate_secret(
+def test_pair_start_creates_compact_owner_invitation_without_duplicate_secret(
     tmp_path,
 ) -> None:
     app, service, _registration = _app(tmp_path)
@@ -63,10 +63,11 @@ def test_pair_start_creates_companion_invitation_without_duplicate_secret(
     token, pairing = _start_invitation(desktop)
 
     assert token.startswith("rbi_")
-    assert pairing["pairing_url"] == f"{ORIGIN}/connect?invitation={token}"
+    pairing_query = parse_qs(urlsplit(pairing["pairing_url"]).query)
+    assert pairing_query["next"] == ["/?mobile=1"]
     assert "code" not in pairing
     assert pairing["access_mode"] == "lan"
-    assert service.inspect_invitation(token).invitation.profile.value == "companion"
+    assert "profile" not in service.inspect_invitation(token).invitation.to_public_dict()
 
 
 def test_legacy_pairing_page_redirects_to_neutral_connect_flow(tmp_path) -> None:

@@ -43,6 +43,9 @@ def test_mobile_active_thread_composer_uses_shared_chat_controls() -> None:
     assert "_set_thread_approval_mode" in src
     assert "_set_thread_agent_profile" in src
     assert "_clear_thread_agent_profile" in src
+    assert "owner_controls" not in src
+    assert "has_capability" not in src
+    assert "Companion sessions" not in src
 
 
 def test_mobile_active_thread_removes_space_heavy_policy_chrome() -> None:

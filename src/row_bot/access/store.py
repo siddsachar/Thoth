@@ -17,7 +17,6 @@ from row_bot.access.models import (
     AccessDevice,
     AccessEvent,
     AccessInvitation,
-    AccessProfile,
     AccessSession,
     SessionLifetime,
     TokenFormat,
@@ -25,7 +24,7 @@ from row_bot.access.models import (
 from row_bot.access.tokens import verify_secret
 from row_bot.data_paths import get_access_db_path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 LEGACY_MIGRATION_GRACE = timedelta(days=30)
 RECOVERY_COPY_MAX_BYTES = 128 * 1024 * 1024
 CLAIM_FAILURE_LIMIT = 5
@@ -146,11 +145,13 @@ class AccessStore:
                 connection
             ):
                 return
-            if current_version == 1:
+            if current_version in {1, 2}:
                 self._make_recovery_copy()
                 self._run_migration_hook("after_backup")
                 self._create_schema(connection)
                 self._run_migration_hook("after_schema")
+                self._migrate_single_owner(connection)
+                self._run_migration_hook("after_semantic_normalization")
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 self._run_migration_hook("before_commit")
                 return
@@ -366,7 +367,7 @@ class AccessStore:
                         revoked_at, user_agent, paired_from, access_route,
                         legacy_source_id
                     )
-                    VALUES (?, ?, 'companion', ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, 'owner', ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         device_id,
@@ -415,6 +416,80 @@ class AccessStore:
             migration_time,
         )
         self._ensure_instance_id(connection, migration_time)
+
+    def _migrate_single_owner(self, connection: sqlite3.Connection) -> None:
+        """Normalize version-2 roles without elevating restricted credentials."""
+
+        migration_time = utc_now()
+        timestamp = to_iso(migration_time)
+        explicit_devices = connection.execute(
+            """
+            SELECT id
+              FROM access_devices
+             WHERE profile = 'companion'
+               AND legacy_source_id IS NULL
+               AND revoked_at IS NULL
+            """
+        ).fetchall()
+        for row in explicit_devices:
+            device_id = str(row["id"])
+            connection.execute(
+                """
+                UPDATE access_devices
+                   SET revoked_at = COALESCE(revoked_at, ?)
+                 WHERE id = ?
+                """,
+                (timestamp, device_id),
+            )
+            connection.execute(
+                """
+                UPDATE access_sessions
+                   SET revoked_at = COALESCE(revoked_at, ?)
+                 WHERE device_id = ?
+                """,
+                (timestamp, device_id),
+            )
+            self._insert_event_on_connection(
+                connection,
+                "owner_repair_required",
+                device_id=device_id,
+                detail={"reason": "single_owner_access_model"},
+                now=migration_time,
+            )
+
+        pending_invitations = connection.execute(
+            """
+            SELECT id
+              FROM access_invitations
+             WHERE profile = 'companion'
+               AND claimed_at IS NULL
+               AND cancelled_at IS NULL
+            """
+        ).fetchall()
+        for row in pending_invitations:
+            invitation_id = str(row["id"])
+            connection.execute(
+                """
+                UPDATE access_invitations
+                   SET cancelled_at = COALESCE(cancelled_at, ?)
+                 WHERE id = ?
+                """,
+                (timestamp, invitation_id),
+            )
+            self._insert_event_on_connection(
+                connection,
+                "invitation_cancelled_for_owner_migration",
+                invitation_id=invitation_id,
+                detail={"reason": "single_owner_access_model"},
+                now=migration_time,
+            )
+
+        connection.execute(
+            "UPDATE access_devices SET profile = 'owner' WHERE profile != 'owner'"
+        )
+        connection.execute(
+            "UPDATE access_invitations SET profile = 'owner' WHERE profile != 'owner'"
+        )
 
     def _ensure_instance_id(
         self,
@@ -484,7 +559,6 @@ class AccessStore:
         invitation_id: str,
         secret_hash: str,
         secret_salt: str,
-        profile: AccessProfile,
         session_lifetime: SessionLifetime,
         intended_origin: str,
         expires_at: datetime,
@@ -509,7 +583,7 @@ class AccessStore:
                     secret_hash,
                     secret_salt,
                     TokenFormat.INVITATION_V1.value,
-                    AccessProfile(profile).value,
+                    "owner",
                     SessionLifetime(session_lifetime).value,
                     intended_origin,
                     to_iso(current),
@@ -672,7 +746,6 @@ class AccessStore:
         expected_origin: str,
         device: AccessDevice,
         session: AccessSession,
-        requested_profile: AccessProfile | None = None,
         requested_lifetime: SessionLifetime | None = None,
         effective_client: str | None = None,
         user_agent: str | None = None,
@@ -701,11 +774,6 @@ class AccessStore:
                 now=current,
             ):
                 raise InvitationClaimError("locked")
-            if (
-                requested_profile is not None
-                and AccessProfile(requested_profile) != invitation.profile
-            ):
-                raise InvitationClaimError("immutable_mismatch")
             if (
                 requested_lifetime is not None
                 and SessionLifetime(requested_lifetime) != invitation.session_lifetime
@@ -790,7 +858,7 @@ class AccessStore:
                 invitation_id=invitation_id,
                 effective_client=effective_client,
                 user_agent=user_agent,
-                detail={"profile": invitation.profile.value},
+                detail={"authority": "owner"},
                 now=current,
             )
             connection.commit()
@@ -1204,7 +1272,7 @@ def _device_values(device: AccessDevice) -> tuple[Any, ...]:
     return (
         device.id,
         device.display_name[:80],
-        device.profile.value,
+        "owner",
         to_iso(device.created_at),
         to_iso(device.last_seen_at) if device.last_seen_at else None,
         to_iso(device.revoked_at) if device.revoked_at else None,
@@ -1235,7 +1303,6 @@ def _device_from_row(row: sqlite3.Row) -> AccessDevice:
     return AccessDevice(
         id=str(row["id"]),
         display_name=str(row["display_name"]),
-        profile=AccessProfile(row["profile"]),
         created_at=parse_iso(row["created_at"]) or utc_now(),
         last_seen_at=parse_iso(row["last_seen_at"]),
         revoked_at=parse_iso(row["revoked_at"]),
@@ -1268,7 +1335,6 @@ def _invitation_from_row(row: sqlite3.Row) -> AccessInvitation:
         secret_hash=str(row["secret_hash"]),
         secret_salt=str(row["secret_salt"]),
         token_format=TokenFormat(row["token_format"]),
-        profile=AccessProfile(row["profile"]),
         session_lifetime=SessionLifetime(row["session_lifetime"]),
         intended_origin=str(row["intended_origin"]),
         created_at=parse_iso(row["created_at"]) or utc_now(),

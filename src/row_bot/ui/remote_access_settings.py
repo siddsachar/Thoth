@@ -22,11 +22,11 @@ from row_bot.access.access_routes import (
     apply_listen_mode,
     build_route_inventory,
 )
-from row_bot.access.models import AccessCapability, AccessProfile, SessionLifetime
+from row_bot.access.models import SessionLifetime
 from row_bot.access.service import AccessService, CreatedInvitation
-from row_bot.ui.access_context import require_ui_capability
+from row_bot.ui.access_context import current_access_context, require_ui_owner
 
-Authorize = Callable[[AccessCapability], Any]
+Authorize = Callable[[], Any]
 RouteInventoryProvider = Callable[[], AccessRouteInventory]
 TailscaleStatusSink = Callable[[object | None], None]
 
@@ -59,11 +59,11 @@ class RemoteAccessActions:
     tailscale_controller: object | None = None
     route_inventory_provider: RouteInventoryProvider | None = None
     tailscale_status_sink: TailscaleStatusSink | None = None
-    authorizer: Authorize = require_ui_capability
+    authorizer: Authorize = require_ui_owner
     _controller_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def _require_admin(self) -> None:
-        self.authorizer(AccessCapability.ACCESS_ADMIN)
+        self.authorizer()
 
     def _publish_tailscale_status(self, status: object | None) -> None:
         if self.tailscale_status_sink:
@@ -72,16 +72,13 @@ class RemoteAccessActions:
     def create_invitation(
         self,
         *,
-        profile: str,
+        layout: str,
         route_id: str,
         lifetime: str,
     ) -> CreatedInvitation:
         self._require_admin()
-        if profile not in {"computer", "companion"}:
-            raise ValueError("profile must be computer or companion")
-        normalized_profile = (
-            AccessProfile.OWNER if profile == "computer" else AccessProfile.COMPANION
-        )
+        if layout not in {"desktop", "compact"}:
+            raise ValueError("layout must be desktop or compact")
         normalized_lifetime = SessionLifetime(lifetime)
         inventory = self.refresh_route_inventory()
         route = inventory.resolve_invitation_route(route_id)
@@ -90,9 +87,9 @@ class RemoteAccessActions:
                 "The selected connection route changed. Refresh and try again."
             )
         return self.service.create_invitation(
-            profile=normalized_profile,
             intended_origin=route.origin,
             session_lifetime=normalized_lifetime,
+            next_path="/?mobile=1" if layout == "compact" else "/",
             created_by="settings_owner",
             access_route="settings",
         )
@@ -266,7 +263,7 @@ def build_remote_access_settings_section(
     tailscale_verified_at: datetime | None = None,
     restart_child: RestartChild | None = None,
     tailscale_controller: object | None = None,
-    authorizer: Authorize = require_ui_capability,
+    authorizer: Authorize = require_ui_owner,
     port: int = 8080,
     status_dot: Callable[[str, str, str | None], None] | None = None,
     metric_chip: Callable[[str, Any, str | None, str], None] | None = None,
@@ -320,6 +317,11 @@ def build_remote_access_settings_section(
             "Remote Access is off by default. Your normal desktop localhost "
             "experience stays unchanged."
         ).classes("text-grey-6 text-xs")
+        ui.label(
+            "Every authenticated browser is the same Row-Bot owner. Device and "
+            "layout details do not reduce permissions."
+        ).classes("text-grey-6 text-xs")
+        _current_session_card()
 
         invitation_dialog, invitation_content, refresh_invitation_routes = (
             _invitation_dialog(
@@ -361,6 +363,26 @@ def build_remote_access_settings_section(
         invitation_content
 
 
+def _current_session_card() -> None:
+    context = current_access_context()
+    if context is None or context.session_id is None:
+        return
+    with ui.card().classes("w-full q-pa-sm"):
+        ui.label("This browser session").classes("text-subtitle2")
+        ui.label(
+            "Signing out revokes this browser session without affecting other devices."
+        ).classes("text-grey-6 text-xs")
+        ui.button(
+            "Sign out this browser",
+            icon="logout",
+            on_click=lambda: ui.run_javascript(
+                "fetch('/api/access/logout',{method:'POST',headers:{"
+                "'Content-Type':'application/json'},body:'{}'}).finally("
+                "()=>window.location.replace('/connect'))"
+            ),
+        ).props("flat dense no-caps color=negative")
+
+
 def _invitation_dialog(
     *,
     actions: RemoteAccessActions,
@@ -376,17 +398,19 @@ def _invitation_dialog(
             with ui.column().classes("gap-0"):
                 ui.label("Invite a device").classes("text-h6")
                 ui.label(
-                    "Choose what this device may access. Screen size never "
-                    "changes its permissions."
+                    "Choose the layout for this device."
+                ).classes("text-grey-6 text-sm")
+                ui.label(
+                    "Every connected device has full owner access to this Row-Bot."
                 ).classes("text-grey-6 text-sm")
             ui.button(icon="close", on_click=dialog.close).props("flat dense round")
 
-        profile = ui.radio(
+        layout = ui.radio(
             {
-                "computer": "Another computer — Full Row-Bot",
-                "companion": "Phone or tablet — Companion",
+                "desktop": "Computer — Desktop layout",
+                "compact": "Phone or tablet — Compact layout",
             },
-            value="computer",
+            value="desktop",
         ).props("inline")
         lifetime = ui.radio(
             {
@@ -466,7 +490,7 @@ def _invitation_dialog(
                 return
             try:
                 created = actions.create_invitation(
-                    profile=str(profile.value),
+                    layout=str(layout.value),
                     route_id=selected_route_id,
                     lifetime=str(lifetime.value),
                 )
@@ -480,7 +504,7 @@ def _invitation_dialog(
             _render_created_invitation(
                 result,
                 created,
-                external_profile=str(profile.value),
+                layout=str(layout.value),
             )
 
         ui.button(
@@ -502,15 +526,15 @@ def _render_created_invitation(
     container: Any,
     created: CreatedInvitation,
     *,
-    external_profile: str,
+    layout: str,
 ) -> None:
     invitation_url = created.invitation_url()
     with container:
         ui.separator()
         ui.label(
-            "Another computer — Full Row-Bot"
-            if external_profile == "computer"
-            else "Phone or tablet — Companion"
+            "Computer — Desktop layout"
+            if layout == "desktop"
+            else "Phone or tablet — Compact layout"
         ).classes("text-subtitle2 text-weight-medium")
         try:
             from row_bot.designer.qr_utils import generate_qr_png_b64
@@ -886,7 +910,7 @@ def _devices_card(
                             "text-sm text-weight-medium"
                         )
                         ui.label(
-                            f"{device.profile.value} · "
+                            "Owner device · "
                             f"{'revoked' if device.revoked_at else 'active'}"
                         ).classes("text-grey-6 text-xs")
 

@@ -3,10 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from row_bot.access.config import AccessConfig
-from row_bot.access.models import (
-    AccessProfile,
-    capabilities_for_profile,
-)
 from row_bot.access.request_context import (
     PresentationMode,
     RequestContextResolver,
@@ -28,15 +24,10 @@ def _scope(*, query: bytes = b"", peer: str = "192.168.1.25") -> dict:
     }
 
 
-def _session(profile: AccessProfile) -> SessionIdentity:
+def _session(name: str = "browser") -> SessionIdentity:
     return SessionIdentity(
-        profile=profile.value,
-        device_id=f"{profile.value}-device",
-        session_id=f"{profile.value}-session",
-        capabilities=frozenset(
-            capability.value
-            for capability in capabilities_for_profile(profile)
-        ),
+        device_id=f"{name}-device",
+        session_id=f"{name}-session",
     )
 
 
@@ -52,34 +43,34 @@ def test_remote_owner_keeps_full_authority_in_desktop_and_compact_layouts() -> N
     resolver = RequestContextResolver(
         AccessConfig.build(deployment_mode="server", allowed_hosts=("localhost",))
     )
-    desktop = resolver.resolve(_scope(), session=_session(AccessProfile.OWNER))
+    desktop = resolver.resolve(_scope(), session=_session())
     compact = resolver.resolve(
         _scope(query=b"mobile=1"),
-        session=_session(AccessProfile.OWNER),
+        session=_session(),
     )
 
-    assert desktop.profile == compact.profile == "owner"
-    assert desktop.capabilities == compact.capabilities
+    assert desktop.authentication_kind == compact.authentication_kind
+    assert desktop.device_id == compact.device_id
     assert desktop.presentation is PresentationMode.DESKTOP
     assert compact.presentation is PresentationMode.COMPACT
     assert is_mobile_client(_client(desktop)) is False
     assert is_mobile_client(_client(compact)) is True
 
 
-def test_companion_cannot_escape_compact_layout_with_query_or_viewport() -> None:
+def test_authenticated_owner_can_switch_back_to_desktop_layout() -> None:
     resolver = RequestContextResolver(
         AccessConfig.build(deployment_mode="server", allowed_hosts=("localhost",))
     )
-    companion = resolver.resolve(
+    desktop = resolver.resolve(
         _scope(query=b"mobile=0"),
-        session=_session(AccessProfile.COMPANION),
+        session=_session("phone"),
     )
-    client = _client(companion)
+    client = _client(desktop)
 
-    assert access_context_from_client(client) is companion
-    assert companion.profile == "companion"
-    assert companion.presentation is PresentationMode.COMPACT
-    assert is_mobile_client(client) is True
+    assert access_context_from_client(client) is desktop
+    assert desktop.authenticated
+    assert desktop.presentation is PresentationMode.DESKTOP
+    assert is_mobile_client(client) is False
 
 
 def test_desktop_loopback_is_owner_but_server_loopback_is_not_implicit() -> None:
@@ -87,13 +78,11 @@ def test_desktop_loopback_is_owner_but_server_loopback_is_not_implicit() -> None
         AccessConfig.build(deployment_mode="desktop", allowed_hosts=("localhost",))
     ).resolve(
         _scope(peer="127.0.0.1"),
-        owner_capabilities=capabilities_for_profile(AccessProfile.OWNER),
     )
     server = RequestContextResolver(
         AccessConfig.build(deployment_mode="server", allowed_hosts=("localhost",))
     ).resolve(_scope(peer="127.0.0.1"))
 
-    assert desktop.profile == "owner"
+    assert desktop.authenticated
     assert desktop.presentation is PresentationMode.DESKTOP
-    assert server.profile is None
     assert not server.authenticated

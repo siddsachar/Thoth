@@ -60,7 +60,7 @@ def _client(app, address: str, *, follow_redirects: bool = False) -> TestClient:
     )
 
 
-def _create_companion_invitation(local: TestClient) -> str:
+def _create_compact_invitation(local: TestClient) -> str:
     response = local.post(
         "/api/mobile/pair/start",
         json={"intended_origin": ORIGIN},
@@ -112,20 +112,20 @@ def test_forwarded_localhost_cannot_bypass_gate(tmp_path) -> None:
     assert response.json()["error"] == "untrusted_forwarding_headers"
 
 
-def test_companion_claim_allows_private_routes_and_revoke_blocks_it(
+def test_compact_owner_claim_allows_private_routes_and_revoke_blocks_it(
     tmp_path,
 ) -> None:
     app, service, registration = _app(tmp_path)
     local = _client(app, "127.0.0.1")
     remote = _client(app, "192.168.1.25")
-    invitation = _create_companion_invitation(local)
+    invitation = _create_compact_invitation(local)
 
     inspection = remote.get("/connect", params={"invitation": invitation})
     claim = _claim(remote, invitation)
 
     assert inspection.status_code == 200
     assert claim.status_code == 200
-    assert claim.json()["device"]["profile"] == "companion"
+    assert "profile" not in claim.json()["device"]
     assert claim.cookies.get(registration.cookies.names.http)
     assert remote.get("/").status_code == 200
     assert remote.get("/_media/thread/file.png").status_code == 200
@@ -145,7 +145,7 @@ def test_legacy_confirm_endpoint_never_claims_or_sets_cookie(tmp_path) -> None:
     app, service, registration = _app(tmp_path)
     local = _client(app, "127.0.0.1")
     remote = _client(app, "192.168.1.25")
-    invitation = _create_companion_invitation(local)
+    invitation = _create_compact_invitation(local)
 
     response = remote.post(
         "/api/mobile/pair/confirm",

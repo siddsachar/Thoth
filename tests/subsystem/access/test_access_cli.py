@@ -12,7 +12,6 @@ from row_bot.access.cli import (
     build_remote_access_parser,
     dispatch_access_command,
 )
-from row_bot.access.models import AccessProfile
 from row_bot.access.service import AccessService
 from row_bot.access.store import AccessStore
 
@@ -50,8 +49,8 @@ def test_parser_exposes_stable_serve_and_access_help(capsys) -> None:
     invite = _parse(
         "access",
         "invite",
-        "--profile",
-        "computer",
+        "--layout",
+        "compact",
         "--origin",
         ORIGIN,
         "--temporary",
@@ -59,7 +58,7 @@ def test_parser_exposes_stable_serve_and_access_help(capsys) -> None:
     )
     assert invite.command == "access"
     assert invite.access_command == "invite"
-    assert invite.profile == "computer"
+    assert invite.layout == "compact"
     assert invite.temporary is True
     assert invite.json_output is True
     assert capsys.readouterr().out == ""
@@ -92,8 +91,8 @@ def test_invite_json_emits_secret_link_once_and_persists_only_hashes(tmp_path) -
         "invite",
         "--data-dir",
         str(tmp_path),
-        "--profile",
-        "computer",
+        "--layout",
+        "desktop",
         "--origin",
         ORIGIN,
         "--temporary",
@@ -108,8 +107,9 @@ def test_invite_json_emits_secret_link_once_and_persists_only_hashes(tmp_path) -
     assert errors == ""
     payload = json.loads(output)
     invitation = payload["invitation"]
-    assert invitation["profile"] == "computer"
-    assert invitation["access_profile"] == "owner"
+    assert invitation["layout"] == "desktop"
+    assert invitation["authority"] == "owner"
+    assert "profile" not in invitation
     assert invitation["session_lifetime"] == "temporary"
     assert invitation["name"] == "Office browser"
     assert output.count("rbi_") == 1
@@ -129,8 +129,8 @@ def test_text_invite_prints_one_secret_link(tmp_path) -> None:
         "invite",
         "--data-dir",
         str(tmp_path),
-        "--profile",
-        "companion",
+        "--layout",
+        "compact",
         "--origin",
         ORIGIN,
     )
@@ -139,7 +139,8 @@ def test_text_invite_prints_one_secret_link(tmp_path) -> None:
 
     assert code == 0
     assert errors == ""
-    assert "Profile: companion" in output
+    assert "Layout: compact" in output
+    assert "Access: full owner" in output
     assert output.count("rbi_") == 1
     assert "token:" not in output.lower()
 
@@ -147,7 +148,6 @@ def test_text_invite_prints_one_secret_link(tmp_path) -> None:
 def test_list_never_serializes_verifiers_or_raw_tokens(tmp_path) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
     created = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin=ORIGIN,
         now=NOW,
     )
@@ -179,7 +179,6 @@ def test_list_never_serializes_verifiers_or_raw_tokens(tmp_path) -> None:
 def test_revoke_and_revoke_all_are_explicit(tmp_path) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
     created = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin=ORIGIN,
         now=NOW,
     )

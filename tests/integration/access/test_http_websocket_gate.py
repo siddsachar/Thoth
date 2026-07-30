@@ -14,7 +14,7 @@ from row_bot.access.request_context import SessionIdentity
 
 class FakeSessionAuthenticator:
     def __init__(self) -> None:
-        self.active = {"owner-token": ("owner", "owner-session")}
+        self.active = {"owner-token": "owner-session"}
 
     def revoke(self, token: str) -> None:
         self.active.pop(token, None)
@@ -36,11 +36,9 @@ class FakeSessionAuthenticator:
         result = self.active.get(token)
         if result is None:
             return None
-        profile, session_id = result
         return SessionIdentity(
-            profile=profile,
-            device_id=f"{profile}-device",
-            session_id=session_id,
+            device_id=f"{result}-device",
+            session_id=result,
         )
 
 
@@ -145,15 +143,15 @@ def test_revocation_blocks_http_immediately_and_active_websocket_within_bound() 
     assert elapsed < 1.0
 
 
-def test_companion_session_cannot_cross_owner_route_boundary() -> None:
+def test_phone_session_can_use_owner_management_routes() -> None:
     authenticator = FakeSessionAuthenticator()
-    authenticator.active["companion-token"] = ("companion", "companion-session")
+    authenticator.active["phone-token"] = "phone-session"
     client = _build_app(authenticator)
 
     response = client.get(
         "/api/access/devices",
-        headers={"cookie": "row_bot_test=companion-token"},
+        headers={"cookie": "row_bot_test=phone-token"},
     )
 
-    assert response.status_code == 403
-    assert response.json()["error"] == "capability_required"
+    assert response.status_code == 200
+    assert response.json() == {"devices": []}

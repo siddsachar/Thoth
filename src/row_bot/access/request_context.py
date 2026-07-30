@@ -76,10 +76,8 @@ class PresentationMode(StrEnum):
 class SessionIdentity:
     """Authentication result supplied by the access-session service."""
 
-    profile: str
     device_id: str
     session_id: str
-    capabilities: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +98,7 @@ class RequestProvenance:
 
 @dataclass(frozen=True, slots=True)
 class AccessContext:
-    """One immutable authorization and presentation context per request."""
+    """One immutable authentication and presentation context per request."""
 
     deployment_mode: DeploymentMode
     authentication_kind: AuthenticationKind
@@ -113,8 +111,6 @@ class AccessContext:
     scheme: str
     host: str
     origin: str
-    profile: str | None
-    capabilities: frozenset[str]
     presentation: PresentationMode
     direct_loopback: bool = False
     device_id: str | None = None
@@ -127,11 +123,6 @@ class AccessContext:
     @property
     def is_local_owner(self) -> bool:
         return self.authentication_kind is AuthenticationKind.LOCAL_OWNER
-
-    def has_capability(self, capability: object) -> bool:
-        value = getattr(capability, "value", capability)
-        return str(value) in self.capabilities
-
 
 def _headers(scope: Mapping[str, object]) -> dict[str, list[str]]:
     headers: dict[str, list[str]] = {}
@@ -467,8 +458,6 @@ class RequestContextResolver:
         scope: Mapping[str, object],
         *,
         session: SessionIdentity | None = None,
-        owner_capabilities: Iterable[object] = (),
-        companion_capabilities: Iterable[object] = (),
     ) -> AccessContext:
         provenance = self.resolve_provenance(scope)
         if (
@@ -476,29 +465,18 @@ class RequestContextResolver:
             and provenance.direct_loopback
         ):
             kind = AuthenticationKind.LOCAL_OWNER
-            profile: str | None = "owner"
             device_id = None
             session_id = None
-            capabilities = _capability_values(owner_capabilities)
         elif session is not None:
             kind = AuthenticationKind.SESSION
-            profile = _profile_value(session.profile)
             device_id = session.device_id
             session_id = session.session_id
-            capabilities = _capability_values(
-                session.capabilities
-                or (
-                    owner_capabilities if profile == "owner" else companion_capabilities
-                )
-            )
         else:
             kind = AuthenticationKind.UNAUTHENTICATED
-            profile = None
             device_id = None
             session_id = None
-            capabilities = frozenset()
 
-        presentation = requested_presentation(scope, profile=profile)
+        presentation = requested_presentation(scope)
         return AccessContext(
             deployment_mode=self.config.deployment_mode,
             authentication_kind=kind,
@@ -511,8 +489,6 @@ class RequestContextResolver:
             scheme=provenance.scheme,
             host=provenance.host,
             origin=provenance.origin,
-            profile=profile,
-            capabilities=capabilities,
             presentation=presentation,
             direct_loopback=provenance.direct_loopback,
             device_id=device_id,
@@ -520,26 +496,11 @@ class RequestContextResolver:
         )
 
 
-def _profile_value(profile: object) -> str:
-    value = getattr(profile, "value", profile)
-    return str(value or "").strip().lower()
-
-
-def _capability_values(capabilities: Iterable[object]) -> frozenset[str]:
-    return frozenset(
-        str(getattr(capability, "value", capability)) for capability in capabilities
-    )
-
-
 def requested_presentation(
     scope: Mapping[str, object],
-    *,
-    profile: str | None,
 ) -> PresentationMode:
     """Resolve presentation without allowing it to change authorization."""
 
-    if _profile_value(profile) == "companion":
-        return PresentationMode.COMPACT
     query = bytes(scope.get("query_string") or b"").decode("latin-1", errors="ignore")
     values = parse_qs(query, keep_blank_values=True)
     requested = str((values.get("mobile") or values.get("m") or [""])[0]).lower()

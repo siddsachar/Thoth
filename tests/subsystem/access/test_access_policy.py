@@ -5,9 +5,8 @@ import pytest
 from row_bot.access.config import DeploymentMode
 from row_bot.access.policy import (
     AccessPolicy,
-    Capability,
     RouteKind,
-    require_capability,
+    require_authenticated_owner,
 )
 from row_bot.access.request_context import (
     AccessContext,
@@ -19,8 +18,6 @@ from row_bot.access.request_context import (
 def _context(
     *,
     kind: AuthenticationKind,
-    profile: str | None,
-    capabilities: frozenset[str] = frozenset(),
     forwarded: tuple[str, ...] = (),
     direct_loopback: bool = False,
     deployment_mode: DeploymentMode = DeploymentMode.DESKTOP,
@@ -37,8 +34,6 @@ def _context(
         scheme="http",
         host="localhost:8080",
         origin="http://localhost:8080",
-        profile=profile,
-        capabilities=capabilities,
         presentation=PresentationMode.DESKTOP,
         direct_loopback=direct_loopback,
     )
@@ -53,40 +48,21 @@ def _scope(path: str, *, method: str = "GET", scope_type: str = "http") -> dict:
     }
 
 
-def test_profile_capabilities_keep_companion_below_owner() -> None:
-    policy = AccessPolicy()
-
-    owner = policy.capabilities_for_profile("owner")
-    companion = policy.capabilities_for_profile("companion")
-
-    assert Capability.FULL_UI.value in owner
-    assert Capability.ACCESS_ADMIN.value in owner
-    assert Capability.DEVELOPER_STUDIO.value in owner
-    assert Capability.COMPACT_UI.value in companion
-    assert Capability.CHAT.value in companion
-    assert Capability.ACCESS_ADMIN.value not in companion
-    assert Capability.SETTINGS.value not in companion
-    assert Capability.SHELL.value not in companion
-
-
-def test_access_management_routes_require_owner_capability() -> None:
+def test_access_management_routes_require_authenticated_owner_and_same_origin() -> None:
     policy = AccessPolicy()
     route = policy.classify(_scope("/api/access/devices/device/revoke", method="POST"))
-    companion = _context(
-        kind=AuthenticationKind.SESSION,
-        profile="companion",
-        capabilities=policy.companion_capabilities,
-    )
-    owner = _context(
-        kind=AuthenticationKind.SESSION,
-        profile="owner",
-        capabilities=policy.owner_capabilities,
-    )
 
-    assert route.kind is RouteKind.OWNER
+    assert route.kind is RouteKind.AUTHENTICATED
     assert route.require_same_origin is True
-    assert policy.authorize(companion, route).status_code == 403
-    assert policy.authorize(owner, route).allowed is True
+    assert (
+        policy.authorize(
+            _context(kind=AuthenticationKind.UNAUTHENTICATED), route
+        ).status_code
+        == 401
+    )
+    assert policy.authorize(
+        _context(kind=AuthenticationKind.SESSION), route
+    ).allowed
 
 
 def test_unpaired_browser_navigation_and_api_are_classified_separately() -> None:
@@ -99,18 +75,12 @@ def test_unpaired_browser_navigation_and_api_are_classified_separately() -> None
 
     assert browser.browser_navigation is True
     assert api.browser_navigation is False
-    assert (
-        policy.authorize(
-            _context(kind=AuthenticationKind.UNAUTHENTICATED, profile=None), browser
-        ).status_code
-        == 401
-    )
-    assert (
-        policy.authorize(
-            _context(kind=AuthenticationKind.UNAUTHENTICATED, profile=None), api
-        ).status_code
-        == 401
-    )
+    assert policy.authorize(
+        _context(kind=AuthenticationKind.UNAUTHENTICATED), browser
+    ).status_code == 401
+    assert policy.authorize(
+        _context(kind=AuthenticationKind.UNAUTHENTICATED), api
+    ).status_code == 401
 
 
 def test_websocket_requires_authentication_and_origin() -> None:
@@ -120,28 +90,25 @@ def test_websocket_requires_authentication_and_origin() -> None:
     assert route.kind is RouteKind.AUTHENTICATED
     assert route.require_same_origin is True
     assert not policy.authorize(
-        _context(kind=AuthenticationKind.UNAUTHENTICATED, profile=None), route
+        _context(kind=AuthenticationKind.UNAUTHENTICATED), route
     ).allowed
 
 
 def test_launcher_operations_are_never_authorized_to_remote_sessions() -> None:
     policy = AccessPolicy()
     route = policy.classify(_scope("/api/launcher-shutdown", method="POST"))
-    remote_owner = _context(
-        kind=AuthenticationKind.SESSION,
-        profile="owner",
-        capabilities=policy.owner_capabilities,
-    )
-    direct_local = _context(
-        kind=AuthenticationKind.LOCAL_OWNER,
-        profile="owner",
-        capabilities=policy.owner_capabilities,
-        direct_loopback=True,
-    )
 
     assert route.kind is RouteKind.LAUNCHER
-    assert policy.authorize(remote_owner, route).status_code == 403
-    assert policy.authorize(direct_local, route).allowed is True
+    assert policy.authorize(
+        _context(kind=AuthenticationKind.SESSION), route
+    ).status_code == 403
+    assert policy.authorize(
+        _context(
+            kind=AuthenticationKind.LOCAL_OWNER,
+            direct_loopback=True,
+        ),
+        route,
+    ).allowed
 
 
 def test_server_mode_direct_loopback_reaches_launcher_handler_boundary() -> None:
@@ -149,7 +116,6 @@ def test_server_mode_direct_loopback_reaches_launcher_handler_boundary() -> None
     route = policy.classify(_scope("/api/launcher-ping"))
     direct_server = _context(
         kind=AuthenticationKind.UNAUTHENTICATED,
-        profile=None,
         direct_loopback=True,
         deployment_mode=DeploymentMode.SERVER,
     )
@@ -162,8 +128,6 @@ def test_forwarded_loopback_cannot_authorize_launcher_operation() -> None:
     route = policy.classify(_scope("/api/launcher-restart", method="POST"))
     forged_local = _context(
         kind=AuthenticationKind.LOCAL_OWNER,
-        profile="owner",
-        capabilities=policy.owner_capabilities,
         forwarded=("x-forwarded-for",),
     )
 
@@ -176,17 +140,14 @@ def test_webhook_preserves_route_owned_secret_semantics() -> None:
 
     assert route.kind is RouteKind.DELEGATED
     assert policy.authorize(
-        _context(kind=AuthenticationKind.UNAUTHENTICATED, profile=None), route
+        _context(kind=AuthenticationKind.UNAUTHENTICATED), route
     ).allowed
 
 
-def test_require_capability_guards_server_side_handlers() -> None:
-    companion = _context(
-        kind=AuthenticationKind.SESSION,
-        profile="companion",
-        capabilities=AccessPolicy.companion_capabilities,
-    )
+def test_require_authenticated_owner_guards_server_side_handlers() -> None:
+    unauthenticated = _context(kind=AuthenticationKind.UNAUTHENTICATED)
+    owner = _context(kind=AuthenticationKind.SESSION)
 
-    require_capability(companion, Capability.CHAT)
-    with pytest.raises(PermissionError, match="capability_required"):
-        require_capability(companion, Capability.ACCESS_ADMIN)
+    with pytest.raises(PermissionError, match="authentication_required"):
+        require_authenticated_owner(unauthenticated)
+    assert require_authenticated_owner(owner) is owner

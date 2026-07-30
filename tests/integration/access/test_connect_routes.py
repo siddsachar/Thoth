@@ -3,13 +3,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import logging
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from row_bot.access.config import AccessConfig
 from row_bot.access.middleware import AccessMiddleware
-from row_bot.access.models import AccessProfile, SessionLifetime
+from row_bot.access.models import SessionLifetime
 from row_bot.access.routes import register_access_routes
 from row_bot.access.service import AccessService
 from row_bot.access.store import AccessStore
@@ -50,14 +51,14 @@ def _invitation(
     service: AccessService,
     *,
     origin: str = "http://localhost:8080",
-    profile: AccessProfile = AccessProfile.OWNER,
     lifetime: SessionLifetime = SessionLifetime.TRUSTED,
+    next_path: str = "/",
     now=None,
 ):
     return service.create_invitation(
-        profile=profile,
         intended_origin=origin,
         session_lifetime=lifetime,
+        next_path=next_path,
         now=now,
     )
 
@@ -87,7 +88,7 @@ def test_get_is_informational_and_strips_ticket_from_visible_history(tmp_path) -
     )
 
     assert response.status_code == 200
-    assert "Access: Full Row-Bot" in response.text
+    assert "Access: Full owner access" in response.text
     assert "Duration: 30 days" in response.text
     assert "history.replaceState" in response.text
     assert "searchParams.delete('invitation')" in response.text
@@ -112,7 +113,7 @@ def test_explicit_json_post_claims_once_and_issues_a_session_cookie(tmp_path) ->
     assert response.status_code == 200
     payload = response.json()
     assert payload["authenticated"] is True
-    assert payload["device"]["profile"] == "owner"
+    assert "profile" not in payload["device"]
     assert payload["next"] == "/settings"
     assert created.token not in response.text
     cookie = response.cookies.get(registration.cookies.names.http)
@@ -123,27 +124,29 @@ def test_explicit_json_post_claims_once_and_issues_a_session_cookie(tmp_path) ->
     assert service.inspect_invitation(created.token).status == "already_claimed"
 
 
-def test_claim_uses_immutable_invitation_profile_and_lifetime(tmp_path) -> None:
+def test_compact_invitation_changes_layout_only_and_keeps_lifetime(tmp_path) -> None:
     _app, client, service, _registration = _application(tmp_path)
     created = _invitation(
         service,
-        profile=AccessProfile.COMPANION,
         lifetime=SessionLifetime.TEMPORARY,
+        next_path="/?mobile=1",
     )
+    query = parse_qs(urlsplit(created.invitation_url()).query)
+    assert query["next"] == ["/?mobile=1"]
 
     response = client.post(
         "/api/access/invitations/claim",
         json={
             "invitation": created.token,
             "display_name": "Phone",
-            "profile": "owner",
-            "session_lifetime": "trusted",
+            "next": "/?mobile=1",
         },
         headers={"origin": "http://localhost:8080"},
     )
 
     assert response.status_code == 200
-    assert response.json()["device"]["profile"] == "companion"
+    assert "profile" not in response.json()["device"]
+    assert response.json()["next"] == "/?mobile=1"
     assert response.json()["session"]["lifetime"] == "temporary"
 
 

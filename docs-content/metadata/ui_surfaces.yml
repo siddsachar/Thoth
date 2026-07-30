@@ -287,7 +287,7 @@ surfaces:
   remote_access_invitation:
     title: Remote Access invitation
     app_route: /?settings_tab=System
-    state: current route selector with computer and companion profiles
+    state: current route selector with desktop and compact layouts plus full owner access disclosure
     scenario: configured
     docs_page: /docs/operations/remote-access
     screenshot_id: remote-access-invitation
@@ -487,13 +487,13 @@ surfaces:
   mobile_settings:
     title: Android settings
     app_route: /?mobile=1&mobile_view=settings
-    state: paired device and inert provider configuration
+    state: authenticated owner session and inert provider configuration in compact presentation
     scenario: mobile
     docs_page: /docs/mobile-native/
     screenshot_id: mobile-settings
     capture_type: automated
     status: ready
-    source_files: [src/row_bot/ui/mobile_settings.py]
+    source_files: [src/row_bot/ui/settings.py, src/row_bot/ui/mobile_settings.py]
   native_mobile_pairing:
     title: Native pairing, trusted LAN, and QR flow
     app_route: native desktop plus physical Android device

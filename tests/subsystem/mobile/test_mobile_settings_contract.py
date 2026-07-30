@@ -20,13 +20,16 @@ def test_system_settings_include_remote_access_section() -> None:
     assert "build_remote_access_settings_section" in settings_src
     assert "Remote Access" in access_settings_src
     assert "Create invitation" in access_settings_src
-    assert "Another computer" in access_settings_src
-    assert "Companion" in access_settings_src
+    assert "Computer — Desktop layout" in access_settings_src
+    assert "Phone or tablet — Compact layout" in access_settings_src
+    assert "full owner access" in access_settings_src
     assert "Connected devices and sessions" in access_settings_src
     assert "Tailscale" in access_settings_src
     assert "Local network" in access_settings_src
     assert "generate_qr_png_b64" in access_settings_src
     assert "service.revoke_device" in access_settings_src
+    assert "Sign out this browser" in access_settings_src
+    assert "/api/access/logout" in access_settings_src
     assert "mobile: bool = False" in settings_src
     assert "row-bot-settings-mobile-shell" in settings_src
     assert "data-mobile-settings=true" in settings_src

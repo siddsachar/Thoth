@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import uuid
 
-from row_bot.access.models import AccessProfile, SessionLifetime
+from row_bot.access.models import SessionLifetime
 from row_bot.access.service import AccessService
 from row_bot.access.store import InvitationClaimError, normalize_datetime, parse_iso, utc_now
 from row_bot.access.tokens import (
@@ -88,7 +88,7 @@ def create_pairing_ticket(
     ttl: timedelta = PAIRING_CODE_TTL,
     now: datetime | None = None,
 ) -> PairingTicket:
-    """Create a companion invitation while preserving the old ``rbp`` URL."""
+    """Create an owner invitation while preserving the old ``rbp`` URL."""
     if ttl > PAIRING_CODE_TTL:
         raise ValueError("pairing lifetime cannot exceed 10 minutes")
     current = _now(now)
@@ -98,7 +98,6 @@ def create_pairing_ticket(
         invitation_id=invitation_id,
         secret_hash=issued.secret_hash,
         secret_salt=issued.secret_salt,
-        profile=AccessProfile.COMPANION,
         session_lifetime=SessionLifetime.TRUSTED,
         intended_origin=(str(intended_origin).rstrip("/") if intended_origin else "http://localhost"),
         expires_at=current + ttl,
@@ -137,7 +136,7 @@ def confirm_pairing(
     access_mode: str | None = None,
     now: datetime | None = None,
 ) -> PairingConfirmation:
-    """Atomically claim a companion invitation and create a session."""
+    """Atomically claim an owner invitation and create a session."""
     parsed = parse_pairing_code(code)
     if parsed is None:
         raise PairingError("invalid_code")
@@ -170,7 +169,7 @@ def validate_device_token(
     now: datetime | None = None,
     touch: bool = True,
 ) -> MobileDevice | None:
-    """Validate a new session or a migrated companion-only ``rbd`` token."""
+    """Validate a new owner session or a migrated legacy-mobile ``rbd`` token."""
     service = AccessService(store.access_store)
     authenticated = service.validate_session(token, now=now, touch=touch)
     if authenticated is None:

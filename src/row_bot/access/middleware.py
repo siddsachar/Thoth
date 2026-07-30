@@ -60,22 +60,6 @@ def _path(scope: Mapping[str, object]) -> str:
     return path.replace("\r", "_").replace("\n", "_").replace("\t", "_")[:256]
 
 
-def _profile_text(value: object) -> str:
-    return str(getattr(value, "value", value) or "").strip().lower()
-
-
-def _capability_values(value: object) -> frozenset[str]:
-    if value is None:
-        return frozenset()
-    try:
-        return frozenset(
-            str(getattr(item, "value", item))
-            for item in value  # type: ignore[union-attr]
-        )
-    except TypeError:
-        return frozenset()
-
-
 def _coerce_session_identity(value: object) -> SessionIdentity | None:
     if value is None:
         return None
@@ -83,23 +67,14 @@ def _coerce_session_identity(value: object) -> SessionIdentity | None:
         return value
     if isinstance(value, tuple) and len(value) == 2:
         session, device = value
-        profile = getattr(device, "profile", None) or getattr(session, "profile", None)
         device_id = getattr(device, "id", None) or getattr(session, "device_id", None)
         session_id = getattr(session, "id", None)
-        capabilities = getattr(device, "capabilities", None) or getattr(
-            session, "capabilities", None
-        )
     elif isinstance(value, Mapping):
-        profile = value.get("profile")
         device_id = value.get("device_id")
         session_id = value.get("session_id")
-        capabilities = value.get("capabilities")
     else:
         authenticated_device = getattr(value, "device", None)
         authenticated_session = getattr(value, "session", None)
-        profile = getattr(value, "profile", None) or getattr(
-            authenticated_device, "profile", None
-        )
         device_id = getattr(value, "device_id", None) or getattr(
             authenticated_device, "id", None
         )
@@ -108,19 +83,11 @@ def _coerce_session_identity(value: object) -> SessionIdentity | None:
             or getattr(authenticated_session, "id", None)
             or getattr(value, "id", None)
         )
-        capabilities = getattr(value, "capabilities", None) or getattr(
-            authenticated_device, "capabilities", None
-        )
-    profile_text = _profile_text(profile)
-    if not profile_text or not device_id or not session_id:
+    if not device_id or not session_id:
         return None
-    if profile_text == "computer":
-        profile_text = "owner"
     return SessionIdentity(
-        profile=profile_text,
         device_id=str(device_id),
         session_id=str(session_id),
-        capabilities=_capability_values(capabilities),
     )
 
 
@@ -319,8 +286,6 @@ class AccessMiddleware:
             context = resolver.resolve(
                 scope,
                 session=session,
-                owner_capabilities=self.policy.owner_capabilities,
-                companion_capabilities=self.policy.companion_capabilities,
             )
         except RequestContextError as exc:
             await self._reject_context_error(scope, send, exc)

@@ -1,4 +1,4 @@
-"""Browser-first mobile companion shell for Row-Bot."""
+"""Browser-first compact owner shell for Row-Bot."""
 
 from __future__ import annotations
 
@@ -10,11 +10,8 @@ from typing import Any, Callable
 from nicegui import run as nicegui_run, ui
 
 from row_bot.brand import APP_DISPLAY_NAME
-from row_bot.access.models import AccessCapability
 from row_bot.ui.access_context import (
     access_context_from_client,
-    current_access_context,
-    has_capability,
     uses_compact_presentation,
 )
 from row_bot.ui.mobile_chat import build_mobile_chat, mobile_chat_mode, open_thread_on_mobile, set_mobile_chat_mode
@@ -452,6 +449,9 @@ def _build_mobile_nav(
     with ui.row().classes("row-bot-mobile-nav w-full items-center justify-around no-wrap"):
         for name, icon in _MOBILE_TABS:
             def _switch(tab: str = name) -> None:
+                if tab == "Settings":
+                    open_settings("Providers")
+                    return
                 if tab == "Chat":
                     set_mobile_chat_mode(state, "threads")
                 _set_mobile_view(state, tab)
@@ -785,60 +785,6 @@ def _build_knowledge() -> None:
     _render_results()
 
 
-def _build_settings(*, open_settings: Callable[..., None]) -> None:
-    """Render only controls allowed by the active access profile."""
-    context = current_access_context()
-    is_owner = bool(context and context.profile == "owner")
-    with ui.element("div").classes("row-bot-mobile-card"):
-        ui.label("This device").classes("text-subtitle2")
-        ui.label(
-            "Computer owner" if is_owner else "Companion"
-        ).classes("text-grey-6 text-sm")
-        if context and context.session_id:
-            ui.label("Authenticated session").classes("text-positive text-xs")
-        elif context and context.is_local_owner:
-            ui.label("Local desktop owner").classes("text-positive text-xs")
-
-    with ui.element("div").classes("row-bot-mobile-card"):
-        ui.label("Presentation").classes("text-subtitle2")
-        if is_owner:
-            ui.label(
-                "Compact mode changes layout only. Your owner permissions stay the same."
-            ).classes("text-grey-6 text-sm")
-            with ui.row().classes("w-full gap-2"):
-                ui.button(
-                    "Desktop layout",
-                    icon="desktop_windows",
-                    on_click=lambda: ui.navigate.to("/?mobile=0"),
-                ).props("flat dense no-caps color=primary")
-                if has_capability(AccessCapability.SETTINGS, context):
-                    ui.button(
-                        "Full settings",
-                        icon="settings",
-                        on_click=lambda: open_settings("Providers"),
-                    ).props("flat dense no-caps")
-        else:
-            ui.label(
-                "Companion sessions always use the restricted compact surface."
-            ).classes("text-grey-6 text-sm")
-
-    if context and context.session_id:
-        with ui.element("div").classes("row-bot-mobile-card"):
-            ui.label("Session").classes("text-subtitle2")
-            ui.label(
-                "Signing out revokes this browser session on the server."
-            ).classes("text-grey-6 text-sm")
-            ui.button(
-                "Sign out",
-                icon="logout",
-                on_click=lambda: ui.run_javascript(
-                    "fetch('/api/access/logout',{method:'POST',headers:{"
-                    "'Content-Type':'application/json'},body:'{}'}).finally("
-                    "()=>window.location.replace('/connect'))"
-                ),
-            ).props("flat dense no-caps color=negative")
-
-
 def _build_desktop_only_notice(
     state: AppState,
     *,
@@ -873,7 +819,7 @@ def build_mobile_shell(
     show_interrupt: Callable[[Any], None],
     add_chat_message: Callable[[dict], Any],
 ) -> None:
-    """Render the mobile companion shell."""
+    """Render the compact owner shell."""
     ui.html(_MOBILE_CSS, sanitize=False)
     p.chat_scroll = None
     p.chat_container = None
@@ -924,7 +870,5 @@ def build_mobile_shell(
                         )
                     elif view == "Knowledge":
                         _build_knowledge()
-                    elif view == "Settings":
-                        _build_settings(open_settings=open_settings)
         if not active_chat_detail:
             _build_mobile_nav(state, rebuild_main=rebuild_main, open_settings=open_settings)

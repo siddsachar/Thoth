@@ -7,7 +7,6 @@ from starlette.testclient import TestClient
 
 from row_bot.access.config import AccessConfig
 from row_bot.access.middleware import AccessMiddleware
-from row_bot.access.models import AccessProfile
 from row_bot.access.routes import register_access_routes
 from row_bot.access.service import AccessService
 from row_bot.access.store import AccessStore
@@ -37,7 +36,6 @@ def _application(tmp_path, *, port: int = 8080):
 
 def _claim_owner(client: TestClient, service: AccessService, *, port: int = 8080):
     created = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin=f"http://localhost:{port}",
     )
     response = client.post(
@@ -58,7 +56,7 @@ def test_session_status_persists_across_refreshes(tmp_path) -> None:
 
     assert claim.status_code == 200
     assert first.json()["authenticated"] is True
-    assert first.json()["profile"] == "owner"
+    assert "profile" not in first.json()
     assert first.json()["session_id"]
     assert second.json()["session_id"] == first.json()["session_id"]
 
@@ -67,7 +65,6 @@ def test_server_expiry_is_authoritative_even_if_cookie_survives(tmp_path) -> Non
     client, service, registration = _application(tmp_path)
     old = datetime(2020, 1, 1, tzinfo=timezone.utc)
     created = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin="http://localhost:8080",
         now=old,
     )

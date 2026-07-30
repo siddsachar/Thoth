@@ -141,12 +141,9 @@ async def _voice_realtime_client_secret() -> dict:
 
 
 def _browser_voice_context(request: Request):
-    from row_bot.access.models import AccessCapability
-    from row_bot.access.policy import context_from_scope, require_capability
+    from row_bot.access.policy import context_from_scope, require_authenticated_owner
 
-    context = context_from_scope(request.scope)
-    require_capability(request.scope, AccessCapability.CHAT)
-    assert context is not None
+    context = require_authenticated_owner(request.scope)
     host = str(request.url.hostname or "").strip("[]").lower()
     if context.scheme != "https" and host not in {"localhost", "127.0.0.1", "::1"}:
         raise HTTPException(status_code=400, detail="secure_context_required")
@@ -1290,7 +1287,6 @@ async def on_shutdown():
 @ui.page("/")
 async def index():
     import row_bot.ui.state as _st
-    from row_bot.access.models import AccessCapability
     from row_bot.ui.access_context import access_context_from_client
 
     ui.dark_mode(True)
@@ -1298,9 +1294,6 @@ async def index():
     _access_context = access_context_from_client(ui.context.client)
     _mobile_client = bool(
         _access_context and _access_context.presentation.value == "compact"
-    )
-    _companion_client = bool(
-        _access_context and _access_context.profile == "companion"
     )
 
     # ── Global panel card style ──────────────────────────────────────────
@@ -1484,7 +1477,7 @@ async def index():
             return False, f"Model {current} is not exposed by the Ollama daemon. Manage local models in Ollama, then refresh."
         return True, ""
 
-    if is_docs_capture() or _companion_client:
+    if is_docs_capture():
         health_result = (True, "")
     else:
         try:
@@ -1504,7 +1497,7 @@ async def index():
         is_docs_capture()
         and _docs_query.get("docs_surface") == "first-launch-setup-wizard"
     )
-    if (_docs_force_setup_wizard or not is_setup_complete()) and not _companion_client:
+    if _docs_force_setup_wizard or not is_setup_complete():
         async def _on_wizard_finish():
             state.current_model = get_current_model()
             if getattr(state, "open_setup_center_on_next_load", False):
@@ -1528,14 +1521,8 @@ async def index():
 
     # ── Wrappers that close over (state, p, cb) ─────────────────────────
     def _open_settings(initial_tab: str = "Providers"):
-        if (
-            _access_context is None
-            or not _access_context.has_capability(AccessCapability.SETTINGS)
-        ):
-            ui.notify(
-                "Full settings are available only to a computer owner.",
-                type="warning",
-            )
+        if _access_context is None or not _access_context.authenticated:
+            ui.notify("Owner authentication is required.", type="warning")
             return
         open_settings(state, p, initial_tab, mobile=_mobile_client)
 

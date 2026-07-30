@@ -193,12 +193,13 @@ def test_docker_guide_documents_bootstrap_isolation_and_recovery() -> None:
 
     assert (
         "docker compose -f deploy/docker/compose.yaml exec row-bot \\\n"
-        "  row-bot access invite --profile computer"
+        "  row-bot access invite --layout desktop"
     ) in source
     assert (
         "docker compose -f deploy/docker/compose.yaml exec row-bot \\\n"
-        "  row-bot access invite --profile companion"
+        "  row-bot access invite --layout compact"
     ) in source
+    assert "Both layouts represent the same owner" in source
     assert "ROW_BOT_BIND_ADDRESS=192.168.1.20" in source
     assert "--project-name row-bot-main" in source
     assert "--project-name row-bot-lab" in source

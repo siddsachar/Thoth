@@ -11,7 +11,6 @@ from starlette.websockets import WebSocketDisconnect
 from row_bot.access.config import AccessConfig
 from row_bot.access.cookies import LEGACY_HTTPS_COOKIE_NAME
 from row_bot.access.middleware import AccessMiddleware
-from row_bot.access.models import AccessProfile
 from row_bot.access.request_context import ACCESS_CONTEXT_SCOPE_KEY
 from row_bot.access.routes import register_access_routes
 from row_bot.access.runtime_policy import RuntimeAccessPolicy
@@ -140,7 +139,7 @@ def _build_app(path):
     async def root(request: Request):
         context = request.scope[ACCESS_CONTEXT_SCOPE_KEY]
         return {
-            "profile": context.profile,
+            "authentication_kind": context.authentication_kind.value,
             "device_id": context.device_id,
             "origin": context.origin,
         }
@@ -196,11 +195,11 @@ def test_migrated_mobile_cookie_survives_same_managed_ngrok_host(
 
     assert admitted.status_code == 200
     assert admitted.json() == {
-        "profile": "companion",
+        "authentication_kind": "session",
         "device_id": LEGACY_DEVICE_ID,
         "origin": MANAGED_ORIGIN,
     }
-    assert service.list_devices()[0].profile is AccessProfile.COMPANION
+    assert service.list_devices()[0].legacy_source_id == LEGACY_DEVICE_ID
     assert service.list_invitations() == []
 
     calls_before_unknown = authenticator.calls

@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-from row_bot.access.models import (
-    AccessCapability,
-    AccessProfile,
-    capabilities_for_profile,
-)
 from row_bot.access.tokens import (
     issue_invitation_token,
     issue_session_token,
@@ -44,18 +39,3 @@ def test_malformed_tokens_fail_closed() -> None:
     assert parse_invitation_token("rbi_not-an-id.short") is None
     assert parse_invitation_token("rbs_" + "a" * 32 + "." + "x" * 43) is None
     assert parse_session_token("rbi_" + "a" * 32 + "." + "x" * 43) is None
-
-
-def test_companion_capabilities_do_not_include_owner_administration() -> None:
-    companion = capabilities_for_profile(AccessProfile.COMPANION)
-    owner = capabilities_for_profile(AccessProfile.OWNER)
-
-    assert AccessCapability.CHAT in companion
-    assert AccessCapability.COMPACT_UI in companion
-    assert AccessCapability.FULL_UI not in companion
-    assert AccessCapability.SETTINGS not in companion
-    assert AccessCapability.ACCESS_ADMIN not in companion
-    assert AccessCapability.DEVELOPER_STUDIO not in companion
-    assert AccessCapability.SHELL not in companion
-    assert AccessCapability.FULL_UI in owner
-    assert AccessCapability.ACCESS_ADMIN in owner

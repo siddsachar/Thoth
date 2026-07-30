@@ -15,7 +15,7 @@ from starlette.responses import (
     Response,
 )
 
-from row_bot.access.models import AccessCapability, AccessProfile, SessionLifetime
+from row_bot.access.models import SessionLifetime
 from row_bot.access.request_context import ACCESS_CONTEXT_SCOPE_KEY, AccessContext
 from row_bot.access.service import AccessService
 from row_bot.brand import APP_BRAND_ACCENT, APP_DISPLAY_NAME
@@ -95,11 +95,7 @@ def _current_device(request: Request) -> Any | None:
 
 def _can_manage_mobile_access(request: Request) -> bool:
     context = _access_context(request)
-    return bool(
-        context
-        and context.authenticated
-        and context.has_capability(AccessCapability.ACCESS_ADMIN)
-    )
+    return bool(context and context.authenticated)
 
 
 async def mobile_pair_page(request: Request) -> RedirectResponse:
@@ -125,7 +121,7 @@ async def mobile_manifest(request: Request) -> JSONResponse:  # noqa: ARG001
         {
             "name": f"{APP_DISPLAY_NAME} Mobile",
             "short_name": APP_DISPLAY_NAME,
-            "description": "Local-first mobile companion for your running Row-Bot desktop host.",
+            "description": "Local-first compact owner access to your running Row-Bot host.",
             "start_url": "/?mobile=1",
             "scope": "/",
             "display": "standalone",
@@ -229,9 +225,9 @@ async def mobile_pair_start(request: Request) -> JSONResponse:
     access_mode = str(payload.get("access_mode") or "localhost").strip()[:80]
     try:
         created = _access_service(request).create_invitation(
-            profile=AccessProfile.COMPANION,
             intended_origin=origin,
             session_lifetime=SessionLifetime.TRUSTED,
+            next_path="/?mobile=1",
             created_by=context.device_id or "local_owner",
             access_route=access_mode,
         )
@@ -292,7 +288,7 @@ async def mobile_session(request: Request) -> JSONResponse:
         {
             "ok": True,
             "authenticated": True,
-            "profile": context.profile,
+            "presentation": context.presentation.value,
             "device": _safe_device(device) if device is not None else None,
         }
     )

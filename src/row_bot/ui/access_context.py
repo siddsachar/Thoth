@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from row_bot.access.models import AccessCapability
 from row_bot.access.request_context import AccessContext, PresentationMode
 
 
@@ -30,14 +29,9 @@ def current_access_context() -> AccessContext | None:
         return None
 
 
-def is_owner_context(context: AccessContext | None = None) -> bool:
+def is_authenticated_owner(context: AccessContext | None = None) -> bool:
     selected = context or current_access_context()
-    return selected is not None and selected.profile == "owner"
-
-
-def is_companion_context(context: AccessContext | None = None) -> bool:
-    selected = context or current_access_context()
-    return selected is not None and selected.profile == "companion"
+    return selected is not None and selected.authenticated
 
 
 def uses_compact_presentation(context: AccessContext | None = None) -> bool:
@@ -48,22 +42,11 @@ def uses_compact_presentation(context: AccessContext | None = None) -> bool:
     )
 
 
-def has_capability(
-    capability: AccessCapability | str,
-    context: AccessContext | None = None,
-) -> bool:
-    selected = context or current_access_context()
-    return selected is not None and selected.has_capability(capability)
-
-
-def require_ui_capability(
-    capability: AccessCapability | str,
+def require_ui_owner(
     context: AccessContext | None = None,
 ) -> AccessContext:
-    """Return the context or fail before a privileged UI handler runs."""
+    """Return the authenticated owner context before a UI handler runs."""
     selected = context or current_access_context()
     if selected is None or not selected.authenticated:
         raise PermissionError("authentication_required")
-    if not selected.has_capability(capability):
-        raise PermissionError("capability_required")
     return selected

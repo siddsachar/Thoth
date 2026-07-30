@@ -59,6 +59,7 @@ Start with the visible status text in Row-Bot. Then check the relevant Settings 
 - If an invitation cannot be claimed, create it for the exact scheme, host, and port currently used by that browser. Expired, consumed, and stale-route invitations must be recreated.
 - If Tailscale reports a conflict, Funnel, or an unowned route, inspect that configuration manually. Row-Bot deliberately refuses to reset or overwrite it.
 - If a remote microphone is unavailable, use `localhost` or HTTPS, grant browser permission, and install the local voice model explicitly.
+- Use `?mobile=1` for compact presentation or `?mobile=0` for desktop presentation. Switching layout does not change the session or its owner authority.
 - Run `row-bot access doctor` for a secret-free server and route safety report.
 
 The full route, authentication, Docker, proxy, and recovery guidance is in [Remote Access And Server Mode](/docs/operations/remote-access).

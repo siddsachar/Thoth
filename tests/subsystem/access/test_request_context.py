@@ -66,11 +66,10 @@ def _config(
 def test_desktop_direct_loopback_is_implicit_owner(client: str) -> None:
     resolver = RequestContextResolver(_config())
 
-    context = resolver.resolve(_scope(client=client), owner_capabilities={"full_ui"})
+    context = resolver.resolve(_scope(client=client))
 
     assert context.authentication_kind is AuthenticationKind.LOCAL_OWNER
-    assert context.profile == "owner"
-    assert context.has_capability("full_ui")
+    assert context.authenticated
 
 
 def test_server_loopback_requires_a_session_and_mode_is_not_inferred_from_bind() -> (
@@ -95,7 +94,7 @@ def test_lan_and_docker_like_peers_never_become_owner(client: str) -> None:
     context = resolver.resolve(_scope(client=client))
 
     assert context.authentication_kind is AuthenticationKind.UNAUTHENTICATED
-    assert context.profile is None
+    assert not context.authenticated
 
 
 @pytest.mark.parametrize("client", ["", "not-an-ip", "127.0.0.1:5000", "[::1"])
@@ -163,10 +162,8 @@ def test_trusted_proxy_walks_chain_from_edge_and_uses_public_origin() -> None:
             ],
         ),
         session=SessionIdentity(
-            profile="owner",
             device_id="device",
             session_id="session",
-            capabilities=frozenset({"full_ui"}),
         ),
     )
 
@@ -276,32 +273,29 @@ def test_unexpected_host_is_rejected_before_authorization() -> None:
         resolver.resolve(_scope(host="attacker.example"))
 
 
-def test_same_origin_and_presentation_are_independent_of_authority() -> None:
+def test_same_origin_and_presentation_are_independent_of_authentication() -> None:
     resolver = RequestContextResolver(_config())
     owner = resolver.resolve(
         _scope(
             query=b"mobile=1",
             headers=[(b"origin", b"http://localhost:8080")],
         ),
-        owner_capabilities={"full_ui"},
     )
-    companion = resolver.resolve(
+    remote_owner = resolver.resolve(
         _scope(client="192.168.1.20", query=b"mobile=0"),
         session=SessionIdentity(
-            profile="companion",
             device_id="device",
             session_id="session",
         ),
-        companion_capabilities={"compact_ui"},
     )
 
     assert owner.presentation is PresentationMode.COMPACT
-    assert owner.has_capability("full_ui")
+    assert owner.authenticated
     assert request_origin_matches(
         owner, _scope(headers=[(b"origin", b"http://localhost:8080")])
     )
-    assert companion.presentation is PresentationMode.COMPACT
-    assert not companion.has_capability("full_ui")
+    assert remote_owner.presentation is PresentationMode.DESKTOP
+    assert remote_owner.authenticated
 
 
 @pytest.mark.parametrize(

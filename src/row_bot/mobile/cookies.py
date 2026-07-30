@@ -1,4 +1,4 @@
-"""Cookie helpers for Row-Bot mobile companion sessions."""
+"""Cookie helpers for Row-Bot mobile owner sessions."""
 
 from __future__ import annotations
 

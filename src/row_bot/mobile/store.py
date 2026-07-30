@@ -11,7 +11,6 @@ import uuid
 from row_bot.access.models import (
     AccessDevice,
     AccessEvent,
-    AccessProfile,
     AccessSession,
     SessionLifetime,
     TokenFormat,
@@ -110,7 +109,6 @@ class MobileAuthStore:
             invitation_id=code_id or uuid.uuid4().hex,
             secret_hash=code_hash,
             secret_salt=code_salt,
-            profile=AccessProfile.COMPANION,
             session_lifetime=SessionLifetime.TRUSTED,
             intended_origin=intended_origin or "http://localhost",
             expires_at=expires_at,
@@ -185,14 +183,13 @@ class MobileAuthStore:
         device_id: str | None = None,
         now: datetime | None = None,
     ) -> MobileDevice:
-        del scopes  # Authorization is fixed by the companion profile.
+        del scopes  # Legacy scopes are metadata, never an entitlement boundary.
         current = normalize_datetime(now)
         row_id = device_id or uuid.uuid4().hex
         device = self.access_store.create_device_record(
             AccessDevice(
                 id=row_id,
                 display_name=(str(display_name or "").strip() or "Mobile device")[:80],
-                profile=AccessProfile.COMPANION,
                 created_at=current,
                 last_seen_at=None,
                 revoked_at=None,
@@ -315,7 +312,7 @@ def _mobile_device(
         user_agent=device.user_agent,
         paired_from=device.paired_from,
         access_mode=device.access_route,
-        scopes=("chat", "workflows", "approvals"),
+        scopes=(),
     )
 
 

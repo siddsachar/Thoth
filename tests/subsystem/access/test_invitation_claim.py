@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from row_bot.access.models import AccessProfile, SessionLifetime
+from row_bot.access.models import SessionLifetime
 from row_bot.access.service import AccessService
 from row_bot.access.store import (
     AccessStore,
@@ -26,7 +26,6 @@ def _service(tmp_path) -> AccessService:
 def test_inspection_does_not_claim_and_success_uses_immutable_grant(tmp_path) -> None:
     service = _service(tmp_path)
     created = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin="HTTPS://ROW-BOT.EXAMPLE:443/",
         session_lifetime=SessionLifetime.TEMPORARY,
         now=NOW,
@@ -41,15 +40,12 @@ def test_inspection_does_not_claim_and_success_uses_immutable_grant(tmp_path) ->
         created.token,
         intended_origin=ORIGIN,
         display_name="Desktop browser",
-        profile=AccessProfile.OWNER,
         session_lifetime=SessionLifetime.TEMPORARY,
         now=NOW,
     )
 
-    assert claim.profile is AccessProfile.OWNER
     assert claim.session_lifetime is SessionLifetime.TEMPORARY
     assert claim.intended_origin == ORIGIN
-    assert claim.device.profile is AccessProfile.OWNER
     assert claim.session.expires_at == NOW + timedelta(hours=12)
     assert (
         service.inspect_invitation(created.token, now=NOW).status == "already_claimed"
@@ -61,10 +57,6 @@ def test_inspection_does_not_claim_and_success_uses_immutable_grant(tmp_path) ->
     [
         ({"intended_origin": "https://other.example"}, "origin_mismatch"),
         (
-            {"intended_origin": ORIGIN, "profile": AccessProfile.COMPANION},
-            "immutable_mismatch",
-        ),
-        (
             {
                 "intended_origin": ORIGIN,
                 "session_lifetime": SessionLifetime.TEMPORARY,
@@ -73,14 +65,13 @@ def test_inspection_does_not_claim_and_success_uses_immutable_grant(tmp_path) ->
         ),
     ],
 )
-def test_claim_cannot_override_origin_profile_or_lifetime(
+def test_claim_cannot_override_origin_or_lifetime(
     tmp_path,
     kwargs,
     reason,
 ) -> None:
     service = _service(tmp_path)
     created = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin=ORIGIN,
         session_lifetime=SessionLifetime.TRUSTED,
         now=NOW,
@@ -101,7 +92,6 @@ def test_claim_cannot_override_origin_profile_or_lifetime(
 def test_concurrent_claim_creates_exactly_one_device_and_session(tmp_path) -> None:
     service = _service(tmp_path)
     created = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin=ORIGIN,
         now=NOW,
     )
@@ -130,7 +120,6 @@ def test_concurrent_claim_creates_exactly_one_device_and_session(tmp_path) -> No
 def test_expired_cancelled_and_locked_invitations_are_terminal(tmp_path) -> None:
     service = _service(tmp_path)
     expired = service.create_invitation(
-        profile=AccessProfile.COMPANION,
         intended_origin=ORIGIN,
         now=NOW,
     )
@@ -144,7 +133,6 @@ def test_expired_cancelled_and_locked_invitations_are_terminal(tmp_path) -> None
     assert expired_error.value.reason == "expired"
 
     cancelled = service.create_invitation(
-        profile=AccessProfile.COMPANION,
         intended_origin=ORIGIN,
         now=NOW,
     )
@@ -159,7 +147,6 @@ def test_expired_cancelled_and_locked_invitations_are_terminal(tmp_path) -> None
     assert cancelled_error.value.reason == "cancelled"
 
     locked = service.create_invitation(
-        profile=AccessProfile.COMPANION,
         intended_origin=ORIGIN,
         now=NOW,
     )
@@ -186,7 +173,6 @@ def test_expired_cancelled_and_locked_invitations_are_terminal(tmp_path) -> None
 def test_claim_failure_lock_is_scoped_to_effective_client(tmp_path) -> None:
     service = _service(tmp_path)
     invitation = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin=ORIGIN,
         now=NOW,
     )
@@ -226,7 +212,7 @@ def test_claim_failure_lock_is_scoped_to_effective_client(tmp_path) -> None:
         effective_client="192.0.2.11",
         now=NOW,
     )
-    assert claim.device.profile is AccessProfile.OWNER
+    assert claim.device.display_name == "Real browser"
 
 
 def test_raw_invitation_and_session_tokens_never_reach_database(
@@ -234,7 +220,6 @@ def test_raw_invitation_and_session_tokens_never_reach_database(
 ) -> None:
     service = _service(tmp_path)
     created = service.create_invitation(
-        profile=AccessProfile.OWNER,
         intended_origin=ORIGIN,
         now=NOW,
     )

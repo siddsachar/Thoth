@@ -90,7 +90,7 @@ curl -fsS http://127.0.0.1:8092/readyz
 Use an isolated data directory for package smoke tests and remove it after the
 process exits. A fresh server does not create an owner session automatically;
 bootstrap a real acceptance browser only with an explicit
-`row-bot access invite --profile computer --origin ...` command. Do not record
+`row-bot access invite --layout desktop --origin ...` command. Do not record
 that command's one-time link in CI logs or package artifacts.
 
 If the launcher starts a process but the app never becomes ready, inspect
@@ -140,7 +140,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 | Bundled in .exe | Downloaded or created outside install |
 |----------------|--------------------------------------|
 | Python 3.13 embeddable runtime | Ollama installer is optional for local models |
-| App source code, authenticated access/server package, Remote Access UI, Agent Profiles, Goal Mode, checkpointed Agent budgets and settings, child-agent runner, generation cancellation, Computer Use integration and pinned manifest, cache-only embedding fallback, mobile companion, channel streaming, tools, providers, plugins, MCP client, migration wizard, UI, Designer, Developer Studio, bundled skills/tool guides, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use |
+| App source code, authenticated access/server package, Remote Access UI, Agent Profiles, Goal Mode, checkpointed Agent budgets and settings, child-agent runner, generation cancellation, Computer Use integration and pinned manifest, cache-only embedding fallback, responsive mobile owner UI, channel streaming, tools, providers, plugins, MCP client, migration wizard, UI, Designer, Developer Studio, bundled skills/tool guides, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use |
 | Python packages from locked `requirements.txt` export | Playwright Chromium is bundled during build when available, otherwise installed on first browser use |
 | Computer Use policy, private client, installer metadata, and platform checks | Pinned Cua Driver 0.7.1 is downloaded only after disclosure and explicit user consent |
 
@@ -328,16 +328,18 @@ The app payload includes `pyproject.toml`, `uv.lock`, and generated `requirement
 - **Local embeddings**: packaged local embedding paths are cache-only during normal startup. Missing or corrupted models stay repairable through explicit download actions, while memory and graph search fall back quickly instead of triggering a surprise model download.
 - **Remote Access and server mode**: recursive `src/row_bot` packaging includes
   the versioned access store, migration bridge for the existing `mobile.db`,
-  request/origin/proxy policy, owner and companion capabilities, invitation
-  routes, Remote Access settings, `row-bot serve`, and
+  request/origin/proxy policy, single-owner session enforcement, invitation
+  routes with desktop or compact layouts, Remote Access settings, `row-bot serve`, and
   `row-bot access invite/list/revoke/revoke-all/doctor`. Desktop mode remains
   local-first. Server mode requires an authenticated session even over
   loopback and runs with one worker, no tray/splash/browser, and no automatic
   Ollama startup by default.
-- **Mobile companion**: the phone shell, PWA routes, workflow/activity
-  surfaces, and phone-safe settings are a restricted profile of the shared
-  access system. Existing companion records migrate in place; packaging must
-  not introduce a second mobile-only credential or policy store.
+- **Responsive mobile owner UI**: the phone shell, PWA routes,
+  workflow/activity surfaces, and complete phone-safe Settings use the same
+  owner authority as desktop. Original legacy mobile sessions retain owner
+  access. Explicitly restricted companion sessions from the previous schema
+  are revoked during migration and must be paired again. Packaging must not
+  introduce a second mobile-only credential or policy store.
 - **Tailscale boundary**: Tailscale remains an optional host dependency.
   Packaged Row-Bot does not bundle or install Tailscale, sign the user in,
   enable Funnel, reset Serve, alter firewall rules, or overwrite an unrelated

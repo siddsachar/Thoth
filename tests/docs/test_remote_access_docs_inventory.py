@@ -20,7 +20,7 @@ def test_remote_access_cli_options_are_in_generated_inventory() -> None:
         for row in rows
     )
     assert any(
-        row["command"] == "row-bot access invite" and row["option"] == "--profile"
+        row["command"] == "row-bot access invite" and row["option"] == "--layout"
         for row in rows
     )
 

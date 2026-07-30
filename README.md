@@ -21,7 +21,7 @@ files, repos, workflows, and channels you choose.
 It combines chat, durable memory, tool use, Agent Profiles, Goal Mode,
 child-agent delegation, profile-first workflows, Developer Studio, Designer
 Studio, Smart Skills, Skills Hub, Custom Tools, Plugin System v2, messaging
-channels, a secure mobile web companion, opt-in native Computer Use, realtime
+channels, secure compact mobile owner access, opt-in native Computer Use, realtime
 voice, and provider-aware model routing. Durable app data stays local by
 default.
 
@@ -76,7 +76,7 @@ Download the latest installer from [GitHub Releases](https://github.com/siddsach
 | Workflows | Scheduled runs, webhook triggers, task-completion triggers, step pipelines, conditions, approvals, subtasks, notification-only runs, concurrency groups, delivery defaults, profile-first workflow agents, promoted Agent-run workflows, per-workflow model/tool/skill/profile overrides, safety modes, run status, run history, upcoming runs, and a Workflow Console. |
 | Controlled self-evolution | Structured self-reflection, bounded change proposals, reviewable execution boundaries, persistence, Dream Cycle and memory integration, and Command Center/status visibility for improvement work that stays explicit and auditable. |
 | Channels and voice | Telegram, WhatsApp, Discord, Slack, SMS, and plugin-owned channels with platform-aware live streaming, typing and edit fallbacks, interactive approvals, durable child-agent and Goal Mode notices, media intake, voice transcription, document extraction, health checks, auto-generated send/photo/document tools, and optional tunnel support. SMS remains final-text-only. Realtime voice adds provider-backed voice sessions, action handling, speech/cue policy, and local faster-whisper STT plus Kokoro TTS options. |
-| Platform and app | Native desktop app plus a secure browser-first mobile companion for chat, Activity, workflows, Knowledge, and phone-safe settings; opt-in Computer Use setup, live takeover, and permission recovery on Windows and macOS; QR pairing over local network, Tailscale, ngrok, or a custom route; installable PWA support; tray integration on Windows and macOS; native macOS tray host; local browser-first Linux launch; optional Linux native window/tray mode; Home status surfaces; recovery tools; verified auto-updates; and a searchable public user guide. |
+| Platform and app | Native desktop app plus secure browser-first compact owner access for chat, Activity, workflows, Knowledge, and complete phone-safe Settings; opt-in Computer Use setup, live takeover, and permission recovery on Windows and macOS; QR pairing over local network, Tailscale, ngrok, or a custom route; installable PWA support; tray integration on Windows and macOS; native macOS tray host; local browser-first Linux launch; optional Linux native window/tray mode; Home status surfaces; recovery tools; verified auto-updates; and a searchable public user guide. |
 | Extensibility | Smart Skills, pinned skills, slash commands, Skills Hub browsing/import/search, Plugin System v2 for native tools, MCP-backed tools, bundled skills, and channels, sandboxed Plugin Center and marketplace, bundled skills and tool guides, Agent Profiles, child-agent tools, Goal Mode tools, external MCP clients over stdio, Streamable HTTP, and SSE, Custom Tools from repos or folders, hardened Custom Tool Builder setup, Claude Code Delegation through an approval-gated CLI worker, migration from selected Hermes/OpenClaw data, setup center, identity settings, and stability diagnostics. |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full subsystem reference.
@@ -159,9 +159,10 @@ tool and approval boundaries.
 
 To use the same running Row-Bot from another computer, phone, or tablet, open
 `Settings -> System -> Remote Access` on an authorized owner device. Create a
-one-time invitation for either the complete computer UI or the restricted
-companion UI, then open or scan it on the new device. The host must remain
-running, and every resulting device session can be revoked independently.
+one-time invitation with either desktop or compact presentation, then open or
+scan it on the new device. Both layouts receive the complete owner product,
+including Settings. The host must remain running, and every resulting device
+session can be revoked independently.
 
 To let an interactive local task operate a native Windows or macOS app, open
 `Settings -> System -> Browser & Computer Use`. Review the Cua Driver telemetry
@@ -207,9 +208,9 @@ An invitation and a session are different:
   invitation is accepted. A trusted-device session lasts up to 30 days; a
   temporary session lasts up to 12 hours. Sessions survive normal restarts and
   can be revoked without changing any invitation.
-- A **computer** invitation grants the complete owner UI. A **companion**
-  invitation grants only the phone/tablet-safe subset and cannot use
-  owner-only settings or tools.
+- A **desktop** or **compact** invitation changes only the initial presentation.
+  Every authenticated browser receives full owner access, including Settings.
+  Rich Developer and Designer editors remain desktop-layout-oriented.
 
 Treat an unused invitation like a password until it expires. Row-Bot stores
 only hashed invitation and session secrets in the existing `mobile.db` access
@@ -231,7 +232,7 @@ active Tailscale route means a browser can reach the connection screen, not
 that the browser is trusted.
 
 The complete public guide, including current UI screenshots, invitation
-profiles and lifetimes, Tailscale ownership, server/Docker deployment,
+layouts and lifetimes, Tailscale ownership, server/Docker deployment,
 browser-local voice, recovery, and proxy diagnostics, is
 [`Remote Access And Server Mode`](docs-site/docs/operations/remote-access.mdx).
 
@@ -253,7 +254,7 @@ ssh -N -L 18080:127.0.0.1:8080 user@row-bot-host
 Then create an invitation on the host for the browser-facing origin:
 
 ```bash
-row-bot access invite --profile computer --origin http://127.0.0.1:18080
+row-bot access invite --layout desktop --origin http://127.0.0.1:18080
 ```
 
 For direct server operation, `row-bot serve` defaults to loopback, one worker,
@@ -276,8 +277,8 @@ service definitions should use `row-bot serve`.
 Useful offline access-management commands are:
 
 ```bash
-row-bot access invite --profile computer --origin https://row-bot.example.com
-row-bot access invite --profile companion --temporary --origin https://row-bot.example.com
+row-bot access invite --layout desktop --origin https://row-bot.example.com
+row-bot access invite --layout compact --temporary --origin https://row-bot.example.com
 row-bot access list
 row-bot access revoke DEVICE_ID
 row-bot access revoke SESSION_ID --session
@@ -360,7 +361,7 @@ cached, and fallback catalog outcomes.
 | Twilio | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | SMS. |
 | X | `X_CLIENT_ID` / `X_CLIENT_SECRET` | X API v2 OAuth 2.0 PKCE for search, timeline, mentions, posting, replies, quotes, likes, reposts, bookmarks, and deletes. |
 | Xquik MCP | Xquik `x-api-key` header in MCP settings | Recommended remote MCP option for X/Twitter search, extraction, monitoring, and connected-account operations. Its generic executor is high risk and remains approval-gated. |
-| Tailscale | Optional local Tailscale install | Private Serve access for full owner and companion devices without making Tailscale a Row-Bot dependency. Row-Bot does not install it, sign in, or enable Funnel. |
+| Tailscale | Optional local Tailscale install | Private Serve reachability for authenticated owner devices without making Tailscale a Row-Bot dependency. Row-Bot does not install it, sign in, or enable Funnel. |
 | ngrok | `NGROK_AUTHTOKEN` | Tunnels for inbound webhooks. |
 | Gmail and Google Calendar | Google Cloud OAuth `credentials.json` | Email search/read/draft/send and request-scoped calendar search/create/bulk-create/update/move/delete with safe concurrent token refresh. |
 
@@ -454,7 +455,7 @@ Safety controls are built into the tool layer:
 
 Row-Bot is organized around reasoning, orchestration, and work: Agent Profiles,
 Goal Mode, checkpoint-safe agent budgets, explicit prompt context/cache
-sections, memory, profile-first workflows, the mobile access gate and companion
+sections, memory, profile-first workflows, the mobile access gate and compact owner
 shell, separate browser and native Computer Use engines, shared channel
 streaming, Designer Studio, Developer Studio worktrees, provider runtime and
 cancellation, Plugin System v2/MCP boundaries, and safety controls.
@@ -598,8 +599,8 @@ installer. Current Row-Bot startup reads Row-Bot data only and no longer scans,
 copies, repairs, or rewrites old `.thoth` data.
 
 Mobile pairing records, hashed device credentials, revocation state, and
-display-safe access events are stored locally in `mobile.db`. The mobile
-companion has no Row-Bot cloud relay: your phone connects directly to the
+display-safe access events are stored locally in `mobile.db`. Mobile access
+has no Row-Bot cloud relay: your phone connects directly to the
 running desktop host through the route you choose. A public tunnel exposes the
 pairing gate to that URL, so keep tunnel links and pairing QR codes private and
 revoke devices you no longer trust.

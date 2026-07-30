@@ -56,19 +56,20 @@ Full Row-Bot for a computer:
 
 ```sh
 docker compose -f deploy/docker/compose.yaml exec row-bot \
-  row-bot access invite --profile computer --origin http://127.0.0.1:8080
+  row-bot access invite --layout desktop --origin http://127.0.0.1:8080
 ```
 
-Restricted companion access for a phone or tablet:
+Full Row-Bot for a phone or tablet, using the compact layout:
 
 ```sh
 docker compose -f deploy/docker/compose.yaml exec row-bot \
-  row-bot access invite --profile companion --origin http://127.0.0.1:8080
+  row-bot access invite --layout compact --origin http://127.0.0.1:8080
 ```
 
 Opening an invitation displays a confirmation page. It is consumed only when
 the recipient presses **Connect**. The resulting browser session is separate,
-persistent, and revocable.
+persistent, and revocable. Both layouts represent the same owner and expose the
+same product authority, including Settings.
 
 Use the normal access commands for recovery and device management:
 

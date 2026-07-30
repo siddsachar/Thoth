@@ -13,7 +13,7 @@ from row_bot.access.access_routes import (
     build_route_inventory,
 )
 from row_bot.access.config import AccessConfig
-from row_bot.access.models import AccessCapability, AccessProfile, SessionLifetime
+from row_bot.access.models import SessionLifetime
 from row_bot.access.runtime_policy import RuntimeAccessPolicy
 from row_bot.access.service import AccessService
 from row_bot.access.store import AccessStore
@@ -51,12 +51,12 @@ def _ready_inventory():
     )
 
 
-def _owner_authorizer(capability) -> None:
-    assert capability is AccessCapability.ACCESS_ADMIN
+def _owner_authorizer() -> None:
+    return None
 
 
-def _companion_authorizer(_capability) -> None:
-    raise PermissionError("capability_required")
+def _unauthenticated_authorizer() -> None:
+    raise PermissionError("authentication_required")
 
 
 def _owned_tailscale_status() -> tuple[TailscaleStatus, TailscaleOwnership]:
@@ -88,7 +88,7 @@ def _owned_tailscale_status() -> tuple[TailscaleStatus, TailscaleOwnership]:
     return status, ownership
 
 
-def test_owner_actions_create_both_profiles_and_lifetimes(tmp_path) -> None:
+def test_owner_actions_create_both_layouts_and_lifetimes(tmp_path) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
     actions = RemoteAccessActions(
         service=service,
@@ -98,42 +98,42 @@ def test_owner_actions_create_both_profiles_and_lifetimes(tmp_path) -> None:
     )
     route_id = _ready_inventory().invitation_routes[0].id
 
-    computer = actions.create_invitation(
-        profile="computer",
+    desktop = actions.create_invitation(
+        layout="desktop",
         route_id=route_id,
         lifetime="trusted",
     )
-    companion = actions.create_invitation(
-        profile="companion",
+    compact = actions.create_invitation(
+        layout="compact",
         route_id=route_id,
         lifetime="temporary",
     )
 
-    assert computer.invitation.profile is AccessProfile.OWNER
-    assert computer.invitation.session_lifetime is SessionLifetime.TRUSTED
-    assert computer.invitation.intended_origin == ORIGIN
-    assert companion.invitation.profile is AccessProfile.COMPANION
-    assert companion.invitation.session_lifetime is SessionLifetime.TEMPORARY
+    assert desktop.invitation.session_lifetime is SessionLifetime.TRUSTED
+    assert desktop.invitation.intended_origin == ORIGIN
+    assert desktop.next_path == "/"
+    assert compact.invitation.session_lifetime is SessionLifetime.TEMPORARY
+    assert compact.next_path == "/?mobile=1"
 
 
-def test_companion_cannot_mutate_invitations_routes_or_sessions(tmp_path) -> None:
+def test_unauthenticated_context_cannot_mutate_access_state(tmp_path) -> None:
     route_store = AccessRouteConfigStore(tmp_path / "routes.json")
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
     actions = RemoteAccessActions(
         service=service,
         route_store=route_store,
-        authorizer=_companion_authorizer,
+        authorizer=_unauthenticated_authorizer,
     )
 
-    with pytest.raises(PermissionError, match="capability_required"):
+    with pytest.raises(PermissionError, match="authentication_required"):
         actions.create_invitation(
-            profile="computer",
+            layout="desktop",
             route_id="missing",
             lifetime="trusted",
         )
-    with pytest.raises(PermissionError, match="capability_required"):
+    with pytest.raises(PermissionError, match="authentication_required"):
         asyncio.run(actions.set_lan_enabled(True))
-    with pytest.raises(PermissionError, match="capability_required"):
+    with pytest.raises(PermissionError, match="authentication_required"):
         actions.revoke_device("device")
 
     assert not route_store.path.exists()
@@ -149,7 +149,7 @@ def test_device_and_session_revoke_controls_use_service(tmp_path) -> None:
         authorizer=_owner_authorizer,
     )
     created = actions.create_invitation(
-        profile="computer",
+        layout="desktop",
         route_id=_ready_inventory().invitation_routes[0].id,
         lifetime="trusted",
     )
@@ -536,7 +536,7 @@ def test_managed_ngrok_inventory_tracks_registration_and_revalidates_invites(
         authorizer=_owner_authorizer,
     )
     created = actions.create_invitation(
-        profile="computer",
+        layout="desktop",
         route_id=managed_route.id,
         lifetime="trusted",
     )
@@ -546,7 +546,7 @@ def test_managed_ngrok_inventory_tracks_registration_and_revalidates_invites(
     assert inventory().by_kind(AccessRouteKind.NGROK) == ()
     with pytest.raises(StaleInvitationRouteError, match="changed"):
         actions.create_invitation(
-            profile="computer",
+            layout="desktop",
             route_id=managed_route.id,
             lifetime="trusted",
         )
@@ -592,15 +592,16 @@ def test_settings_provider_uses_process_cache_and_registered_manager_url_only() 
     assert "detect(" not in provider_source
 
 
-def test_settings_copy_covers_profiles_qr_one_time_and_ngrok() -> None:
+def test_settings_copy_covers_layouts_owner_access_qr_one_time_and_ngrok() -> None:
     source = inspect.getsource(
         __import__(
             "row_bot.ui.remote_access_settings", fromlist=["RemoteAccessActions"]
         )
     )
 
-    assert "Another computer — Full Row-Bot" in source
-    assert "Phone or tablet — Companion" in source
+    assert "Computer — Desktop layout" in source
+    assert "Phone or tablet — Compact layout" in source
+    assert "Every connected device has full owner access" in source
     assert "Trusted device — 30 days" in source
     assert "Temporary access — 12 hours" in source
     assert "expires after 10 minutes and works once" in source
@@ -699,7 +700,7 @@ def test_invitation_resolves_route_again_and_rejects_stale_selection(tmp_path) -
 
     with pytest.raises(StaleInvitationRouteError, match="changed"):
         actions.create_invitation(
-            profile="computer",
+            layout="desktop",
             route_id=selected_id,
             lifetime="trusted",
         )

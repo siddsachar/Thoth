@@ -11,7 +11,6 @@ from typing import Any, Callable
 
 from nicegui import ui
 
-from row_bot.access.models import AccessCapability
 from row_bot.approval_policy import DEFAULT_APPROVAL_MODE, normalize_approval_mode
 from row_bot.memory_extraction import set_active_thread
 from row_bot.threads import (
@@ -28,7 +27,6 @@ from row_bot.threads import (
 )
 from row_bot.ui.chat_components import build_chat_messages, build_file_upload
 from row_bot.ui.chat_composer_extras import create_chat_composer_extras
-from row_bot.ui.access_context import has_capability
 from row_bot.ui.streaming import request_generation_stop
 from row_bot.ui.state import AppState, P, _active_generations
 from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
@@ -271,7 +269,6 @@ def _build_chat_controls_dialog(
     rebuild_main: Callable[..., None],
     composer_extras: Any | None = None,
 ) -> None:
-    owner_controls = has_capability(AccessCapability.SETTINGS)
     dialog = ui.dialog().props("position=bottom")
     with dialog:
         with ui.card().classes("row-bot-mobile-sheet w-full no-shadow").props(
@@ -280,16 +277,6 @@ def _build_chat_controls_dialog(
             with ui.row().classes("w-full items-center justify-between no-wrap"):
                 ui.label("Chat controls").classes("text-subtitle1")
                 ui.button(icon="close", on_click=dialog.close).props("flat dense round")
-            if not owner_controls:
-                ui.label(
-                    "Companion sessions use the owner's configured model and "
-                    "approval policy."
-                ).classes("text-grey-6 text-sm")
-                ui.button("Done", on_click=dialog.close).props(
-                    "flat dense no-caps color=primary"
-                )
-                dialog.open()
-                return
             ui.label("These apply to the active thread.").classes("text-grey-6 text-sm")
             policy_icon, policy_label, policy_detail = _model_policy_summary(state)
             with ui.element("div").classes("row-bot-mobile-policy-chip"):
@@ -354,12 +341,11 @@ def _build_chat_controls_dialog(
                 rebuild_main(immediate=True, reason="mobile_chat_controls")
 
             with ui.row().classes("w-full justify-between items-center gap-2"):
-                if owner_controls:
-                    ui.button(
-                        "Full settings",
-                        icon="settings",
-                        on_click=lambda: (dialog.close(), open_settings("Providers")),
-                    ).props("flat dense no-caps")
+                ui.button(
+                    "Full settings",
+                    icon="settings",
+                    on_click=lambda: (dialog.close(), open_settings("Providers")),
+                ).props("flat dense no-caps")
                 ui.button("Apply", icon="check", on_click=_save_controls).props(
                     "unelevated dense no-caps color=primary"
                 )
@@ -552,11 +538,10 @@ def build_mobile_thread_list(
                 with ui.column().classes("gap-0").style("min-width: 0;"):
                     ui.label("Chats").classes("text-h6")
                     ui.label("Start something new or continue a thread.").classes("text-grey-6 text-xs")
-                if has_capability(AccessCapability.SETTINGS):
-                    ui.button(
-                        icon="settings",
-                        on_click=lambda: open_settings("Providers"),
-                    ).props("flat dense round").tooltip("Settings")
+                ui.button(
+                    icon="settings",
+                    on_click=lambda: open_settings("Providers"),
+                ).props("flat dense round").tooltip("Settings")
 
             ui.button(
                 "New thread",

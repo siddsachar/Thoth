@@ -138,10 +138,10 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "tests/test_provider_auth_store.py",
             "tests/test_channel_auth_store.py",
         ),
-        "Remote access, server policy, deployment examples, and smoke changes need access security, companion compatibility, and deployment contracts.",
+        "Remote access, server policy, deployment examples, and smoke changes need access security, legacy-mobile compatibility, and deployment contracts.",
     ),
     SourceTestRule(
-        "mobile_companion",
+        "mobile_owner_access",
         (
             "src/row_bot/mobile/**",
             "src/row_bot/ui/mobile*.py",
@@ -151,7 +151,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "tests/subsystem/mobile",
             "tests/integration/mobile",
         ),
-        "Mobile companion changes need auth, access-gate, pairing, PWA, and route coverage.",
+        "Compact owner UI changes need auth, access-gate, pairing, PWA, Settings, and route coverage.",
     ),
     SourceTestRule(
         "chat_composer",
