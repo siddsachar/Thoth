@@ -201,3 +201,76 @@ def test_append_checkpoint_messages_repairs_legacy_int_versions(monkeypatch):
     assert writes["checkpoint"]["channel_versions"]["messages"] == "00000000000000000000000000000003.0000000000000000"
     assert writes["checkpoint"]["channel_versions"]["other"] == "00000000000000000000000000000003.0000000000000000"
     assert writes["checkpoint"]["versions_seen"]["agent"]["messages"] == "00000000000000000000000000000001.0000000000000000"
+
+
+def test_orchestration_suspend_removes_the_full_provisional_turn(monkeypatch):
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    import row_bot.threads as threads
+
+    previous_user = HumanMessage(content="Earlier question")
+    previous_answer = AIMessage(content="Earlier answer")
+    current_user = HumanMessage(content="Compare three vendors")
+    draft = AIMessage(
+        content="I will delegate this.",
+        tool_calls=[{"name": "agents", "args": {}, "id": "call-1"}],
+    )
+    tool_result = ToolMessage(
+        content='{"message":"Child Agent started."}',
+        tool_call_id="call-1",
+        name="agents",
+    )
+    provisional = AIMessage(content="The agents are queued.")
+    trailing_empty = AIMessage(content="")
+    writes = {}
+
+    class FakeCheckpointer:
+        def get_tuple(self, config):
+            return SimpleNamespace(
+                config={
+                    "configurable": {
+                        "thread_id": "thread-orchestration",
+                        "checkpoint_ns": "",
+                        "checkpoint_id": "parent",
+                    }
+                },
+                checkpoint={
+                    "channel_values": {
+                        "messages": [
+                            previous_user,
+                            previous_answer,
+                            current_user,
+                            draft,
+                            tool_result,
+                            provisional,
+                            trailing_empty,
+                        ]
+                    },
+                    "channel_versions": {
+                        "messages": "00000000000000000000000000000005.0000000000000000"
+                    },
+                    "versions_seen": {},
+                },
+            )
+
+        def get_next_version(self, current, channel):
+            assert current == "00000000000000000000000000000005.0000000000000000"
+            return "00000000000000000000000000000006.0000000000000000"
+
+        def put(self, config, checkpoint, metadata, new_versions):
+            writes["checkpoint"] = checkpoint
+            writes["metadata"] = metadata
+            writes["new_versions"] = new_versions
+            return config
+
+    monkeypatch.setattr(threads, "checkpointer", FakeCheckpointer())
+
+    assert threads.remove_latest_checkpoint_ai_message(
+        "thread-orchestration",
+        "I will delegate this.The agents are queued.",
+    )
+    assert writes["checkpoint"]["channel_values"]["messages"] == [
+        previous_user,
+        previous_answer,
+        current_user,
+    ]
+    assert writes["metadata"]["writes"]["messages"] == -4

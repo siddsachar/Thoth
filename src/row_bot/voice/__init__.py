@@ -26,9 +26,11 @@ State machine::
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from queue import Empty, SimpleQueue
 from typing import Literal
 
@@ -58,6 +60,10 @@ _UNMUTE_GRACE_S = 0.6
 # Data directory
 _DATA_DIR = get_row_bot_data_dir()
 _VOICE_SETTINGS_FILE = _DATA_DIR / "voice_settings.json"
+_WHISPER_CACHE_DIR = Path(
+    os.environ.get("ROW_BOT_WHISPER_CACHE_DIR")
+    or (_DATA_DIR / "cache" / "whisper")
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -165,18 +171,33 @@ class VoiceService:
 
     # ── Model loading ────────────────────────────────────────────────────
 
-    def _ensure_whisper(self):
+    def _ensure_whisper(self, *, allow_download: bool = True):
         if self._whisper_model is not None:
             return
         from faster_whisper import WhisperModel
 
+        _WHISPER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.status_queue.put(f"Loading Whisper ({self._whisper_size})…")
         self._whisper_model = WhisperModel(
             self._whisper_size,
             device="cpu",
             compute_type="int8",
+            download_root=str(_WHISPER_CACHE_DIR),
+            local_files_only=not allow_download,
         )
         logger.info("Loaded Whisper model: %s (cpu/int8)", self._whisper_size)
+
+    def whisper_model_available(self) -> bool:
+        """Return whether the configured model is already cached locally."""
+        if self._whisper_model is not None:
+            return True
+        model_name = f"models--Systran--faster-whisper-{self._whisper_size}"
+        model_dir = _WHISPER_CACHE_DIR / model_name
+        return model_dir.is_dir() and any(model_dir.iterdir())
+
+    def install_whisper_model(self) -> None:
+        """Explicitly download and load the selected Whisper model."""
+        self._ensure_whisper(allow_download=True)
 
     def _ensure_funasr(self):
         if self._funasr_provider is None:
@@ -198,15 +219,7 @@ class VoiceService:
 
                 self._funasr_provider = LocalFunASRProvider()
             return self._funasr_provider.transcribe_bytes(audio_bytes)
-        self._ensure_whisper()
-        f32 = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-        segs, _ = self._whisper_model.transcribe(
-            f32,
-            beam_size=5,
-            language="en",
-            vad_filter=True,
-        )
-        return " ".join(s.text.strip() for s in segs).strip()
+        return self.transcribe_pcm16(audio_bytes, allow_download=True)
 
     # ── Pipeline ─────────────────────────────────────────────────────────
 
@@ -395,6 +408,20 @@ class VoiceService:
     def transcribe_bytes(self, audio_bytes: bytes) -> str:
         """One-shot transcription of raw PCM bytes."""
         return self._transcribe_pcm_bytes(audio_bytes)
+
+    def transcribe_pcm16(
+        self,
+        audio_bytes: bytes,
+        *,
+        allow_download: bool = False,
+    ) -> str:
+        """Transcribe 16 kHz mono signed-16 PCM."""
+        self._ensure_whisper(allow_download=allow_download)
+        f32 = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        segs, _ = self._whisper_model.transcribe(
+            f32, beam_size=5, language="en", vad_filter=True,
+        )
+        return " ".join(s.text.strip() for s in segs).strip()
 
 
 # ── Singleton ────────────────────────────────────────────────────────────────

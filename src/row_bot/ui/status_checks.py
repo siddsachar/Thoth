@@ -546,15 +546,61 @@ def check_wiki_vault() -> CheckResult:
 
 
 def check_document_store() -> CheckResult:
-    """Check indexed document count using the Settings source of truth."""
+    """Check durable queue health plus legacy/sharded document retrieval."""
     try:
+        from row_bot.document_jobs import DocumentJobService
         from row_bot.documents import document_vector_status, load_processed_files
-        processed = load_processed_files()
-        doc_count = len(processed)
+
+        service = DocumentJobService()
+        durable_records = service.list_document_records()
+        durable_names = {
+            str(record["original_name"]) for record in durable_records
+        }
+        legacy_names = load_processed_files() - durable_names
+        doc_count = len(durable_records) + len(legacy_names)
         vector_status = document_vector_status()
         stale = bool(vector_status.get("stale"))
         exists = bool(vector_status.get("exists"))
+        queue_health = service.health()
+        if not queue_health.get("db_ok"):
+            return CheckResult(
+                "Documents",
+                "error",
+                f"Queue database needs repair · {queue_health.get('error') or 'integrity check failed'}",
+                settings_tab="Documents",
+            )
+        interrupted = (
+            int(queue_health.get("missing_sources") or 0)
+            + int(queue_health.get("staging_orphans") or 0)
+            + int(queue_health.get("work_orphans") or 0)
+            + int(vector_status.get("partial_documents") or 0)
+            + int(vector_status.get("orphan_documents") or 0)
+        )
+        active = service.active_summary()
+        remaining = int(active.get("remaining") or 0)
+        paused = bool(active.get("paused"))
         label = f"{doc_count} doc{'s' if doc_count != 1 else ''} indexed"
+        if interrupted:
+            return CheckResult(
+                "Documents",
+                "warn",
+                f"{label} · {interrupted} interrupted item{'s' if interrupted != 1 else ''} need recovery",
+                settings_tab="Documents",
+            )
+        if paused and remaining:
+            return CheckResult(
+                "Documents",
+                "warn",
+                f"{label} · queue paused · {remaining} remaining",
+                settings_tab="Documents",
+            )
+        if remaining:
+            return CheckResult(
+                "Documents",
+                "ok",
+                f"{label} · {remaining} processing",
+                settings_tab="Documents",
+            )
         if stale:
             return CheckResult("Documents", "warn", f"{label} · rebuild recommended", settings_tab="Documents")
         if doc_count:

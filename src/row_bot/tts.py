@@ -10,12 +10,15 @@ Everything runs locally — no audio is sent to the cloud.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import re
+import tempfile
 import threading
 import time
+import wave
 from pathlib import Path
 from queue import Queue, Empty
 from typing import Callable
@@ -43,6 +46,31 @@ _VOICES_PATH = _KOKORO_DIR / _VOICES_FILENAME
 
 _MODEL_URL = f"{_KOKORO_RELEASE_BASE}/{_MODEL_FILENAME}"
 _VOICES_URL = f"{_KOKORO_RELEASE_BASE}/{_VOICES_FILENAME}"
+
+
+def _prepare_configured_runtime_tmp() -> None:
+    """Create an explicitly configured data-local temp directory.
+
+    The Kokoro phonemizer loads a temporary copy of ``libespeak``. Hardened
+    server containers keep shared ``/tmp`` mounted ``noexec``, so the Docker
+    runtime points ``TMPDIR`` at an isolated directory under Row-Bot data.
+    Ignore arbitrary external temp paths; only the app-owned data tree is
+    eligible for this bootstrap.
+    """
+    configured = str(os.environ.get("TMPDIR") or "").strip()
+    if not configured:
+        return
+    candidate = Path(configured).resolve()
+    data_root = _ROW_BOT_DIR.resolve()
+    try:
+        candidate.relative_to(data_root)
+    except ValueError:
+        return
+    candidate.mkdir(parents=True, exist_ok=True)
+    tempfile.tempdir = str(candidate)
+
+
+_prepare_configured_runtime_tmp()
 
 # ── Voice catalog (id → display name) ───────────────────────────────────────
 # Curated set of the highest-rated Kokoro v1.0 voices.
@@ -281,6 +309,24 @@ class TTSService:
         """Speak immediately (test button / future read-aloud)."""
         self._speak_internal(text)
 
+    def synthesize_wav_bytes(self, text: str) -> bytes:
+        """Generate local Kokoro audio without using a physical device."""
+        clean = _prepare_text(text)
+        if not clean.strip():
+            return b""
+        samples, sample_rate = self._synthesize_samples(clean)
+        pcm = (
+            np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
+            * 32767.0
+        ).astype("<i2")
+        output = io.BytesIO()
+        with wave.open(output, "wb") as wav:
+            wav.setnchannels(1 if pcm.ndim == 1 else int(pcm.shape[1]))
+            wav.setsampwidth(2)
+            wav.setframerate(int(sample_rate))
+            wav.writeframes(pcm.tobytes())
+        return output.getvalue()
+
     def stop(self) -> None:
         """Stop current playback and clear the streaming queue."""
         self._stop_event.set()
@@ -454,17 +500,7 @@ class TTSService:
         import sounddevice as sd
 
         try:
-            kokoro = self._get_kokoro()
-            if kokoro is None:
-                return
-
-            lang = _voice_lang(self._voice)
-            samples, sample_rate = kokoro.create(
-                text,
-                voice=self._voice,
-                speed=self._speed,
-                lang=lang,
-            )
+            samples, sample_rate = self._synthesize_samples(text)
 
             if self._stop_event.is_set():
                 return
@@ -474,6 +510,18 @@ class TTSService:
 
         except Exception:
             logger.warning("TTS playback error", exc_info=True)
+
+    def _synthesize_samples(self, text: str) -> tuple[np.ndarray, int]:
+        kokoro = self._get_kokoro()
+        if kokoro is None:
+            raise RuntimeError("Kokoro model is not installed")
+        samples, sample_rate = kokoro.create(
+            text,
+            voice=self._voice,
+            speed=self._speed,
+            lang=_voice_lang(self._voice),
+        )
+        return np.asarray(samples), int(sample_rate)
 
     def _load_settings(self) -> None:
         try:

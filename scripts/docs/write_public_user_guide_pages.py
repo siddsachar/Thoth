@@ -252,15 +252,16 @@ SETTINGS = {
     },
     "system": {
         "title": "Settings: System",
-        "desc": "Configure local access, workspace paths, browser and Computer Use behavior, tunnels, logs, and updates.",
+        "desc": "Configure Remote Access, workspace paths, browser and Computer Use behavior, tunnels, logs, and updates.",
         "shot": "settings-system",
-        "caption": "The System tab contains local runtime choices, workspace access, window mode, tunnels, and diagnostic controls.",
-        "overview": "System settings describe what the local app may access and how it runs on your machine. This is where you adjust the app window, workspace boundaries, shell behavior, browser automation, opt-in native Computer Use, tunnels, and diagnostics.",
+        "caption": "The System tab contains local runtime choices, workspace access, Remote Access, tunnels, and diagnostic controls.",
+        "overview": "System settings describe what the app may access, which trusted owner devices may connect, and how it runs on your machine. This is where you adjust Remote Access, workspace boundaries, shell behavior, browser automation, opt-in native Computer Use, tunnels, and diagnostics.",
         "controls": [
             "Workspace and filesystem controls define where Row-Bot may read or write when tools need local files.",
             "Shell and command controls affect whether command-running tools are available and how approvals apply.",
             "Browser controls affect page-reading and browser automation features.",
             "Computer Use controls keep native application automation separate, off by default, and gated by platform readiness, telemetry disclosure, and a verified optional runtime.",
+            "Remote Access creates one-time desktop or compact owner invitations, checks or configures an owned Tailscale Serve route, explicitly enables LAN listening, and revokes devices or sessions.",
             "Window mode chooses whether Row-Bot opens in its own app window, the system browser, or asks at launch.",
             "Tunnel settings are for external callback use cases such as channels that need a public webhook URL.",
             "Log and diagnostic controls help support troubleshooting without changing your model setup.",
@@ -269,13 +270,16 @@ SETTINGS = {
             "Keep workspace access narrow for everyday use.",
             "Enable shell or browser automation only when you intend to use those tools.",
             "Enable Computer Use only on an interactive Windows or macOS desktop after reviewing its separate setup and safety guide.",
+            "Use [Remote Access](/docs/operations/remote-access) only after choosing the narrowest connection route and the presentation layout for the invited owner device.",
             "Use tunnels only for channels or integrations that explicitly require inbound webhooks.",
             "Collect logs from this tab when troubleshooting startup or provider issues.",
         ],
-        "saved": "System settings are global for the local app. Workspace files are not uploaded to Row-Bot; external providers may still receive content when a model or tool request sends it.",
+        "saved": "System settings are global for the active Row-Bot data directory. Remote Access stores hashed invitation and session secrets plus revocable owner-device records in the shared access database. Workspace files are not uploaded to Row-Bot; external providers may still receive content when a model or tool request sends it.",
+        "privacy": "Remote reachability never grants access on its own. Every non-local browser needs a Row-Bot session. Treat unused invitation links as passwords, prefer Tailscale or HTTPS over remote LAN HTTP, and revoke lost or retired devices. Every authenticated browser is the same owner; compact and desktop layouts do not change authority. Review credential, account, channel, provider, or tool settings before enabling features that can contact outside services.",
         "troubleshoot": [
             "If Row-Bot cannot read a file, check whether it is inside the allowed workspace.",
             "If Computer Use is unavailable, open its setup card and follow the reported runtime or operating-system permission recovery step.",
+            "If a remote URL shows a JSON access error, use the [Remote Access troubleshooting table](/docs/operations/remote-access#troubleshooting) instead of broadly trusting proxy headers or disabling the access gate.",
             "If a tunnel URL is unavailable, check the tunnel provider credentials and whether the tunnel is running.",
             "If the app opens in the wrong place, change Window mode and restart Row-Bot.",
         ],
@@ -559,12 +563,30 @@ def settings_page(slug: str, meta: dict[str, object]) -> str:
     controls = "\n".join(f"- {item}" for item in meta["controls"])
     workflow = "\n".join(f"{idx}. {item}" for idx, item in enumerate(meta["workflow"], 1))
     trouble = "\n".join(f"- {item}" for item in meta["troubleshoot"])
+    privacy = str(
+        meta.get(
+            "privacy",
+            "Review credential, account, channel, provider, or tool settings "
+            "before enabling features that can contact outside services. "
+            "Local-only features stay on your machine until you ask Row-Bot "
+            "to use a provider, account, channel, MCP server, plugin, or tool "
+            "that sends data elsewhere.",
+        )
+    )
+    extra_screenshot = (
+        '\n\n<Screenshot id="settings-remote-access" alt="Remote Access controls in '
+        'Row-Bot System settings." caption="Remote Access keeps private '
+        'reachability, one-time owner invitations, connected devices, and '
+        'explicit LAN access in one owner-only section." />'
+        if slug == "system"
+        else ""
+    )
     return f"""
 # {meta['title']}
 
 {meta['overview']}
 
-<Screenshot id="{meta['shot']}" alt="{meta['title']} in Row-Bot." caption="{meta['caption']}" />
+<Screenshot id="{meta['shot']}" alt="{meta['title']} in Row-Bot." caption="{meta['caption']}" />{extra_screenshot}
 
 ## Where To Find It
 
@@ -584,7 +606,7 @@ Open **Settings**, then choose **{meta['title'].split(': ', 1)[1]}** from the le
 
 ## Privacy And Safety
 
-Review credential, account, channel, provider, or tool settings before enabling features that can contact outside services. Local-only features stay on your machine until you ask Row-Bot to use a provider, account, channel, MCP server, plugin, or tool that sends data elsewhere.
+{privacy}
 
 ## Control-Level Reference
 
@@ -653,7 +675,8 @@ These pages describe Row-Bot 4.5.0, the current stable release represented by th
 - [Developer Studio](/docs/developer/) for folders, repositories, code chat, inspectors, commands, and sandbox modes.
 - [Knowledge](/docs/knowledge/) for local memory, documents, graph review, and background organization.
 - [Computer Use](/docs/computer-use/) for target-window automation in native Windows and macOS applications.
-- [Android And Native Desktop](/docs/mobile-native/) for pairing, mobile Chat and Activity, and native-only behaviour.
+- [Android And Native Desktop](/docs/mobile-native/) for the full owner product in a compact mobile layout and native-only behaviour.
+- [Remote Access And Server Mode](/docs/operations/remote-access) for owner invitations, Tailscale, LAN, SSH, Docker, HTTPS proxies, and remote browser voice.
 - [Monitor](/docs/monitor/) for logs, journals, channel state, and background activity.
 - [Skills Hub](/docs/skills/) for browsing, enabling, creating, and reviewing skills.
 - [Channels](/docs/integrations/channels), [MCP](/docs/integrations/mcp), and [Plugins](/docs/integrations/plugins) for integrations.
@@ -746,6 +769,8 @@ Advanced users can set `ROW_BOT_DATA_DIR` before launch to use a separate data d
 ## After Installing
 
 Continue to [First Launch](/docs/getting-started/first-launch). You can finish optional setup later from the Setup Center and Settings.
+
+The standard desktop install stays on local loopback. To connect another trusted computer or phone, finish local setup first and then follow [Remote Access And Server Mode](/docs/operations/remote-access). For a headless or container deployment, read that guide before publishing a port or creating the first owner invitation.
 """,
     )
 
@@ -1381,6 +1406,8 @@ Logs and journals are local Row-Bot data. They may include file names, thread na
 
 Settings is Row-Bot's configuration center. It affects model providers, model choices, documents, search, skills, system access, accounts, utilities, tracker, knowledge, Buddy, voice, channels, MCP, plugins, and preferences.
 
+Authenticated owner sessions receive this complete Settings experience in both desktop and compact presentation. On phones and tablets, the layout adapts to the viewport; the available settings and authority do not change.
+
 ## How Settings Is Organized
 
 - **Providers** connects local, hosted, subscription, and custom model providers.
@@ -1683,6 +1710,18 @@ Computer Use is a distinct opt-in boundary. Row-Bot downloads the pinned Cua Dri
 
 Enter credentials only in the relevant Settings tab or provider sign-in flow. Row-Bot stores secrets in the operating system key store when available and keeps local metadata for status and diagnostics.
 
+## Remote Access
+
+Remote Access is single-owner and multi-device. A Tailscale, LAN, SSH, Docker, or reverse-proxy route provides reachability only; each non-local browser still needs a one-time invitation and a revocable Row-Bot session.
+
+Every authenticated interactive browser has full owner authority. Phone/tablet and computer choices select compact or desktop presentation only; device metadata and screen size are not permission boundaries. Row-Bot does not provide guest or multi-user sharing.
+
+Invitation links expire after 10 minutes and work once, but should still be treated like passwords until they expire. Row-Bot stores only hashed invitation and session secrets. Session credentials use HttpOnly cookies and are not placed in URLs.
+
+Prefer Tailscale or HTTPS for remote access. Plain LAN HTTP is unencrypted and does not support a remote browser microphone. For an operator-managed proxy, allow only the canonical browser-facing origin and trust only the exact address that connects from the proxy to Row-Bot. Never resolve a forwarding-header error by trusting every private address or a whole container network.
+
+See [Remote Access And Server Mode](/docs/operations/remote-access) for layouts, lifetimes, revocation, Tailscale ownership, server mode, Docker, and recovery.
+
 ## Approvals
 
 Use approvals to review file writes, command execution, browser actions, account actions, channel sends, MCP calls, plugin tools, Developer changes, and other sensitive actions. Reject anything that does not match your request.
@@ -1698,6 +1737,7 @@ Before sharing logs, screenshots, documents, thread exports, or review packages,
 - Start with local models when privacy matters most.
 - Keep channels, MCP, and plugins disabled until needed.
 - Keep Computer Use disabled until a local interactive task needs native application control.
+- Keep Remote Access off until another trusted device needs it; use the narrowest route and the appropriate layout.
 - Use narrow workspaces for file tools.
 - Review approvals before external or destructive actions.
 - Keep a final human review step before publishing screenshots or docs built from a personal app state.
@@ -1887,11 +1927,11 @@ For the exact allowlist and reviewed dependency record, see [Computer Use Beta: 
     write(
         "mobile-native/index.mdx",
         "Android And Native Desktop",
-        "Pair an Android companion, use mobile Chat and Activity, and understand native-only desktop behaviour.",
+        "Use the full Row-Bot owner product from Android in a compact layout and understand native-only desktop behaviour.",
         """
 # Android And Native Desktop
 
-Row-Bot's mobile companion gives a paired Android device a compact view of the local app. The native desktop build adds operating-system integration such as window, tray, microphone, file-picker, and updater behaviour. Neither surface changes the approval rules of the underlying task.
+Row-Bot's mobile layout gives an authenticated Android browser the full owner product in a compact presentation. Chat, Activity, workflows, Knowledge, and complete phone-safe Settings remain available. The native desktop build adds operating-system integration such as window, tray, microphone, file-picker, and updater behaviour. Layout never changes Row-Bot authority or the approval rules of the underlying task.
 
 <Screenshot id="mobile-chat-list" alt="Android-sized Row-Bot chat list with fictional conversations." caption="Chat starts with recent local threads and a New thread action." />
 
@@ -1899,14 +1939,19 @@ Row-Bot's mobile companion gives a paired Android device a compact view of the l
 
 ## Pair An Android Device
 
-1. On desktop, open **Settings -> System** and find Mobile Access.
-2. Read the network disclosure and choose the narrowest access mode that fits your network.
-3. Create a pairing invitation from the desktop app.
-4. Open the shown address or QR code on the Android device while both devices can reach the same Row-Bot host.
-5. Confirm the device name and access request on desktop.
-6. Revoke the device from desktop settings when it is lost, replaced, or no longer trusted.
+1. On an authorized owner device, open **Settings → System → Remote Access**.
+2. Check Tailscale or explicitly enable the narrowest connection route that fits your network.
+3. Select **Invite a device**, then choose **Phone or tablet — Compact layout**.
+4. Choose a trusted 30-day or temporary 12-hour session and a currently reachable connection route.
+5. Create the invitation and open the shown link or QR code on Android.
+6. Review the connection page on Android and press **Connect** before the invitation expires.
+7. Revoke the device or an individual session from Remote Access settings when it is lost, replaced, or no longer trusted.
 
-Pairing credentials grant access to your local Row-Bot instance. Do not share a pairing invitation, expose the local server broadly, or use an untrusted network without understanding the tunnel or proxy in front of it.
+<Screenshot id="remote-access-invitation" alt="Remote Access invitation configured for a phone or tablet." caption="Phone and computer choices select presentation only. Every connected browser receives full owner access." />
+
+The invitation expires after 10 minutes and works once. Opening it does not consume it until the recipient presses **Connect**. The resulting owner session is a separate HttpOnly browser credential and never appears in the URL.
+
+Pairing grants access to your local Row-Bot instance. Do not share an invitation, expose the local server broadly, or use remote LAN HTTP on an untrusted network. Tailscale or an operator-managed HTTPS origin is preferred and is required for browser microphone capture away from localhost. See [Remote Access And Server Mode](/docs/operations/remote-access) for the complete connection and recovery model.
 
 <Screenshot id="mobile-activity" alt="Android-sized Row-Bot Activity view." caption="Activity keeps goals, delegated agents, approvals, and attention states available away from the desktop layout." />
 
@@ -1916,6 +1961,8 @@ Pairing credentials grant access to your local Row-Bot instance. Do not share a 
 
 <Screenshot id="mobile-settings" alt="Android-sized Row-Bot Providers settings." caption="Mobile settings use the same provider categories and credential boundaries as desktop." />
 
+Mobile Settings includes Providers, Models, Knowledge, Buddy, Voice, System and Remote Access, Tracker, Documents, Search, Skills, Accounts, Channels, Utilities, MCP, Plugins, and Preferences. Rich Developer Studio and Designer Studio editors remain desktop-layout-oriented and show an explanatory notice in compact presentation.
+
 ## Native-Only Checks
 
 Some states cannot be reproduced faithfully in browser automation: OS microphone prompts, native file pickers, tray menus, updater/restart dialogs, Computer Use takeover, and physical-device network permission. The public guide documents their intent; release review must test them on the target operating system and a physical Android device.
@@ -1923,9 +1970,10 @@ Some states cannot be reproduced faithfully in browser automation: OS microphone
 ## Troubleshooting
 
 - If the phone cannot connect, confirm the host, port, access mode, firewall, and network reachability shown on desktop.
-- If a token expires, pair again rather than copying cookies or local credential files.
+- If an invitation expires or was already consumed, create a new one rather than copying cookies or local credential files.
+- If the connection page opens but the app remains unavailable, confirm the recipient pressed **Connect** and that the device or session was not revoked.
 - If an approval is missing, open Activity and confirm the relevant thread is still active.
-- If the mobile layout opens on desktop, remove the mobile query parameter or reopen the normal local address.
+- If the mobile layout opens on desktop, use `?mobile=0` or reopen the normal local address. Switching layout does not require a new session.
 """,
         screenshot=True,
     )
@@ -2233,6 +2281,12 @@ Third-party dependency telemetry is not Row-Bot telemetry. Review dependency beh
 
 Row-Bot is local-first, so operational safety starts with knowing which data directory and workspace are active. Conversations, settings, memory, Knowledge, workflows, documents, Designer projects, Developer workspace records, skills, plugins, logs, channel state, and MCP configuration can live under that directory. Operating-system key stores may hold credentials separately.
 
+## Remote Access And Server Operations
+
+Use [Remote Access And Server Mode](/docs/operations/remote-access) for the complete guide to one-time invitations, desktop and compact owner sessions, Tailscale Serve, LAN, SSH forwarding, Docker, HTTPS reverse proxies, browser-local voice, access recovery, and proxy error diagnostics.
+
+Remote access remains off by default in ordinary desktop launches. Server operators should back up access state with the rest of the active data directory, keep one worker, publish one canonical origin, terminate remote traffic with HTTPS, and trust only the exact reverse proxy that connects to Row-Bot.
+
 ## Back Up
 
 1. Open Settings and note the active data and workspace paths.
@@ -2313,6 +2367,18 @@ Start with the visible status text in Row-Bot. Then check the relevant Settings 
 - MCP needs the global switch, a trusted server, and a successful test.
 - Plugins need installation, enablement, configuration, and sometimes a restart.
 - Skills need to be enabled and relevant to the prompt.
+
+## Remote Access And Server Mode
+
+- If the browser shows `untrusted_forwarding_headers`, a proxy supplied forwarding metadata from an address Row-Bot does not trust. Restart after enabling a Row-Bot-owned Tailscale route. For another proxy, configure only its exact connecting address or CIDR; do not trust a broad network.
+- If the browser shows `unexpected_host`, add the exact canonical browser-facing host and verify the proxy preserves it.
+- If an invitation cannot be claimed, create it for the exact scheme, host, and port currently used by that browser. Expired, consumed, and stale-route invitations must be recreated.
+- If Tailscale reports a conflict, Funnel, or an unowned route, inspect that configuration manually. Row-Bot deliberately refuses to reset or overwrite it.
+- If a remote microphone is unavailable, use `localhost` or HTTPS, grant browser permission, and install the local voice model explicitly.
+- Use `?mobile=1` for compact presentation or `?mobile=0` for desktop presentation. Switching layout does not change the session or its owner authority.
+- Run `row-bot access doctor` for a secret-free server and route safety report.
+
+The full route, authentication, Docker, proxy, and recovery guidance is in [Remote Access And Server Mode](/docs/operations/remote-access).
 
 ## Voice And Buddy
 

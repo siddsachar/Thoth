@@ -172,7 +172,7 @@ def _render_frontmatter(entity: dict) -> str:
 
     lines = [
         "---",
-        f"id: {entity['id']}",
+        f"id: {json.dumps(str(entity['id']))}",
         f"type: {entity.get('entity_type', '')}",
         f"subject: \"{entity.get('subject', '')}\"",
     ]
@@ -558,7 +558,14 @@ def search_vault(query: str, max_results: int = 10) -> list[dict]:
                 if line.startswith("# "):
                     title = line[2:].strip()
                 if line.startswith("id: "):
-                    entity_id = line[4:].strip()
+                    raw_entity_id = line[4:].strip()
+                    if raw_entity_id.startswith('"') and raw_entity_id.endswith('"'):
+                        try:
+                            entity_id = str(json.loads(raw_entity_id))
+                        except json.JSONDecodeError:
+                            entity_id = raw_entity_id[1:-1]
+                    else:
+                        entity_id = raw_entity_id
 
             # Extract snippet around match
             idx = text.lower().find(query_lower)
@@ -690,8 +697,12 @@ def parse_entity_md(filepath: str | pathlib.Path) -> dict | None:
         key = key.strip()
         value = value.strip()
         # Handle quoted strings
-        if value.startswith('"') and value.endswith('"'):
-            value = value[1:-1]
+        quoted_string = value.startswith('"') and value.endswith('"')
+        if quoted_string:
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                value = value[1:-1]
         # Handle list syntax [a, b, c]
         if value.startswith("[") and value.endswith("]"):
             inner = value[1:-1]
@@ -701,7 +712,13 @@ def parse_entity_md(filepath: str | pathlib.Path) -> dict | None:
                 if val:
                     items.append(val)
             value = ", ".join(items)
-        if isinstance(value, str) and value and value[0] in "[{\"0123456789tfn-":
+        if (
+            key != "id"
+            and not quoted_string
+            and isinstance(value, str)
+            and value
+            and value[0] in "[{\"0123456789tfn-"
+        ):
             try:
                 value = json.loads(value)
             except Exception:

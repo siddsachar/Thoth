@@ -217,6 +217,9 @@ def _run_agent_sync(user_text: str, config: dict,
 
     agent_mod = _agent_mod()
     config = build_channel_runtime_config(config, "message")
+    from row_bot.channels import runtime as orchestration_runtime
+
+    config = orchestration_runtime.prepare_channel_turn_config(config, user_text)
     enabled = [t.name for t in tool_registry.get_enabled_tools()]
     full_answer: list[str] = []
     tool_reports: list[str] = []
@@ -253,6 +256,12 @@ def _run_agent_sync(user_text: str, config: dict,
     from row_bot.channels.agent_output import assemble_agent_answer
 
     answer = assemble_agent_answer("".join(full_answer), tool_reports)
+    if interrupt_data is None and orchestration_runtime.finalize_channel_orchestration(
+        config,
+        answer,
+        enabled,
+    ):
+        answer = orchestration_runtime.orchestration_suspended_final()
 
     if event_queue is not None:
         event_queue.put(None)  # sentinel
@@ -1255,7 +1264,7 @@ async def _handle_dm(event: dict, say, client) -> None:
                 config=config,
                 thread_ts=thread_ts,
             )
-        elif answer:
+        elif answer and not ch_runtime.channel_turn_is_suspended(answer):
             thread_id = ch_runtime.thread_id_from_config(config)
             if thread_id:
                 _goal_run_turn, _goal_send_text = _slack_goal_callbacks(
@@ -1356,7 +1365,7 @@ async def _handle_dm(event: dict, say, client) -> None:
                                                 name="thumbsup", timestamp=ts)
             except Exception:
                 pass
-            if answer:
+            if answer and not ch_runtime.channel_turn_is_suspended(answer):
                 await say(_md_to_mrkdwn(answer), channel=channel_id)
             for img_bytes in captured_images:
                 try:
@@ -1413,6 +1422,8 @@ async def _handle_dm(event: dict, say, client) -> None:
 
     # Extract YouTube URLs for separate messages (auto-preview)
     from row_bot.channels import extract_youtube_urls
+    if ch_runtime.channel_turn_is_suspended(answer):
+        return
     clean_answer, yt_urls = extract_youtube_urls(answer) if answer else ("", [])
 
     # If streaming/final delivery covered the response, just send images/URLs.
@@ -1762,7 +1773,7 @@ async def _handle_file(event: dict, say, client) -> None:
                 answer, _, _, _ = await loop.run_in_executor(
                     None, _run_agent_sync, user_text, config
                 )
-                if answer:
+                if answer and not ch_runtime.channel_turn_is_suspended(answer):
                     await say(_md_to_mrkdwn(answer), channel=channel_id)
 
         elif mimetype.startswith("image/"):
@@ -1775,7 +1786,7 @@ async def _handle_file(event: dict, say, client) -> None:
                 answer, _, _, _ = await loop.run_in_executor(
                     None, _run_agent_sync, user_text, config
                 )
-                if answer:
+                if answer and not ch_runtime.channel_turn_is_suspended(answer):
                     await say(_md_to_mrkdwn(answer), channel=channel_id)
 
         else:
@@ -1804,7 +1815,7 @@ async def _handle_file(event: dict, say, client) -> None:
             answer, _, _, _ = await loop.run_in_executor(
                 None, _run_agent_sync, user_text, config
             )
-            if answer:
+            if answer and not ch_runtime.channel_turn_is_suspended(answer):
                 await say(_md_to_mrkdwn(answer), channel=channel_id)
 
 
@@ -1836,7 +1847,7 @@ async def start_bot() -> bool:
     app_token = _get_app_token()
 
     if not bot_token or not app_token:
-        log.warning("Slack bot token or app token not configured")
+        log.info("Slack bot token or app token not configured")
         return False
 
     try:

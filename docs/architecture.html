@@ -4,324 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script>document.documentElement.classList.add('js');</script>
-    <title>Row-Bot — Architecture</title>
+    <title>Row-Bot &mdash; Architecture</title>
     <meta name="description" content="Explore Row-Bot's local-first architecture diagrams for the core agent, context assembly, knowledge graph, workflows, channels, Designer Studio, Developer Studio, skills, safety, and self-evolution systems.">
     <link rel="canonical" href="https://row-bot.ai/architecture.html">
+    <meta name="theme-color" content="#080b0f">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://row-bot.ai/architecture.html">
     <meta property="og:title" content="Row-Bot Architecture">
-    <meta property="og:description" content="Visual architecture diagrams for Row-Bot's local-first personal AI assistant.">
+    <meta property="og:description" content="Visual architecture diagrams for Row-Bot's local-first personal AI workbench.">
     <meta property="og:image" content="https://row-bot.ai/Core_Agent_Arch.png">
+    <meta property="og:image:width" content="1024">
+    <meta property="og:image:height" content="1024">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Row-Bot Architecture">
-    <meta name="twitter:description" content="Visual architecture diagrams for Row-Bot's local-first personal AI assistant.">
+    <meta name="twitter:description" content="Visual architecture diagrams for Row-Bot's local-first personal AI workbench.">
     <meta name="twitter:image" content="https://row-bot.ai/Core_Agent_Arch.png">
     <link rel="icon" href="favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg: #0b0d10;
-            --bg-alt: #101318;
-            --surface: #151920;
-            --surface-raised: #1c2129;
-            --border: #232a35;
-            --border-hover: #3a4556;
-            --text: #e2e6ed;
-            --text-dim: #9aa3b4;
-            --text-faint: #636d7e;
-            --accent: #4F78A4;
-            --accent-hover: #6C93BC;
-            --rose: #d87682;
-            --sans: 'Inter', system-ui, sans-serif;
-            --serif: 'Instrument Serif', Georgia, serif;
-            --mono: 'JetBrains Mono', 'SF Mono', monospace;
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        html { scroll-behavior: smooth; }
-        body {
-            font-family: var(--sans);
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.6;
-            overflow-x: hidden;
-        }
-
-        body::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            z-index: -1;
-            background-image:
-                linear-gradient(rgba(79,120,164,0.02) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(79,120,164,0.02) 1px, transparent 1px);
-            background-size: 64px 64px;
-        }
-
-        .container { max-width: 1180px; margin: 0 auto; padding: 0 2rem; }
-        .container--narrow { max-width: 780px; margin: 0 auto; padding: 0 2rem; }
-        .section-divider { height: 1px; background: linear-gradient(90deg, transparent 0%, var(--border) 20%, var(--border) 80%, transparent 100%); }
-
-        nav {
-            position: fixed;
-            top: 0;
-            width: 100%;
-            height: 56px;
-            padding: 0 2rem;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: rgba(11, 13, 16, 0.88);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-            z-index: 100;
-        }
-
-        .nav-wordmark {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            font-family: var(--serif);
-            font-size: 1.4rem;
-            color: var(--accent);
-            text-decoration: none;
-        }
-
-        .nav-glyph {
-            width: 28px;
-            height: 28px;
-            object-fit: contain;
-            flex: 0 0 auto;
-        }
-        .nav-links { display: flex; align-items: center; gap: 0.2rem; }
-        .nav-links a {
-            color: var(--text-dim);
-            text-decoration: none;
-            font-size: 0.86rem;
-            padding: 0.35rem 0.75rem;
-            border-radius: 6px;
-            transition: color 0.2s, background 0.15s;
-        }
-
-        .nav-links a:hover { color: var(--text); background: rgba(255,255,255,0.04); }
-        .nav-links .nav-dl {
-            color: var(--bg);
-            background: var(--accent);
-            font-weight: 600;
-            margin-left: 0.35rem;
-        }
-        .nav-links .nav-dl:hover { background: var(--accent-hover); }
-
-        .hero {
-            position: relative;
-            max-width: 960px;
-            margin: 0 auto;
-            padding: 9rem 2rem 5rem;
-        }
-
-        .hero-glyph {
-            position: absolute;
-            top: 6rem;
-            right: -1rem;
-            width: min(18rem, 40vw);
-            height: auto;
-            opacity: 0.09;
-            pointer-events: none;
-            user-select: none;
-        }
-
-        .hero > *:not(.hero-glyph) { position: relative; z-index: 1; }
-        .eyebrow {
-            font-family: var(--mono);
-            font-size: 0.78rem;
-            color: var(--accent);
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            margin-bottom: 1.2rem;
-        }
-
-        h1 {
-            font-family: var(--serif);
-            font-size: clamp(3rem, 7vw, 5.6rem);
-            font-weight: 400;
-            line-height: 1;
-            color: var(--text);
-            margin-bottom: 1.4rem;
-        }
-
-        h1 em { color: var(--accent); font-style: italic; }
-        .hero-copy {
-            max-width: 700px;
-            color: var(--text-dim);
-            font-size: 1.08rem;
-            line-height: 1.75;
-            margin-bottom: 2rem;
-        }
-
-        .hero-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            padding: 0.75rem 1.45rem;
-            border-radius: 8px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            text-decoration: none;
-            transition: all 0.2s;
-        }
-        .btn--primary { background: var(--accent); color: var(--bg); }
-        .btn--primary:hover { background: var(--accent-hover); transform: translateY(-1px); }
-        .btn--ghost { color: var(--text-dim); border: 1px solid var(--border); }
-        .btn--ghost:hover { color: var(--text); border-color: var(--border-hover); }
-
-        .overview { padding: 4.5rem 0; }
-        .overview-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 1rem;
-        }
-        .overview-item {
-            padding: 1.2rem;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: var(--surface);
-        }
-        .overview-item span {
-            display: block;
-            font-family: var(--mono);
-            color: var(--accent);
-            font-size: 0.72rem;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin-bottom: 0.55rem;
-        }
-        .overview-item p { color: var(--text-dim); font-size: 0.9rem; }
-
-        .diagrams { padding: 5rem 0; }
-        .section-head { margin-bottom: 2rem; }
-        .section-head h2 {
-            font-family: var(--serif);
-            font-size: 2.6rem;
-            font-weight: 400;
-            line-height: 1.15;
-            margin-bottom: 0.7rem;
-        }
-        .section-head p { color: var(--text-dim); max-width: 680px; }
-
-        .diagram-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 1.35rem;
-        }
-        .diagram-card {
-            display: block;
-            color: inherit;
-            text-decoration: none;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            overflow: hidden;
-            background: var(--surface);
-            transition: transform 0.2s, border-color 0.2s;
-        }
-        .diagram-card:hover { transform: translateY(-3px); border-color: var(--accent); }
-        .diagram-card img {
-            display: block;
-            width: 100%;
-            aspect-ratio: 1 / 1;
-            object-fit: cover;
-            background: var(--bg-alt);
-        }
-        .diagram-caption { padding: 1rem 1.1rem 1.15rem; }
-        .diagram-caption span {
-            display: block;
-            font-family: var(--mono);
-            font-size: 0.68rem;
-            color: var(--accent);
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin-bottom: 0.35rem;
-        }
-        .diagram-caption h3 { font-size: 1.03rem; font-weight: 600; margin-bottom: 0.35rem; }
-        .diagram-caption p { color: var(--text-dim); font-size: 0.88rem; }
-
-        .cta { padding: 5rem 0; text-align: center; }
-        .cta h2 { font-family: var(--serif); font-size: 2.5rem; font-weight: 400; margin-bottom: 0.7rem; }
-        .cta p { color: var(--text-dim); margin-bottom: 1.75rem; }
-
-        footer {
-            padding: 2rem;
-            text-align: center;
-            font-family: var(--mono);
-            font-size: 0.75rem;
-            color: var(--text-faint);
-            border-top: 1px solid var(--border);
-        }
-        footer a { color: var(--text-faint); text-decoration: none; }
-        footer a:hover { color: var(--text-dim); }
-
-        .lightbox {
-            position: fixed;
-            inset: 0;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            padding: 2rem;
-            background: rgba(5, 7, 9, 0.92);
-            z-index: 300;
-        }
-        .lightbox:target { display: flex; }
-        .lightbox-figure {
-            width: min(92vw, 980px);
-            max-height: 92vh;
-        }
-        .lightbox img {
-            display: block;
-            width: 100%;
-            max-height: 82vh;
-            object-fit: contain;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: var(--bg);
-        }
-        .lightbox figcaption {
-            display: flex;
-            justify-content: space-between;
-            gap: 1rem;
-            align-items: center;
-            color: var(--text-dim);
-            font-size: 0.9rem;
-            margin-top: 0.85rem;
-        }
-        .lightbox-close {
-            color: var(--bg);
-            background: var(--accent);
-            border-radius: 6px;
-            padding: 0.45rem 0.8rem;
-            text-decoration: none;
-            font-weight: 600;
-        }
-
-        @media (max-width: 860px) {
-            nav { padding: 0 1rem; }
-            .nav-links a:not(.nav-dl) { display: none; }
-            .overview-grid { grid-template-columns: repeat(2, 1fr); }
-            .diagram-grid { grid-template-columns: 1fr; }
-        }
-
-        @media (max-width: 520px) {
-            .container, .container--narrow, .hero { padding-left: 1.1rem; padding-right: 1.1rem; }
-            .hero { padding-top: 7.5rem; }
-            .overview-grid { grid-template-columns: 1fr; }
-            .hero-actions { flex-direction: column; align-items: stretch; }
-            .btn { justify-content: center; }
-            .nav-links .nav-dl { padding: 0.35rem 0.55rem; margin-left: 0.1rem; }
-        }
-    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="site.css">
+    <script src="site.js" defer></script>
 </head>
 <body class="architecture-page">
     <div class="site-progress" aria-hidden="true"></div>
@@ -330,22 +33,18 @@
     <nav class="site-nav" aria-label="Primary navigation">
         <div class="site-nav__inner shell">
             <a class="wordmark" href="index.html" aria-label="Row-Bot home">
-                <img src="row_bot_glyph_256.png" alt="">
+                <img src="row_bot_glyph_256.png" width="256" height="256" alt="">
                 <strong>Row-Bot</strong>
                 <small>formerly Thoth</small>
             </a>
             <button class="nav-hamburger" type="button" aria-controls="nav-menu" aria-expanded="false" aria-label="Open navigation"><span></span></button>
             <div class="nav-menu" id="nav-menu">
-                <a href="index.html#new">What’s new</a>
                 <a href="features.html">Features</a>
                 <a href="architecture.html" aria-current="page">Architecture</a>
                 <a href="docs/">Docs</a>
-                <a href="index.html#comparison">Compare</a>
-                <a href="index.html#privacy">Privacy</a>
-                <a href="https://sydsachar.com/category/row-bot/" target="_blank" rel="noopener noreferrer">Blog</a>
                 <a href="contact.html">Contact</a>
                 <a href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">GitHub</a>
-                <a class="nav-download" href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-Windows-x64.exe" data-os-primary data-os-label="short" data-download="windows">Download</a>
+                <a class="nav-download" href="index.html#install" data-os-primary data-os-label="short" data-placement="navigation">Desktop install</a>
             </div>
         </div>
     </nav>
@@ -354,13 +53,13 @@
         <header class="page-hero page-hero--visual architecture-page-hero">
             <div class="shell page-hero__grid">
                 <div class="page-hero__content">
-                    <a class="release-pill" href="index.html#architecture">Local-first system map · Row-Bot 4.5.0</a>
+                    <a class="release-pill" href="https://github.com/siddsachar/row-bot/releases/tag/v4.5.0" target="_blank" rel="noopener noreferrer">Architecture current with Row-Bot 4.5.0</a>
                     <p class="eyebrow">Architecture</p>
                     <h1>How Row-Bot stays <em>local-first.</em></h1>
                     <p class="page-hero__copy">These diagrams map the main systems behind Row-Bot: the checkpointed agent orchestrator, context assembly, memory graph, workflows, channels, native Computer Use, Developer and Designer Studios, safety boundaries, and self-management loops. Durable state stays local; external services and optional runtimes remain explicit and opt-in.</p>
                     <div class="hero-actions">
                         <a href="#diagrams" class="button button--primary">Explore diagrams</a>
-                        <a href="ARCHITECTURE.md" class="button button--secondary">Read technical reference</a>
+                        <a href="https://github.com/siddsachar/row-bot/blob/main/docs/ARCHITECTURE.md" class="button button--secondary" target="_blank" rel="noopener noreferrer">Read technical reference</a>
                     </div>
                 </div>
                 <div class="page-hero-art page-hero-art--glyph" aria-label="Row-Bot local-first core">
@@ -371,9 +70,7 @@
             </div>
         </header>
 
-        <div class="section-divider"></div>
-
-        <section class="overview">
+        <section class="overview" aria-label="Architectural principles">
             <div class="container">
                 <div class="overview-grid">
                     <div class="overview-item">
@@ -396,69 +93,53 @@
             </div>
         </section>
 
-        <div class="section-divider"></div>
-
         <section class="diagrams" id="diagrams">
             <div class="container">
                 <div class="section-head">
-                    <h2>Subsystem Maps</h2>
+                    <h2>Subsystem maps</h2>
                     <p>Open any diagram for a larger view. The gallery starts with the full core-agent map, then moves through the specialized subsystems that make Row-Bot useful day to day.</p>
                 </div>
                 <div class="diagram-grid">
-                    <a class="diagram-card" href="#core-agent">
-                        <img src="Core_Agent_Arch.png" alt="Row-Bot core agent architecture diagram">
+                    <a class="diagram-card" href="#core-agent" data-lightbox-open>
+                        <img src="Core_Agent_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot core agent architecture diagram">
                         <div class="diagram-caption"><span>01</span><h3>Core Agent</h3><p>Interfaces, model routing, checkpointed work budgets, context, memory, tool calls, workflows, storage, and control planes.</p></div>
                     </a>
-                    <a class="diagram-card" href="#context">
-                        <img src="Context_Arch.png" alt="Row-Bot context architecture diagram">
+                    <a class="diagram-card" href="#context" data-lightbox-open>
+                        <img src="Context_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot context architecture diagram">
                         <div class="diagram-caption"><span>02</span><h3>Context Assembly</h3><p>How current turns, history, skills, memories, documents, and tool results become model-ready context.</p></div>
                     </a>
-                    <a class="diagram-card" href="#knowledge-graph">
-                        <img src="Knowledge_Graph_Arch.png" alt="Row-Bot knowledge graph architecture diagram">
+                    <a class="diagram-card" href="#knowledge-graph" data-lightbox-open>
+                        <img src="Knowledge_Graph_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot knowledge graph architecture diagram">
                         <div class="diagram-caption"><span>03</span><h3>Knowledge Graph</h3><p>Capture, extraction, graph storage, semantic retrieval, wiki export, and Dream Cycle refinement.</p></div>
                     </a>
-                    <a class="diagram-card" href="#workflows">
-                        <img src="Workflows_Arch.png" alt="Row-Bot background workflow architecture diagram">
+                    <a class="diagram-card" href="#workflows" data-lightbox-open>
+                        <img src="Workflows_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot background workflow architecture diagram">
                         <div class="diagram-caption"><span>04</span><h3>Background Workflows</h3><p>Natural-language workflow creation, scheduling, execution, approvals, delivery, and recurring loops.</p></div>
                     </a>
-                    <a class="diagram-card" href="#channels">
-                        <img src="Multi_Channel_Arch.png" alt="Row-Bot multi-channel architecture diagram">
+                    <a class="diagram-card" href="#channels" data-lightbox-open>
+                        <img src="Multi_Channel_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot multi-channel architecture diagram">
                         <div class="diagram-caption"><span>05</span><h3>Multi-Channel Runtime</h3><p>Messaging entry points, adapters, normalization, identity mapping, attachment handling, and delivery.</p></div>
                     </a>
-                    <a class="diagram-card" href="#designer">
-                        <img src="Designer_Studio_Arch.png" alt="Row-Bot Designer Studio architecture diagram">
+                    <a class="diagram-card" href="#designer" data-lightbox-open>
+                        <img src="Designer_Studio_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot Designer Studio architecture diagram">
                         <div class="diagram-caption"><span>06</span><h3>Designer Studio</h3><p>Project modes, page generation, media, targeted edits, preview sandboxing, export, and publish paths.</p></div>
                     </a>
-                    <a class="diagram-card" href="#developer">
-                        <img src="Developer_Studio_Arch.png" alt="Row-Bot Developer Studio architecture diagram">
+                    <a class="diagram-card" href="#developer" data-lightbox-open>
+                        <img src="Developer_Studio_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot Developer Studio architecture diagram">
                         <div class="diagram-caption"><span>07</span><h3>Developer Studio</h3><p>Workspace linking, repo context, approval modes, Git operations, Docker Sandbox, tests, and PR prep.</p></div>
                     </a>
-                    <a class="diagram-card" href="#skills">
-                        <img src="Skills_System_Arch.png" alt="Row-Bot skills system architecture diagram">
+                    <a class="diagram-card" href="#skills" data-lightbox-open>
+                        <img src="Skills_System_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot skills system architecture diagram">
                         <div class="diagram-caption"><span>08</span><h3>Skills System</h3><p>Smart Skills activation, Skills Hub imports, bundled guides, slash commands, and skill-scoped prompts.</p></div>
                     </a>
-                    <a class="diagram-card" href="#safety">
-                        <img src="Safety_Privacy_Arch.png" alt="Row-Bot safety privacy and control architecture diagram">
+                    <a class="diagram-card" href="#safety" data-lightbox-open>
+                        <img src="Safety_Privacy_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot safety privacy and control architecture diagram">
                         <div class="diagram-caption"><span>09</span><h3>Safety, Privacy &amp; Control</h3><p>Local-first boundaries, approvals, prompt-injection defense, native target-window control, tool permissions, credentials, and updates.</p></div>
                     </a>
-                    <a class="diagram-card" href="#self-evolution">
-                        <img src="Self_Evolution_Arch.png" alt="Row-Bot self-evolution architecture diagram">
+                    <a class="diagram-card" href="#self-evolution" data-lightbox-open>
+                        <img src="Self_Evolution_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot self-evolution architecture diagram">
                         <div class="diagram-caption"><span>10</span><h3>Self-Evolution</h3><p>Status introspection, diagnostics, capability registry, insights, skill guidance, and controlled self-management.</p></div>
                     </a>
-                </div>
-            </div>
-        </section>
-
-        <div class="section-divider"></div>
-
-        <section class="architecture-cta">
-            <div class="shell shell--narrow reveal">
-                <p class="kicker">Go deeper</p>
-                <h2>Want the implementation detail?</h2>
-                <p>The written architecture reference covers modules, storage layout, provider routing, update flow, packaging, and system boundaries.</p>
-                <div class="final-actions">
-                    <a href="ARCHITECTURE.md" class="button button--primary">Open architecture reference</a>
-                    <a href="index.html#comparison" class="button button--secondary">Compare operating models</a>
                 </div>
             </div>
         </section>
@@ -466,11 +147,14 @@
 
     <footer class="site-footer">
         <div class="shell footer-grid">
-            <span>Row-Bot · v4.5.0 · Apache 2.0</span>
+            <span>Row-Bot &middot; v4.5.0 &middot; Apache 2.0</span>
             <div class="footer-links">
+                <a href="index.html">Home</a>
                 <a href="features.html">Features</a>
-                <a href="architecture.html">Architecture</a>
+                <a href="architecture.html" aria-current="page">Architecture</a>
                 <a href="docs/">Docs</a>
+                <a href="index.html#privacy">Privacy</a>
+                <a href="index.html#comparison">Compare</a>
                 <a href="contact.html">Contact</a>
                 <a href="https://sydsachar.com/category/row-bot/" target="_blank" rel="noopener noreferrer">Blog</a>
                 <a href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">GitHub</a>
@@ -478,16 +162,15 @@
         </div>
     </footer>
 
-    <a class="lightbox" id="core-agent" href="#diagrams"><figure class="lightbox-figure"><img src="Core_Agent_Arch.png" alt="Row-Bot core agent architecture diagram"><figcaption><span>Core Agent Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <a class="lightbox" id="context" href="#diagrams"><figure class="lightbox-figure"><img src="Context_Arch.png" alt="Row-Bot context architecture diagram"><figcaption><span>Context Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <a class="lightbox" id="knowledge-graph" href="#diagrams"><figure class="lightbox-figure"><img src="Knowledge_Graph_Arch.png" alt="Row-Bot knowledge graph architecture diagram"><figcaption><span>Knowledge Graph Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <a class="lightbox" id="workflows" href="#diagrams"><figure class="lightbox-figure"><img src="Workflows_Arch.png" alt="Row-Bot background workflow architecture diagram"><figcaption><span>Background Workflow Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <a class="lightbox" id="channels" href="#diagrams"><figure class="lightbox-figure"><img src="Multi_Channel_Arch.png" alt="Row-Bot multi-channel architecture diagram"><figcaption><span>Multi-Channel Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <a class="lightbox" id="designer" href="#diagrams"><figure class="lightbox-figure"><img src="Designer_Studio_Arch.png" alt="Row-Bot Designer Studio architecture diagram"><figcaption><span>Designer Studio Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <a class="lightbox" id="developer" href="#diagrams"><figure class="lightbox-figure"><img src="Developer_Studio_Arch.png" alt="Row-Bot Developer Studio architecture diagram"><figcaption><span>Developer Studio Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <a class="lightbox" id="skills" href="#diagrams"><figure class="lightbox-figure"><img src="Skills_System_Arch.png" alt="Row-Bot skills system architecture diagram"><figcaption><span>Skills System Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <a class="lightbox" id="safety" href="#diagrams"><figure class="lightbox-figure"><img src="Safety_Privacy_Arch.png" alt="Row-Bot safety privacy and control architecture diagram"><figcaption><span>Safety, Privacy &amp; Control Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <a class="lightbox" id="self-evolution" href="#diagrams"><figure class="lightbox-figure"><img src="Self_Evolution_Arch.png" alt="Row-Bot self-evolution architecture diagram"><figcaption><span>Self-Evolution Architecture</span><span class="lightbox-close">Close</span></figcaption></figure></a>
-    <script src="site.js" defer></script>
+    <div class="lightbox" id="core-agent" data-lightbox role="dialog" aria-modal="true" aria-labelledby="core-agent-title" tabindex="-1"><figure class="lightbox-figure"><img src="Core_Agent_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot core agent architecture diagram"><figcaption><span id="core-agent-title">Core Agent Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
+    <div class="lightbox" id="context" data-lightbox role="dialog" aria-modal="true" aria-labelledby="context-title" tabindex="-1"><figure class="lightbox-figure"><img src="Context_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot context architecture diagram"><figcaption><span id="context-title">Context Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
+    <div class="lightbox" id="knowledge-graph" data-lightbox role="dialog" aria-modal="true" aria-labelledby="knowledge-graph-title" tabindex="-1"><figure class="lightbox-figure"><img src="Knowledge_Graph_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot knowledge graph architecture diagram"><figcaption><span id="knowledge-graph-title">Knowledge Graph Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
+    <div class="lightbox" id="workflows" data-lightbox role="dialog" aria-modal="true" aria-labelledby="workflows-title" tabindex="-1"><figure class="lightbox-figure"><img src="Workflows_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot background workflow architecture diagram"><figcaption><span id="workflows-title">Background Workflow Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
+    <div class="lightbox" id="channels" data-lightbox role="dialog" aria-modal="true" aria-labelledby="channels-title" tabindex="-1"><figure class="lightbox-figure"><img src="Multi_Channel_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot multi-channel architecture diagram"><figcaption><span id="channels-title">Multi-Channel Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
+    <div class="lightbox" id="designer" data-lightbox role="dialog" aria-modal="true" aria-labelledby="designer-title" tabindex="-1"><figure class="lightbox-figure"><img src="Designer_Studio_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot Designer Studio architecture diagram"><figcaption><span id="designer-title">Designer Studio Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
+    <div class="lightbox" id="developer" data-lightbox role="dialog" aria-modal="true" aria-labelledby="developer-title" tabindex="-1"><figure class="lightbox-figure"><img src="Developer_Studio_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot Developer Studio architecture diagram"><figcaption><span id="developer-title">Developer Studio Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
+    <div class="lightbox" id="skills" data-lightbox role="dialog" aria-modal="true" aria-labelledby="skills-title" tabindex="-1"><figure class="lightbox-figure"><img src="Skills_System_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot skills system architecture diagram"><figcaption><span id="skills-title">Skills System Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
+    <div class="lightbox" id="safety" data-lightbox role="dialog" aria-modal="true" aria-labelledby="safety-title" tabindex="-1"><figure class="lightbox-figure"><img src="Safety_Privacy_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot safety privacy and control architecture diagram"><figcaption><span id="safety-title">Safety, Privacy &amp; Control Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
+    <div class="lightbox" id="self-evolution" data-lightbox role="dialog" aria-modal="true" aria-labelledby="self-evolution-title" tabindex="-1"><figure class="lightbox-figure"><img src="Self_Evolution_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot self-evolution architecture diagram"><figcaption><span id="self-evolution-title">Self-Evolution Architecture</span><a class="lightbox-close" href="#diagrams" data-lightbox-close>Close</a></figcaption></figure></div>
 </body>
 </html>

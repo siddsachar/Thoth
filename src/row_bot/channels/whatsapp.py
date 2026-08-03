@@ -475,6 +475,9 @@ def _run_agent_sync(user_text: str, config: dict,
 
     agent_mod = _agent_mod()
     config = build_channel_runtime_config(config, "message")
+    from row_bot.channels import runtime as orchestration_runtime
+
+    config = orchestration_runtime.prepare_channel_turn_config(config, user_text)
     enabled = [t.name for t in tool_registry.get_enabled_tools()]
     full_answer: list[str] = []
     tool_reports: list[str] = []
@@ -514,6 +517,12 @@ def _run_agent_sync(user_text: str, config: dict,
     from row_bot.channels.agent_output import assemble_agent_answer
 
     answer = assemble_agent_answer("".join(full_answer), tool_reports)
+    if interrupt_data is None and orchestration_runtime.finalize_channel_orchestration(
+        config,
+        answer,
+        enabled,
+    ):
+        answer = orchestration_runtime.orchestration_suspended_final()
 
     captured_images: list[bytes] = []
     captured_video_paths: list[str] = []
@@ -855,7 +864,7 @@ def _process_inbound(data: dict) -> None:
             detail = approval_helpers.format_interrupt_text(new_interrupt)
             _send_message_sync(chat_id,
                                detail + "\n\nReply YES or NO.")
-        elif answer:
+        elif answer and not ch_runtime.channel_turn_is_suspended(answer):
             thread_id = ch_runtime.thread_id_from_config(config)
             if thread_id:
                 _goal_run_turn, _goal_send_text = _whatsapp_goal_callbacks(chat_id)
@@ -974,7 +983,7 @@ def _process_inbound(data: dict) -> None:
                 _react_sync(chat_id, msg_key, "👍")
             if placeholder_key:
                 _edit_message_sync(chat_id, placeholder_key, answer or "_(done)_")
-            elif answer:
+            elif answer and not ch_runtime.channel_turn_is_suspended(answer):
                 _send_message_sync(chat_id, answer)
             for img_bytes in captured_images:
                 try:
@@ -1020,6 +1029,8 @@ def _process_inbound(data: dict) -> None:
 
     # Extract YouTube URLs so they can be sent separately for auto-preview
     from row_bot.channels import extract_youtube_urls
+    if ch_runtime.channel_turn_is_suspended(answer):
+        return
     _, yt_urls = extract_youtube_urls(answer) if answer else ("", [])
 
     # If streaming covered the full response and no interrupt, just send images/URLs
@@ -1123,7 +1134,7 @@ def _handle_media(chat_id: str, data: dict, caption: str) -> None:
             if caption:
                 user_text += f"\n\nCaption: {caption}"
             answer, _, _, _ = _run_agent_sync(user_text, config)
-            if answer:
+            if answer and not ch_runtime.channel_turn_is_suspended(answer):
                 _send_message_sync(chat_id, answer)
 
     elif media_type.startswith("image/"):
@@ -1140,7 +1151,7 @@ def _handle_media(chat_id: str, data: dict, caption: str) -> None:
             if caption:
                 user_text += f"\n\nUser said: {caption}"
             answer, _, _, _ = _run_agent_sync(user_text, config)
-            if answer:
+            if answer and not ch_runtime.channel_turn_is_suspended(answer):
                 _send_message_sync(chat_id, answer)
 
     else:
@@ -1166,7 +1177,7 @@ def _handle_media(chat_id: str, data: dict, caption: str) -> None:
 
         user_text = "\n".join(parts)
         answer, _, _, _ = _run_agent_sync(user_text, config)
-        if answer:
+        if answer and not ch_runtime.channel_turn_is_suspended(answer):
             _send_message_sync(chat_id, answer)
 
 

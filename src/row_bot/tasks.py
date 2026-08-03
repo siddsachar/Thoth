@@ -2265,10 +2265,18 @@ def _finish_run(run_id: str, status: str = "completed",
                 status_message: str = "", terminal_reason: str = "") -> None:
     conn = _get_conn()
     row = conn.execute(
-        "SELECT status_message FROM task_runs WHERE id = ?",
+        "SELECT status, status_message FROM task_runs WHERE id = ?",
         (run_id,),
     ).fetchone()
-    existing_status = str(row[0] or "") if row else ""
+    if (
+        row
+        and str(row["status"] or "")
+        in {"completed", "completed_delivery_failed", "failed", "stopped", "blocked"}
+        and status not in {"completed", "completed_delivery_failed", "failed", "stopped", "blocked"}
+    ):
+        conn.close()
+        return
+    existing_status = str(row["status_message"] or "") if row else ""
     status_message = _merge_memory_fallback_status(existing_status, status_message)
     conn.execute(
         "UPDATE task_runs SET status = ?, status_message = ?, finished_at = ? "
@@ -3444,6 +3452,7 @@ def run_task_background(
                                 f"workflow:{run_id}:{step_id}:{step_attempt}"
                             )
                             config["configurable"]["generation_id"] = generation_id
+                            config["configurable"]["root_objective"] = prompt
                             try:
                                 result = invoke_agent(
                                     prompt,
@@ -3459,6 +3468,62 @@ def run_task_background(
                                         "Could not persist workflow memory fallback notice",
                                         exc_info=True,
                                     )
+                            if not isinstance(result, dict):
+                                from row_bot.agent_orchestrator import (
+                                    finalize_parent_generation,
+                                    get_generation_orchestration,
+                                )
+
+                                orchestration = get_generation_orchestration(
+                                    thread_id,
+                                    generation_id,
+                                )
+                                if (
+                                    orchestration
+                                    and int(orchestration.get("required_total") or 0) > 0
+                                ):
+                                    provisional_text = str(result or "")
+                                    if provisional_text.strip():
+                                        from row_bot.threads import remove_latest_checkpoint_ai_message
+
+                                        remove_latest_checkpoint_ai_message(
+                                            thread_id,
+                                            provisional_text,
+                                        )
+                                    _save_pipeline_state(
+                                        run_id=run_id,
+                                        task_id=task_id,
+                                        thread_id=thread_id,
+                                        current_step_index=step_index,
+                                        step_outputs=step_outputs,
+                                        config=config,
+                                        resume_token=f"orchestration:{orchestration['id']}",
+                                        status=_CHILD_AGENT_WAIT_STATUS,
+                                        graph_interrupted=_orchestration_wait_payload(
+                                            str(orchestration["id"]),
+                                            step_id,
+                                        ),
+                                    )
+                                    finalize_parent_generation(
+                                        str(orchestration["id"]),
+                                        continuation_state={
+                                            "config": config,
+                                            "enabled_tool_names": effective_tool_names,
+                                            "provisional_text": provisional_text,
+                                            "workflow_run_id": run_id,
+                                            "workflow_step_id": step_id,
+                                        },
+                                        delivery_context={
+                                            "runtime_surface": "workflow",
+                                            "workflow_run_id": run_id,
+                                        },
+                                    )
+                                    paused = True
+                                    paused_message = "Waiting for required child Agents"
+                                    _task_log(
+                                        f"Step {step_index + 1}: Waiting for required child Agents"
+                                    )
+                                    break
                             if isinstance(result, dict) and result.get("type") == "terminal":
                                 terminal_reason = str(result.get("terminal_reason") or "")
                                 message = str(result.get("message") or "Workflow step stopped incomplete.")
@@ -3770,11 +3835,7 @@ def run_task_background(
                             or str(step.get("workspace_mode") or "").strip() == "worktree"
                         )
                         try:
-                            from row_bot.agent_runner import (
-                                agent_run_is_terminal,
-                                spawn_agent_run,
-                                wait_for_agent_run_terminal_or_status,
-                            )
+                            from row_bot.agent_runner import spawn_agent_run
                             from row_bot.threads import _get_thread_developer_workspace
 
                             profile_ref = str(
@@ -3796,10 +3857,30 @@ def run_task_background(
                             wait_for_result = bool(step.get("wait", True))
                             if return_mode in {"background", "start_in_background"}:
                                 wait_for_result = False
-                            timeout_seconds = float(
-                                step.get("timeout_seconds") or (300 if wait_for_result else 0)
-                            )
                             _task_log(f"Step {step_index + 1}/{total}: Child Agent")
+                            from row_bot.agent_orchestrator import create_or_get_orchestration
+                            from row_bot.models import get_current_model
+
+                            delegation_generation_id = (
+                                f"workflow:{run_id}:{step_id}:delegate"
+                            )
+                            orchestration = create_or_get_orchestration(
+                                parent_thread_id=thread_id,
+                                parent_generation_id=delegation_generation_id,
+                                parent_run_id=run_id,
+                                root_objective=objective,
+                                model_ref=str(
+                                    step.get("model_override")
+                                    or config["configurable"].get("model_override")
+                                    or get_current_model()
+                                ),
+                                approval_mode=approval_mode,
+                                runtime_surface="workflow",
+                                delivery_context={
+                                    "workflow_run_id": run_id,
+                                    "workflow_step_id": step_id,
+                                },
+                            )
                             child_run = spawn_agent_run(
                                 objective,
                                 parent_thread_id=thread_id,
@@ -3810,19 +3891,63 @@ def run_task_background(
                                 context_mode=str(step.get("context_mode") or "auto"),
                                 enabled_tool_names=effective_tool_names,
                                 model_override=str(step.get("model_override") or ""),
+                                approval_mode=approval_mode,
                                 developer_workspace_id=developer_workspace_id,
                                 workspace_mode=workspace_mode,
                                 use_worktree=use_worktree,
+                                orchestration_id=str(orchestration.get("id") or ""),
+                                orchestration_required=wait_for_result,
                                 wait=False,
                             )
                             child_run_id = str((child_run or {}).get("id") or "")
                             if wait_for_result:
-                                if child_run_id:
-                                    child_run = wait_for_agent_run_terminal_or_status(
-                                        child_run_id,
-                                        timeout=timeout_seconds,
-                                        statuses={"waiting_approval"},
-                                    )
+                                from row_bot.agent_orchestrator import finalize_parent_generation
+                                from row_bot.agent_runs import get_agent_run
+
+                                child_run = get_agent_run(child_run_id) or child_run
+                                child_output = _child_agent_output(child_run)
+                                step_outputs[step_id] = json.dumps(
+                                    child_output,
+                                    sort_keys=True,
+                                )
+                                _save_pipeline_state(
+                                    run_id=run_id,
+                                    task_id=task_id,
+                                    thread_id=thread_id,
+                                    current_step_index=step_index,
+                                    step_outputs=step_outputs,
+                                    config=config,
+                                    resume_token=f"orchestration:{orchestration['id']}",
+                                    status=_CHILD_AGENT_WAIT_STATUS,
+                                    graph_interrupted=_orchestration_wait_payload(
+                                        str(orchestration["id"]),
+                                        step_id,
+                                    ),
+                                )
+                                finalize_parent_generation(
+                                    str(orchestration["id"]),
+                                    continuation_state={
+                                        "config": config,
+                                        "enabled_tool_names": effective_tool_names,
+                                        "workflow_run_id": run_id,
+                                        "workflow_step_id": step_id,
+                                        "workflow_direct_child": True,
+                                    },
+                                    delivery_context={
+                                        "runtime_surface": "workflow",
+                                        "workflow_run_id": run_id,
+                                    },
+                                )
+                                paused = True
+                                paused_message = (
+                                    "Child Agent is waiting for approval"
+                                    if child_output["status"] == "waiting_approval"
+                                    else "Waiting for required child Agent"
+                                )
+                                _task_log(
+                                    f"Step {step_index + 1}: Waiting for required child Agent"
+                                )
+                                break
                             child_status = str((child_run or {}).get("status") or "")
                             summary = str((child_run or {}).get("summary") or "")
                             child_output = _child_agent_output(child_run)
@@ -3833,59 +3958,6 @@ def run_task_background(
                                 f"{step_index + 1}: Agent {child_output['agent_run_id']} "
                                 f"{child_status or 'started'}"
                             )
-                            if wait_for_result and not agent_run_is_terminal(child_run):
-                                if child_status == "waiting_approval":
-                                    paused_message = (
-                                        f"Child Agent {child_output['agent_run_id']} is waiting for approval."
-                                    )
-                                    _save_pipeline_state(
-                                        run_id=run_id,
-                                        task_id=task_id,
-                                        thread_id=thread_id,
-                                        current_step_index=step_index,
-                                        step_outputs=step_outputs,
-                                        config=config,
-                                        resume_token=f"child-agent:{run_id}:{child_output['agent_run_id']}",
-                                        status=_CHILD_AGENT_WAIT_STATUS,
-                                        graph_interrupted=_child_agent_wait_payload(
-                                            child_output["agent_run_id"],
-                                            step_id,
-                                        ),
-                                    )
-                                    _task_log(
-                                        f"Step {step_index + 1}: {paused_message[:120]}"
-                                    )
-                                    paused = True
-                                    break
-                                else:
-                                    failure_message = (
-                                        f"Child Agent {child_output['agent_run_id']} did not finish "
-                                        f"before the workflow wait timeout (status: {child_status or 'unknown'})."
-                                    )
-                                _task_log(
-                                    f"Step {step_index + 1}: {failure_message[:120]}"
-                                )
-                                if step.get("on_error", "stop") == "skip":
-                                    failure_message = ""
-                                else:
-                                    stopped = True
-                                    break
-                            if (
-                                wait_for_result
-                                and child_status
-                                and child_status not in _CHILD_AGENT_SUCCESS_STATUSES
-                            ):
-                                failure_message = _child_agent_failure_message(child_output)
-                                _task_log(
-                                    f"Step {step_index + 1}: {failure_message[:120]}"
-                                )
-                                if step.get("on_error", "stop") == "skip":
-                                    failure_message = ""
-                                else:
-                                    stopped = True
-                                    if child_status in _CHILD_AGENT_STOP_STATUSES:
-                                        failure_message = ""
-                                    break
                         except Exception as exc:
                             failure_message = str(exc)
                             step_outputs[step_id] = failure_message
@@ -3913,13 +3985,6 @@ def run_task_background(
 
                 elif step_type == "wait_for_agents":
                     try:
-                        import time as _time
-
-                        from row_bot.agent_runner import (
-                            agent_run_is_terminal,
-                            wait_for_agent_run_terminal,
-                        )
-
                         run_ids: list[str] = []
                         raw_run_ids = step.get("run_ids") or []
                         if isinstance(raw_run_ids, str):
@@ -3949,42 +4014,87 @@ def run_task_background(
                             for child_run_id in run_ids
                             if not (child_run_id in seen_run_ids or seen_run_ids.add(child_run_id))
                         ]
-                        timeout_seconds = float(step.get("timeout_seconds") or 300)
-                        deadline = _time.monotonic() + timeout_seconds
-                        collected: list[dict[str, str]] = []
-                        for child_run_id in run_ids:
-                            remaining = max(0.0, deadline - _time.monotonic())
-                            child_run = wait_for_agent_run_terminal(child_run_id, timeout=remaining)
-                            collected.append({
-                                "agent_run_id": child_run_id,
-                                "status": str((child_run or {}).get("status") or ""),
-                                "summary": str((child_run or {}).get("summary") or ""),
-                                "thread_id": str((child_run or {}).get("thread_id") or ""),
-                            })
-                        child_output = {"agent_runs": collected}
-                        step_outputs[step_id] = json.dumps(child_output, sort_keys=True)
-                        last_response = step_outputs[step_id]
-                        _task_log(
-                            f"Step {step_index + 1}: Collected {len(collected)} Agent run(s)"
-                        )
-                        nonterminal = [
-                            row for row in collected if not agent_run_is_terminal(row)
-                        ]
-                        if nonterminal:
-                            statuses = ", ".join(
-                                f"{row['agent_run_id']}={row.get('status') or 'unknown'}"
-                                for row in nonterminal[:4]
+                        if run_ids:
+                            from row_bot.agent_orchestrator import (
+                                create_or_get_orchestration,
+                                finalize_parent_generation,
+                                get_member_for_run,
+                                register_member,
+                                transfer_member,
                             )
-                            failure_message = (
-                                "Child Agent wait timed out before terminal status"
-                                + (f": {statuses}" if statuses else ".")
+                            from row_bot.agent_runs import get_agent_run
+                            from row_bot.models import get_current_model
+
+                            orchestration = create_or_get_orchestration(
+                                parent_thread_id=thread_id,
+                                parent_generation_id=f"workflow:{run_id}:{step_id}:wait",
+                                parent_run_id=run_id,
+                                root_objective=f"Wait for {len(run_ids)} delegated Agent run(s).",
+                                model_ref=str(
+                                    config["configurable"].get("model_override")
+                                    or get_current_model()
+                                ),
+                                approval_mode=approval_mode,
+                                runtime_surface="workflow",
+                                delivery_context={"workflow_run_id": run_id},
                             )
-                            _task_log(f"Step {step_index + 1}: {failure_message[:120]}")
-                            if step.get("on_error", "stop") == "skip":
-                                failure_message = ""
-                            else:
-                                stopped = True
-                                break
+                            for child_run_id in run_ids:
+                                existing_member = get_member_for_run(child_run_id)
+                                if existing_member:
+                                    transfer_member(
+                                        str(orchestration["id"]),
+                                        child_run_id,
+                                        required=True,
+                                    )
+                                    continue
+                                child_run = get_agent_run(child_run_id)
+                                if not child_run:
+                                    raise ValueError(
+                                        f"Agent Run {child_run_id} was not found."
+                                    )
+                                register_member(
+                                    str(orchestration["id"]),
+                                    child_run_id,
+                                    required=True,
+                                )
+                            step_outputs[step_id] = json.dumps(
+                                {"agent_run_ids": run_ids},
+                                sort_keys=True,
+                            )
+                            _save_pipeline_state(
+                                run_id=run_id,
+                                task_id=task_id,
+                                thread_id=thread_id,
+                                current_step_index=step_index,
+                                step_outputs=step_outputs,
+                                config=config,
+                                resume_token=f"orchestration:{orchestration['id']}",
+                                status=_CHILD_AGENT_WAIT_STATUS,
+                                graph_interrupted=_orchestration_wait_payload(
+                                    str(orchestration["id"]),
+                                    step_id,
+                                ),
+                            )
+                            finalize_parent_generation(
+                                str(orchestration["id"]),
+                                continuation_state={
+                                    "config": config,
+                                    "enabled_tool_names": effective_tool_names,
+                                    "workflow_run_id": run_id,
+                                    "workflow_step_id": step_id,
+                                    "workflow_direct_child": True,
+                                },
+                                delivery_context={
+                                    "runtime_surface": "workflow",
+                                    "workflow_run_id": run_id,
+                                },
+                            )
+                            paused = True
+                            paused_message = "Waiting for required child Agents"
+                            _task_log(
+                                f"Step {step_index + 1}: Waiting for {len(run_ids)} required Agent run(s)"
+                            )
+                            break
                     except Exception as exc:
                         failure_message = str(exc)
                         step_outputs[step_id] = failure_message
@@ -4878,6 +4988,7 @@ def _clear_graph_interrupted(run_id: str) -> None:
 
 _CHILD_AGENT_WAIT_STATUS = "waiting_child_agent"
 _CHILD_AGENT_WAIT_TYPE = "child_agent_wait"
+_ORCHESTRATION_WAIT_TYPE = "agent_orchestration_wait"
 _CHILD_AGENT_SUCCESS_STATUSES = {"completed", "completed_delivery_failed"}
 _CHILD_AGENT_STOP_STATUSES = {"stopped", "cancelled"}
 _CHILD_AGENT_SETUP_FAILURE_FRAGMENTS = (
@@ -4948,6 +5059,32 @@ def _child_agent_wait_payload(child_run_id: str, step_id: str) -> str:
     )
 
 
+def _orchestration_wait_payload(orchestration_id: str, step_id: str) -> str:
+    return json.dumps(
+        {
+            "type": _ORCHESTRATION_WAIT_TYPE,
+            "orchestration_id": orchestration_id,
+            "step_id": step_id,
+        },
+        sort_keys=True,
+    )
+
+
+def _parse_orchestration_wait_payload(raw: str | None) -> dict[str, str] | None:
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or payload.get("type") != _ORCHESTRATION_WAIT_TYPE:
+        return None
+    return {
+        "orchestration_id": str(payload.get("orchestration_id") or ""),
+        "step_id": str(payload.get("step_id") or ""),
+    }
+
+
 def _parse_child_agent_wait_payload(raw: str | None) -> dict[str, str] | None:
     if not raw:
         return None
@@ -5002,6 +5139,125 @@ def _claim_child_agent_wait_state(run_id: str) -> bool:
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+@_schema_retry
+def _load_pipeline_states_waiting_for_orchestration(
+    orchestration_id: str,
+) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM pipeline_state WHERE status = ?",
+        (_CHILD_AGENT_WAIT_STATUS,),
+    ).fetchall()
+    conn.close()
+    states: list[dict] = []
+    for row in rows:
+        state = dict(row)
+        payload = _parse_orchestration_wait_payload(state.get("graph_interrupted"))
+        if not payload or payload.get("orchestration_id") != orchestration_id:
+            continue
+        state["step_outputs"] = json.loads(state.get("step_outputs") or "{}")
+        state["config"] = json.loads(state.get("config") or "{}")
+        state["orchestration_wait"] = payload
+        states.append(state)
+    return states
+
+
+def resume_workflows_waiting_for_orchestration(orchestration_id: str) -> int:
+    """Resume workflow steps only after their durable required barrier."""
+
+    if not orchestration_id:
+        return 0
+    from row_bot.agent_orchestrator import (
+        list_members,
+        list_messages,
+        get_orchestration,
+    )
+    from row_bot.tools import registry as tool_registry
+
+    orchestration = get_orchestration(orchestration_id)
+    if not orchestration or orchestration.get("status") not in {
+        "completed",
+        "completed_partial",
+        "failed",
+        "stopped",
+    }:
+        return 0
+    final_messages = list_messages(orchestration_id, kinds=["final"])
+    final_text = str(final_messages[-1].get("content") or "") if final_messages else ""
+    continuation = orchestration.get("continuation_state_json") or {}
+    members = [
+        member for member in list_members(orchestration_id) if member.get("required")
+    ]
+    failed_members = [
+        member
+        for member in members
+        if str(member.get("status") or "")
+        in {"failed", "stopped", "blocked", "timed_out", "cancelled"}
+    ]
+    resumed = 0
+    for state in _load_pipeline_states_waiting_for_orchestration(orchestration_id):
+        run_id = str(state.get("run_id") or "")
+        if not run_id or not _claim_child_agent_wait_state(run_id):
+            continue
+        task_id = str(state.get("task_id") or "")
+        task = get_task(task_id)
+        if not task:
+            _finish_run(run_id, "failed", status_message=f"Task {task_id} not found")
+            continue
+        steps = task.get("steps") or []
+        step_index = int(state.get("current_step_index") or 0)
+        step = steps[step_index] if step_index < len(steps) else {}
+        step_id = str(
+            (state.get("orchestration_wait") or {}).get("step_id")
+            or step.get("id")
+            or f"step_{step_index + 1}"
+        )
+        step_outputs = dict(state.get("step_outputs") or {})
+        step_outputs[step_id] = final_text
+        if (
+            failed_members
+            and str(step.get("type") or "prompt") == "delegate_agent"
+            and str(step.get("on_error") or "stop") != "skip"
+        ):
+            failed_run = (failed_members[0].get("run") or {}) if failed_members else {}
+            message = _child_agent_failure_message(_child_agent_output(failed_run))
+            if final_text:
+                message = f"{message} {final_text}"
+            parent_status = (
+                "stopped"
+                if all(
+                    str(member.get("status") or "") in _CHILD_AGENT_STOP_STATUSES
+                    for member in failed_members
+                )
+                else "failed"
+            )
+            _update_pipeline_status(run_id, parent_status)
+            _finish_run(run_id, parent_status, status_message=message)
+            resumed += 1
+            continue
+        _clear_graph_interrupted(run_id)
+        if "enabled_tool_names" in continuation:
+            enabled = [
+                str(name)
+                for name in (continuation.get("enabled_tool_names") or [])
+                if str(name)
+            ]
+        else:
+            # Compatibility for pre-orchestration pipeline rows only.
+            enabled = [tool.name for tool in tool_registry.get_enabled_tools()]
+        run_task_background(
+            task_id,
+            str(state.get("thread_id") or ""),
+            enabled,
+            start_step=step_index + 1,
+            notification=True,
+            resume_step_outputs=step_outputs,
+            resume_run_id=run_id,
+        )
+        resumed += 1
+    return resumed
 
 
 def resume_workflows_waiting_for_child_agent(child_run_id: str) -> int:

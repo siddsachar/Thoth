@@ -482,17 +482,19 @@ def test_embedding_overhaul_source_contracts_are_wired():
     installer_src = (root / "installer" / "row_bot_setup.iss").read_text(encoding="utf-8")
 
     assert "get_embedding_provider()" in documents_src
-    assert "index_metadata_matches(VECTOR_STORE_DIR)" in documents_src
-    assert "write_index_metadata(VECTOR_STORE_DIR)" in documents_src
+    assert "DocumentVectorStoreFacade" in documents_src
+    assert "legacy compatibility" in documents_src
     assert "rebuild_vector_store_from_vault" in documents_src
-    assert "VECTOR_STORE_DIR.with_name" in documents_src
+    assert "iter_document_chunks" in documents_src
+    assert "iter_chunk_batches" in documents_src
     assert 'release_document_embedding_resources("document extraction complete")' in extraction_src
     assert 'release_embedding_resources("memory extraction complete")' in memory_src
     assert "Cloud embeddings send document chunks and memory text" in settings_src
     assert "Embedding engine" in settings_src
     assert 'logger.error("Document vector rebuild failed", exc_info=True)' in settings_src
     assert 'logger.error("Memory vector rebuild failed", exc_info=True)' in settings_src
-    assert 'logger.error("Document upload/index failed for %s", name, exc_info=True)' in settings_src
+    assert '"Document upload staging rejected for %s"' in settings_src
     assert "doc_upload.reset()" in settings_src
+    assert "on_multi_upload=_handle_doc_upload_batch" in settings_src
     assert "embedding_config.py" in installer_src
     assert "embedding_providers.py" in installer_src

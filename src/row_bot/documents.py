@@ -1,38 +1,31 @@
-from langchain_community.document_loaders import (
-    PyPDFLoader,
-    UnstructuredWordDocumentLoader,
-    TextLoader
-)
+"""Bounded document parsing and compatibility access to document retrieval."""
 
-# Optional loaders - graceful degradation if deps missing
-try:
-    from langchain_community.document_loaders import BSHTMLLoader
-    _HTML_LOADER = BSHTMLLoader
-except Exception:
-    _HTML_LOADER = None
+from __future__ import annotations
 
-try:
-    from langchain_community.document_loaders import UnstructuredEPubLoader
-    _EPUB_LOADER = UnstructuredEPubLoader
-except Exception:
-    _EPUB_LOADER = None
-
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+import contextlib
+import hashlib
+import importlib
+import json
 import logging
-import shutil
 import os
 import pathlib
-import json
+import shutil
+import threading
+import uuid
+from collections.abc import Iterable, Iterator
+from datetime import UTC, datetime
 from typing import Any
 
+from langchain_core.documents import Document
+
+from row_bot.data_paths import get_row_bot_data_dir
+from row_bot.document_jobs import EMBEDDING_BATCH_SIZE, DocumentJob, DocumentJobService
 from row_bot.embedding_config import (
     active_embedding_metadata,
     describe_active_embedding,
     get_embedding_config,
     index_metadata_matches,
     read_index_metadata,
-    write_index_metadata,
 )
 from row_bot.embedding_providers import (
     ensure_embedding_runtime_available,
@@ -40,265 +33,502 @@ from row_bot.embedding_providers import (
     get_embedding_provider_for_recall,
     release_embedding_resources,
 )
-from row_bot.data_paths import get_row_bot_data_dir
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = get_row_bot_data_dir()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-
 PROCESSED_FILES_PATH = DATA_DIR / "processed_files.json"
-VECTOR_STORE_DIR = DATA_DIR / "vector_store"
+VECTOR_STORE_DIR = DATA_DIR / "vector_store"  # read-only legacy compatibility
+DOCUMENT_INDEX_DIR = DATA_DIR / "document_index"
 
-def load_processed_files():
-    """Load the set of already processed file paths."""
-    if PROCESSED_FILES_PATH.exists():
-        with open(PROCESSED_FILES_PATH, "r") as f:
-            return set(json.load(f))
-    return set()
+CHUNK_SIZE = 1_500
+CHUNK_OVERLAP = 150
+TEXT_PAGE_CHARS = 64 * 1_024
+TEXT_ENCODING_SAMPLE_BYTES = 64 * 1_024
 
-def save_processed_file(file_path):
-    """Add a file to the processed files list."""
-    processed = load_processed_files()
-    processed.add(file_path)
-    with open(PROCESSED_FILES_PATH, "w") as f:
-        json.dump(list(processed), f, indent=2)
-
-def is_file_processed(file_path):
-    """Check if a file has already been processed."""
-    return file_path in load_processed_files()
-
-def clear_processed_files():
-    """Clear the processed files list."""
-    if PROCESSED_FILES_PATH.exists():
-        PROCESSED_FILES_PATH.unlink()
-
-def reset_vector_store():
-    """Clear all indexed documents and reinitialize an empty vector store."""
-    global _vector_store
-    from langchain_classic.vectorstores import FAISS
-    clear_processed_files()
-    if VECTOR_STORE_DIR.exists():
-        shutil.rmtree(VECTOR_STORE_DIR)
-    _vector_store = FAISS.from_texts([" "], embedding=get_embedding_model())
-    _vector_store.save_local(str(VECTOR_STORE_DIR))
-    write_index_metadata(VECTOR_STORE_DIR)
-
-
-def remove_document(display_name: str) -> bool:
-    """Remove a single document from the FAISS vector store and processed list.
-
-    Finds all chunks whose ``metadata["source"]`` matches *display_name*,
-    deletes them from the vector store, and removes the entry from the
-    processed-files list.  Returns True if anything was removed.
-    """
-    global _vector_store
-    vs = get_vector_store()
-
-    # Find docstore IDs whose source matches this document
-    ids_to_delete: list[str] = []
-    if hasattr(vs, "docstore") and hasattr(vs.docstore, "_dict"):
-        for doc_id, doc in vs.docstore._dict.items():
-            if getattr(doc, "metadata", {}).get("source") == display_name:
-                ids_to_delete.append(doc_id)
-
-    if ids_to_delete:
-        try:
-            vs.delete(ids_to_delete)
-            vs.save_local(str(VECTOR_STORE_DIR))
-        except Exception as exc:
-            logger.warning("Failed to delete FAISS chunks for %s: %s", display_name, exc)
-
-    # Remove from processed files list
-    processed = load_processed_files()
-    if display_name in processed:
-        processed.discard(display_name)
-        with open(PROCESSED_FILES_PATH, "w") as f:
-            json.dump(list(processed), f, indent=2)
-
-    # Remove vault/raw/ copy
-    try:
-        import row_bot.wiki_vault as wiki_vault
-        if wiki_vault.is_enabled():
-            raw_file = wiki_vault.get_vault_path() / "raw" / display_name
-            if raw_file.exists():
-                raw_file.unlink()
-    except Exception:
-        pass
-
-    return bool(ids_to_delete) or display_name in load_processed_files()
-
-
-def _load_text_file(path: str):
-    last_error: Exception | None = None
-    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
-        try:
-            pathlib.Path(path).read_text(encoding=encoding)
-            return TextLoader(path, encoding=encoding)
-        except UnicodeDecodeError as exc:
-            last_error = exc
-    if last_error is not None:
-        raise last_error
-    return TextLoader(path, encoding="utf-8")
-
-class DocumentLoader(object):
-    supported_file_types = {
-        ".pdf": PyPDFLoader,
-        ".docx": UnstructuredWordDocumentLoader,
-        ".doc": UnstructuredWordDocumentLoader,
-        ".txt": _load_text_file,
-        ".md": _load_text_file,
-    }
-
-
-# Dynamically add optional loaders if their dependencies are available
-if _HTML_LOADER is not None:
-    DocumentLoader.supported_file_types[".html"] = _HTML_LOADER
-    DocumentLoader.supported_file_types[".htm"] = _HTML_LOADER
-if _EPUB_LOADER is not None:
-    DocumentLoader.supported_file_types[".epub"] = _EPUB_LOADER
-
-text_splitter = RecursiveCharacterTextSplitter(
-    separators = ["\n\n", "\n", " ", ""],
-    chunk_size = 1500,
-    chunk_overlap = 150
-)
-
-# Lazy-loaded singletons (avoids heavy imports in child processes)
-import threading as _threading
-_embedding_lock = _threading.Lock()
+_processed_files_lock = threading.RLock()
+_embedding_lock = threading.Lock()
 _vector_store = None
 
 
+def load_processed_files() -> set[str]:
+    """Return legacy names plus display names from durable document records."""
+    processed: set[str] = set()
+    if PROCESSED_FILES_PATH.exists():
+        try:
+            value = json.loads(PROCESSED_FILES_PATH.read_text(encoding="utf-8"))
+            if isinstance(value, list):
+                processed.update(str(item) for item in value)
+        except (json.JSONDecodeError, OSError, TypeError):
+            logger.warning("Ignoring unreadable legacy processed-files metadata")
+    try:
+        service = DocumentJobService(DATA_DIR)
+        processed.update(
+            str(record["original_name"]) for record in service.list_document_records()
+        )
+    except Exception:
+        logger.debug("Durable document records unavailable", exc_info=True)
+    return processed
+
+
+def save_processed_file(file_path: str) -> None:
+    """Atomically add a legacy processed-file marker."""
+    with _processed_files_lock:
+        processed = load_processed_files()
+        processed.add(str(file_path))
+        temp = PROCESSED_FILES_PATH.with_name(f".{PROCESSED_FILES_PATH.name}.tmp")
+        temp.write_text(
+            json.dumps(sorted(processed), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(temp, PROCESSED_FILES_PATH)
+
+
+def is_file_processed(file_path: str) -> bool:
+    return str(file_path) in load_processed_files()
+
+
+def clear_processed_files() -> None:
+    with contextlib.suppress(FileNotFoundError):
+        PROCESSED_FILES_PATH.unlink()
+
+
+def _text_encoding(path: pathlib.Path) -> str:
+    with path.open("rb") as handle:
+        sample = handle.read(TEXT_ENCODING_SAMPLE_BYTES)
+    if sample.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig"
+    try:
+        sample.decode("utf-8")
+    except UnicodeDecodeError:
+        return "cp1252"
+    return "utf-8"
+
+
+class _BoundedTextLoader:
+    """Small compatibility loader whose lazy path never reads the whole file."""
+
+    def __init__(self, path: str) -> None:
+        self.path = pathlib.Path(path)
+
+    def lazy_load(self) -> Iterator[Document]:
+        encoding = _text_encoding(self.path)
+        with self.path.open(
+            "r",
+            encoding=encoding,
+            errors="replace",
+            newline=None,
+        ) as handle:
+            page = 0
+            while True:
+                content = handle.read(TEXT_PAGE_CHARS)
+                if not content:
+                    return
+                yield Document(
+                    page_content=content,
+                    metadata={"source": str(self.path), "page": page},
+                )
+                page += 1
+
+    def load(self) -> list[Document]:
+        """Retain the upstream loader API for legacy direct callers."""
+        return list(self.lazy_load())
+
+
+def _upstream_loader(module_name: str, class_name: str):
+    def build(path: str):
+        try:
+            module = importlib.import_module(module_name)
+            loader_class = getattr(module, class_name)
+        except Exception as exc:
+            raise RuntimeError(
+                f"{class_name} is unavailable; install its optional parser dependencies."
+            ) from exc
+        return loader_class(path)
+
+    return build
+
+
+class DocumentLoader:
+    supported_file_types = {
+        ".pdf": _upstream_loader(
+            "langchain_community.document_loaders.pdf",
+            "PyPDFLoader",
+        ),
+        ".docx": _upstream_loader(
+            "langchain_community.document_loaders.word_document",
+            "UnstructuredWordDocumentLoader",
+        ),
+        ".doc": _upstream_loader(
+            "langchain_community.document_loaders.word_document",
+            "UnstructuredWordDocumentLoader",
+        ),
+        ".txt": _BoundedTextLoader,
+        ".md": _BoundedTextLoader,
+        ".html": _upstream_loader(
+            "langchain_community.document_loaders.html_bs",
+            "BSHTMLLoader",
+        ),
+        ".htm": _upstream_loader(
+            "langchain_community.document_loaders.html_bs",
+            "BSHTMLLoader",
+        ),
+        ".epub": _upstream_loader(
+            "langchain_community.document_loaders.epub",
+            "UnstructuredEPubLoader",
+        ),
+    }
+
+
+def iter_document_pages(path: str | pathlib.Path) -> Iterator[Document]:
+    """Yield non-empty pages, preferring an upstream loader's lazy API."""
+    source = pathlib.Path(path)
+    extension = source.suffix.lower()
+    loader_class = DocumentLoader.supported_file_types.get(extension)
+    if loader_class is None:
+        raise ValueError(f"Unsupported file type: {extension}")
+    loader = loader_class(str(source))
+    lazy_load = getattr(loader, "lazy_load", None)
+    pages = lazy_load() if callable(lazy_load) else iter(loader.load())
+    for page in pages:
+        content = getattr(page, "page_content", None)
+        if not isinstance(content, str) or not content.strip():
+            continue
+        clean = content.encode("utf-8", errors="surrogatepass").decode(
+            "utf-8", errors="replace"
+        )
+        yield Document(
+            page_content=clean,
+            metadata=dict(getattr(page, "metadata", {}) or {}),
+        )
+
+
+def _iter_page_chunks(
+    text: str,
+    *,
+    chunk_size: int = CHUNK_SIZE,
+    overlap: int = CHUNK_OVERLAP,
+) -> Iterator[str]:
+    if chunk_size <= 0 or overlap < 0 or overlap >= chunk_size:
+        raise ValueError("Invalid document chunk bounds")
+    start = 0
+    length = len(text)
+    while start < length:
+        end = min(length, start + chunk_size)
+        chunk = text[start:end]
+        if chunk.strip():
+            yield chunk
+        if end >= length:
+            break
+        start = end - overlap
+
+
+def iter_document_chunks(
+    path: str | pathlib.Path,
+    metadata: dict[str, Any] | None = None,
+    *,
+    check_cancelled=None,
+) -> Iterator[Document]:
+    """Split and yield one bounded chunk at a time without page/chunk lists."""
+    base_metadata = dict(metadata or {})
+    chunk_index = 0
+    for page_index, page in enumerate(iter_document_pages(path)):
+        if check_cancelled:
+            check_cancelled()
+        page_metadata = dict(page.metadata or {})
+        page_metadata.update(base_metadata)
+        page_metadata.setdefault("page", page_index)
+        for content in _iter_page_chunks(page.page_content):
+            if check_cancelled:
+                check_cancelled()
+            chunk_metadata = dict(page_metadata)
+            chunk_metadata["chunk_index"] = chunk_index
+            yield Document(page_content=content, metadata=chunk_metadata)
+            chunk_index += 1
+
+
+def iter_chunk_batches(
+    chunks: Iterable[Document],
+    batch_size: int = EMBEDDING_BATCH_SIZE,
+) -> Iterator[list[Document]]:
+    """Yield fixed embedding batches; the reviewed maximum is always 32."""
+    bounded_size = min(max(1, int(batch_size)), EMBEDDING_BATCH_SIZE)
+    batch: list[Document] = []
+    for chunk in chunks:
+        batch.append(chunk)
+        if len(batch) >= bounded_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
 def get_embedding_model():
-    """Return the configured embedding provider (created on first call)."""
     with _embedding_lock:
         ensure_embedding_runtime_available()
         return get_embedding_provider()
 
 
 def get_embedding_model_for_recall():
-    """Return the embedding provider using the bounded auto-recall load path."""
     return get_embedding_provider_for_recall()
 
 
 def get_vector_store():
-    """Return the FAISS vector store (loaded/created on first call)."""
+    """Return the shard/legacy compatibility facade used by document search."""
     global _vector_store
     if _vector_store is None:
-        from langchain_classic.vectorstores import FAISS
-        em = get_embedding_model()
-        metadata_ok = VECTOR_STORE_DIR.exists() and index_metadata_matches(VECTOR_STORE_DIR)
-        if VECTOR_STORE_DIR.exists() and not metadata_ok:
-            logger.warning(
-                "Document vector index is stale for active embedding model %s; "
-                "new writes will start a compatible index until documents are rebuilt.",
-                describe_active_embedding(),
-            )
-        _vector_store = (
-            FAISS.load_local(
-                str(VECTOR_STORE_DIR),
-                embeddings=em,
-                allow_dangerous_deserialization=True,
-            )
-            if metadata_ok
-            else FAISS.from_texts([" "], embedding=em)
+        from row_bot.document_index import DocumentVectorStoreFacade
+
+        _vector_store = DocumentVectorStoreFacade(
+            index_root=DOCUMENT_INDEX_DIR,
+            legacy_root=VECTOR_STORE_DIR,
         )
     return _vector_store
 
 
-def load_and_vectorize_document(file_path, skip_if_processed=True, display_name=None):
+def index_document_job(job: DocumentJob, service: DocumentJobService) -> None:
+    """Build and transactionally publish one durable job's document shards."""
+    from row_bot.document_index import build_unpublished_document, publish_document
+
+    service.raise_if_cancelled(job.id)
+    service.update_progress(job.id, stage="parse", current=0, total=0)
+    metadata = {
+        "source": job.original_name,
+        "original_name": job.original_name,
+        "stored_name": job.stored_name,
+        "document_id": job.id,
+        "content_sha256": job.content_sha256,
+    }
+    chunks = iter_document_chunks(
+        job.staged_path,
+        metadata,
+        check_cancelled=lambda: service.raise_if_cancelled(job.id),
+    )
+    work_document_dir = service.work_root / job.id / "index" / "document"
+    manifest = build_unpublished_document(
+        document_id=job.id,
+        original_name=job.original_name,
+        stored_name=job.stored_name,
+        content_sha256=job.content_sha256,
+        chunks=chunks,
+        work_document_dir=work_document_dir,
+        embedding=get_embedding_model(),
+        check_cancelled=lambda: service.raise_if_cancelled(job.id),
+        progress=lambda current: service.update_progress(
+            job.id,
+            stage="embed",
+            current=current,
+            total=0,
+        ),
+        embedding_metadata=active_embedding_metadata(),
+    )
+    service.raise_if_cancelled(job.id)
+    service.update_progress(
+        job.id,
+        stage="index_commit",
+        current=int(manifest["chunk_count"]),
+        total=int(manifest["chunk_count"]),
+    )
+    publish_document(
+        work_document_dir,
+        manifest,
+        index_root=DOCUMENT_INDEX_DIR,
+    )
+
+
+def _copy_existing_file_into_job(
+    service: DocumentJobService,
+    job: DocumentJob,
+    source: pathlib.Path,
+) -> DocumentJob:
+    final = pathlib.Path(job.staged_path)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    temp = final.with_name(f".{final.name}.copying")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with source.open("rb") as reader, temp.open("xb") as writer:
+            while True:
+                data = reader.read(1024 * 1024)
+                if not data:
+                    break
+                writer.write(data)
+                digest.update(data)
+                size += len(data)
+            writer.flush()
+            os.fsync(writer.fileno())
+        os.replace(temp, final)
+    except Exception:
+        with contextlib.suppress(FileNotFoundError):
+            temp.unlink()
+        raise
+    return service.complete_staging(job.id, digest.hexdigest(), size, final)
+
+
+def load_and_vectorize_document(
+    file_path: str,
+    skip_if_processed: bool = True,
+    display_name: str | None = None,
+) -> None:
+    """Bounded synchronous compatibility entry point for older callers."""
     record_name = display_name or file_path
-    ensure_embedding_runtime_available()
-    # Skip if already processed
     if skip_if_processed and is_file_processed(record_name):
         logger.info("Skipping already processed file: %s", record_name)
         return
-    
-    file_extension = pathlib.Path(file_path).suffix
-    if file_extension in DocumentLoader.supported_file_types:
-        loader_class = DocumentLoader.supported_file_types[file_extension]
-        loader = loader_class(file_path)
-        document = loader.load()
-        documents = [
-            doc
-            for doc in document
-            if isinstance(doc.page_content, str) and doc.page_content.strip()
-        ]
-        if not documents:
-            logger.warning("No valid text content found in: %s", file_path)
+    service = DocumentJobService(DATA_DIR)
+    batch_id = service.create_batch()
+    job = service.create_staging_job(batch_id, 0, record_name)
+    try:
+        job = _copy_existing_file_into_job(service, job, pathlib.Path(file_path))
+        service.finish_batch_staging(batch_id)
+        if job.status == "skipped_duplicate":
             return
-        chunks = text_splitter.split_documents(documents)
-        # Replace temp file paths with the actual display name in metadata
-        if display_name:
-            for chunk in chunks:
-                chunk.metadata["source"] = display_name
-        vs = get_vector_store()
-        vs.add_documents(chunks)
-        vs.save_local(str(VECTOR_STORE_DIR))
-        write_index_metadata(VECTOR_STORE_DIR)
-        # Mark as processed using the display name
+        service.transition_job(job.id, "indexing", stage="parse")
+        index_document_job(service.get_job(job.id), service)
+        service.mark_searchable(job.id)
         save_processed_file(record_name)
-        return
-
-    else:
-        raise ValueError(f"Unsupported file type: {file_extension}")
+    except Exception as exc:
+        current = service.get_job(job.id)
+        if current.status not in {"failed", "cancelled", "skipped_duplicate"}:
+            service.mark_failed(job.id, "compatibility_index_failed", str(exc), stage=current.stage)
+        raise
 
 
 def load_document_text(file_path: str) -> tuple[str, str]:
-    """Load full text from a document file (no chunking).
-
-    Returns ``(full_text, title)`` where *title* is derived from the
-    filename.  Uses the same loader classes as ``DocumentLoader`` but
-    joins all pages instead of splitting into chunks.
-    """
-    p = pathlib.Path(file_path)
-    ext = p.suffix.lower()
-    if ext not in DocumentLoader.supported_file_types:
-        raise ValueError(f"Unsupported file type: {ext}")
-    loader_class = DocumentLoader.supported_file_types[ext]
-    loader = loader_class(str(p))
-    pages = loader.load()
-    parts = [
-        doc.page_content
-        for doc in pages
-        if isinstance(doc.page_content, str) and doc.page_content.strip()
-    ]
-    if not parts:
-        raise ValueError(f"No text content found in: {file_path}")
+    """Legacy compatibility helper; the durable extraction path does not use it."""
+    parts = (page.page_content for page in iter_document_pages(file_path))
     full_text = "\n\n".join(parts)
-    # Strip UTF-16 surrogates that can appear in PDF text extraction -
-    # they crash orjson serialisation downstream (NiceGUI socketio emit).
-    full_text = full_text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
-    title = p.stem  # filename without extension
-    return full_text, title
+    if not full_text:
+        raise ValueError(f"No text content found in: {file_path}")
+    return full_text, pathlib.Path(file_path).stem
 
 
 def document_vector_status() -> dict[str, Any]:
-    """Return display-safe status for the document FAISS index."""
-    active = active_embedding_metadata()
-    return {
-        "exists": VECTOR_STORE_DIR.exists(),
-        "stale": VECTOR_STORE_DIR.exists() and not index_metadata_matches(VECTOR_STORE_DIR, active),
-        "stored": read_index_metadata(VECTOR_STORE_DIR),
-        "active": active,
-        "active_label": describe_active_embedding(),
-    }
+    from row_bot.document_index import index_health
+
+    health = index_health(
+        index_root=DOCUMENT_INDEX_DIR,
+        legacy_root=VECTOR_STORE_DIR,
+    )
+    health.update(
+        {
+            "stored": read_index_metadata(VECTOR_STORE_DIR),
+            "active_label": describe_active_embedding(),
+        }
+    )
+    return health
 
 
-def release_document_embedding_resources(reason: str = "document work complete") -> None:
-    """Release cached vector and embedding resources after heavyweight work."""
+def release_document_embedding_resources(
+    reason: str = "document work complete",
+) -> None:
     global _vector_store
-    if reason != "embedding settings changed" and not get_embedding_config().get("auto_unload", False):
+    if _vector_store is not None:
+        with contextlib.suppress(Exception):
+            _vector_store.clear_cache()
+    if reason != "embedding settings changed" and not get_embedding_config().get(
+        "auto_unload", False
+    ):
         return
     _vector_store = None
     release_embedding_resources(reason)
 
 
-def rebuild_vector_store_from_vault() -> int:
-    """Rebuild the document FAISS index from wiki vault raw document copies."""
+def _recoverable_retire(path: pathlib.Path, label: str) -> pathlib.Path | None:
+    if not path.exists():
+        return None
+    retired = path.with_name(
+        f"{path.name}.{label}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+    )
+    os.replace(path, retired)
+    return retired
+
+
+def reset_vector_store() -> None:
+    """Retire document indexes recoverably and initialize an empty shard set."""
     global _vector_store
-    from langchain_classic.vectorstores import FAISS
+    from row_bot.document_index import reset_sharded_index
+
+    service = DocumentJobService(DATA_DIR)
+    service.cancel_all_batches()
+    service.retire_all_document_sources()
+    service.clear_document_records()
+    clear_processed_files()
+    reset_sharded_index(index_root=DOCUMENT_INDEX_DIR)
+    _recoverable_retire(VECTOR_STORE_DIR, "retired")
+    _vector_store = None
+
+
+def remove_document(document_id: str) -> bool:
+    """Remove one durable document by ID, or tombstone one legacy display name."""
+    from row_bot.document_index import remove_document_shard
+
+    service = DocumentJobService(DATA_DIR)
+    records = {
+        str(record["document_id"]): record
+        for record in service.list_document_records()
+    }
+    if document_id in records:
+        record = records[document_id]
+        removed = remove_document_shard(document_id, index_root=DOCUMENT_INDEX_DIR)
+        service.retire_document_source(document_id)
+        service.remove_document_record(document_id)
+        try:
+            import row_bot.wiki_vault as wiki_vault
+
+            raw = wiki_vault.get_vault_path() / "raw" / str(record["stored_name"])
+            with contextlib.suppress(FileNotFoundError):
+                raw.unlink()
+        except Exception:
+            logger.debug("Document raw-copy cleanup skipped", exc_info=True)
+        return removed
+
+    # Legacy stores remain read-only. A source tombstone excludes a removed
+    # legacy name without mutating or partially rewriting the FAISS files.
+    tombstones = DATA_DIR / "document_index" / "legacy_tombstones.json"
+    values = _read_name_list(tombstones)
+    values.add(document_id)
+    tombstones.parent.mkdir(parents=True, exist_ok=True)
+    temp = tombstones.with_name(f".{tombstones.name}.tmp")
+    temp.write_text(json.dumps(sorted(values), indent=2), encoding="utf-8")
+    os.replace(temp, tombstones)
+    processed = load_processed_files()
+    if document_id in processed:
+        processed.discard(document_id)
+        PROCESSED_FILES_PATH.write_text(
+            json.dumps(sorted(processed), indent=2), encoding="utf-8"
+        )
+        return True
+    return False
+
+
+def _read_name_list(path: pathlib.Path) -> set[str]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return {str(item) for item in value} if isinstance(value, list) else set()
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
+        return set()
+
+
+def _hash_file(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            data = handle.read(1024 * 1024)
+            if not data:
+                break
+            digest.update(data)
+    return digest.hexdigest()
+
+
+def rebuild_vector_store_from_vault() -> int:
+    """Boundedly rebuild all vault raw copies into an atomic shard directory."""
+    from row_bot.document_index import (
+        build_unpublished_document,
+        initialize_index,
+        publish_document,
+    )
 
     try:
         import row_bot.wiki_vault as wiki_vault
@@ -308,68 +538,76 @@ def rebuild_vector_store_from_vault() -> int:
         raw_dir = DATA_DIR / "vault" / "raw"
     if not raw_dir.exists():
         raise FileNotFoundError("No vault/raw document copies were found to rebuild from.")
-    files = [
-        path for path in sorted(raw_dir.iterdir())
-        if path.is_file() and path.suffix.lower() in DocumentLoader.supported_file_types
-    ]
-    if not files:
-        raise FileNotFoundError("No supported document files were found in vault/raw.")
 
-    all_chunks = []
-    indexed_names: list[str] = []
-    for path in files:
-        loader = DocumentLoader.supported_file_types[path.suffix.lower()](str(path))
-        pages = [
-            doc
-            for doc in loader.load()
-            if isinstance(doc.page_content, str) and doc.page_content.strip()
-        ]
-        if not pages:
-            logger.warning("No valid text content found in vault copy: %s", path)
-            continue
-        chunks = text_splitter.split_documents(pages)
-        for chunk in chunks:
-            chunk.metadata["source"] = path.name
-        all_chunks.extend(chunks)
-        indexed_names.append(path.name)
-
-    if not all_chunks:
-        raise ValueError("No valid text content was found in vault/raw documents.")
-
-    tmp_dir = VECTOR_STORE_DIR.with_name(f"{VECTOR_STORE_DIR.name}_rebuild_tmp")
-    backup_dir = VECTOR_STORE_DIR.with_name(f"{VECTOR_STORE_DIR.name}_rebuild_backup")
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir)
-    if backup_dir.exists():
-        shutil.rmtree(backup_dir)
-
-    vs = FAISS.from_documents(all_chunks, embedding=get_embedding_model())
-    vs.save_local(str(tmp_dir))
-    write_index_metadata(tmp_dir)
-
+    rebuild_id = uuid.uuid4().hex
+    temp_root = DOCUMENT_INDEX_DIR.with_name(f"{DOCUMENT_INDEX_DIR.name}.rebuild-{rebuild_id}")
+    temp_work = DATA_DIR / "document_ingestion" / "work" / f"rebuild-{rebuild_id}"
+    initialize_index(temp_root)
+    indexed = 0
     try:
-        if VECTOR_STORE_DIR.exists():
-            shutil.move(str(VECTOR_STORE_DIR), str(backup_dir))
-        shutil.move(str(tmp_dir), str(VECTOR_STORE_DIR))
-        PROCESSED_FILES_PATH.write_text(json.dumps(indexed_names, indent=2), encoding="utf-8")
-        _vector_store = vs
-    except Exception:
-        logger.exception("Failed to swap rebuilt document vector store into place")
-        if VECTOR_STORE_DIR.exists():
-            shutil.rmtree(VECTOR_STORE_DIR, ignore_errors=True)
-        if backup_dir.exists():
-            shutil.move(str(backup_dir), str(VECTOR_STORE_DIR))
-        raise
-    finally:
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        if backup_dir.exists():
-            shutil.rmtree(backup_dir, ignore_errors=True)
-        release_document_embedding_resources("document vector rebuild")
+        for path in sorted(raw_dir.iterdir(), key=lambda item: item.name.casefold()):
+            if not path.is_file() or path.suffix.lower() not in DocumentLoader.supported_file_types:
+                continue
+            content_hash = _hash_file(path)
+            document_id = uuid.uuid5(uuid.NAMESPACE_URL, f"row-bot:{path.name}:{content_hash}").hex
+            original_name = path.name
+            metadata_path = raw_dir / ".metadata" / f"{path.name}.json"
+            metadata = {}
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
+                pass
+            original_name = str(metadata.get("original_name") or original_name)
+            chunks = iter_document_chunks(
+                path,
+                {
+                    "source": original_name,
+                    "original_name": original_name,
+                    "stored_name": path.name,
+                    "document_id": document_id,
+                    "content_sha256": content_hash,
+                },
+            )
+            work_document_dir = temp_work / document_id
+            try:
+                manifest = build_unpublished_document(
+                    document_id=document_id,
+                    original_name=original_name,
+                    stored_name=path.name,
+                    content_sha256=content_hash,
+                    chunks=chunks,
+                    work_document_dir=work_document_dir,
+                    embedding=get_embedding_model(),
+                    embedding_metadata=active_embedding_metadata(),
+                )
+            except ValueError:
+                logger.warning("No valid text content found in vault copy: %s", path)
+                continue
+            publish_document(work_document_dir, manifest, index_root=temp_root)
+            indexed += 1
+        if indexed == 0:
+            raise ValueError("No valid text content was found in vault/raw documents.")
 
-    logger.info(
-        "Rebuilt document vector store with %d document(s), %d chunk(s)",
-        len(indexed_names),
-        len(all_chunks),
-    )
-    return len(indexed_names)
+        backup = None
+        if DOCUMENT_INDEX_DIR.exists():
+            backup = DOCUMENT_INDEX_DIR.with_name(
+                f"{DOCUMENT_INDEX_DIR.name}.rebuild-backup-{rebuild_id}"
+            )
+            os.replace(DOCUMENT_INDEX_DIR, backup)
+        try:
+            os.replace(temp_root, DOCUMENT_INDEX_DIR)
+        except Exception:
+            if backup is not None and backup.exists() and not DOCUMENT_INDEX_DIR.exists():
+                os.replace(backup, DOCUMENT_INDEX_DIR)
+            raise
+        _recoverable_retire(VECTOR_STORE_DIR, "legacy-backup")
+        clear_processed_files()
+        global _vector_store
+        _vector_store = None
+        return indexed
+    finally:
+        if temp_root.exists():
+            shutil.rmtree(temp_root)
+        if temp_work.exists():
+            shutil.rmtree(temp_work)
+        release_document_embedding_resources("document vector rebuild")

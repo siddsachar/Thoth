@@ -9,9 +9,14 @@
     <link rel="canonical" href="https://row-bot.ai/features.html">
     <meta name="theme-color" content="#080b0f">
     <meta property="og:type" content="website">
+    <meta property="og:url" content="https://row-bot.ai/features.html">
     <meta property="og:title" content="Row-Bot Features — One Local-First AI Workbench">
     <meta property="og:description" content="Agents, models, tools, memory, workflows, mobile access, code, design, channels, plugins, MCP, and explicit local-first control.">
     <meta property="og:image" content="https://row-bot.ai/row_bot_preview.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Row-Bot Features &mdash; One Local-First AI Workbench">
+    <meta name="twitter:description" content="Agents, models, tools, memory, workflows, mobile access, code, design, channels, plugins, MCP, and explicit local-first control.">
+    <meta name="twitter:image" content="https://row-bot.ai/row_bot_preview.png">
     <link rel="icon" href="favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,22 +30,18 @@
     <nav class="site-nav" aria-label="Primary navigation">
         <div class="site-nav__inner shell">
             <a class="wordmark" href="index.html" aria-label="Row-Bot home">
-                <img src="row_bot_glyph_256.png" alt="">
+                <img src="row_bot_glyph_256.png" width="256" height="256" alt="">
                 <strong>Row-Bot</strong>
                 <small>formerly Thoth</small>
             </a>
             <button class="nav-hamburger" type="button" aria-controls="nav-menu" aria-expanded="false" aria-label="Open navigation"><span></span></button>
             <div class="nav-menu" id="nav-menu">
-                <a href="index.html#new">What’s new</a>
                 <a href="features.html" aria-current="page">Features</a>
                 <a href="architecture.html">Architecture</a>
                 <a href="docs/">Docs</a>
-                <a href="index.html#comparison">Compare</a>
-                <a href="index.html#privacy">Privacy</a>
-                <a href="https://sydsachar.com/category/row-bot/" target="_blank" rel="noopener noreferrer">Blog</a>
                 <a href="contact.html">Contact</a>
                 <a href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">GitHub</a>
-                <a class="nav-download" href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-Windows-x64.exe" data-os-primary data-os-label="short" data-download="windows">Download</a>
+                <a class="nav-download" href="index.html#install" data-os-primary data-os-label="short" data-placement="navigation">Desktop install</a>
             </div>
         </div>
     </nav>
@@ -49,7 +50,7 @@
         <header class="page-hero page-hero--visual">
             <div class="shell page-hero__grid">
                 <div class="page-hero__content">
-                    <a class="release-pill" href="https://github.com/siddsachar/row-bot/releases/tag/v4.5.0" target="_blank" rel="noopener noreferrer">Feature inventory · Row-Bot 4.5.0</a>
+                    <p class="release-pill">Feature inventory</p>
                     <p class="eyebrow">The complete workbench</p>
                     <h1>One system.<br><em>Every surface.</em></h1>
                     <p class="page-hero__copy">Row-Bot combines the reasoning flexibility of a model router with durable agents, explicit goals, local memory, real tools, background workflows, phone access, messaging, code workspaces, design canvases, and reviewable extensions. This page documents what ships and where each capability fits.</p>
@@ -90,12 +91,13 @@
                     <span class="chapter-index">01 / AGENTS</span>
                     <h2>Durable roles, visible goals, coordinated work.</h2>
                     <p class="chapter-intro">Row-Bot turns a chat thread into a controlled working environment. Profiles define how an agent should operate, Goal Mode keeps long-running intent visible, and delegated child agents handle bounded work without severing the parent conversation.</p>
+                    <p class="chapter-links"><a href="docs/profiles-goals-agents/">Profiles, goals, and agents documentation &rarr;</a></p>
                     <div class="capability-grid">
                         <article class="capability"><h3>Agent Profiles</h3><p>Give a thread a reusable role with instructions, usage guidance, handoff contracts, workspace policy, enabled tools and skills, approval policy, and model preferences. Profile snapshots travel with delegated work so the operating contract remains explicit.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Desktop</span></div></article>
                         <article class="capability"><h3>Goal Mode</h3><p>Keep the objective, current progress, evidence, blockers, next step, status, and completion summary beside the conversation. Goal turns can use tools, delegate work, resume after approvals, and deliver terminal notices through configured channels.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Desktop + Mobile</span></div></article>
                         <article class="capability"><h3>Child-agent delegation</h3><p>Spawn focused runs with parent linkage, live status, event history, queues, tool boundaries, wait and stop controls, and durable completion summaries. Promote successful patterns into reusable profiles or reviewable workflows.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Approval aware</span></div></article>
-                        <article class="capability"><h3>Checkpointed execution budgets</h3><p>Bound long-running Agent work with durable model-and-tool round counters, repeat-stall protection, exactly-once finalization, and configurable nesting, concurrency, and active-time limits. Extra child runs wait in a fair queue instead of bypassing capacity.</p><div class="tags"><span class="tag tag--new">New in 4.5</span><span class="tag">Durable</span></div></article>
-                        <article class="capability"><h3>Parent-thread lifecycle</h3><p>Child approvals, completion notices, failures, queued turns, and run summaries surface in the parent thread instead of disappearing into background state. Version 4.4 adds durable, deduplicated approval and terminal messages.</p><div class="tags"><span class="tag tag--new">Improved in 4.4</span></div></article>
+                        <article class="capability"><h3>Checkpointed execution budgets</h3><p>Bound long-running Agent work with durable model-and-tool round counters, repeat-stall protection, exactly-once finalization, and configurable nesting, concurrency, and active-time limits. Extra child runs wait in a fair queue instead of bypassing capacity.</p><div class="tags"><span class="tag">Bounded execution</span><span class="tag">Durable</span></div></article>
+                        <article class="capability"><h3>Parent-thread lifecycle</h3><p>Child approvals, completion notices, failures, queued turns, and durable, deduplicated run summaries surface in the parent thread instead of disappearing into background state.</p><div class="tags"><span class="tag">Parent linked</span></div></article>
                     </div>
                 </section>
 
@@ -103,13 +105,14 @@
                     <span class="chapter-index">02 / MODELS</span>
                     <h2>Local, self-hosted, hosted, or subscription-backed.</h2>
                     <p class="chapter-intro">Every selection stays provider-qualified from setup through runtime. Row-Bot separates model discovery, credentials, capabilities, readiness, context policy, and transport behavior so similarly named models do not become interchangeable by accident.</p>
+                    <p class="chapter-links"><a href="docs/configuration/models-and-providers/">Models and providers documentation &rarr;</a></p>
                     <div class="capability-grid">
                         <article class="capability"><h3>Local and self-hosted models</h3><p>Discover and use Ollama plus OpenAI-compatible runtimes such as LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, SGLang, and oMLX. Local endpoints remain distinct from hosted services and can work offline when their runtime and model are local.</p><div class="tags"><span class="tag">Local</span><span class="tag">Offline capable</span></div></article>
                         <article class="capability"><h3>Hosted API providers</h3><p>Connect OpenAI, Anthropic, Google AI, xAI, OpenRouter, Requesty, Atlas Cloud, MiniMax, OpenCode providers, Ollama Cloud, and custom endpoints. Capability mapping routes chat, tools, reasoning, vision, image, and video models to compatible surfaces.</p><div class="tags"><span class="tag">Optional</span><span class="tag">Hosted</span></div></article>
                         <article class="capability"><h3>Subscription sign-in</h3><p>Keep xAI Grok OAuth, ChatGPT/Codex, and Claude Subscription authentication separate from API-key providers. OAuth health, credential source, model visibility, and runtime readiness appear in provider settings.</p><div class="tags"><span class="tag">OAuth</span><span class="tag">Optional</span></div></article>
-                        <article class="capability"><h3>Automatic catalog discovery</h3><p>Targeted, startup, and scheduled refreshes discover newly available models. Last-known-good provider rows survive failed or incomplete refreshes, while live, cached, fallback, and empty outcomes remain visible.</p><div class="tags"><span class="tag tag--new">Restored in 4.4</span></div></article>
+                        <article class="capability"><h3>Automatic catalog discovery</h3><p>Targeted, startup, and scheduled refreshes discover newly available models. Last-known-good provider rows survive failed or incomplete refreshes, while live, cached, fallback, and empty outcomes remain visible.</p><div class="tags"><span class="tag">Resilient discovery</span></div></article>
                         <article class="capability"><h3>Context and prompt cache</h3><p>Model-aware context budgets, compaction, prompt-cache diagnostics, cache-stable prefixes, and provider-specific reporting make long conversations more predictable. Unsupported or chat-only transports receive explicit fallbacks.</p><div class="tags"><span class="tag">Built in</span></div></article>
-                        <article class="capability"><h3>Provider-safe tool schemas</h3><p>Inspect the effective schema sent through each adapter. Gemini-compatible filtering catches untyped arrays before a request is made, while unaffected providers keep the original tool contract and explicitly requested incompatible tools fail clearly.</p><div class="tags"><span class="tag tag--new">Improved in 4.4</span></div></article>
+                        <article class="capability"><h3>Provider-safe tool schemas</h3><p>Inspect the effective schema sent through each adapter. Gemini-compatible filtering catches untyped arrays before a request is made, while unaffected providers keep the original tool contract and explicitly requested incompatible tools fail clearly.</p><div class="tags"><span class="tag">Provider aware</span></div></article>
                     </div>
                 </section>
 
@@ -117,11 +120,12 @@
                     <span class="chapter-index">03 / TOOLS</span>
                     <h2>Use the computer, not just the model.</h2>
                     <p class="chapter-intro">Row-Bot can chain built-in tools inside an agent turn, limit them through profiles, pause for approval, and return generated files to the conversation or configured delivery channel.</p>
+                    <p class="chapter-links"><a href="docs/chat/tools-approvals-and-terminal/">Tools and approvals documentation &rarr;</a><a href="docs/computer-use/">Computer Use documentation &rarr;</a></p>
                     <div class="capability-grid">
                         <article class="capability"><h3>Search and research</h3><p>Search the web through configured services or DuckDuckGo, read URLs, query Wikipedia and arXiv, inspect YouTube content, work with local documents, and preserve useful findings in memory or the wiki vault.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Some online</span></div></article>
-                        <article class="capability"><h3>Files, shell, and browser</h3><p>Read and manage files, run approval-gated shell commands, automate isolated Chromium contexts, inspect page state, redact sensitive tool output, and bring generated files back into a thread. Consequential navigation and browser takeover remain visible.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Approval gated</span></div></article>
-                        <article class="capability"><h3>Native Computer Use</h3><p>Opt into provider-neutral Windows and macOS application control through a pinned, checksum-verified Cua Driver. Target-window capture, an exclusive interactive lease, point-of-risk approvals, blocked sensitive surfaces, ephemeral Vision fallback, and Stop/Take over/Resume controls constrain every session.</p><div class="tags"><span class="tag tag--new">Beta in 4.5</span><span class="tag">Explicit install</span></div></article>
-                        <article class="capability"><h3>Email and Calendar</h3><p>Use Gmail and Google Calendar with OAuth-backed tools for search, drafting, event lookup, typed mutations, and bulk creation. Calendar operations use request-scoped clients, safe concurrent refresh, retries, ordered writes, and timeout reconciliation.</p><div class="tags"><span class="tag">OAuth</span><span class="tag tag--new">Improved in 4.4</span></div></article>
+                        <article class="capability"><h3>Files, shell, and browser</h3><p>Read and manage files, run approval-gated shell commands, automate browser sessions under Row-Bot&rsquo;s browser policy, inspect page state, redact sensitive tool output, and bring generated files back into a thread. Consequential navigation and browser takeover remain visible.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Approval gated</span></div></article>
+                        <article class="capability"><h3>Native Computer Use</h3><p>Opt into the Computer Use beta for Windows and macOS through a pinned, checksum-verified Cua Driver. Target-window capture, an exclusive interactive lease, point-of-risk approvals, blocked sensitive surfaces, ephemeral Vision fallback, and Stop/Take over/Resume controls constrain every session. The separately installed driver&rsquo;s consent-gated third-party telemetry is disclosed before enablement and is not a Row-Bot telemetry pipeline.</p><div class="tags"><span class="tag">Beta</span><span class="tag">Explicit install</span></div></article>
+                        <article class="capability"><h3>Email and Calendar</h3><p>Use Gmail and Google Calendar with OAuth-backed tools for search, drafting, event lookup, typed mutations, and bulk creation. Calendar operations use request-scoped clients, safe concurrent refresh, retries, ordered writes, and timeout reconciliation.</p><div class="tags"><span class="tag">OAuth</span></div></article>
                         <article class="capability"><h3>Analysis and output</h3><p>Calculate, query Wolfram Alpha, inspect weather, analyse images, search conversations, create charts, generate or edit images, and produce video through compatible provider models. Media choices remain scoped to the correct surface.</p><div class="tags"><span class="tag">Built in + providers</span></div></article>
                     </div>
                 </section>
@@ -130,9 +134,10 @@
                     <span class="chapter-index">04 / KNOWLEDGE</span>
                     <h2>Memory that remains inspectable.</h2>
                     <p class="chapter-intro">Useful recall needs more than an opaque summary. Row-Bot stores structured local records, combines semantic, lexical, and graph signals, and keeps review state and trace information available when you need to understand why something returned.</p>
+                    <p class="chapter-links"><a href="docs/knowledge/">Knowledge and memory documentation &rarr;</a></p>
                     <div class="capability-grid">
                         <article class="capability"><h3>Personal knowledge graph</h3><p>Represent people, projects, preferences, facts, events, documents, and other entities as typed nodes and relationships. Browse the graph, review extracted memories, normalise relations, and repair inconsistent records without touching real user data in tests.</p><div class="tags"><span class="tag">Local</span><span class="tag">Auditable</span></div></article>
-                        <article class="capability"><h3>Bounded hybrid recall</h3><p>Combine configurable embeddings, FAISS semantic search, FTS5 lexical matching, and bounded graph expansion. Local embedding startup is cache-only, downloads and repair are explicit, and missing models fall back quickly to lexical and graph retrieval instead of stalling the request.</p><div class="tags"><span class="tag tag--new">Improved in 4.5</span><span class="tag">Local by default</span></div></article>
+                        <article class="capability"><h3>Bounded hybrid recall</h3><p>Combine configurable embeddings, FAISS semantic search, FTS5 lexical matching, and bounded graph expansion. Local embedding startup is cache-only, downloads and repair are explicit, and missing models fall back quickly to lexical and graph retrieval instead of stalling the request.</p><div class="tags"><span class="tag">Bounded recall</span><span class="tag">Local by default</span></div></article>
                         <article class="capability"><h3>Documents and extraction</h3><p>Read PDFs, spreadsheets, JSON, TSV, images, and common text formats; extract knowledge under reviewable policies; and retain source metadata so derived facts can be traced to their origin.</p><div class="tags"><span class="tag">Built in</span></div></article>
                         <article class="capability"><h3>Wiki Vault and Dream Cycle</h3><p>Export an Obsidian-compatible local wiki, synchronise selected knowledge, and let the idle-aware Dream Cycle consolidate memory or prepare bounded improvement proposals while preserving busy-state and review controls.</p><div class="tags"><span class="tag">Optional</span><span class="tag">Local</span></div></article>
                     </div>
@@ -142,11 +147,12 @@
                     <span class="chapter-index">05 / WORKFLOWS</span>
                     <h2>Background work with visible control.</h2>
                     <p class="chapter-intro">Turn repeated tasks into scheduled or manually triggered pipelines without turning them into invisible automation. Profiles, delivery defaults, conditions, approvals, run history, and recovery state stay attached to the workflow.</p>
+                    <p class="chapter-links"><a href="docs/guides/workflows/">Workflow documentation &rarr;</a></p>
                     <div class="capability-grid">
                         <article class="capability"><h3>Profile-first workflows</h3><p>Choose a profile, model override, tool policy, prompt, schedule, persistent thread, conditions, approval mode, and delivery destination. Advanced graph steps support multi-stage work while the mobile editor covers common prompt workflows.</p><div class="tags"><span class="tag">Desktop</span><span class="tag">Mobile basics</span></div></article>
                         <article class="capability"><h3>Approvals and delivery</h3><p>Pause consequential actions for approval in the app or supported channels. Workflow-level delivery defaults distinguish no destinations from inherited destinations, and channel retries retain terminal notices until they can be reconciled.</p><div class="tags"><span class="tag">Approval aware</span></div></article>
                         <article class="capability"><h3>Run history and diagnostics</h3><p>Inspect scheduled runs, subtasks, pipeline state, errors, completion summaries, database recovery diagnostics, insight cards, and attention states in a collapsible console rather than relying on ephemeral notifications.</p><div class="tags"><span class="tag">Durable history</span></div></article>
-                        <article class="capability"><h3>Shared cancellation scope</h3><p>Stop connects the active generation to provider responses, subprocesses, tool waits, browser work, MCP calls, voice turns, and child agents spawned by that generation. Unrelated runs remain untouched.</p><div class="tags"><span class="tag tag--new">New in 4.4</span></div></article>
+                        <article class="capability"><h3>Shared cancellation scope</h3><p>Stop connects the active generation to provider responses, subprocesses, tool waits, browser work, MCP calls, voice turns, and child agents spawned by that generation. Unrelated runs remain untouched.</p><div class="tags"><span class="tag">Scoped cancellation</span></div></article>
                     </div>
                 </section>
 
@@ -154,9 +160,10 @@
                     <span class="chapter-index">06 / MOBILE</span>
                     <h2>A companion to the machine you control.</h2>
                     <p class="chapter-intro">Mobile Companion is a phone-native interface served by the running Row-Bot host—not a separate Row-Bot cloud service. Pair over an approved route, keep the host as the system of record, and revoke access locally.</p>
+                    <p class="chapter-links"><a href="docs/mobile-native/">Mobile Companion documentation &rarr;</a></p>
                     <div class="capability-grid">
-                        <article class="capability"><h3>Phone-native shell</h3><p>Use Chat, Activity, Workflows, Knowledge, and Settings navigation designed for a small screen. Create threads, attach files, choose skills, profiles, and models, follow generation state, and stop active work.</p><div class="tags"><span class="tag tag--new">New in 4.4</span><span class="tag">PWA</span></div></article>
-                        <article class="capability"><h3>Activity and approvals</h3><p>See active chat generations, running workflows, recent runs, tool approvals, and workflow approvals in one phone-safe surface with approve, deny, and stop actions.</p><div class="tags"><span class="tag tag--new">New in 4.4</span></div></article>
+                        <article class="capability"><h3>Phone-native shell</h3><p>Use Chat, Activity, Workflows, Knowledge, and Settings navigation designed for a small screen. Create threads, attach files, choose skills, profiles, and models, follow generation state, and stop active work.</p><div class="tags"><span class="tag">PWA</span></div></article>
+                        <article class="capability"><h3>Activity and approvals</h3><p>See active chat generations, running workflows, recent runs, tool approvals, and workflow approvals in one phone-safe surface with approve, deny, and stop actions.</p><div class="tags"><span class="tag">Mobile control</span></div></article>
                         <article class="capability"><h3>Secure pairing</h3><p>Create short-lived single-use QR links, store session tokens in HttpOnly cookies, rate-limit failed attempts, review display-safe access events, list paired devices, and revoke a phone immediately.</p><div class="tags"><span class="tag">Local auth</span><span class="tag">Revocable</span></div></article>
                         <article class="capability"><h3>Network routes</h3><p>Connect over a local network, Tailscale direct or Serve routes, an existing ngrok tunnel, or an advanced custom origin. Remote HTTP and WebSocket traffic remains pairing-gated while direct desktop loopback stays open.</p><div class="tags"><span class="tag">Optional remote access</span></div></article>
                     </div>
@@ -166,9 +173,10 @@
                     <span class="chapter-index">07 / CHANNELS</span>
                     <h2>Live conversations beyond the desktop.</h2>
                     <p class="chapter-intro">Messaging adapters share one delivery engine while preserving the limits and native interaction model of each platform. Channel work uses the same threads, profiles, Goal Mode, approvals, media handling, and final records as desktop turns.</p>
+                    <p class="chapter-links"><a href="docs/guides/channels-and-voice/">Channels and voice documentation &rarr;</a></p>
                     <div class="capability-grid">
-                        <article class="capability"><h3>Streaming delivery</h3><p>Coalesce edits, keep typing alive, bound previews, split long output safely, respect rate limits, clean up previews, and send a fresh final message when an edit cannot complete. Discord, Slack, Telegram, and WhatsApp use the best supported path.</p><div class="tags"><span class="tag tag--new">New in 4.4</span></div></article>
-                        <article class="capability"><h3>Interactive approvals</h3><p>Approve or deny through Discord buttons, Slack Block Kit actions, Telegram inline controls, WhatsApp resume flows, or explicit SMS YES/NO handling. SMS intentionally remains final-text-only with safe chunking.</p><div class="tags"><span class="tag tag--new">New in 4.4</span></div></article>
+                        <article class="capability"><h3>Streaming delivery</h3><p>Coalesce edits, keep typing alive, bound previews, split long output safely, respect rate limits, clean up previews, and send a fresh final message when an edit cannot complete. Discord, Slack, Telegram, and WhatsApp use the best supported path.</p><div class="tags"><span class="tag">Streaming</span></div></article>
+                        <article class="capability"><h3>Interactive approvals</h3><p>Approve or deny through Discord buttons, Slack Block Kit actions, Telegram inline controls, WhatsApp resume flows, or explicit SMS YES/NO handling. SMS intentionally remains final-text-only with safe chunking.</p><div class="tags"><span class="tag">Native controls</span></div></article>
                         <article class="capability"><h3>Voice and speech</h3><p>Use local Whisper speech-to-text and Kokoro text-to-speech, or opt into compatible realtime voice providers. Voice turns share agent tools and cancellation behavior while provider usage remains explicit.</p><div class="tags"><span class="tag">Local options</span><span class="tag">Optional providers</span></div></article>
                         <article class="capability"><h3>Media and terminal notices</h3><p>Receive images and documents, return generated files, show reactions and health state, and deliver compact once-only Goal Mode or child-agent completion notices. Failed terminal notices remain available for retry.</p><div class="tags"><span class="tag">Native + plugin channels</span></div></article>
                     </div>
@@ -178,6 +186,7 @@
                     <span class="chapter-index">08 / DEVELOPER</span>
                     <h2>Code threads with real repository state.</h2>
                     <p class="chapter-intro">Developer Studio connects conversational work to explicit Git repositories and durable worktrees. It is designed for reviewable implementation, not a hidden command runner.</p>
+                    <p class="chapter-links"><a href="docs/developer/">Developer Studio documentation &rarr;</a></p>
                     <div class="capability-grid">
                         <article class="capability"><h3>Durable workspaces</h3><p>Connect local repositories, restore code threads from the sidebar, allocate worktrees to threads or delegated runs, preserve workspace context, and keep source changes separate from unrelated work.</p><div class="tags"><span class="tag">Desktop</span><span class="tag">Git</span></div></article>
                         <article class="capability"><h3>Review and delivery</h3><p>Inspect diffs, run focused tests, manage todos, review command output, prepare commits and pull requests, and require approval for install, network, delete, commit, push, or PR actions.</p><div class="tags"><span class="tag">Approval gated</span></div></article>
@@ -190,6 +199,7 @@
                     <span class="chapter-index">09 / DESIGNER</span>
                     <h2>Editable artifacts, not disposable generations.</h2>
                     <p class="chapter-intro">Designer Studio provides mode-aware canvases for presentations, documents, landing pages, app mockups, and storyboards. Generated output remains open to targeted edits, previews, export, and repair.</p>
+                    <p class="chapter-links"><a href="docs/designer/">Designer Studio documentation &rarr;</a></p>
                     <div class="capability-grid">
                         <article class="capability"><h3>Five design modes</h3><p>Choose the canvas and constraints appropriate to a deck, document, web page, interface, or storyboard. Templates and brand controls keep format-specific decisions visible instead of forcing everything through one generic layout.</p><div class="tags"><span class="tag">Desktop</span><span class="tag">Five modes</span></div></article>
                         <article class="capability"><h3>Live preview and surgical edits</h3><p>Render deterministic previews, select the part that needs work, request bounded changes, and preserve unaffected content. History, thumbnails, and snapshots make iteration reviewable.</p><div class="tags"><span class="tag">Editable</span></div></article>
@@ -202,10 +212,11 @@
                     <span class="chapter-index">10 / EXTENSIONS</span>
                     <h2>Extend the workbench without hiding the boundary.</h2>
                     <p class="chapter-intro">Skills, plugins, MCP servers, and Custom Tools add capability through separate contracts. Enablement, permissions, configuration, health, and profile policy determine what becomes available to an agent.</p>
+                    <p class="chapter-links"><a href="docs/extending/">Extensions documentation &rarr;</a></p>
                     <div class="capability-grid">
                         <article class="capability"><h3>Skills Hub</h3><p>Install, enable, and pin reusable instruction packages, invoke slash commands, and let Agent Profiles narrow which skills enter a run. Bundled, user, and plugin-provided skills retain clear ownership.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Local packages</span></div></article>
                         <article class="capability"><h3>Plugin System v2</h3><p>Install reviewable plugins that provide native tools, packaged MCP servers, bundled skills, or channels. Manifests declare permissions, settings, secrets, authentication, health checks, versions, and supported extension surfaces.</p><div class="tags"><span class="tag">Plugin Center</span></div></article>
-                        <article class="capability"><h3>MCP client and marketplace</h3><p>Connect stdio, HTTP, or SSE servers with capability metadata, safety classification, requirements, probes, conflict handling, and approval gates. Version 4.4 adds Xquik and preserves marketplace metadata through configuration edits.</p><div class="tags"><span class="tag">Optional</span><span class="tag tag--new">Xquik in 4.4</span></div></article>
+                        <article class="capability"><h3>MCP client and marketplace</h3><p>Connect stdio, HTTP, or SSE servers with capability metadata, safety classification, requirements, probes, conflict handling, and approval gates. Marketplace metadata, including catalog entries such as Xquik, remains intact through configuration edits.</p><div class="tags"><span class="tag">Optional</span><span class="tag">Reviewable</span></div></article>
                         <article class="capability"><h3>Custom Tool builder</h3><p>Turn a repository, local folder, or current workspace into a reusable tool through Source, Inspect, Test, and Enable stages. Safer Git setup, isolated environments, command checks, removal, and optional chat promotion keep experiments bounded.</p><div class="tags"><span class="tag">Approval gated</span></div></article>
                     </div>
                 </section>
@@ -214,11 +225,12 @@
                     <span class="chapter-index">11 / PRIVACY</span>
                     <h2>Control is a system property.</h2>
                     <p class="chapter-intro">Local-first means durable application state belongs to the user, external routes are explicit, and consequential actions remain reviewable. It does not pretend that a hosted model or online tool can be used without sending that service the data required for the request.</p>
+                    <p class="chapter-links"><a href="docs/privacy-safety/">Privacy and safety documentation &rarr;</a></p>
                     <div class="capability-grid">
                         <article class="capability"><h3>Local durable data</h3><p>Store conversations, profiles, goals, child-run records, workflows, memory, documents, Designer projects, plugin state, code context, and paired-device records under the local Row-Bot data directory.</p><div class="tags"><span class="tag">Local</span></div></article>
                         <article class="capability"><h3>Credential protection</h3><p>Use the operating-system credential store when available, session-only fallback where supported, fingerprints and hashes for display-safe identity, and metadata files that do not contain provider tokens as plain secrets.</p><div class="tags"><span class="tag">OS credential store</span></div></article>
                         <article class="capability"><h3>Approval and risk policy</h3><p>Classify destructive, networked, private-data, metered, installation, Git, shell, browser, channel, and MCP actions conservatively. Approval cards show bounded reasons while retaining the original action payload for the decision.</p><div class="tags"><span class="tag">Reviewable</span></div></article>
-                        <article class="capability"><h3>No hidden Row-Bot cloud</h3><p>Row-Bot has no required account, hosted sync service, or app telemetry pipeline. Online providers, channels, tunnels, updates, search, and external tools remain individually visible choices.</p><div class="tags"><span class="tag">No app telemetry</span></div></article>
+                        <article class="capability"><h3>No hidden Row-Bot cloud</h3><p>Row-Bot has no required account, hosted sync service, or first-party telemetry pipeline. Optional providers, channels, tunnels, updates, search, and external tools remain individually visible choices. The opt-in Cua Driver has separately disclosed, consent-gated third-party telemetry; it is the reviewed exception, not Row-Bot telemetry.</p><div class="tags"><span class="tag">No first-party telemetry</span><span class="tag">Explicit services</span></div></article>
                     </div>
                 </section>
 
@@ -226,8 +238,9 @@
                     <span class="chapter-index">12 / PLATFORMS</span>
                     <h2>Installable, diagnosable, and repairable.</h2>
                     <p class="chapter-intro">Windows and macOS are first-class desktop targets, while Linux provides the browser/server application through a verified XDG user install. Packaging includes the application source, locked runtime dependencies, bundled skills, UI assets, and required installer metadata.</p>
+                    <p class="chapter-links"><a href="docs/getting-started/installation/">Installation documentation &rarr;</a><a href="docs/troubleshooting/">Troubleshooting documentation &rarr;</a></p>
                     <div class="capability-grid">
-                        <article class="capability"><h3>Platform installers</h3><p>Use the Windows x64 installer, macOS Apple-silicon DMG, or verified Linux one-line installer and tarball. Release workflows build checksums and manifests; Windows signing and macOS notarization remain explicit release gates.</p><div class="tags"><span class="tag">Windows</span><span class="tag">macOS</span><span class="tag">Linux</span></div></article>
+                        <article class="capability"><h3>Platform installers</h3><p>Use the Windows x64 installer, macOS Apple-silicon DMG, or verified Linux one-line installer and tarball. Published artifacts, checksums, and platform trust details are listed with each release so signing or notarization is never implied.</p><div class="tags"><span class="tag">Windows</span><span class="tag">macOS</span><span class="tag">Linux</span></div></article>
                         <article class="capability"><h3>Setup Center</h3><p>Resume onboarding across provider configuration, credentials, model selection, tools, optional integrations, and runtime checks. Setup guidance distinguishes missing configuration, missing dependencies, unhealthy credentials, and unsupported models.</p><div class="tags"><span class="tag">Resumable</span></div></article>
                         <article class="capability"><h3>Status and diagnostics</h3><p>Inspect provider health, model count and provenance, OAuth state, prompt-cache metrics, workflow attention, task recovery, app performance, update state, and subsystem readiness without digging through raw configuration files.</p><div class="tags"><span class="tag">Built in</span></div></article>
                         <article class="capability"><h3>Updates and repair</h3><p>Check signed release metadata, download compatible updates, validate installer contents, and preserve local data through upgrades. Deeper installer verification covers clean installs, repair, upgrade, uninstall, and installed-package smoke checks.</p><div class="tags"><span class="tag">Release verified</span></div></article>
@@ -238,12 +251,12 @@
 
         <section class="final-cta">
             <div class="shell shell--narrow">
-                <p class="kicker">Row-Bot 4.5.0</p>
+                <p class="kicker">Get Row-Bot</p>
                 <h2>Choose the parts you need.<br><em>Keep control of the whole.</em></h2>
                 <p>Start locally, add providers and integrations deliberately, and let the workbench grow with the work.</p>
                 <div class="final-actions">
-                    <a class="button button--primary" href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-Windows-x64.exe" data-os-primary data-download="windows">Download for Windows <small>· .exe</small></a>
-                    <a class="button button--secondary" href="index.html">Return to overview</a>
+                    <a class="button button--primary" href="index.html#install" data-os-primary data-mobile-target="install" data-mobile-label="Desktop installation options" data-placement="final_install">Desktop installation options</a>
+                    <a class="button button--secondary" href="docs/">Read the documentation</a>
                 </div>
             </div>
         </section>
@@ -253,10 +266,14 @@
         <div class="shell footer-grid">
             <span>Row-Bot · v4.5.0 · Apache 2.0</span>
             <div class="footer-links">
-                <a href="index.html">Overview</a>
+                <a href="index.html">Home</a>
+                <a href="features.html" aria-current="page">Features</a>
                 <a href="architecture.html">Architecture</a>
                 <a href="docs/">Docs</a>
+                <a href="index.html#privacy">Privacy</a>
+                <a href="index.html#comparison">Compare</a>
                 <a href="contact.html">Contact</a>
+                <a href="https://sydsachar.com/category/row-bot/" target="_blank" rel="noopener noreferrer">Blog</a>
                 <a href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">GitHub</a>
             </div>
         </div>

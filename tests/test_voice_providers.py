@@ -37,7 +37,14 @@ class FakeFunASRModel:
 
     def generate(self, **kwargs):
         self.inputs.append(kwargs["input"])
-        return [{"text": "sensevoice text"}]
+        return [
+            {
+                "text": (
+                    "<|en|><|NEUTRAL|><|Speech|><|woitn|>"
+                    "sensevoice text"
+                )
+            }
+        ]
 
 
 def test_local_whisper_provider_wraps_existing_voice_service():

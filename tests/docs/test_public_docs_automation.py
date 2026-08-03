@@ -1,13 +1,29 @@
 import json
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import yaml
 
 from scripts.docs.collect_inventory import ROOT, build_inventory
 from scripts.docs.generate_llms_txt import generate
 from scripts.docs.generate_mdx import check_pages, render_pages
-from scripts.docs.sync_github_pages import check_sync, sync
+from scripts.docs.sync_github_pages import HAND_CURATED_MARKETING_FILES, check_sync, sync
 from scripts.docs.validate_public_docs import validate
+
+
+class _PublishedLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ids: set[str] = set()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {key: value or "" for key, value in attrs}
+        if values.get("id"):
+            self.ids.add(values["id"])
+        if tag == "a" and values.get("href"):
+            self.hrefs.append(values["href"])
 
 
 def test_public_docs_inventory_has_core_sections() -> None:
@@ -32,6 +48,38 @@ def test_public_docs_inventory_has_core_sections() -> None:
     }
     assert inventory["cli_options"]
     assert inventory["environment"]
+
+
+def test_all_published_html_internal_links_resolve() -> None:
+    publish_root = ROOT / "docs"
+    pages = sorted(publish_root.rglob("*.html"))
+    parsed: dict[Path, _PublishedLinkParser] = {}
+
+    def parse(path: Path) -> _PublishedLinkParser:
+        if path not in parsed:
+            parser = _PublishedLinkParser()
+            parser.feed(path.read_text(encoding="utf-8"))
+            parsed[path] = parser
+        return parsed[path]
+
+    for page in pages:
+        for href in parse(page).hrefs:
+            parts = urlsplit(href)
+            if parts.scheme or parts.netloc or href.startswith(("mailto:", "tel:")):
+                continue
+            if parts.path.startswith("/"):
+                target = publish_root / unquote(parts.path.lstrip("/"))
+            else:
+                target = page.parent / unquote(parts.path)
+            if not parts.path:
+                target = page
+            if target.is_dir() or (not target.suffix and (target / "index.html").is_file()):
+                target = target / "index.html"
+            assert target.is_file(), f"{page.relative_to(publish_root)}: {href}"
+            if parts.fragment:
+                assert unquote(parts.fragment) in parse(target).ids, (
+                    f"{page.relative_to(publish_root)}: {href}"
+                )
 
 
 def test_generated_mdx_pages_are_current() -> None:
@@ -69,15 +117,19 @@ def test_github_pages_sync_preserves_marketing_files(tmp_path: Path) -> None:
     for name in ("llms-full.txt", "llms.txt", "sitemap.xml"):
         (build_dir / name).write_text(name, encoding="utf-8")
     publish_dir.mkdir()
-    marketing = publish_dir / "index.html"
-    marketing.write_text("marketing", encoding="utf-8")
+    marketing_files = {}
+    for index, name in enumerate(HAND_CURATED_MARKETING_FILES):
+        marketing = publish_dir / name
+        payload = f"marketing-{index}".encode()
+        marketing.write_bytes(payload)
+        marketing_files[marketing] = payload
     obsolete = publish_dir / "docs.html"
     obsolete.write_text("old route format", encoding="utf-8")
 
     sync(build_dir, publish_dir)
 
     assert check_sync(build_dir, publish_dir) == []
-    assert marketing.read_text(encoding="utf-8") == "marketing"
+    assert all(path.read_bytes() == payload for path, payload in marketing_files.items())
     assert not obsolete.exists()
     published_entry = publish_dir / "pagefind" / "pagefind-entry.json"
     published_entry.write_text(
@@ -193,9 +245,41 @@ def test_docs_navigation_returns_to_the_marketing_landing_page() -> None:
     assert config.count("href: landingPageUrl") == 3
     assert "{href: landingPageUrl, label: 'Home'" in config
     assert "label: 'Download'" in config
+    assert "href: installationUrl" in config
+    assert "const installationUrl = 'https://row-bot.ai/#install';" in config
+    assert "https://row-bot.ai/features.html" in config
+    assert "https://row-bot.ai/architecture.html" in config
+    assert "https://row-bot.ai/contact.html" in config
     assert "github.com/siddsachar/row-bot/releases/latest" not in config
-    assert 'href="https://row-bot.ai/"' in docs_home
+    assert 'href="https://row-bot.ai/#install"' in docs_home
     assert "github.com/siddsachar/row-bot/releases/latest" not in docs_home
+
+
+def test_sitemap_source_includes_marketing_pages_without_shadow_copies() -> None:
+    config = (ROOT / "docs-site" / "docusaurus.config.ts").read_text(encoding="utf-8")
+
+    for url in (
+        "https://row-bot.ai/features.html",
+        "https://row-bot.ai/architecture.html",
+        "https://row-bot.ai/contact.html",
+    ):
+        assert url in config
+    assert "404.html" not in config
+    assert not (ROOT / "docs-site" / "static" / "architecture.html").exists()
+    assert not (ROOT / "docs-site" / "static" / "contact.html").exists()
+
+
+def test_docs_ci_build_regenerates_llm_exports_before_building() -> None:
+    package = json.loads(
+        (ROOT / "docs-site" / "package.json").read_text(encoding="utf-8")
+    )
+    scripts = package["scripts"]
+
+    assert scripts["generate:llms"] == (
+        "python ../scripts/docs/generate_llms_txt.py "
+        "--docs-root docs-site/docs --out-dir docs-site/static"
+    )
+    assert scripts["build:ci"].startswith("npm run generate:llms && ")
 
 
 def test_authoritative_surface_map_has_one_outcome_per_surface() -> None:

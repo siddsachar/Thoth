@@ -22,7 +22,7 @@ export default function Home(): JSX.Element {
             </Link>
             <Link
               className="button button--secondary button--lg"
-              href="https://row-bot.ai/"
+              href="https://row-bot.ai/#install"
             >
               Download
             </Link>

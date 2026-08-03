@@ -754,38 +754,57 @@ def build_status_bar(
             sanitize=False,
         ).on("click", lambda: _run_diagnosis())
 
-      # ── EXTRACTION PROGRESS pill (below status row) ──────────────
+      # ── DOCUMENT INGESTION pill (below status row) ──────────────
       extraction_pill = ui.html("", sanitize=False)
       extraction_pill.set_visibility(False)
       extraction_pill.style("text-align: center; margin-top: 4px;")
 
       def _poll_extraction_status() -> None:
-          """Timer callback — update extraction pill every 2 s."""
+          """Timer callback — show the durable active document and stage."""
           try:
-              from row_bot.document_extraction import get_extraction_status, get_queue_length, stop_extraction as _stop_ext
+              from row_bot.document_jobs import DocumentJobService
           except ImportError:
               return
-          status = get_extraction_status()
-          if status is None:
+          summary = DocumentJobService().active_summary()
+          active = summary.get("active")
+          remaining = int(summary.get("remaining") or 0)
+          paused = bool(summary.get("paused"))
+          if not active and not (paused and remaining):
               extraction_pill.set_visibility(False)
               return
-          fname = status.get("file", "")
-          prog = status.get("progress", 0)
-          total = status.get("total", 0)
-          ents = status.get("entities", 0)
-          phase = status.get("phase", "map")
-          queued = get_queue_length()
-          pct = int(prog / total * 100) if total else 0
-          bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
-          queue_txt = f" · +{queued} queued" if queued else ""
-          phase_label = {"map": "summarizing", "reduce": "compiling", "extract": "extracting"}.get(phase, phase)
+          active = active or {}
+          fname = html.escape(str(active.get("original_name") or "Document queue"))
+          stage = str(active.get("stage") or "paused")
+          stage_label = {
+              "upload": "uploading",
+              "parse": "parsing",
+              "embed": "embedding",
+              "index_commit": "publishing search index",
+              "knowledge_map": "extracting knowledge",
+              "knowledge_reduce": "compiling knowledge",
+              "knowledge_commit": "saving knowledge",
+              "finalize": "finalizing",
+              "paused": "paused",
+          }.get(stage, stage.replace("_", " "))
+          if active.get("status") == "indexing":
+              progress = int(active.get("index_progress_current") or 0)
+              total = int(active.get("index_progress_total") or 0)
+          else:
+              progress = int(active.get("extraction_progress_current") or 0)
+              total = int(active.get("extraction_progress_total") or 0)
+          progress_text = f" · {progress}/{total}" if total else ""
+          paused_text = " · paused" if paused else ""
+          cancel_html = (
+              '<span id="document-ingestion-cancel-btn" style="cursor:pointer; margin-left:4px;" '
+              'title="Cancel active document">⏹ Cancel active</span>'
+              if active else ""
+          )
           extraction_pill.set_content(
               f'<span style="display:inline-flex; align-items:center; gap:6px; '
               f'border:1px solid #FFA726; border-radius:12px; padding:2px 10px; '
               f'font-size:0.75rem; color:#FFA726; animation:pulse-border 2s infinite;">'
-              f'🧠 {fname} {bar} {prog}/{total} · {phase_label}{queue_txt}'
-              f'<span id="extraction-stop-btn" style="cursor:pointer; margin-left:4px;" '
-              f'title="Stop extraction">⏹</span>'
+              f'📄 {fname} · {stage_label}{progress_text} · {remaining} remaining{paused_text}'
+              f'{cancel_html}'
               f'</span>'
           )
           extraction_pill.set_visibility(True)
@@ -832,25 +851,20 @@ def build_status_bar(
 
       safe_timer(2.0, _poll_buddy_hatch_status)
 
-      # Wire the stop button via JavaScript delegation
-      ui.run_javascript('''
-          document.addEventListener("click", function(e) {
-              if (e.target && e.target.id === "extraction-stop-btn") {
-                  fetch("/_nicegui_api/extraction_stop", {method: "POST"}).catch(function(){});
-              }
-          });
-      ''')
-
-      # Use server-side click detection instead — simpler with NiceGUI
+      # The only status-bar action targets the active document.
       extraction_pill.on("click", lambda: _handle_extraction_stop())
 
       def _handle_extraction_stop():
           try:
-              from row_bot.document_extraction import stop_extraction
-              if stop_extraction():
-                  ui.notify("⏹ Stopping extraction…", type="info")
-          except ImportError:
-              pass
+              from row_bot.document_jobs import DocumentJobService
+
+              service = DocumentJobService()
+              active = service.active_summary().get("active")
+              if isinstance(active, dict) and active.get("id"):
+                  service.cancel_job(str(active["id"]))
+                  ui.notify("Stopping the active document…", type="info")
+          except Exception:
+              logger.debug("Could not cancel active document ingestion", exc_info=True)
 
       # ── UPDATE-AVAILABLE pill ────────────────────────────────
       update_pill = ui.html("", sanitize=False)

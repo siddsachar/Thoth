@@ -113,11 +113,50 @@ def test_delegate_work_uses_runner_and_returns_public_run(tmp_path, monkeypatch)
     assert calls["kwargs"]["profile"] == "quality_reviewer"
     assert calls["kwargs"]["context"] == "Changed files: app.py"
     assert calls["kwargs"]["parent_thread_id"] == "parent-thread"
-    assert calls["kwargs"]["model_override"] == ""
+    assert calls["kwargs"]["orchestration_id"]
+    assert calls["kwargs"]["orchestration_required"] is True
+    from row_bot.models import get_current_model
+
+    assert calls["kwargs"]["model_override"] == get_current_model()
     assert calls["kwargs"]["developer_workspace_id"] == "dev_parent"
     assert calls["kwargs"]["use_worktree"] is True
     assert payload["run"]["workspace"]["mode"] == "worktree"
     assert payload["run"]["workspace"]["id"] == "dev_parent"
+
+
+def test_optional_background_child_is_still_a_durable_member(
+    tmp_path,
+    monkeypatch,
+):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    calls = {}
+
+    def fake_spawn(objective, **kwargs):
+        calls["kwargs"] = kwargs
+        return {
+            "id": "optional-run",
+            "kind": "subagent",
+            "status": "queued",
+            "display_name": "Background",
+            "thread_id": "optional-thread",
+            "parent_thread_id": kwargs["parent_thread_id"],
+        }
+
+    monkeypatch.setattr(agent_tool.agent_runner, "spawn_agent_run", fake_spawn)
+    payload = json.loads(
+        agent_tool._delegate_work(
+            objective="Watch this in the background.",
+            parent_thread_id="parent-thread",
+            required=False,
+            wait=False,
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["orchestration"]["id"]
+    assert payload["orchestration"]["required"] is False
+    assert calls["kwargs"]["orchestration_id"] == payload["orchestration"]["id"]
+    assert calls["kwargs"]["orchestration_required"] is False
 
 
 def test_delegate_work_resolves_optional_model_to_canonical_ref(tmp_path, monkeypatch):
@@ -232,6 +271,12 @@ def test_agents_guide_mentions_pinned_model_resolution() -> None:
     assert "delegate_work(wait=false)" in guide
     assert "parent thread stays responsive" in guide
     assert "use `wait=true` only when the user explicitly asks" in guide
+    assert "do not delegate" in guide
+    assert "trivial" in guide
+    assert "smallest useful wave" in guide
+    assert "inherits the parent model" in guide
+    assert "required=true" in guide
+    assert "required=false" in guide
 
 
 def test_delegate_work_schema_is_async_first() -> None:

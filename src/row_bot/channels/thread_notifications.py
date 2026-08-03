@@ -87,6 +87,25 @@ def append_parent_thread_message_once(
         return False
 
 
+def _parent_thread_message_exists(*, thread_id: str, key: str, text: str) -> bool:
+    """Return whether a local checkpoint already contains this delivery."""
+
+    try:
+        from row_bot.threads import get_latest_checkpoint_messages
+
+        for message in get_latest_checkpoint_messages(thread_id):
+            if getattr(message, "type", "") != "ai":
+                continue
+            metadata = _message_ui_metadata(message)
+            if _clean_text(metadata.get("channel_notification_key")) == key:
+                return True
+            if _message_content(message).strip() == text:
+                return True
+    except Exception:
+        log.debug("Could not verify parent-thread notification checkpoint", exc_info=True)
+    return False
+
+
 def _tool_payloads_for_parent_thread(thread_id: str) -> list[dict[str, Any]]:
     try:
         from row_bot.threads import get_latest_checkpoint_messages
@@ -196,7 +215,7 @@ def deliver_parent_thread_notification(
         existing = get_channel_thread_notification(clean_key)
         metadata = dict(ui_metadata or {})
         metadata.setdefault("channel_notification_key", clean_key)
-        append_parent_thread_message_once(
+        appended_locally = append_parent_thread_message_once(
             thread_id=clean_thread_id,
             key=clean_key,
             text=clean_text,
@@ -206,7 +225,11 @@ def deliver_parent_thread_notification(
             return True
         ref = get_thread_channel_ref(clean_thread_id)
         if not ref:
-            return False
+            return appended_locally or _parent_thread_message_exists(
+                thread_id=clean_thread_id,
+                key=clean_key,
+                text=clean_text,
+            )
         record = upsert_channel_thread_notification(
             key=clean_key,
             thread_id=clean_thread_id,

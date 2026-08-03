@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -51,6 +52,7 @@ SECRET_PATTERNS = [
     "C:\\Users\\",
     "/Users/",
 ]
+LAUNCH_SECRET_ENV = "ROW_BOT_LAUNCH_SECRET"
 
 
 def _load_manifest() -> dict[str, Any]:
@@ -71,14 +73,18 @@ def _port_open(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _wait_ping(port: int, proc: subprocess.Popen, timeout: float) -> None:
+def _wait_ping(port: int, proc: subprocess.Popen, timeout: float, *, launcher_secret: str) -> None:
     deadline = time.monotonic() + timeout
     url = f"http://127.0.0.1:{port}/api/launcher-ping"
+    request = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {launcher_secret}"},
+    )
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise RuntimeError(f"app exited during startup with code {proc.returncode}")
         try:
-            with urllib.request.urlopen(url, timeout=2) as response:
+            with urllib.request.urlopen(request, timeout=2) as response:
                 body = response.read(512).decode("utf-8", errors="replace")
             if response.status == 200 and "row-bot" in body.lower():
                 return
@@ -145,12 +151,13 @@ def _seed(data_dir: Path, scenario: str) -> None:
     )
 
 
-def _launch_app(port: int, data_dir: Path, stack: ExitStack) -> subprocess.Popen:
+def _launch_app(port: int, data_dir: Path, stack: ExitStack) -> tuple[subprocess.Popen, str]:
     LOG_ROOT.mkdir(parents=True, exist_ok=True)
     stdout_path = LOG_ROOT / "docs_capture_stdout.log"
     stderr_path = LOG_ROOT / "docs_capture_stderr.log"
     stdout_file = stack.enter_context(stdout_path.open("w", encoding="utf-8"))
     stderr_file = stack.enter_context(stderr_path.open("w", encoding="utf-8"))
+    launcher_secret = secrets.token_urlsafe(32)
     env = {
         **os.environ,
         "PYTHONIOENCODING": "utf-8",
@@ -164,8 +171,9 @@ def _launch_app(port: int, data_dir: Path, stack: ExitStack) -> subprocess.Popen
         "ROW_BOT_DOCS_DISABLE_AUTOSTART": "1",
         "ROW_BOT_DOCS_REDUCE_MOTION": "1",
         "ROW_BOT_DOCS_FAKE_PROVIDERS": "1",
+        LAUNCH_SECRET_ENV: launcher_secret,
     }
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         [sys.executable, "app.py"],
         cwd=str(ROOT),
         env=env,
@@ -173,6 +181,7 @@ def _launch_app(port: int, data_dir: Path, stack: ExitStack) -> subprocess.Popen
         stderr=stderr_file,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+    return proc, launcher_secret
 
 
 def _validate_image(path: Path, shot: dict[str, Any]) -> list[str]:
@@ -577,8 +586,8 @@ def capture(
         if seed_demo_data:
             _seed(data_dir, scenario)
         with ExitStack() as stack:
-            proc = _launch_app(port, data_dir, stack)
-            _wait_ping(port, proc, timeout)
+            proc, launcher_secret = _launch_app(port, data_dir, stack)
+            _wait_ping(port, proc, timeout, launcher_secret=launcher_secret)
             try:
                 from playwright.sync_api import sync_playwright
             except Exception as exc:

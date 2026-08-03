@@ -25,6 +25,31 @@ OWNED_FILES = (
     "sitemap.xml",
 )
 OBSOLETE_FILES = ("docs.html", "search.html")
+HAND_CURATED_MARKETING_FILES = (
+    "404.html",
+    "architecture.html",
+    "contact.html",
+    "features.html",
+    "index.html",
+    "site.css",
+    "site.js",
+    "favicon.ico",
+    "row_bot_glyph.png",
+    "row_bot_glyph_256.png",
+    "row_bot_hero.webp",
+    "row_bot_preview.png",
+    "row_bot_workspace_4_4_v2.png",
+    "Context_Arch.png",
+    "Core_Agent_Arch.png",
+    "Designer_Studio_Arch.png",
+    "Developer_Studio_Arch.png",
+    "Knowledge_Graph_Arch.png",
+    "Multi_Channel_Arch.png",
+    "Safety_Privacy_Arch.png",
+    "Self_Evolution_Arch.png",
+    "Skills_System_Arch.png",
+    "Workflows_Arch.png",
+)
 
 
 def _direct_child(root: Path, name: str) -> Path:
@@ -102,6 +127,9 @@ def _check_pagefind(build_dir: Path, publish_dir: Path) -> list[str]:
 
 def validate_sources(build_dir: Path) -> list[str]:
     errors: list[str] = []
+    collisions = sorted(set(OWNED_FILES) & set(HAND_CURATED_MARKETING_FILES))
+    if collisions:
+        errors.append(f"Documentation ownership overlaps marketing files: {collisions}")
     for name in OWNED_DIRECTORIES:
         if not (build_dir / name).is_dir():
             errors.append(f"Missing build directory: {build_dir / name}")

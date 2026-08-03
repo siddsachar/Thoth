@@ -51,7 +51,7 @@ def test_wiki_vault_filename_frontmatter_and_markdown_rendering(wiki_stack: dict
     frontmatter = wiki_vault._render_frontmatter(entity)
     assert frontmatter.startswith("---")
     assert frontmatter.endswith("---")
-    assert "id: entity-1" in frontmatter
+    assert 'id: "entity-1"' in frontmatter
     assert 'type: person' in frontmatter
     assert 'subject: "Bob"' in frontmatter
     assert "Bobby" in frontmatter
@@ -63,6 +63,24 @@ def test_wiki_vault_filename_frontmatter_and_markdown_rendering(wiki_stack: dict
     assert "sync back" in markdown
     assert "# Bob" in markdown
     assert "Bob has enough deterministic content" in markdown
+
+
+def test_wiki_vault_frontmatter_preserves_json_like_ids(wiki_stack: dict[str, Any]) -> None:
+    wiki_vault = wiki_stack["wiki_vault"]
+    wiki_vault.set_enabled(True)
+
+    for entity_id in ("25e872019289", "123456789012"):
+        entity = _entity(id=entity_id, subject=f"Entity {entity_id}")
+        md_path = wiki_vault.export_entity(entity)
+        assert md_path is not None
+
+        exported = md_path.read_text(encoding="utf-8")
+        assert f'id: "{entity_id}"' in exported
+        assert wiki_vault.parse_entity_md(md_path)["id"] == entity_id
+
+        legacy_unquoted = exported.replace(f'id: "{entity_id}"', f"id: {entity_id}")
+        md_path.write_text(legacy_unquoted, encoding="utf-8")
+        assert wiki_vault.parse_entity_md(md_path)["id"] == entity_id
 
 
 def test_wiki_vault_config_export_search_read_delete_and_stats(wiki_stack: dict[str, Any]) -> None:

@@ -196,3 +196,71 @@ def test_voice_diagnostics_include_turn_latency_summary():
 
     assert "realtime_latency_summary_ms" in voice_src
     assert "Turn timing:" in voice_src
+
+
+def test_document_ingestion_ui_exposes_only_agreed_controls_and_milestones():
+    settings_src = SETTINGS.read_text(encoding="utf-8")
+    documents_src = _function_source("_build_documents_tab")
+    upload_src = _function_source("_handle_doc_upload_batch")
+    status_src = Path("src/row_bot/ui/status_bar.py").read_text(encoding="utf-8")
+
+    for label in (
+        "Queued",
+        "Indexing",
+        "Searchable",
+        "Extracting",
+        "Complete",
+        "Failed",
+        "Cancelled",
+        "Duplicate skipped",
+    ):
+        assert f'"{label}"' in settings_src
+    for control in (
+        '"Pause"',
+        '"Resume"',
+        '"Cancel remaining"',
+        '"Clear finished"',
+        '"Retry {job.original_name}"',
+        '"Cancel {job.original_name}"',
+    ):
+        assert control in documents_src
+    for forbidden in (
+        '"Batch size"',
+        '"Shard size"',
+        '"Lease duration"',
+        '"Disk reserve"',
+        '"Parser settings"',
+    ):
+        assert forbidden not in documents_src
+
+    assert "stage_upload(" in upload_src
+    assert "upload.size()" in upload_src
+    assert ".read()" not in upload_src
+    assert "document_job_service.finish_batch_staging" in upload_src
+    assert "Accepted {accepted} document" in upload_src
+    assert "was not accepted" in upload_src
+    assert "document_job_service.pause_batch" in documents_src
+    assert "document_job_service.cancel_job" in documents_src
+    assert "document_job_service.cancel_batch" in documents_src
+    assert "document_job_service.retry_failed" in documents_src
+    assert "document_job_service.clear_finished" in documents_src
+    assert "UPDATE document_jobs" not in documents_src
+    assert "Supported files: PDF, DOC, DOCX, TXT, MD, HTML, HTM, and EPUB." in documents_src
+    assert "text-overflow:ellipsis" in documents_src
+    assert "flex-shrink:0" in documents_src
+
+    assert "DocumentJobService().active_summary()" in status_src
+    assert "Cancel active document" in status_src
+    assert "service.cancel_job" in status_src
+    assert "Cancel remaining" not in status_src
+
+
+def test_document_embedding_status_panel_keeps_dark_mode_contrast():
+    documents_src = _function_source("_build_documents_tab")
+    status_panel_src = documents_src.split("local_status_panel =", 1)[1].split(
+        "def _sync_embedding_controls", 1
+    )[0]
+
+    assert "bg-grey-2" not in status_panel_src
+    assert "background: rgba(148, 163, 184, 0.08);" in status_panel_src
+    assert "border: 1px solid rgba(148, 163, 184, 0.24);" in status_panel_src

@@ -1,13 +1,13 @@
 ---
 title: "Android And Native Desktop"
-description: "Pair an Android companion, use mobile Chat and Activity, and understand native-only desktop behaviour."
+description: "Use the full Row-Bot owner product from Android in a compact layout and understand native-only desktop behaviour."
 ---
 
 import Screenshot from '@site/src/components/Screenshot';
 
 # Android And Native Desktop
 
-Row-Bot's mobile companion gives a paired Android device a compact view of the local app. The native desktop build adds operating-system integration such as window, tray, microphone, file-picker, and updater behaviour. Neither surface changes the approval rules of the underlying task.
+Row-Bot's mobile layout gives an authenticated Android browser the full owner product in a compact presentation. Chat, Activity, workflows, Knowledge, and complete phone-safe Settings remain available. The native desktop build adds operating-system integration such as window, tray, microphone, file-picker, and updater behaviour. Layout never changes Row-Bot authority or the approval rules of the underlying task.
 
 <Screenshot id="mobile-chat-list" alt="Android-sized Row-Bot chat list with fictional conversations." caption="Chat starts with recent local threads and a New thread action." />
 
@@ -15,14 +15,19 @@ Row-Bot's mobile companion gives a paired Android device a compact view of the l
 
 ## Pair An Android Device
 
-1. On desktop, open **Settings -> System** and find Mobile Access.
-2. Read the network disclosure and choose the narrowest access mode that fits your network.
-3. Create a pairing invitation from the desktop app.
-4. Open the shown address or QR code on the Android device while both devices can reach the same Row-Bot host.
-5. Confirm the device name and access request on desktop.
-6. Revoke the device from desktop settings when it is lost, replaced, or no longer trusted.
+1. On an authorized owner device, open **Settings → System → Remote Access**.
+2. Check Tailscale or explicitly enable the narrowest connection route that fits your network.
+3. Select **Invite a device**, then choose **Phone or tablet — Compact layout**.
+4. Choose a trusted 30-day or temporary 12-hour session and a currently reachable connection route.
+5. Create the invitation and open the shown link or QR code on Android.
+6. Review the connection page on Android and press **Connect** before the invitation expires.
+7. Revoke the device or an individual session from Remote Access settings when it is lost, replaced, or no longer trusted.
 
-Pairing credentials grant access to your local Row-Bot instance. Do not share a pairing invitation, expose the local server broadly, or use an untrusted network without understanding the tunnel or proxy in front of it.
+<Screenshot id="remote-access-invitation" alt="Remote Access invitation configured for a phone or tablet." caption="Phone and computer choices select presentation only. Every connected browser receives full owner access." />
+
+The invitation expires after 10 minutes and works once. Opening it does not consume it until the recipient presses **Connect**. The resulting owner session is a separate HttpOnly browser credential and never appears in the URL.
+
+Pairing grants access to your local Row-Bot instance. Do not share an invitation, expose the local server broadly, or use remote LAN HTTP on an untrusted network. Tailscale or an operator-managed HTTPS origin is preferred and is required for browser microphone capture away from localhost. See [Remote Access And Server Mode](/docs/operations/remote-access) for the complete connection and recovery model.
 
 <Screenshot id="mobile-activity" alt="Android-sized Row-Bot Activity view." caption="Activity keeps goals, delegated agents, approvals, and attention states available away from the desktop layout." />
 
@@ -32,6 +37,8 @@ Pairing credentials grant access to your local Row-Bot instance. Do not share a 
 
 <Screenshot id="mobile-settings" alt="Android-sized Row-Bot Providers settings." caption="Mobile settings use the same provider categories and credential boundaries as desktop." />
 
+Mobile Settings includes Providers, Models, Knowledge, Buddy, Voice, System and Remote Access, Tracker, Documents, Search, Skills, Accounts, Channels, Utilities, MCP, Plugins, and Preferences. Rich Developer Studio and Designer Studio editors remain desktop-layout-oriented and show an explanatory notice in compact presentation.
+
 ## Native-Only Checks
 
 Some states cannot be reproduced faithfully in browser automation: OS microphone prompts, native file pickers, tray menus, updater/restart dialogs, Computer Use takeover, and physical-device network permission. The public guide documents their intent; release review must test them on the target operating system and a physical Android device.
@@ -39,6 +46,7 @@ Some states cannot be reproduced faithfully in browser automation: OS microphone
 ## Troubleshooting
 
 - If the phone cannot connect, confirm the host, port, access mode, firewall, and network reachability shown on desktop.
-- If a token expires, pair again rather than copying cookies or local credential files.
+- If an invitation expires or was already consumed, create a new one rather than copying cookies or local credential files.
+- If the connection page opens but the app remains unavailable, confirm the recipient pressed **Connect** and that the device or session was not revoked.
 - If an approval is missing, open Activity and confirm the relevant thread is still active.
-- If the mobile layout opens on desktop, remove the mobile query parameter or reopen the normal local address.
+- If the mobile layout opens on desktop, use `?mobile=0` or reopen the normal local address. Switching layout does not require a new session.

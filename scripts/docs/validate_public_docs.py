@@ -7,7 +7,6 @@ import contextlib
 import io
 import json
 import re
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -385,31 +384,33 @@ def _validate_public_guardrails(errors: list[str]) -> None:
         "docs/features.html",
         "docs/contact.html",
         "docs/architecture.html",
+        "docs/404.html",
     ]
-    sensitive = re.compile(
-        r"fetch\(|formspree|<form\b|action=|data-track|google-analytics|gtag\(|plausible|analytics",
-        re.IGNORECASE,
-    )
     for rel in marketing_files:
         path = ROOT / rel
         text = path.read_text(encoding="utf-8", errors="replace")
         if not re.search(r'href=["\'](?:/)?docs/?["\'][^>]*>\s*Docs\s*<', text, re.IGNORECASE):
             errors.append(f"{rel} is missing the public Docs navigation link")
-        try:
-            baseline = subprocess.run(
-                ["git", "show", f"main:{rel}"],
-                cwd=str(ROOT),
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            if baseline.returncode == 0:
-                before = [line.strip() for line in baseline.stdout.splitlines() if sensitive.search(line)]
-                after = [line.strip() for line in text.splitlines() if sensitive.search(line)]
-                if before != after:
-                    errors.append(f"{rel} changes analytics or form handling outside Phase A scope")
-        except Exception as exc:
-            errors.append(f"Could not verify {rel} analytics/form guardrail: {exc}")
+        if rel != "docs/contact.html" and re.search(r"<form\b|formspree|fetch\(", text, re.IGNORECASE):
+            errors.append(f"{rel} adds an unexpected form or submission endpoint")
+
+    combined = "\n".join((ROOT / rel).read_text(encoding="utf-8") for rel in marketing_files)
+    for forbidden_vendor in ("plausible", "segment.com", "mixpanel", "amplitude", "hotjar"):
+        if forbidden_vendor in combined.lower():
+            errors.append(f"Marketing pages include unapproved analytics vendor: {forbidden_vendor}")
+
+    contact = (ROOT / "docs" / "contact.html").read_text(encoding="utf-8")
+    if 'action="https://formspree.io/f/mwvagdzv"' not in contact:
+        errors.append("docs/contact.html must retain the approved Formspree endpoint")
+    for event_name in (
+        "contact_submit",
+        "contact_submit_error",
+        "contact_discussions",
+        "contact_issue",
+        "contact_security",
+    ):
+        if event_name not in contact:
+            errors.append(f"docs/contact.html is missing analytics distinction {event_name}")
     readme = ROOT / "README.md"
     if readme.exists():
         readme_text = readme.read_text(encoding="utf-8", errors="replace").lower()

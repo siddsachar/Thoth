@@ -21,6 +21,76 @@ def test_get_app_port_defaults_and_validates_env():
     assert app_port.get_app_port(environ={_LEGACY_PORT_ENV: "8123"}) == 8080
 
 
+def test_get_app_host_defaults_and_preserves_explicit_values():
+    assert app_port.DEFAULT_APP_HOST == "127.0.0.1"
+    assert app_port.parse_app_host(None) == "127.0.0.1"
+    assert app_port.parse_app_host("") == "127.0.0.1"
+    assert app_port.parse_app_host("   ") == "127.0.0.1"
+    assert app_port.parse_app_host(" 127.0.0.1 ") == "127.0.0.1"
+    assert app_port.parse_app_host("0.0.0.0") == "0.0.0.0"
+    assert app_port.parse_app_host("::") == "::"
+    assert app_port.parse_app_host("192.168.1.20") == "192.168.1.20"
+    assert app_port.parse_app_host("row-bot.local") == "row-bot.local"
+
+
+def test_get_app_host_uses_only_current_environment_name():
+    assert app_port.get_app_host(environ={}) == "127.0.0.1"
+    assert app_port.get_app_host(environ={app_port.ROW_BOT_HOST_ENV: " 0.0.0.0 "}) == "0.0.0.0"
+    assert app_port.get_app_host(environ={_LEGACY_HOST_ENV: "0.0.0.0"}) == "127.0.0.1"
+
+
+def test_app_always_passes_shared_effective_host_to_nicegui():
+    source = Path("src/row_bot/app.py").read_text(encoding="utf-8")
+
+    assert "_APP_HOST = get_app_host()" in source
+    assert '"host": _APP_HOST' in source
+    assert 'if _APP_HOST:' not in source
+    assert '_app_boot_event("startup_shell_ready", host=_APP_HOST, port=_APP_PORT)' in source
+
+
+def test_launcher_host_precedence_is_cli_then_environment_then_loopback(monkeypatch):
+    monkeypatch.delenv(app_port.ROW_BOT_HOST_ENV, raising=False)
+    assert launcher._resolve_launch_host(None) == "127.0.0.1"
+
+    monkeypatch.setenv(app_port.ROW_BOT_HOST_ENV, "0.0.0.0")
+    assert launcher._resolve_launch_host(None) == "0.0.0.0"
+    assert launcher._resolve_launch_host(" 192.168.1.20 ") == "192.168.1.20"
+
+
+def test_launcher_local_url_and_browser_helper_use_explicit_loopback(monkeypatch):
+    opened = []
+    monkeypatch.setattr(launcher.webbrowser, "open", opened.append)
+
+    assert launcher._url_for_port(8123) == "http://127.0.0.1:8123"
+    launcher._open_in_browser(8123)
+
+    assert opened == ["http://127.0.0.1:8123"]
+
+
+def test_launcher_native_window_helper_uses_explicit_loopback(monkeypatch):
+    captured = {}
+
+    class _FakePopen:
+        pid = 4242
+
+        def poll(self):
+            return None
+
+    def _fake_popen(args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        return _FakePopen()
+
+    monkeypatch.setattr(launcher, "_has_display_server", lambda: True)
+    monkeypatch.setattr(launcher.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(launcher.time, "sleep", lambda _seconds: None)
+
+    process = launcher._open_window(8124)
+
+    assert process is not None
+    assert "http://127.0.0.1:8124" in captured["args"]
+
+
 def test_launcher_selects_default_port_when_free(monkeypatch):
     checked_ports = []
 
@@ -191,6 +261,56 @@ def test_row_bot_process_passes_selected_port_to_app(monkeypatch, tmp_path):
     assert captured["env"]["ROW_BOT_NATIVE"] == "1"
     assert _LEGACY_NATIVE_ENV not in captured["env"]
     assert captured["cmd"][-1].endswith("app.py")
+
+
+def test_row_bot_process_passes_default_host_to_child(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakePopen:
+        pid = 4242
+
+        def poll(self):
+            return None
+
+    def _fake_popen(_cmd, **kwargs):
+        captured.update(kwargs)
+        return _FakePopen()
+
+    monkeypatch.delenv(app_port.ROW_BOT_HOST_ENV, raising=False)
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(launcher.subprocess, "Popen", _fake_popen)
+
+    process = launcher._RowBotProcess(port=8125)
+    process.start()
+    process._close_log_handle()
+
+    assert process.host == "127.0.0.1"
+    assert captured["env"][app_port.ROW_BOT_HOST_ENV] == "127.0.0.1"
+
+
+def test_row_bot_process_preserves_environment_remote_host(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakePopen:
+        pid = 4242
+
+        def poll(self):
+            return None
+
+    def _fake_popen(_cmd, **kwargs):
+        captured.update(kwargs)
+        return _FakePopen()
+
+    monkeypatch.setenv(app_port.ROW_BOT_HOST_ENV, "0.0.0.0")
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(launcher.subprocess, "Popen", _fake_popen)
+
+    process = launcher._RowBotProcess(port=8125)
+    process.start()
+    process._close_log_handle()
+
+    assert process.host == "0.0.0.0"
+    assert captured["env"][app_port.ROW_BOT_HOST_ENV] == "0.0.0.0"
 
 
 def test_row_bot_process_stop_closes_parent_log_handle(monkeypatch, tmp_path):

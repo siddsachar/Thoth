@@ -1,6 +1,16 @@
 # Row-Bot Docs Site
 
-This Docusaurus site is a review-only public documentation build. It is not wired into the current public website and is not published by CI.
+This Docusaurus project is the source for Row-Bot's public documentation. Its
+build is synchronized into the generated documentation-owned paths under
+`docs/`, which GitHub Pages publishes alongside the hand-curated marketing
+pages at the site root.
+
+Do not edit generated files under `docs/docs`, `docs/assets`, `docs/img`,
+`docs/pagefind`, or `docs/search` by hand. Change this source and use the
+documented build/synchronization workflow. The root marketing files
+(`index.html`, `features.html`, `architecture.html`, `contact.html`,
+`404.html`, `site.css`, `site.js`, and their media) are deliberately outside
+the synchronization script's ownership.
 
 ## Local Preview
 

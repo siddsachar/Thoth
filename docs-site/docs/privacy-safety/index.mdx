@@ -21,6 +21,18 @@ Computer Use is a distinct opt-in boundary. Row-Bot downloads the pinned Cua Dri
 
 Enter credentials only in the relevant Settings tab or provider sign-in flow. Row-Bot stores secrets in the operating system key store when available and keeps local metadata for status and diagnostics.
 
+## Remote Access
+
+Remote Access is single-owner and multi-device. A Tailscale, LAN, SSH, Docker, or reverse-proxy route provides reachability only; each non-local browser still needs a one-time invitation and a revocable Row-Bot session.
+
+Every authenticated interactive browser has full owner authority. Phone/tablet and computer choices select compact or desktop presentation only; device metadata and screen size are not permission boundaries. Row-Bot does not provide guest or multi-user sharing.
+
+Invitation links expire after 10 minutes and work once, but should still be treated like passwords until they expire. Row-Bot stores only hashed invitation and session secrets. Session credentials use HttpOnly cookies and are not placed in URLs.
+
+Prefer Tailscale or HTTPS for remote access. Plain LAN HTTP is unencrypted and does not support a remote browser microphone. For an operator-managed proxy, allow only the canonical browser-facing origin and trust only the exact address that connects from the proxy to Row-Bot. Never resolve a forwarding-header error by trusting every private address or a whole container network.
+
+See [Remote Access And Server Mode](/docs/operations/remote-access) for layouts, lifetimes, revocation, Tailscale ownership, server mode, Docker, and recovery.
+
 ## Approvals
 
 Use approvals to review file writes, command execution, browser actions, account actions, channel sends, MCP calls, plugin tools, Developer changes, and other sensitive actions. Reject anything that does not match your request.
@@ -36,6 +48,7 @@ Before sharing logs, screenshots, documents, thread exports, or review packages,
 - Start with local models when privacy matters most.
 - Keep channels, MCP, and plugins disabled until needed.
 - Keep Computer Use disabled until a local interactive task needs native application control.
+- Keep Remote Access off until another trusted device needs it; use the narrowest route and the appropriate layout.
 - Use narrow workspaces for file tools.
 - Review approvals before external or destructive actions.
 - Keep a final human review step before publishing screenshots or docs built from a personal app state.

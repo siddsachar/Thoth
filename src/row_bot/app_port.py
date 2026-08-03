@@ -7,9 +7,42 @@ from collections.abc import Mapping
 
 from row_bot.brand import APP_HOST_ENV, APP_PORT_ENV
 
+DEFAULT_APP_HOST = "127.0.0.1"
 DEFAULT_APP_PORT = 8080
 ROW_BOT_PORT_ENV = APP_PORT_ENV
 ROW_BOT_HOST_ENV = APP_HOST_ENV
+
+
+def parse_app_host(value: object, default: str = DEFAULT_APP_HOST) -> str:
+    """Return a stripped explicit bind host, or the loopback-safe *default*."""
+    host = "" if value is None else str(value).strip()
+    if host:
+        return host
+    fallback = str(default or DEFAULT_APP_HOST).strip()
+    return fallback or DEFAULT_APP_HOST
+
+
+def get_app_host(
+    default: str = DEFAULT_APP_HOST,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Return environment host, then durable listen choice, then loopback."""
+    env = os.environ if environ is None else environ
+    explicit = str(env.get(ROW_BOT_HOST_ENV) or "").strip()
+    if explicit:
+        return parse_app_host(explicit, default=default)
+    try:
+        from row_bot.access.access_routes import (
+            AccessRouteConfigStore,
+            resolve_listen_host,
+        )
+
+        return resolve_listen_host(
+            environ=env,
+            config=AccessRouteConfigStore().load_or_default(),
+        ).host
+    except Exception:
+        return parse_app_host(None, default=default)
 
 
 def parse_app_port(value: object, default: int = DEFAULT_APP_PORT) -> int:
@@ -32,7 +65,7 @@ def get_app_port(
     return parse_app_port(env.get(ROW_BOT_PORT_ENV), default=default)
 
 
-def app_base_url(host: str = "127.0.0.1", *, port: int | None = None) -> str:
+def app_base_url(host: str = DEFAULT_APP_HOST, *, port: int | None = None) -> str:
     """Return the local base URL for the active app port."""
     resolved_port = get_app_port() if port is None else parse_app_port(port)
     return f"http://{host}:{resolved_port}"

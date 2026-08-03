@@ -567,6 +567,46 @@ class McpClientFoundationTests(unittest.TestCase):
         self.assertTrue(browser_result.ok)
         browser_installer.assert_called_once()
 
+    def test_playwright_browser_accepts_image_bundled_environment(self) -> None:
+        self._reload_config()
+        import row_bot.mcp_client.requirements as requirements
+        requirements = importlib.reload(requirements)
+
+        browsers_dir = Path(self._tmp.name, "image-browsers")
+        system = requirements.platform.system().lower()
+        if system == "windows":
+            browser_exe = browsers_dir / "chromium-1234" / "chrome-win" / "chrome.exe"
+        elif system == "darwin":
+            browser_exe = browsers_dir / "chromium-1234" / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
+        else:
+            browser_exe = browsers_dir / "chromium-1234" / "chrome-linux" / "chrome"
+        browser_exe.parent.mkdir(parents=True)
+        browser_exe.write_text("ok", encoding="utf-8")
+        env = {
+            "PATH": "",
+            "PLAYWRIGHT_BROWSERS_PATH": str(browsers_dir),
+        }
+
+        requirement = requirements.requirements_for_server(
+            {
+                "transport": "stdio",
+                "command": "npx",
+                "args": ["-y", "@playwright/mcp"],
+            }
+        )[-1]
+        check = requirements.check_requirement(requirement, env)
+
+        self.assertTrue(check.available)
+        self.assertEqual(check.source, "environment")
+        self.assertEqual(
+            check.paths["PLAYWRIGHT_MCP_EXECUTABLE_PATH"],
+            str(browser_exe),
+        )
+        self.assertEqual(
+            requirements.playwright_browser_executable_path(env),
+            str(browser_exe),
+        )
+
     def test_playwright_chrome_install_handles_empty_process_output(self) -> None:
         self._reload_config()
         import row_bot.mcp_client.requirements as requirements

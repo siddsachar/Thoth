@@ -1,171 +1,168 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from row_bot.mobile.auth import create_pairing_ticket
+from row_bot.access.config import AccessConfig
+from row_bot.access.middleware import AccessMiddleware
+from row_bot.access.routes import register_access_routes
+from row_bot.access.service import AccessService
 from row_bot.mobile.routes import register_mobile_routes
 from row_bot.mobile.store import MobileAuthStore
 
+ORIGIN = "http://localhost:8080"
 
-def _app(tmp_path) -> FastAPI:
+
+def _app(tmp_path):
     app = FastAPI()
-    register_mobile_routes(app, store=MobileAuthStore(tmp_path / "mobile.db"))
-    return app
-
-
-def test_pairing_routes_create_session_cookie_without_exposing_token_in_body(tmp_path) -> None:
-    app = _app(tmp_path)
-    desktop = TestClient(app, client=("127.0.0.1", 50000))
-
-    start = desktop.post(
-        "/api/mobile/pair/start",
-        json={"intended_origin": "http://phone.test", "access_mode": "lan"},
+    store = MobileAuthStore(tmp_path / "mobile.db")
+    service = AccessService(store.access_store)
+    config = AccessConfig.build(
+        deployment_mode="desktop",
+        allowed_hosts=("localhost",),
     )
-    assert start.status_code == 200
-    code = start.json()["pairing"]["code"]
-    assert start.json()["pairing"]["pairing_url"] == f"http://phone.test/mobile/pair?code={code}"
-
-    phone = TestClient(app, base_url="http://phone.test", client=("192.168.1.25", 50000))
-    confirm = phone.post(
-        "/api/mobile/pair/confirm",
-        json={"code": code, "display_name": "Android Chrome"},
-        headers={"user-agent": "pytest-mobile"},
+    registration = register_access_routes(app, service=service, config=config)
+    register_mobile_routes(app, store=store)
+    app.add_middleware(
+        AccessMiddleware,
+        config=config,
+        session_authenticator=registration.authenticator,
     )
-
-    assert confirm.status_code == 200
-    body = confirm.json()
-    assert body["authenticated"] is True
-    assert body["device"]["display_name"] == "Android Chrome"
-    assert "token" not in body
-    assert "set-cookie" in confirm.headers
-    assert "row_bot_mobile_lan=" in confirm.headers["set-cookie"]
-    cookie_value = confirm.cookies.get("row_bot_mobile_lan")
-    assert cookie_value
-    assert cookie_value not in confirm.text
-
-    session = phone.get("/api/mobile/session", cookies={"row_bot_mobile_lan": cookie_value})
-    assert session.status_code == 200
-    assert session.json()["authenticated"] is True
+    return app, service, registration
 
 
-def test_pairing_form_redirects_to_mobile_shell_with_cookie(tmp_path) -> None:
-    app = _app(tmp_path)
-    desktop = TestClient(app, client=("127.0.0.1", 50000))
-    code = desktop.post(
-        "/api/mobile/pair/start",
-        json={"intended_origin": "http://phone.test", "access_mode": "lan"},
-    ).json()["pairing"]["code"]
-
-    phone = TestClient(app, base_url="http://phone.test", client=("192.168.1.25", 50000))
-    confirm = phone.post(
-        "/api/mobile/pair/confirm",
-        data={"code": code, "display_name": "iPhone Safari"},
+def _client(app, address: str = "127.0.0.1") -> TestClient:
+    return TestClient(
+        app,
+        base_url=ORIGIN,
+        client=(address, 50000),
         follow_redirects=False,
     )
 
-    assert confirm.status_code == 303
-    assert confirm.headers["location"] == "/?mobile=1"
-    assert "row_bot_mobile_lan=" in confirm.headers["set-cookie"]
 
-
-def test_pairing_page_is_not_cached(tmp_path) -> None:
-    app = _app(tmp_path)
-    phone = TestClient(app, base_url="http://phone.test", client=("192.168.1.25", 50000))
-
-    response = phone.get("/mobile/pair?code=rbp_fake.fake")
-
+def _start_invitation(client: TestClient) -> tuple[str, dict]:
+    response = client.post(
+        "/api/mobile/pair/start",
+        json={"intended_origin": ORIGIN, "access_mode": "lan"},
+        headers={"origin": ORIGIN},
+    )
     assert response.status_code == 200
+    pairing = response.json()["pairing"]
+    token = parse_qs(urlsplit(pairing["pairing_url"]).query)["invitation"][0]
+    return token, pairing
+
+
+def test_pair_start_creates_compact_owner_invitation_without_duplicate_secret(
+    tmp_path,
+) -> None:
+    app, service, _registration = _app(tmp_path)
+    desktop = _client(app)
+
+    token, pairing = _start_invitation(desktop)
+
+    assert token.startswith("rbi_")
+    pairing_query = parse_qs(urlsplit(pairing["pairing_url"]).query)
+    assert pairing_query["next"] == ["/?mobile=1"]
+    assert "code" not in pairing
+    assert pairing["access_mode"] == "lan"
+    assert "profile" not in service.inspect_invitation(token).invitation.to_public_dict()
+
+
+def test_legacy_pairing_page_redirects_to_neutral_connect_flow(tmp_path) -> None:
+    app, _service, _registration = _app(tmp_path)
+    phone = _client(app, "192.168.1.25")
+
+    response = phone.get("/mobile/pair")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/connect"
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["pragma"] == "no-cache"
-    assert "Pairing links are single-use and expire after 10 minutes." in response.text
+    assert response.headers["x-robots-tag"] == "noindex"
 
 
-def test_pairing_form_failure_renders_pairing_page(tmp_path) -> None:
-    app = _app(tmp_path)
-    phone = TestClient(app, base_url="http://phone.test", client=("192.168.1.25", 50000))
+def test_legacy_rbp_link_is_converted_without_claiming(tmp_path) -> None:
+    app, _service, _registration = _app(tmp_path)
+    phone = _client(app, "192.168.1.25")
+
+    response = phone.get(
+        "/mobile/pair",
+        params={"code": "rbp_ticket.secret", "next": "/chat?thread=one"},
+    )
+
+    assert response.status_code == 303
+    location = response.headers["location"]
+    query = parse_qs(urlsplit(location).query)
+    assert urlsplit(location).path == "/connect"
+    assert query["invitation"] == ["rbi_ticket.secret"]
+    assert query["next"] == ["/chat?thread=one"]
+
+
+def test_legacy_json_confirm_never_claims_or_sets_a_cookie(tmp_path) -> None:
+    app, service, registration = _app(tmp_path)
+    desktop = _client(app)
+    phone = _client(app, "192.168.1.25")
+    token, _pairing = _start_invitation(desktop)
 
     response = phone.post(
         "/api/mobile/pair/confirm",
-        data={"code": "not-a-real-code", "display_name": "Phone"},
+        json={"code": token, "display_name": "Phone"},
+        headers={"origin": ORIGIN},
     )
 
-    assert response.status_code == 400
-    assert "This pairing link is invalid or incomplete." in response.text
-    assert "Pair Row-Bot" in response.text
+    assert response.status_code == 409
+    assert response.json()["error"] == "connect_flow_required"
+    assert response.json()["connect_url"].startswith("/connect?invitation=")
+    assert response.cookies.get(registration.cookies.names.http) is None
+    assert service.inspect_invitation(token).status == "available"
 
 
-def test_pairing_form_failure_explains_expired_code(tmp_path) -> None:
-    store = MobileAuthStore(tmp_path / "mobile.db")
-    app = FastAPI()
-    register_mobile_routes(app, store=store)
-    ticket = create_pairing_ticket(store, ttl=timedelta(seconds=-1))
-    phone = TestClient(app, base_url="http://phone.test", client=("192.168.1.25", 50000))
+def test_legacy_form_confirm_redirects_without_claiming(tmp_path) -> None:
+    app, service, registration = _app(tmp_path)
+    desktop = _client(app)
+    phone = _client(app, "192.168.1.25")
+    token, _pairing = _start_invitation(desktop)
 
     response = phone.post(
         "/api/mobile/pair/confirm",
-        data={"code": ticket.code, "display_name": "Phone"},
+        data={"code": token, "display_name": "Phone"},
+        headers={"origin": ORIGIN},
     )
 
-    assert response.status_code == 400
-    assert "This pairing code has expired." in response.text
-    assert response.headers["cache-control"] == "no-store"
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/connect?invitation=")
+    assert response.cookies.get(registration.cookies.names.http) is None
+    assert service.inspect_invitation(token).status == "available"
 
 
 def test_pair_start_rejects_forwarded_localhost_bypass(tmp_path) -> None:
-    app = _app(tmp_path)
-    client = TestClient(app, client=("127.0.0.1", 50000))
+    app, _service, _registration = _app(tmp_path)
+    client = _client(app)
 
     response = client.post(
         "/api/mobile/pair/start",
         json={"intended_origin": "https://evil.example"},
-        headers={"x-forwarded-for": "203.0.113.4"},
+        headers={
+            "origin": ORIGIN,
+            "x-forwarded-for": "203.0.113.4",
+        },
     )
 
-    assert response.status_code == 403
-    assert response.json()["error"] == "local_required"
+    assert response.status_code == 400
+    assert response.json()["error"] == "untrusted_forwarding_headers"
 
 
-def test_pair_confirm_rejects_reused_code(tmp_path) -> None:
-    app = _app(tmp_path)
-    desktop = TestClient(app, client=("127.0.0.1", 50000))
-    code = desktop.post("/api/mobile/pair/start", json={}).json()["pairing"]["code"]
+def test_unauthenticated_mobile_session_is_neutral(tmp_path) -> None:
+    app, _service, _registration = _app(tmp_path)
+    remote = _client(app, "192.168.1.25")
 
-    phone = TestClient(app, client=("192.168.1.25", 50000))
-    first = phone.post("/api/mobile/pair/confirm", json={"code": code, "display_name": "Phone"})
-    second = phone.post("/api/mobile/pair/confirm", json={"code": code, "display_name": "Phone"})
+    response = remote.get("/api/mobile/session")
 
-    assert first.status_code == 200
-    assert second.status_code == 400
-    assert second.json()["error"] == "already_claimed"
-
-
-def test_revoke_device_blocks_next_session_validation(tmp_path) -> None:
-    app = _app(tmp_path)
-    desktop = TestClient(app, client=("127.0.0.1", 50000))
-    code = desktop.post("/api/mobile/pair/start", json={}).json()["pairing"]["code"]
-    phone = TestClient(app, client=("192.168.1.25", 50000))
-    confirm = phone.post("/api/mobile/pair/confirm", json={"code": code, "display_name": "Phone"})
-    cookie_value = confirm.cookies.get("row_bot_mobile_lan")
-    device_id = confirm.json()["device"]["id"]
-
-    revoke = desktop.post(f"/api/mobile/devices/{device_id}/revoke")
-    assert revoke.status_code == 200
-    assert revoke.json()["revoked"] is True
-
-    session = phone.get("/api/mobile/session", cookies={"row_bot_mobile_lan": cookie_value})
-    assert session.status_code == 200
-    assert session.json()["authenticated"] is False
-
-
-def test_device_and_event_management_requires_local_or_settings_session(tmp_path) -> None:
-    app = _app(tmp_path)
-    remote = TestClient(app, client=("192.168.1.25", 50000))
-
-    devices = remote.get("/api/mobile/devices")
-    events = remote.get("/api/mobile/access-events")
-
-    assert devices.status_code == 403
-    assert events.status_code == 403
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "authenticated": False,
+        "device": None,
+    }

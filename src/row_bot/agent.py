@@ -2058,6 +2058,9 @@ _current_runtime_reason_var: _contextvars.ContextVar[str] = _contextvars.Context
 _current_generation_id_var: _contextvars.ContextVar[str] = _contextvars.ContextVar(
     "current_generation_id", default=""
 )
+_current_root_objective_var: _contextvars.ContextVar[str] = _contextvars.ContextVar(
+    "current_root_objective", default=""
+)
 _developer_context_var: _contextvars.ContextVar[str] = _contextvars.ContextVar(
     "developer_context", default=""
 )
@@ -2098,6 +2101,7 @@ def get_active_runtime_context() -> dict:
         "approval_mode": get_approval_mode(),
         "runtime_reason": _current_runtime_reason_var.get(""),
         "generation_id": _current_generation_id_var.get(""),
+        "root_objective": _current_root_objective_var.get(""),
         "model_override": _model_override_var.get(""),
         "enabled_tool_names": tuple(_current_enabled_tool_names_var.get(()) or ()),
         "tool_allowlist": tuple(_current_tool_allowlist_var.get(()) or ()),
@@ -2118,6 +2122,7 @@ def _set_active_runtime_context(
     approval_mode: str = DEFAULT_APPROVAL_MODE,
     runtime_reason: str = "",
     generation_id: str = "",
+    root_objective: str = "",
     model_override: str = "",
     enabled_tool_names: list[str] | tuple[str, ...] | None = None,
     tool_allowlist: list[str] | tuple[str, ...] | None = None,
@@ -2133,6 +2138,7 @@ def _set_active_runtime_context(
     _approval_mode_var.set(normalize_approval_mode(approval_mode, DEFAULT_APPROVAL_MODE))
     _current_runtime_reason_var.set(runtime_reason or "")
     _current_generation_id_var.set(generation_id or "")
+    _current_root_objective_var.set(root_objective or "")
     _model_override_var.set(model_override or "")
     _current_enabled_tool_names_var.set(tuple(enabled_tool_names or ()))
     _current_tool_allowlist_var.set(tuple(tool_allowlist or ()))
@@ -3146,6 +3152,7 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         approval_mode=configurable.get("approval_mode", DEFAULT_APPROVAL_MODE),
         runtime_reason="forced_agent" if runtime_mode == "agent" else runtime_mode,
         generation_id=str(configurable.get("generation_id") or ""),
+        root_objective=str(configurable.get("root_objective") or user_input),
         model_override=_model_ov or "",
         enabled_tool_names=enabled_tool_names,
         tool_allowlist=_tool_allowlist,
@@ -3525,6 +3532,7 @@ def stream_chat_only(
         approval_mode=configurable.get("approval_mode", DEFAULT_APPROVAL_MODE),
         runtime_reason="chat_only",
         generation_id=str(configurable.get("generation_id") or ""),
+        root_objective=str(configurable.get("root_objective") or user_input),
         model_override=model_label,
         enabled_tool_names=(),
         agent_profile_id=str(configurable.get("agent_profile_id") or ""),
@@ -3771,6 +3779,7 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         approval_mode=configurable.get("approval_mode", DEFAULT_APPROVAL_MODE),
         runtime_reason="evaluating",
         generation_id=str(configurable.get("generation_id") or ""),
+        root_objective=str(configurable.get("root_objective") or user_input),
         model_override=_model_ov or "",
         enabled_tool_names=enabled_tool_names,
         tool_allowlist=_tool_allowlist,
@@ -3867,6 +3876,7 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         approval_mode=configurable.get("approval_mode", DEFAULT_APPROVAL_MODE),
         runtime_reason=_current_runtime_reason_var.get(""),
         generation_id=str(configurable.get("generation_id") or ""),
+        root_objective=str(configurable.get("root_objective") or user_input),
         model_override=_model_ov or "",
         enabled_tool_names=enabled_tool_names,
         tool_allowlist=_tool_allowlist,
@@ -3994,6 +4004,7 @@ def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: b
         approval_mode=configurable.get("approval_mode", DEFAULT_APPROVAL_MODE),
         runtime_reason="resume",
         generation_id=str(configurable.get("generation_id") or ""),
+        root_objective=str(configurable.get("root_objective") or ""),
         model_override=_model_ov or "",
         enabled_tool_names=enabled_tool_names,
         tool_allowlist=_tool_allowlist,
@@ -4056,6 +4067,7 @@ def resume_invoke_agent(enabled_tool_names: list[str], config: dict, approved: b
         approval_mode=configurable.get("approval_mode", DEFAULT_APPROVAL_MODE),
         runtime_reason="resume",
         generation_id=str(configurable.get("generation_id") or ""),
+        root_objective=str(configurable.get("root_objective") or ""),
         model_override=_model_ov or "",
         enabled_tool_names=enabled_tool_names,
         tool_allowlist=_tool_allowlist,

@@ -272,6 +272,9 @@ def test_agent_drawer_contract_and_surface_usage():
     assert "_render_parent_agent_strip" in chat
     assert "parent_agent_strip_container" in chat
     assert "refresh_parent_agent_strip" in chat
+    assert "if p.parent_agent_dialog_open:" in chat
+    assert "p.parent_agent_dialog_open = True" in drawer
+    assert '"hide"' in drawer
     assert "_refresh_parent_agent_strip()" in chat
     assert "build_parent_agent_drawer" in chat
     assert "build_parent_agent_drawer" in designer

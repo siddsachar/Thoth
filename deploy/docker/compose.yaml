@@ -1,0 +1,52 @@
+services:
+  row-bot:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: row-bot:remote-access-local
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    environment:
+      ROW_BOT_DATA_DIR: /data
+      ROW_BOT_DEPLOYMENT_MODE: server
+      ROW_BOT_HOST: 0.0.0.0
+      ROW_BOT_PORT: "8080"
+      ROW_BOT_BROWSER_HEADLESS: "1"
+      PLAYWRIGHT_BROWSERS_PATH: /opt/row-bot/playwright-browsers
+      XDG_CACHE_HOME: /data/cache
+      HF_HOME: /data/cache/huggingface
+      TORCH_HOME: /data/cache/torch
+      SENTENCE_TRANSFORMERS_HOME: /data/cache/sentence-transformers
+      UV_CACHE_DIR: /data/cache/uv
+      TMPDIR: /data/tmp
+      ROW_BOT_SECRETS_DIR: /run/secrets
+    ports:
+      - "${ROW_BOT_BIND_ADDRESS:-127.0.0.1}:${ROW_BOT_HOST_PORT:-8080}:8080"
+    volumes:
+      - row_bot_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+    shm_size: "256m"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 45s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8080/healthz',
+          timeout=2).read()
+      interval: 15s
+      timeout: 3s
+      start_period: 30s
+      retries: 5
+
+volumes:
+  row_bot_data:

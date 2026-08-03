@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import json
 import re
 import shutil
 import subprocess
 from typing import Any, Callable
+
+from row_bot.access.tailscale import (
+    CommandResult as AccessCommandResult,
+    TailscaleServeController,
+    TailscaleState as AccessTailscaleState,
+)
 
 
 @dataclass(frozen=True)
@@ -56,7 +62,9 @@ def _run(argv: list[str], *, timeout: float) -> CommandResult:
         timeout=timeout,
         check=False,
     )
-    return CommandResult(completed.returncode, completed.stdout or "", completed.stderr or "")
+    return CommandResult(
+        completed.returncode, completed.stdout or "", completed.stderr or ""
+    )
 
 
 def parse_tailscale_ips(output: str) -> tuple[str, ...]:
@@ -68,19 +76,35 @@ def parse_tailscale_ips(output: str) -> tuple[str, ...]:
     return tuple(ips)
 
 
-def parse_tailscale_status_json(payload: str | dict[str, Any], *, port: int | None = None) -> TailscaleState:
+def parse_tailscale_status_json(
+    payload: str | dict[str, Any], *, port: int | None = None
+) -> TailscaleState:
     try:
         data = json.loads(payload) if isinstance(payload, str) else dict(payload)
     except Exception as exc:
-        return TailscaleState(installed=True, error=f"Could not parse tailscale status: {exc}")
+        return TailscaleState(
+            installed=True, error=f"Could not parse tailscale status: {exc}"
+        )
 
     self_info = data.get("Self") if isinstance(data.get("Self"), dict) else {}
     backend_state = str(data.get("BackendState") or "")
-    logged_in = bool(self_info) and backend_state.lower() not in {"stopped", "needslogin", "no state"}
-    tailnet = data.get("CurrentTailnet") if isinstance(data.get("CurrentTailnet"), dict) else {}
+    logged_in = bool(self_info) and backend_state.lower() not in {
+        "stopped",
+        "needslogin",
+        "no state",
+    }
+    tailnet = (
+        data.get("CurrentTailnet")
+        if isinstance(data.get("CurrentTailnet"), dict)
+        else {}
+    )
     tailnet_name = str(tailnet.get("Name") or tailnet.get("MagicDNSSuffix") or "")
-    device_name = str(self_info.get("HostName") or self_info.get("DNSName") or "").strip(".")
-    ips = tuple(str(ip) for ip in self_info.get("TailscaleIPs") or [] if str(ip).strip())
+    device_name = str(
+        self_info.get("HostName") or self_info.get("DNSName") or ""
+    ).strip(".")
+    ips = tuple(
+        str(ip) for ip in self_info.get("TailscaleIPs") or [] if str(ip).strip()
+    )
     dns_name = str(self_info.get("DNSName") or "").strip(".")
     magicdns: list[str] = []
     if dns_name:
@@ -98,7 +122,9 @@ def parse_tailscale_status_json(payload: str | dict[str, Any], *, port: int | No
     )
 
 
-def parse_tailscale_serve_status(output: str | dict[str, Any]) -> tuple[bool, str, bool]:
+def parse_tailscale_serve_status(
+    output: str | dict[str, Any],
+) -> tuple[bool, str, bool]:
     text = json.dumps(output) if isinstance(output, dict) else str(output or "")
     urls = re.findall(r"https://[A-Za-z0-9_.-]+(?:/[^\s\"']*)?", text)
     funnel_enabled = "funnel" in text.lower()
@@ -112,47 +138,65 @@ def detect_tailscale(
     runner: Runner | None = None,
     which: Callable[[str], str | None] = shutil.which,
 ) -> TailscaleState:
-    """Detect Tailscale without making it a hard dependency."""
-    binary = which("tailscale")
-    if not binary:
-        return TailscaleState(installed=False, error="tailscale command not found")
-    run = runner or (lambda argv: _run(argv, timeout=timeout))
-    try:
-        status_result = run([binary, "status", "--json"])
-    except Exception as exc:
-        return TailscaleState(installed=True, error=str(exc))
-    if status_result.returncode != 0:
-        detail = (status_result.stderr or status_result.stdout or "tailscale status failed").strip()
-        return TailscaleState(installed=True, error=detail)
-    state = parse_tailscale_status_json(status_result.stdout, port=port)
+    """Compatibility view backed by the canonical access controller."""
+    legacy_runner = runner or (lambda argv: _run(argv, timeout=timeout))
 
-    ips = state.tailscale_ips
-    try:
-        ip_result = run([binary, "ip", "-4"])
-        if ip_result.returncode == 0:
-            ips = parse_tailscale_ips(ip_result.stdout) or ips
-    except Exception:
-        pass
+    def access_runner(argv, _timeout: float) -> AccessCommandResult:
+        result = legacy_runner(list(argv))
+        return AccessCommandResult(
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
 
-    serve_enabled = False
-    serve_url = ""
-    funnel_enabled = False
-    try:
-        serve_result = run([binary, "serve", "status", "--json"])
-        if serve_result.returncode == 0:
-            serve_enabled, serve_url, funnel_enabled = parse_tailscale_serve_status(serve_result.stdout)
-    except Exception:
-        pass
-
+    controller = TailscaleServeController(
+        runner=access_runner,
+        which=which,
+        timeout=timeout,
+    )
+    status = controller.detect(port=port or 8080)
+    installed = status.state is not AccessTailscaleState.CLI_NOT_FOUND
+    logged_in = status.state not in {
+        AccessTailscaleState.CLI_NOT_FOUND,
+        AccessTailscaleState.SIGNED_OUT,
+        AccessTailscaleState.DAEMON_UNAVAILABLE,
+    }
+    ips: tuple[str, ...] = ()
+    if installed and status.binary:
+        try:
+            ip_result = legacy_runner([status.binary, "ip", "-4"])
+            if ip_result.returncode == 0:
+                ips = parse_tailscale_ips(ip_result.stdout)
+        except Exception:
+            pass
+    dns_name = status.dns_name.strip(".")
+    tailnet_name = dns_name.split(".", 1)[1] if "." in dns_name else ""
+    active_states = {
+        AccessTailscaleState.ACTIVE_OWNED,
+        AccessTailscaleState.ACTIVE_UNOWNED,
+    }
     return TailscaleState(
-        installed=True,
-        logged_in=state.logged_in,
-        tailnet_name=state.tailnet_name,
-        device_name=state.device_name,
+        installed=installed,
+        logged_in=logged_in,
+        tailnet_name=tailnet_name,
+        device_name=dns_name.split(".", 1)[0] if dns_name else "",
         tailscale_ips=ips,
-        magicdns_url_candidates=state.magicdns_url_candidates,
-        serve_enabled=serve_enabled,
-        serve_url=serve_url,
-        funnel_enabled=funnel_enabled,
-        error=state.error,
+        magicdns_url_candidates=(
+            (f"http://{dns_name}:{port}",)
+            if dns_name and port
+            else (f"http://{dns_name}",)
+            if dns_name
+            else ()
+        ),
+        serve_enabled=status.state in active_states,
+        serve_url=status.serve_url,
+        funnel_enabled=status.state is AccessTailscaleState.FUNNEL_ACTIVE,
+        error=status.detail
+        if status.state
+        in {
+            AccessTailscaleState.DAEMON_UNAVAILABLE,
+            AccessTailscaleState.ERROR,
+            AccessTailscaleState.UNSUPPORTED_CLI,
+        }
+        else "",
     )

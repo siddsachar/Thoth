@@ -404,6 +404,8 @@ def build_chat(
     def _refresh_parent_agent_strip() -> None:
         if p.parent_agent_strip_container is None:
             return
+        if p.parent_agent_dialog_open:
+            return
         try:
             p.parent_agent_strip_container.clear()
             with p.parent_agent_strip_container:
@@ -1863,7 +1865,101 @@ def build_chat(
                 js_handler="(e) => emit(e.detail)",
             )
 
+            async def _on_browser_voice_transcript(e) -> None:
+                payload = e.args if isinstance(e.args, dict) else {}
+                text = str(payload.get("text") or "").strip()
+                mode = str(payload.get("mode") or "talk")
+                if not text:
+                    return
+                if mode == "dictate":
+                    p.chat_input.value = text
+                    p.chat_input.update()
+                    state.voice_enabled = False
+                    state.voice_coordinator.stop()
+                    if p.dictate_btn:
+                        _set_dictate_button_active(p, False)
+                    return
+                await send_message(text, voice_mode=True)
+
+            def _on_browser_voice_error(e) -> None:
+                payload = e.args if isinstance(e.args, dict) else {}
+                code = str(payload.get("code") or "microphone_unavailable")
+                messages = {
+                    "secure_context_required": "Browser microphone access requires HTTPS (localhost is allowed for development).",
+                    "whisper_model_missing": "Install the local Whisper model in Voice settings before using browser voice.",
+                    "NotAllowedError": "Microphone permission was denied by the browser.",
+                }
+                ui.notify(
+                    messages.get(code, "Browser voice could not start."),
+                    type="warning",
+                    close_button=True,
+                )
+                state.voice_enabled = False
+                state.voice_coordinator.stop()
+                if p.voice_switch:
+                    _set_talk_button_active(p, False)
+                if p.dictate_btn:
+                    _set_dictate_button_active(p, False)
+
+            def _on_browser_voice_state(e) -> None:
+                payload = e.args if isinstance(e.args, dict) else {}
+                if p.voice_status_label and payload.get("state") == "recording":
+                    p.voice_status_label.text = "Listening in this browser…"
+
+            p.browser_voice_event_sink = ui.element("div").style("display:none")
+            p.browser_voice_event_sink.on(
+                "row-bot-browser-voice-transcript",
+                _on_browser_voice_transcript,
+                js_handler="(e) => emit(e.detail)",
+            )
+            p.browser_voice_event_sink.on(
+                "row-bot-browser-voice-error",
+                _on_browser_voice_error,
+                js_handler="(e) => emit(e.detail)",
+            )
+            p.browser_voice_event_sink.on(
+                "row-bot-browser-voice-state",
+                _on_browser_voice_state,
+                js_handler="(e) => emit(e.detail)",
+            )
+
+            def _browser_voice_required() -> bool:
+                from row_bot.access.config import DeploymentMode
+                from row_bot.ui.access_context import current_access_context
+
+                context = current_access_context()
+                return bool(
+                    context
+                    and (
+                        context.deployment_mode is DeploymentMode.SERVER
+                        or not context.is_local_owner
+                    )
+                )
+
+            def _start_browser_voice(mode: str) -> None:
+                from row_bot.ui.streaming import run_realtime_client_js
+                from row_bot.voice.browser_client import start_browser_voice_capture_js
+
+                _register_active_voice_binding()
+                state.voice_input_mode = "dictate" if mode == "dictate" else "talk"
+                state.voice_enabled = True
+                state.voice_coordinator.start_browser(state.voice_input_mode)
+                delivered = run_realtime_client_js(
+                    p,
+                    start_browser_voice_capture_js(
+                        sink_id=p.browser_voice_event_sink.id,
+                        mode=state.voice_input_mode,
+                    ),
+                    context=f"start_browser_{state.voice_input_mode}",
+                )
+                if not delivered:
+                    state.voice_enabled = False
+                    state.voice_coordinator.stop()
+
             def _start_local_talk() -> None:
+                if _browser_voice_required():
+                    _start_browser_voice("talk")
+                    return
                 _register_active_voice_binding()
                 state.voice_input_mode = "talk"
                 state.voice_enabled = True
@@ -1913,6 +2009,14 @@ def build_chat(
 
                 if state.voice_coordinator.transport == "realtime":
                     run_realtime_client_js(p, stop_realtime_client_js(), context="stop_realtime_talk")
+                elif state.voice_coordinator.transport == "browser":
+                    from row_bot.voice.browser_client import stop_browser_voice_js
+
+                    run_realtime_client_js(
+                        p,
+                        stop_browser_voice_js(cancel=True),
+                        context="stop_browser_talk",
+                    )
                 state.voice_enabled = False
                 state.voice_coordinator.stop()
                 binding = getattr(p, "active_voice_binding", None)
@@ -1932,6 +2036,15 @@ def build_chat(
                     _set_talk_button_active(p, False)
             def _toggle_dictate():
                 if state.voice_enabled and state.voice_input_mode == "dictate":
+                    if state.voice_coordinator.transport == "browser":
+                        from row_bot.ui.streaming import run_realtime_client_js
+                        from row_bot.voice.browser_client import stop_browser_voice_js
+
+                        run_realtime_client_js(
+                            p,
+                            stop_browser_voice_js(cancel=True),
+                            context="stop_browser_dictation",
+                        )
                     state.voice_enabled = False
                     state.voice_coordinator.stop()
                     binding = getattr(p, "active_voice_binding", None)
@@ -1944,7 +2057,10 @@ def build_chat(
                 state.voice_input_mode = "dictate"
                 state.voice_enabled = True
                 _register_active_voice_binding()
-                state.voice_coordinator.start_dictation()
+                if _browser_voice_required():
+                    _start_browser_voice("dictate")
+                else:
+                    state.voice_coordinator.start_dictation()
                 if p.voice_switch:
                     _set_talk_button_active(p, False)
                 if p.dictate_btn:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 from contextlib import contextmanager
+import hmac
 import logging
 import os
 import sys
@@ -44,8 +45,9 @@ for _discord_noisy in _DISCORD_BENIGN_VOICE_LOGGERS:
     logging.getLogger(_discord_noisy).setLevel(logging.ERROR)
 
 os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
-from row_bot.brand import APP_BRAND_ACCENT, APP_DISPLAY_NAME, APP_HOST_ENV, APP_PING_ID, APP_USER_AGENT
+from row_bot.brand import APP_BRAND_ACCENT, APP_DISPLAY_NAME, APP_PING_ID, APP_USER_AGENT
 from row_bot.data_paths import get_row_bot_data_dir
+from row_bot.access.launcher_control import LAUNCH_SECRET_ENV
 from row_bot.docs_capture import (
     configure_docs_capture_state,
     docs_capture_bootstrap_html,
@@ -105,12 +107,14 @@ except Exception:
 
 from nicegui import ui, app, run
 from fastapi import HTTPException
-from row_bot.app_port import get_app_port
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from row_bot.app_port import get_app_host, get_app_port
 from row_bot.ui.performance import log_ui_perf
 from row_bot.ui.timer_utils import deactivate_on_disconnect, defer_ui, safe_timer, safe_ui_task
 
 _APP_PORT = get_app_port()
-_APP_HOST = os.environ.get(APP_HOST_ENV) or None
+_APP_HOST = get_app_host()
 
 
 @app.post("/api/voice/realtime/client-secret")
@@ -134,6 +138,154 @@ async def _voice_realtime_client_secret() -> dict:
     except Exception as exc:
         logger.warning("OpenAI Realtime client secret creation failed", exc_info=True)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _browser_voice_context(request: Request):
+    from row_bot.access.policy import context_from_scope, require_authenticated_owner
+
+    context = require_authenticated_owner(request.scope)
+    host = str(request.url.hostname or "").strip("[]").lower()
+    if context.scheme != "https" and host not in {"localhost", "127.0.0.1", "::1"}:
+        raise HTTPException(status_code=400, detail="secure_context_required")
+    session_key = context.session_id or (
+        f"local:{context.transport_peer}:{context.origin}"
+    )
+    return context, session_key
+
+
+async def _bounded_request_body(request: Request, maximum: int) -> bytes:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > maximum:
+                raise HTTPException(status_code=413, detail="request_too_large")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid_content_length") from exc
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > maximum:
+            raise HTTPException(status_code=413, detail="request_too_large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _browser_voice_error_response(exc: Exception) -> JSONResponse:
+    from row_bot.voice.browser_local import BrowserVoiceError
+
+    if isinstance(exc, BrowserVoiceError):
+        return JSONResponse(
+            {"ok": False, "error": exc.code},
+            status_code=exc.status_code,
+            headers={"Cache-Control": "no-store"},
+        )
+    logger.warning("Browser-local voice operation failed", exc_info=True)
+    return JSONResponse(
+        {"ok": False, "error": "voice_operation_failed"},
+        status_code=503,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/voice/local/status")
+async def _browser_voice_status(request: Request) -> JSONResponse:
+    _context, _session_key = _browser_voice_context(request)
+    from row_bot.voice.browser_local import get_browser_local_voice_service
+
+    return JSONResponse(
+        get_browser_local_voice_service().status(),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/voice/local/transcribe")
+async def _browser_voice_transcribe(request: Request) -> JSONResponse:
+    _context, session_key = _browser_voice_context(request)
+    from row_bot.voice.browser_local import (
+        MAX_INPUT_BYTES,
+        get_browser_local_voice_service,
+    )
+
+    payload = await _bounded_request_body(request, MAX_INPUT_BYTES)
+    try:
+        text = await asyncio.to_thread(
+            get_browser_local_voice_service().transcribe,
+            session_key,
+            payload,
+            request.headers.get("content-type", ""),
+        )
+    except Exception as exc:
+        return _browser_voice_error_response(exc)
+    return JSONResponse(
+        {"ok": True, "text": text},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/voice/local/synthesize")
+async def _browser_voice_synthesize(request: Request) -> Response:
+    _context, session_key = _browser_voice_context(request)
+    raw = await _bounded_request_body(request, 16 * 1024)
+    try:
+        import json as _json
+
+        body = _json.loads(raw.decode("utf-8"))
+        text = str(body.get("text") or "") if isinstance(body, dict) else ""
+    except (UnicodeDecodeError, ValueError):
+        return JSONResponse(
+            {"ok": False, "error": "invalid_json"},
+            status_code=400,
+            headers={"Cache-Control": "no-store"},
+        )
+    from row_bot.voice.browser_local import get_browser_local_voice_service
+
+    try:
+        audio = await asyncio.to_thread(
+            get_browser_local_voice_service().synthesize,
+            session_key,
+            text,
+        )
+    except Exception as exc:
+        return _browser_voice_error_response(exc)
+    return Response(
+        content=audio,
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'inline; filename="row-bot-voice.wav"',
+        },
+    )
+
+
+@app.post("/api/voice/local/models/{model_name}/install")
+async def _browser_voice_install_model(
+    request: Request,
+    model_name: str,
+) -> JSONResponse:
+    _context, session_key = _browser_voice_context(request)
+    from row_bot.voice.browser_local import get_browser_local_voice_service
+
+    service = get_browser_local_voice_service()
+    installers = {
+        "whisper": service.install_whisper,
+        "kokoro": service.install_kokoro,
+    }
+    install = installers.get(str(model_name or "").lower())
+    if install is None:
+        return JSONResponse(
+            {"ok": False, "error": "unknown_voice_model"},
+            status_code=404,
+            headers={"Cache-Control": "no-store"},
+        )
+    try:
+        await asyncio.to_thread(install, session_key)
+    except Exception as exc:
+        return _browser_voice_error_response(exc)
+    return JSONResponse(
+        {"ok": True, "model": model_name},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # ── Patch NiceGUI JSON serializer for surrogate safety ───────────────────────
@@ -208,7 +360,7 @@ from row_bot.ui.task_dialog import show_task_dialog
 from row_bot.ui.sidebar import build_sidebar
 from row_bot.ui.command_center import build_command_center
 from row_bot.ui.settings import open_settings
-from row_bot.ui.mobile import build_mobile_shell, is_mobile_client
+from row_bot.ui.mobile import build_mobile_shell
 from row_bot.ui.streaming import (
     Callbacks,
     _append_async_delegated_agent_completion_messages,
@@ -344,6 +496,9 @@ async def _auto_start_channel_background(channel, _st) -> None:
                 from row_bot.channels.thread_notifications import reconcile_pending_channel_notifications
 
                 delivered = await asyncio.to_thread(reconcile_pending_channel_notifications, 25)
+                from row_bot.agent_orchestrator import retry_pending_deliveries
+
+                await asyncio.to_thread(retry_pending_deliveries, 25)
                 if delivered:
                     logger.info(
                         "startup.channel.pending_notifications_delivered channel=%s count=%d",
@@ -378,6 +533,9 @@ async def _auto_start_channels_background(channels: list, _st) -> None:
         from row_bot.channels.thread_notifications import reconcile_pending_channel_notifications
 
         delivered = await asyncio.to_thread(reconcile_pending_channel_notifications, 50)
+        from row_bot.agent_orchestrator import retry_pending_deliveries
+
+        await asyncio.to_thread(retry_pending_deliveries, 50)
         if delivered:
             logger.info("startup.channels.pending_notifications_delivered count=%d", delivered)
     except Exception:
@@ -403,11 +561,18 @@ def _schedule_auto_start_channels(channels: list, _st):
 async def _prewarm_agent_graph_background() -> None:
     with _startup_phase("agent_graph_prewarm", background=True):
         from row_bot.agent import get_agent_graph
+        from row_bot.providers.readiness import AgentCompatibilityError
 
-        await asyncio.to_thread(get_agent_graph)
+        try:
+            await asyncio.to_thread(get_agent_graph)
+        except AgentCompatibilityError as exc:
+            logger.info("startup.agent_graph_prewarm skipped=agent_not_ready reason=%s", exc)
 
 
 def _schedule_agent_graph_prewarm():
+    if os.environ.get("ROW_BOT_DEPLOYMENT_MODE", "desktop").strip().lower() == "server":
+        logger.info("startup.agent_graph_prewarm skipped=server_mode")
+        return None
     return _schedule_background_task(
         _prewarm_agent_graph_background(),
         name="row-bot-agent-graph-prewarm",
@@ -548,7 +713,7 @@ async def on_startup():
 
     _st.startup_ready = False
     _st.startup_status = "Starting Row-Bot..."
-    _app_boot_event("startup_shell_ready", port=_APP_PORT)
+    _app_boot_event("startup_shell_ready", host=_APP_HOST, port=_APP_PORT)
     logger.info(
         "%s startup shell ready; scheduling background startup (session=%s)",
         APP_DISPLAY_NAME,
@@ -603,11 +768,6 @@ async def _run_startup_sequence():
     except Exception:
         logger.debug("Required runtime diagnostics failed", exc_info=True)
 
-    # Kill orphaned ngrok processes from previous runs
-    from row_bot.tunnel import kill_stale_ngrok
-    with _startup_phase("kill_stale_ngrok"):
-        kill_stale_ngrok()
-
     # One-shot: clear project_id on thread_meta rows whose designer
     # project JSON is missing. Prevents the "All Conversations" view
     # from showing threads that claim to belong to a deleted project.
@@ -636,11 +796,6 @@ async def _run_startup_sequence():
     with _startup_phase("apply_keys"):
         await asyncio.to_thread(apply_keys)
 
-    from row_bot.models import fetch_context_catalog
-    _set("📊 Fetching context catalog…")
-    with _startup_phase("fetch_context_catalog"):
-        await asyncio.to_thread(fetch_context_catalog)
-
     if is_cloud_available():
         _set("☁️ Loading cached model catalog...")
         with _startup_phase("load_cached_model_catalog"):
@@ -650,6 +805,22 @@ async def _run_startup_sequence():
     with _startup_phase("memory_extraction_scheduler"):
         await asyncio.to_thread(start_periodic_extraction)
         await asyncio.to_thread(schedule_idle_extraction)
+
+    _set("Recovering document ingestion…")
+    try:
+        from row_bot.document_jobs import ensure_document_supervisor
+
+        with _startup_phase("document_ingestion_supervisor"):
+            await asyncio.to_thread(ensure_document_supervisor)
+    except Exception as exc:
+        logger.warning(
+            "Document ingestion startup recovery skipped (non-fatal): %s",
+            exc,
+        )
+        _st.startup_warnings.append(
+            "Document ingestion could not start. Existing document search remains available; "
+            "restart Row-Bot or review System Diagnosis before uploading more files."
+        )
 
     _set("🌙 Starting dream cycle daemon…")
     with _startup_phase("dream_cycle_daemon"):
@@ -685,13 +856,6 @@ async def _run_startup_sequence():
             logger.info("Agent Run startup recovery: %s", recovery)
     except Exception as exc:
         logger.warning("Agent Run startup recovery skipped (non-fatal): %s", exc)
-
-    try:
-        from row_bot.providers.model_catalog_cache import schedule_model_catalog_refresh_jobs
-        with _startup_phase("model_catalog_refresh_scheduler"):
-            await asyncio.to_thread(schedule_model_catalog_refresh_jobs)
-    except Exception as exc:
-        logger.warning("Model catalog refresh scheduler failed to start (non-fatal): %s", exc)
 
     # ── Load Plugins ────────────────────────────────────────────────────────
     _set("🔌 Loading plugins…")
@@ -894,12 +1058,21 @@ async def _run_startup_sequence():
 
 # ── Webhook API Route ────────────────────────────────────────────────────────
 
-from starlette.requests import Request
-from starlette.responses import JSONResponse
+
+def _launcher_request_authorized(request: Request) -> bool:
+    """Validate the ephemeral secret shared only with the owning launcher."""
+    expected = os.environ.get(LAUNCH_SECRET_ENV, "")
+    authorization = str(request.headers.get("authorization") or "")
+    return bool(
+        len(expected) >= 32
+        and hmac.compare_digest(authorization, f"Bearer {expected}")
+    )
 
 
 async def _launcher_ping_handler(request: Request) -> JSONResponse:  # noqa: ARG001
     """Identify this process to the desktop launcher."""
+    if not _launcher_request_authorized(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
     global _FIRST_LAUNCHER_PING_LOGGED
     if not _FIRST_LAUNCHER_PING_LOGGED:
         _FIRST_LAUNCHER_PING_LOGGED = True
@@ -909,6 +1082,8 @@ async def _launcher_ping_handler(request: Request) -> JSONResponse:  # noqa: ARG
 
 async def _startup_state_handler(request: Request) -> JSONResponse:  # noqa: ARG001
     """Expose startup state for the browser-side splash handoff."""
+    if not _launcher_request_authorized(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
     import row_bot.ui.state as _st
 
     return JSONResponse({
@@ -916,6 +1091,26 @@ async def _startup_state_handler(request: Request) -> JSONResponse:  # noqa: ARG
         "status": str(_st.startup_status or ""),
         "warnings": len(_st.startup_warnings),
     })
+
+
+async def _health_handler(request: Request) -> JSONResponse:  # noqa: ARG001
+    """Expose process liveness without provider, route, or user details."""
+    return JSONResponse(
+        {"ok": True, "status": "alive"},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def _ready_handler(request: Request) -> JSONResponse:  # noqa: ARG001
+    """Expose only whether application startup reached its ready state."""
+    import row_bot.ui.state as _st
+
+    ready = bool(_st.startup_ready)
+    return JSONResponse(
+        {"ok": ready, "status": "ready" if ready else "starting"},
+        status_code=200 if ready else 503,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 async def _webhook_handler(request: Request) -> JSONResponse:
@@ -1007,9 +1202,8 @@ async def _cleanup_runtime(reason: str = "shutdown") -> None:
 
 async def _launcher_shutdown_handler(request: Request) -> JSONResponse:
     """Local launcher hook used for tray quit and updater handoff."""
-    client_host = (request.client.host if request.client else "") or ""
-    if client_host not in {"127.0.0.1", "::1", "localhost"} and not client_host.endswith("127.0.0.1"):
-        return JSONResponse({"ok": False, "error": "localhost only"}, status_code=403)
+    if not _launcher_request_authorized(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
 
     async def _shutdown_soon() -> None:
         await asyncio.sleep(0.1)
@@ -1026,12 +1220,54 @@ app.add_route("/api/startup-state", _startup_state_handler, methods=["GET"])
 app.add_route("/api/launcher-shutdown", _launcher_shutdown_handler, methods=["POST"])
 app.add_route("/api/webhook/{task_id}", _webhook_handler, methods=["POST"])
 app.add_route("/api/client-error", _client_error_handler, methods=["POST"])
+app.add_route("/healthz", _health_handler, methods=["GET"])
+app.add_route("/readyz", _ready_handler, methods=["GET"])
 
+from row_bot.access.middleware import AccessMiddleware
+from row_bot.access.config import AccessConfig, canonical_host
+from row_bot.access.access_routes import (
+    AccessRouteConfigStore,
+    discover_private_lan_addresses,
+)
+from row_bot.access.routes import register_access_routes
+from row_bot.access.tailscale import (
+    TailscaleOwnershipStore,
+    augment_access_config_for_owned_tailscale,
+)
+from row_bot.access.runtime_policy import RuntimeAccessPolicy
 from row_bot.mobile.routes import register_mobile_routes
-from row_bot.mobile.access_gate import MobileAccessGate
 
+_access_config = AccessConfig.from_env()
+_access_config = augment_access_config_for_owned_tailscale(
+    _access_config,
+    ownership=TailscaleOwnershipStore().load(),
+    app_port=get_app_port(),
+)
+if (
+    "ROW_BOT_ALLOWED_HOSTS" not in os.environ
+    and AccessRouteConfigStore().load_or_default().lan_enabled
+):
+    from dataclasses import replace as _dataclass_replace
+
+    _lan_hosts = tuple(
+        canonical_host(address, allow_port=False)
+        for address in discover_private_lan_addresses()
+    )
+    _access_config = _dataclass_replace(
+        _access_config,
+        allowed_hosts=tuple(dict.fromkeys((*_access_config.allowed_hosts, *_lan_hosts))),
+    )
+_access_registration = register_access_routes(app, config=_access_config)
+_runtime_access_policy = RuntimeAccessPolicy(_access_registration.config)
+from row_bot.tunnel import tunnel_manager as _managed_tunnel_manager
+
+_managed_tunnel_manager.set_managed_origin_registrar(_runtime_access_policy)
 register_mobile_routes(app)
-app.add_middleware(MobileAccessGate)
+app.add_middleware(
+    AccessMiddleware,
+    runtime_policy=_runtime_access_policy,
+    session_authenticator=_access_registration.authenticator,
+)
 
 
 @app.on_shutdown
@@ -1051,9 +1287,14 @@ async def on_shutdown():
 @ui.page("/")
 async def index():
     import row_bot.ui.state as _st
+    from row_bot.ui.access_context import access_context_from_client
 
     ui.dark_mode(True)
     _docs_query = docs_capture_query_params(ui.context.client)
+    _access_context = access_context_from_client(ui.context.client)
+    _mobile_client = bool(
+        _access_context and _access_context.presentation.value == "compact"
+    )
 
     # ── Global panel card style ──────────────────────────────────────────
     ui.add_head_html("""
@@ -1186,7 +1427,7 @@ async def index():
           window.__rowBotStartupPollInstalled = true;
           const poll = async () => {
             try {
-              const response = await fetch('/api/startup-state', {cache: 'no-store'});
+              const response = await fetch('/readyz', {cache: 'no-store'});
               if (!response.ok) return;
               const state = await response.json();
               if (state && state.ready) {
@@ -1280,6 +1521,9 @@ async def index():
 
     # ── Wrappers that close over (state, p, cb) ─────────────────────────
     def _open_settings(initial_tab: str = "Providers"):
+        if _access_context is None or not _access_context.authenticated:
+            ui.notify("Owner authentication is required.", type="warning")
+            return
         open_settings(state, p, initial_tab, mobile=_mobile_client)
 
     def _open_export():
@@ -1362,8 +1606,6 @@ async def index():
 
     def _show_task_dialog(task, on_done):
         show_task_dialog(task, on_done, state=state, p=p)
-
-    _mobile_client = is_mobile_client(ui.context.client)
 
     # ══════════════════════════════════════════════════════════════════════
     # LAYOUT
@@ -1879,6 +2121,7 @@ async def index():
     # ── Timers ───────────────────────────────────────────────────────────
 
     _last_agent_run_refresh = {"thread_id": "", "key": ""}
+    _last_orchestration_transcript = {"thread_id": "", "key": ""}
 
     def _current_agent_run_refresh_key(tid: str) -> str:
         if not tid:
@@ -1907,7 +2150,125 @@ async def index():
                     "stop_requested",
                 )
             ))
+        try:
+            from row_bot.agent_orchestrator import list_messages, list_orchestrations
+
+            for orchestration in list_orchestrations(parent_thread_id=tid, limit=5):
+                parts.append("|".join(
+                    [
+                        "orchestration",
+                        str(orchestration.get("id") or ""),
+                        str(orchestration.get("status") or ""),
+                        str(orchestration.get("updated_at") or ""),
+                    ]
+                ))
+                for message in list_messages(str(orchestration.get("id") or "")):
+                    if str(message.get("kind") or "") not in {"acknowledgement", "final"}:
+                        continue
+                    parts.append("|".join(
+                        [
+                            "orchestration_message",
+                            str(message.get("id") or ""),
+                            str(message.get("kind") or ""),
+                            str(message.get("delivery_status") or ""),
+                            str(message.get("delivered_at") or ""),
+                        ]
+                    ))
+        except Exception:
+            logger.debug("Orchestration page refresh poll failed", exc_info=True)
         return "\n".join(parts)
+
+    def _reload_completed_orchestration_transcript(tid: str) -> bool:
+        try:
+            from row_bot.agent_orchestrator import (
+                list_messages,
+                list_orchestrations,
+                record_message,
+            )
+            from row_bot.ui.helpers import load_thread_messages
+
+            rows = list_orchestrations(parent_thread_id=tid, limit=1)
+            if not rows:
+                return False
+            orchestration = rows[0]
+            status = str(orchestration.get("status") or "")
+            if status not in {"completed", "completed_partial", "failed", "stopped"}:
+                return False
+            final_messages = list_messages(
+                str(orchestration.get("id") or ""),
+                kinds=["final"],
+            )
+            if not final_messages:
+                return False
+            final_key = str(final_messages[-1].get("id") or "")
+            if (
+                _last_orchestration_transcript.get("thread_id") == tid
+                and _last_orchestration_transcript.get("key") == final_key
+            ):
+                return False
+            state.messages = load_thread_messages(tid)
+            state.cache_active_messages()
+            _last_orchestration_transcript["thread_id"] = tid
+            _last_orchestration_transcript["key"] = final_key
+            delivery_context = orchestration.get("delivery_context_json") or {}
+            if delivery_context.get("voice_mode"):
+                spoken_rows = list_messages(
+                    str(orchestration.get("id") or ""),
+                    kinds=["voice_final"],
+                )
+                already_spoken = any(
+                    str(row.get("delivery_status") or "") == "delivered"
+                    for row in spoken_rows
+                )
+                if not already_spoken:
+                    from row_bot.voice.output_controller import speak_orchestration_final
+
+                    def _realtime_speaker(text: str, *, origin: str = "final") -> bool:
+                        from row_bot.ui.streaming import run_realtime_client_js
+                        if str(delivery_context.get("voice_transport") or "") == "browser":
+                            from row_bot.voice.browser_client import speak_browser_voice_js
+
+                            return run_realtime_client_js(
+                                p,
+                                speak_browser_voice_js(text),
+                                context="orchestration_final_browser_voice",
+                            )
+                        from row_bot.voice.realtime_client import send_realtime_run_event_js
+
+                        return run_realtime_client_js(
+                            p,
+                            send_realtime_run_event_js(
+                                text,
+                                origin=origin,
+                                thread_id=tid,
+                                generation_id=str(
+                                    orchestration.get("parent_generation_id") or ""
+                                ),
+                            ),
+                            context="orchestration_final_voice",
+                        )
+
+                    spoken = speak_orchestration_final(
+                        delivery_context,
+                        str(final_messages[-1].get("content") or ""),
+                        tts_service=state.tts_service,
+                        realtime_speaker=_realtime_speaker,
+                        now=time.perf_counter,
+                    )
+                    if spoken:
+                        record_message(
+                            str(orchestration.get("id") or ""),
+                            kind="voice_final",
+                            content=str(final_messages[-1].get("content") or ""),
+                            message_id=(
+                                f"orchestration:{orchestration.get('id')}:voice_final"
+                            ),
+                            delivery_status="delivered",
+                        )
+            return True
+        except Exception:
+            logger.debug("Completed orchestration transcript reload failed", exc_info=True)
+            return False
 
     def _current_child_agent_run_ids(tid: str) -> list[str]:
         if not tid:
@@ -1945,6 +2306,7 @@ async def index():
             _last_agent_run_refresh["key"] = key
             if _thread_has_live_generation(tid):
                 return
+            _reload_completed_orchestration_transcript(tid)
             try:
                 completion_changed = _append_async_delegated_agent_completion_messages(
                     state.messages,
@@ -1969,6 +2331,7 @@ async def index():
             logger.debug("Parent Agent strip poll refresh failed", exc_info=True)
         if _thread_has_live_generation(tid):
             return
+        _reload_completed_orchestration_transcript(tid)
         try:
             if _append_async_delegated_agent_completion_messages(
                 state.messages,
@@ -2328,15 +2691,14 @@ if __name__ in {"__main__", "__mp_main__"}:
 
     _run_kwargs = {
         "title": APP_DISPLAY_NAME,
+        "host": _APP_HOST,
         "port": _APP_PORT,
         "dark": True,
         "favicon": Path(_static_dir) / "favicon.ico",
         "reload": False,
         "show": _show,
         "native": _native,
+        "proxy_headers": False,
         "window_size": (1280, 900) if _native else None,
     }
-    if _APP_HOST:
-        _run_kwargs["host"] = _APP_HOST
-
     ui.run(**_run_kwargs)

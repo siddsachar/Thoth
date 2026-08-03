@@ -1,0 +1,197 @@
+---
+title: "Remote Access And Server Mode"
+description: "Use Row-Bot as one owner from trusted devices through Tailscale, LAN, SSH, Docker, or an HTTPS reverse proxy."
+---
+
+import Screenshot from '@site/src/components/Screenshot';
+
+# Remote Access And Server Mode
+
+Row-Bot Remote Access lets one owner use the same instance from several trusted browsers. It is a **single-owner, multi-device** system, not a multi-user service or a hostile tenant-isolation boundary.
+
+Reachability, authentication, and presentation are separate:
+
+- A network route lets a browser reach Row-Bot's neutral connection page.
+- A one-time invitation authorizes one browser to create a revocable session.
+- Every authenticated interactive browser represents the same owner.
+- Desktop or compact presentation changes layout only, never authority.
+
+Normal desktop launches remain local-first. They listen on loopback and keep the local owner experience unless you explicitly enable another route. Authenticated server mode is stricter: every browser must connect with a valid session, including a browser on the server itself.
+
+<Screenshot id="settings-remote-access" alt="Row-Bot Remote Access settings." caption="Remote Access keeps connection routes separate from connected-device authorization. Tailscale is recommended; LAN remains an explicit, unencrypted option." />
+
+## Configure Remote Access In The App
+
+Open **Settings → System → Remote Access** from any authenticated owner session, including compact mobile Settings.
+
+1. Choose how the other device will reach this Row-Bot instance.
+2. Check or enable that route.
+3. Select **Invite a device**.
+4. Choose the initial desktop or compact layout, session lifetime, and one of the currently reachable connection routes.
+5. Create the invitation and open or scan it on the other device.
+6. Review the confirmation page on that device, then press **Connect**.
+
+The route selector refreshes from current state when the invitation is created. Row-Bot refuses a stale or no-longer-reachable selection instead of issuing a misleading link.
+
+<Screenshot id="remote-access-invitation" alt="Row-Bot device invitation dialog." caption="Desktop and compact choices affect layout only. Every connected browser receives full owner access; the invitation still binds its lifetime and browser-facing origin." />
+
+## Invitations, Sessions, And Layouts
+
+| Item | Meaning |
+| --- | --- |
+| Invitation | A secret link that expires after 10 minutes and can be consumed once. Opening or previewing it does not connect the device; the recipient must press **Connect**. |
+| Session | A separate HttpOnly browser credential created after acceptance. Raw session secrets are never placed in the URL. |
+| Trusted device | A session lasting up to 30 days. |
+| Temporary access | A session lasting up to 12 hours. |
+| Desktop layout | The full owner product in its wide-screen presentation. |
+| Compact layout | The same owner authority in a phone-safe presentation, including complete mobile Settings. Rich Developer and Designer editors show a desktop-layout notice. |
+
+Row-Bot stores only hashed invitation and session secrets in the versioned access database. Sessions survive normal restarts and can be revoked individually. Revoking a device revokes its sessions.
+
+Row-Bot has no guest or multi-user sharing boundary. Device names, user agents, routes, and layout choices are session metadata, not entitlements. Existing action approval gates continue to govern sensitive tools and operations.
+
+Treat an unused invitation like a password. Do not paste it into chat, logs, issue reports, screenshots, shell history you plan to share, or a public URL.
+
+## Choose A Connection Route
+
+| Route | Best fit | Important boundary |
+| --- | --- | --- |
+| Local desktop | Browser and Row-Bot are on the same computer. | Default desktop mode stays on loopback and does not expose a remote listener. |
+| Tailscale Serve | Recommended private HTTPS access across your tailnet. | Tailnet membership does not replace a Row-Bot invitation or session. |
+| Direct LAN | A private, trusted local network. | Remote LAN HTTP is unencrypted and does not provide a secure browser context for microphone capture. |
+| SSH tunnel | An operator can SSH to a remote host and wants no published Row-Bot port. | Keep Row-Bot on loopback and create the invitation for the workstation-facing forwarded origin. |
+| Docker | A headless, isolated, reproducible instance. | The supplied Compose file publishes to host loopback by default and persists `/data`. |
+| HTTPS reverse proxy | An operator owns DNS, TLS, proxy configuration, backups, and ingress policy. | Trust only the exact proxy address or CIDR that connects to Row-Bot. |
+
+An active route means the connection page is reachable. It does not mean the browser is trusted.
+
+## Tailscale Serve
+
+Tailscale Serve is the recommended desktop route because it provides a private HTTPS origin without changing Row-Bot's default bind address.
+
+Row-Bot does not install Tailscale, sign you in, enable Funnel, reset the complete Serve configuration, change firewall rules, or overwrite an unrelated route. Status checks and planning are read-only. Enabling a route requires you to review the exact private Serve change, accept the third-party disclosure, and confirm it in the UI.
+
+Row-Bot refuses to mutate when Funnel is active, a conflicting route exists, ownership cannot be verified, or the Tailscale CLI outcome is ambiguous. It records ownership only after it verifies the exact route it created, and it removes only that unchanged owned route.
+
+After a verified enable or disable, Row-Bot asks its launcher to restart the app. That restart activates the matching proxy policy:
+
+- only loopback connections from the local Tailscale proxy are trusted;
+- only the verified owned `.ts.net` host and HTTPS origin are added;
+- the owned route must still target this exact Row-Bot app port.
+
+If the launcher is unavailable, the UI tells you to restart Row-Bot manually. A manually managed Tailscale or reverse-proxy route is not treated as Row-Bot-owned; configure its public URL, allowed host, and exact proxy trust explicitly.
+
+After Tailscale reports **Active Owned**, create the invitation for its verified private origin. The recipient still needs the one-time invitation and resulting Row-Bot session.
+
+## Direct LAN
+
+Use **Allow local-network connections** only on a network you trust. The launcher restarts Row-Bot after the durable listen setting changes.
+
+Anyone who can reach the port can see the neutral connection page, but cannot use the application without a valid session. LAN HTTP is unencrypted. Prefer Tailscale or an operator-managed HTTPS origin on shared, guest, workplace, or otherwise untrusted networks. Row-Bot does not change the host firewall.
+
+## SSH Tunnel
+
+Start Row-Bot on loopback:
+
+```bash
+row-bot serve --host 127.0.0.1 --port 8080
+```
+
+Forward a workstation port:
+
+```bash
+ssh -N -L 18080:127.0.0.1:8080 user@row-bot-host
+```
+
+Create the invitation for the origin the browser will actually use:
+
+```bash
+row-bot access invite \
+  --layout desktop \
+  --origin http://127.0.0.1:18080
+```
+
+## Authenticated Server Mode
+
+`row-bot serve` starts one authenticated headless instance. It defaults to loopback, one worker, no tray, no splash, no opened browser, and no automatic Ollama startup.
+
+For a host-installed HTTPS reverse proxy:
+
+```bash
+row-bot serve \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --public-url https://row-bot.example.com \
+  --allowed-host row-bot.example.com \
+  --trusted-proxy 127.0.0.1/32
+```
+
+The equivalent core environment settings are:
+
+```text
+ROW_BOT_DEPLOYMENT_MODE=server
+ROW_BOT_PUBLIC_URL=https://row-bot.example.com
+ROW_BOT_ALLOWED_HOSTS=row-bot.example.com
+ROW_BOT_TRUSTED_PROXY_CIDRS=127.0.0.1/32
+ROW_BOT_WORKERS=1
+```
+
+Use the address that actually connects from the proxy to Row-Bot. Do not trust every private address, a whole Docker bridge range, or caller-supplied forwarding headers. Keep WebSocket upgrades enabled and terminate remote traffic with HTTPS. The reviewed [Caddy example](https://github.com/siddsachar/row-bot/blob/main/deploy/reverse-proxy/Caddyfile.example) and [systemd service](https://github.com/siddsachar/row-bot/blob/main/deploy/systemd/row-bot.service.example) are starting points, not substitutes for operator-owned firewall, rate-limit, logging, backup, and recovery policy.
+
+The deprecated `row-bot --server --no-open` form remains compatible, but new scripts and services should use `row-bot serve`.
+
+## Docker
+
+The supplied Docker image contains the complete supported server feature set: all canonical Python extras, matching headless Playwright Chromium, native media libraries, `uv`/`uvx`, and pinned Node.js with `node`/`npm`/`npx`. It does not contain invitations, sessions, credentials, downloaded voice models, arbitrary MCP servers, or Tailscale.
+
+Compose publishes `127.0.0.1:8080` by default and persists private state and explicit model/runtime downloads under `/data`. Every browser must claim an invitation, including a browser on the Docker host. Docker bridge and gateway addresses never grant owner identity.
+
+Follow the complete [Docker deployment guide](https://github.com/siddsachar/row-bot/blob/main/deploy/docker/README.md) for:
+
+- invitation bootstrap with `docker compose exec`;
+- intentional LAN or HTTPS publication;
+- multiple isolated instances;
+- health and readiness checks;
+- read-only secret files;
+- backups, upgrades, restore, and rollback;
+- browser, MCP runtime, local-model cache, and headless feature boundaries.
+
+Never mount the host Docker socket merely to satisfy a tool or MCP server.
+
+## Voice From A Remote Browser
+
+Local browser voice uses the requesting browser's microphone and speaker. The browser sends bounded audio to Row-Bot for local Whisper transcription; Row-Bot returns local Kokoro audio to that same browser. A headless server or container does not need access to the host microphone or speakers.
+
+Browsers permit microphone capture on `localhost` or in a secure HTTPS context. Plain HTTP on a remote LAN address is insufficient. Use Tailscale HTTPS or a correctly configured HTTPS reverse proxy for remote dictation or talk.
+
+Whisper and Kokoro model installation remains an explicit owner action and can use several gigabytes of persistent cache. OpenAI Realtime voice is a separate provider/network feature; local browser voice does not silently fall back to it.
+
+## Offline Access Management And Recovery
+
+Use a trusted local terminal, SSH session, or `docker compose exec`:
+
+```bash
+row-bot access invite --layout desktop --origin https://row-bot.example.com
+row-bot access invite --layout compact --temporary --origin https://row-bot.example.com
+row-bot access list
+row-bot access revoke DEVICE_ID
+row-bot access revoke SESSION_ID --session
+row-bot access revoke-all --yes
+row-bot access doctor
+```
+
+`list` and `doctor` never print reusable session secrets. Invitation commands are the only commands that print a raw one-time link.
+
+If every owner session is lost, create a new owner invitation from a trusted terminal. Back up the complete active `ROW_BOT_DATA_DIR` while Row-Bot is stopped. It contains conversations, configuration, instance identity, invitations, devices, sessions, and other private state; operating-system keyring credentials may require a separate recovery plan.
+
+## Troubleshooting
+
+- **`untrusted_forwarding_headers`**: a proxy supplied forwarding headers from an address Row-Bot does not trust. For a Row-Bot-owned Tailscale route, restart once if the UI reports that restart is required. For an operator proxy, set only its exact connecting address in `ROW_BOT_TRUSTED_PROXY_CIDRS`. Do not fix this by trusting a broad network.
+- **`unexpected_host`**: the browser-facing host is missing from `ROW_BOT_ALLOWED_HOSTS`, or the proxy forwarded a different host.
+- **Origin or invitation mismatch**: create the invitation for the exact browser-facing scheme, host, and port. Do not reuse an invitation after changing routes.
+- **Tailscale conflict or unowned route**: inspect the existing Serve configuration. Row-Bot will not reset or overwrite it.
+- **Phone reaches the page but cannot use Row-Bot**: reachability is working; create or reclaim the correct invitation and confirm the device was not revoked.
+- **Remote microphone unavailable**: use HTTPS, grant microphone permission in that browser, and install the local voice model explicitly.
+- **Server starts but is not ready**: check `/healthz`, `/readyz`, local logs, and `row-bot access doctor`.
+
+For command lookup, see the generated [CLI reference](/docs/reference/generated/cli) and [environment reference](/docs/reference/generated/environment-and-config).

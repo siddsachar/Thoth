@@ -1,4 +1,4 @@
-"""Mobile-safe settings sections for browser-first companion mode."""
+"""Mobile-safe settings sections for compact owner presentation."""
 
 from __future__ import annotations
 

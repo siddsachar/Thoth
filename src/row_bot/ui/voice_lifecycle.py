@@ -32,6 +32,18 @@ def stop_voice_for_thread_change(state: AppState, p: P | None, *, reason: str = 
                 )
             except Exception:
                 logger.debug("Realtime browser stop during thread change failed", exc_info=True)
+        elif transport == "browser" and p is not None:
+            try:
+                from row_bot.ui.streaming import run_realtime_client_js
+                from row_bot.voice.browser_client import stop_browser_voice_js
+
+                run_realtime_client_js(
+                    p,
+                    stop_browser_voice_js(cancel=True),
+                    context=f"stop_browser_{reason}",
+                )
+            except Exception:
+                logger.debug("Browser voice stop during thread change failed", exc_info=True)
         try:
             coordinator.stop()
         except Exception:

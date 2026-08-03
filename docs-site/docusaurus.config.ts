@@ -2,6 +2,12 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const landingPageUrl = 'https://row-bot.ai/';
+const installationUrl = 'https://row-bot.ai/#install';
+const marketingSitemapUrls = [
+  'https://row-bot.ai/features.html',
+  'https://row-bot.ai/architecture.html',
+  'https://row-bot.ai/contact.html',
+];
 
 const config: Config = {
   title: 'Row-Bot',
@@ -41,6 +47,20 @@ const config: Config = {
         theme: {
           customCss: './src/css/custom.css',
         },
+        sitemap: {
+          async createSitemapItems({
+            routes,
+            siteConfig,
+            defaultCreateSitemapItems,
+          }) {
+            const docsItems = await defaultCreateSitemapItems({routes, siteConfig});
+            const existingUrls = new Set(docsItems.map((item) => item.url));
+            const marketingItems = marketingSitemapUrls
+              .filter((url) => !existingUrls.has(url))
+              .map((url) => ({url}));
+            return [...docsItems, ...marketingItems];
+          },
+        },
       } satisfies Preset.Options,
     ],
   ],
@@ -76,7 +96,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: landingPageUrl,
+          href: installationUrl,
           label: 'Download',
           position: 'right',
           target: '_self',
@@ -86,6 +106,16 @@ const config: Config = {
     footer: {
       style: 'dark',
       links: [
+        {
+          title: 'Row-Bot',
+          items: [
+            {label: 'Home', href: landingPageUrl},
+            {label: 'Features', href: 'https://row-bot.ai/features.html'},
+            {label: 'Architecture', href: 'https://row-bot.ai/architecture.html'},
+            {label: 'Contact', href: 'https://row-bot.ai/contact.html'},
+            {label: 'Blog', href: 'https://sydsachar.com/category/row-bot/'},
+          ],
+        },
         {
           title: 'Docs',
           items: [

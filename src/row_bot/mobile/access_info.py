@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from ipaddress import ip_address
-import os
 import socket
 from typing import Any
 
-from row_bot.app_port import get_app_port
-from row_bot.brand import APP_HOST_ENV
+from row_bot.app_port import get_app_host, get_app_port
 from row_bot.mobile.tailscale import TailscaleState
+
+_BIND_HOST_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -71,13 +71,13 @@ def bind_allows_remote(bind_host: str | None) -> bool:
 def build_access_candidates(
     *,
     port: int | None = None,
-    bind_host: str | None = None,
+    bind_host: str | None | object = _BIND_HOST_UNSET,
     lan_ips: tuple[str, ...] | list[str] | None = None,
     ngrok_url: str | None = None,
     tailscale_state: TailscaleState | None = None,
 ) -> list[AccessCandidate]:
     resolved_port = get_app_port() if port is None else int(port)
-    host = os.environ.get(APP_HOST_ENV) if bind_host is None else bind_host
+    host = get_app_host() if bind_host is _BIND_HOST_UNSET else bind_host
     allows_remote = bind_allows_remote(host)
     candidates: list[AccessCandidate] = [
         AccessCandidate(
@@ -165,13 +165,13 @@ def build_access_candidates(
 def build_access_info(
     *,
     port: int | None = None,
-    bind_host: str | None = None,
+    bind_host: str | None | object = _BIND_HOST_UNSET,
     lan_ips: tuple[str, ...] | list[str] | None = None,
     ngrok_url: str | None = None,
     tailscale_state: TailscaleState | None = None,
 ) -> dict[str, Any]:
     resolved_port = get_app_port() if port is None else int(port)
-    host = os.environ.get(APP_HOST_ENV) if bind_host is None else bind_host
+    host = get_app_host() if bind_host is _BIND_HOST_UNSET else bind_host
     candidates = build_access_candidates(
         port=resolved_port,
         bind_host=host,

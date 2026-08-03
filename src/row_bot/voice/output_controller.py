@@ -30,8 +30,8 @@ class VoiceOutputController:
     ) -> "VoiceOutputController":
         if not voice_mode:
             mode = "off"
-        elif transport == "realtime":
-            mode = "realtime"
+        elif transport in {"realtime", "browser"}:
+            mode = transport
         elif bool(getattr(tts_service, "enabled", False)):
             mode = "normal"
         else:
@@ -80,7 +80,7 @@ class VoiceOutputController:
         clean = str(text or "").strip()
         if not clean:
             return False
-        if self.mode == "realtime":
+        if self.mode in {"realtime", "browser"}:
             if not self.realtime_speaker:
                 return False
             origin = str(getattr(cue.type, "value", cue.type))
@@ -96,7 +96,7 @@ class VoiceOutputController:
         clean = str(text or "").strip()
         if not clean:
             return False
-        if self.mode == "realtime":
+        if self.mode in {"realtime", "browser"}:
             if not self.realtime_speaker:
                 return False
             return self._call_realtime_speaker(clean, origin="final") is not False
@@ -114,3 +114,25 @@ class VoiceOutputController:
             return self.realtime_speaker(text, origin=origin)
         except TypeError:
             return self.realtime_speaker(text)
+
+
+def speak_orchestration_final(
+    delivery_context: dict[str, Any],
+    text: str,
+    *,
+    tts_service: Any,
+    realtime_speaker: Callable[..., bool | None] | None,
+    now: Callable[[], float],
+) -> bool:
+    """Speak a detached orchestration final only for its originating voice turn."""
+
+    if not bool((delivery_context or {}).get("voice_mode")):
+        return False
+    controller = VoiceOutputController.for_generation(
+        voice_mode=True,
+        transport=str((delivery_context or {}).get("voice_transport") or "normal"),
+        tts_service=tts_service,
+        realtime_speaker=realtime_speaker,
+        now=now,
+    )
+    return controller.speak_final(text)

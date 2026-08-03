@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -19,6 +20,9 @@ import urllib.request
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+LAUNCH_SECRET_ENV = "ROW_BOT_LAUNCH_SECRET"
 
 
 @dataclass
@@ -78,6 +82,8 @@ def run_app_smoke(
         "ROW_BOT_PORT": str(port),
         "PYTHONIOENCODING": "utf-8",
     }
+    launcher_secret = secrets.token_urlsafe(32)
+    env[LAUNCH_SECRET_ENV] = launcher_secret
     if data_dir is None:
         temp_data = tempfile.TemporaryDirectory(prefix="row_bot_smoke_", ignore_cleanup_errors=True)
         env["ROW_BOT_DATA_DIR"] = temp_data.name
@@ -118,7 +124,11 @@ def run_app_smoke(
                     _add_tail(result, "launcher app log", Path(env["ROW_BOT_DATA_DIR"]) / "row_bot_app.log")
                     return result
                 try:
-                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/launcher-ping", timeout=2) as response:
+                    ping_request = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/launcher-ping",
+                        headers={"Authorization": f"Bearer {launcher_secret}"},
+                    )
+                    with urllib.request.urlopen(ping_request, timeout=2) as response:
                         body = response.read(512).decode("utf-8", errors="replace")
                     if response.status == 200 and '"app":"row-bot"' in body.replace(" ", "").lower():
                         elapsed = time.monotonic() - launched_at
@@ -146,7 +156,11 @@ def run_app_smoke(
                         _add_tail(result, "launcher app log", Path(env["ROW_BOT_DATA_DIR"]) / "row_bot_app.log")
                         return result
                     try:
-                        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/startup-state", timeout=2) as response:
+                        startup_request = urllib.request.Request(
+                            f"http://127.0.0.1:{port}/api/startup-state",
+                            headers={"Authorization": f"Bearer {launcher_secret}"},
+                        )
+                        with urllib.request.urlopen(startup_request, timeout=2) as response:
                             body = response.read(2048).decode("utf-8", errors="replace")
                         state = json.loads(body)
                         if response.status == 200 and state.get("ready") is True:

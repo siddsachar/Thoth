@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
@@ -19,6 +21,7 @@ from row_bot.agent_runs import (
     update_agent_status,
 )
 
+logger = logging.getLogger(__name__)
 
 GOAL_ACTIVE_STATUSES = {"active", "waiting_approval"}
 GOAL_VISIBLE_STATUSES = {
@@ -790,6 +793,127 @@ def after_turn(
         reason=reason or "goal incomplete",
         status="active",
     )
+
+
+def after_orchestration_completion(
+    thread_id: str,
+    orchestration_id: str,
+    assistant_text: str,
+) -> None:
+    """Continue Goal Mode after a durable child barrier completes."""
+
+    orchestration = None
+    try:
+        from row_bot.agent_orchestrator import get_orchestration
+
+        orchestration = get_orchestration(orchestration_id)
+    except Exception:
+        logger.debug("Could not load completed Goal orchestration", exc_info=True)
+    decision = after_turn(
+        thread_id=thread_id,
+        turn_id=f"orchestration:{orchestration_id}",
+        assistant_text=assistant_text,
+        model_override=str((orchestration or {}).get("model_ref") or ""),
+    )
+    if not decision.should_continue or not decision.continuation_prompt:
+        return
+    continuation = (orchestration or {}).get("continuation_state_json") or {}
+    worker = threading.Thread(
+        target=_run_detached_goal_continuations,
+        args=(
+            thread_id,
+            decision.continuation_prompt,
+            str((orchestration or {}).get("model_ref") or ""),
+            str((orchestration or {}).get("approval_mode") or ""),
+            [
+                str(name)
+                for name in (continuation.get("enabled_tool_names") or [])
+                if str(name)
+            ],
+        ),
+        daemon=True,
+        name=f"goal-continuation-{str(orchestration_id)[:8]}",
+    )
+    worker.start()
+
+
+def _run_detached_goal_continuations(
+    thread_id: str,
+    first_prompt: str,
+    model_ref: str,
+    approval_mode: str,
+    enabled_tool_names: list[str],
+) -> None:
+    """Run claimed Goal continuations independently of an attached UI."""
+
+    from row_bot.agent import invoke_agent
+    prompt = first_prompt
+    while prompt:
+        generation_id = f"{thread_id}:goal:{uuid.uuid4().hex[:12]}"
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "runtime_surface": "goal",
+                "runtime_mode": "agent",
+                "generation_id": generation_id,
+                "root_objective": str(
+                    (get_current_goal(thread_id) or {}).get("objective") or prompt
+                ),
+                "internal_goal_continuation": True,
+                "approval_mode": approval_mode,
+                **({"model_override": model_ref} if model_ref else {}),
+            }
+        }
+        enabled_tools = list(enabled_tool_names)
+        try:
+            result = invoke_agent(prompt, enabled_tools, config)
+        except Exception:
+            logger.exception("Detached Goal continuation failed")
+            return
+        if isinstance(result, dict) and result.get("type") == "interrupt":
+            after_turn(
+                thread_id=thread_id,
+                turn_id=generation_id,
+                pending_approval=True,
+                model_override=model_ref,
+            )
+            return
+        text = str(
+            result.get("message") if isinstance(result, dict) else result or ""
+        )
+        try:
+            from row_bot.agent_orchestrator import (
+                finalize_parent_generation,
+                get_generation_orchestration,
+            )
+
+            orchestration = get_generation_orchestration(thread_id, generation_id)
+            if orchestration and int(orchestration.get("required_total") or 0) > 0:
+                if text.strip():
+                    from row_bot.threads import remove_latest_checkpoint_ai_message
+
+                    remove_latest_checkpoint_ai_message(thread_id, text)
+                finalize_parent_generation(
+                    str(orchestration["id"]),
+                    continuation_state={
+                        "config": config,
+                        "enabled_tool_names": enabled_tools,
+                        "provisional_text": text,
+                        "goal_mode": True,
+                    },
+                    delivery_context={"runtime_surface": "goal"},
+                )
+                return
+        except Exception:
+            logger.exception("Goal orchestration suspension failed")
+            return
+        decision = after_turn(
+            thread_id=thread_id,
+            turn_id=generation_id,
+            assistant_text=text,
+            model_override=model_ref,
+        )
+        prompt = decision.continuation_prompt if decision.should_continue else ""
 
 
 def _claim_turn(thread_id: str, turn_id: str) -> dict[str, Any] | None:

@@ -95,7 +95,9 @@ class LocalFunASRProvider:
             result = model.generate(
                 input=str(audio_path), language="auto", use_itn=True
             )
-            return _extract_funasr_text(result)
+            from funasr.utils.postprocess_utils import rich_transcription_postprocess
+
+            return rich_transcription_postprocess(_extract_funasr_text(result))
         finally:
             try:
                 audio_path.unlink()

@@ -3,9 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Row-Bot - Page not found</title>
+    <script>document.documentElement.classList.add('js');</script>
+    <title>Page not found &mdash; Row-Bot</title>
+    <meta name="description" content="The requested Row-Bot page could not be found.">
+    <meta name="robots" content="noindex, follow">
+    <meta name="theme-color" content="#080b0f">
     <link rel="icon" href="favicon.ico">
-    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="site.css">
+    <script src="site.js" defer></script>
     <script>
         window.ROW_BOT_GA_MEASUREMENT_ID = 'G-0YYKPX5M5E';
         window.ROW_BOT_GOOGLE_ADS_ID = 'AW-847204616';
@@ -18,92 +26,62 @@
             window.dataLayer = window.dataLayer || [];
             window.gtag = function(){ dataLayer.push(arguments); };
             gtag('js', new Date());
-            if (window.ROW_BOT_GA_MEASUREMENT_ID) {
-                gtag('config', window.ROW_BOT_GA_MEASUREMENT_ID);
-            }
-            if (window.ROW_BOT_GOOGLE_ADS_ID) {
-                gtag('config', window.ROW_BOT_GOOGLE_ADS_ID);
-            }
+            if (window.ROW_BOT_GA_MEASUREMENT_ID) gtag('config', window.ROW_BOT_GA_MEASUREMENT_ID);
+            if (window.ROW_BOT_GOOGLE_ADS_ID) gtag('config', window.ROW_BOT_GOOGLE_ADS_ID);
         }
     </script>
-    <style>
-        :root {
-            --bg: #0b0d10;
-            --surface: #151920;
-            --border: #232a35;
-            --text: #e2e6ed;
-            --text-dim: #9aa3b4;
-            --text-faint: #636d7e;
-            --accent: #4F78A4;
-            --accent-hover: #6C93BC;
-        }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        .glyph {
-            width: 8rem;
-            height: auto;
-            opacity: 0.14;
-            margin-bottom: 1rem;
-            user-select: none;
-        }
-
-        .code {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.78rem;
-            color: var(--accent);
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            margin-bottom: 0.75rem;
-        }
-
-        h1 {
-            font-family: 'Instrument Serif', Georgia, serif;
-            font-size: 2.4rem;
-            font-weight: 400;
-            margin-bottom: 0.65rem;
-        }
-
-        p {
-            color: var(--text-dim);
-            font-size: 0.95rem;
-            margin-bottom: 2rem;
-        }
-
-        a {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            padding: 0.7rem 1.5rem;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            font-weight: 600;
-            text-decoration: none;
-            background: var(--accent);
-            color: var(--bg);
-            transition: background 0.2s, transform 0.2s;
-        }
-
-        a:hover { background: var(--accent-hover); transform: translateY(-1px); }
-    </style>
 </head>
-<body>
-    <img class="glyph" src="row_bot_glyph_256.png" alt="">
-    <div class="code">404 - Not Found</div>
-    <h1>Nothing here</h1>
-    <p>This page doesn't exist. Row-Bot has no route for it.</p>
-    <a href="./">Back to Row-Bot</a>
+<body class="not-found-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <nav class="site-nav" aria-label="Primary navigation">
+        <div class="site-nav__inner shell">
+            <a class="wordmark" href="index.html" aria-label="Row-Bot home">
+                <img src="row_bot_glyph_256.png" width="256" height="256" alt="">
+                <strong>Row-Bot</strong>
+                <small>formerly Thoth</small>
+            </a>
+            <button class="nav-hamburger" type="button" aria-controls="nav-menu" aria-expanded="false" aria-label="Open navigation"><span></span></button>
+            <div class="nav-menu" id="nav-menu">
+                <a href="features.html">Features</a>
+                <a href="architecture.html">Architecture</a>
+                <a href="docs/">Docs</a>
+                <a href="contact.html">Contact</a>
+                <a href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a class="nav-download" href="index.html#install" data-os-primary data-os-label="short" data-placement="navigation">Desktop install</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="not-found-main shell" id="main">
+        <section class="not-found-card" aria-labelledby="not-found-title">
+            <img class="not-found-glyph" src="row_bot_glyph_256.png" width="256" height="256" alt="">
+            <span class="not-found-code">404</span>
+            <h1 id="not-found-title">Nothing here</h1>
+            <p>This page does not exist. Continue from the overview, browse the feature inventory, or search the documentation.</p>
+            <div class="not-found-actions">
+                <a class="button button--primary" href="index.html">Back to Row-Bot</a>
+                <a class="button button--secondary" href="features.html">Explore features</a>
+                <a class="button button--secondary" href="docs/">Search docs</a>
+            </div>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <div class="shell footer-grid">
+            <span>Row-Bot &middot; v4.5.0 &middot; Apache 2.0</span>
+            <div class="footer-links">
+                <a href="index.html">Home</a>
+                <a href="features.html">Features</a>
+                <a href="architecture.html">Architecture</a>
+                <a href="docs/">Docs</a>
+                <a href="index.html#privacy">Privacy</a>
+                <a href="index.html#comparison">Compare</a>
+                <a href="contact.html">Contact</a>
+                <a href="https://sydsachar.com/category/row-bot/" target="_blank" rel="noopener noreferrer">Blog</a>
+                <a href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">GitHub</a>
+            </div>
+        </div>
+    </footer>
 </body>
 </html>

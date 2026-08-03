@@ -90,6 +90,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
     SourceTestRule(
         "startup_runtime",
         (
+            "src/row_bot/app_port.py",
             "src/row_bot/app.py",
             "src/row_bot/launcher.py",
             "src/row_bot/startup_diagnostics.py",
@@ -99,19 +100,58 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "scripts/smoke_app.py",
         ),
         (
+            "tests/test_app_port.py",
             "tests/test_startup_hardening.py",
             "tests/test_ui_performance.py",
+            "tests/subsystem/mobile",
+            "tests/integration/mobile",
         ),
-        "Startup, app shell, and smoke harness changes need import, readiness, and UI performance regressions.",
+        "Startup host, app shell, and smoke harness changes need import, readiness, UI performance, and mobile exposure regressions.",
     ),
     SourceTestRule(
-        "mobile_companion",
-        ("src/row_bot/mobile/**", "src/row_bot/ui/mobile*.py", "src/row_bot/ui/settings.py"),
+        "remote_access_server",
+        (
+            "src/row_bot/access/**",
+            "src/row_bot/ui/access_context.py",
+            "src/row_bot/ui/remote_access_settings.py",
+            "src/row_bot/ui/settings.py",
+            "src/row_bot/voice/browser_local.py",
+            "src/row_bot/voice/browser_client.py",
+            "src/row_bot/voice/coordinator.py",
+            "src/row_bot/voice/output_controller.py",
+            "src/row_bot/tts.py",
+            "src/row_bot/secret_store.py",
+            "src/row_bot/providers/auth_store.py",
+            "src/row_bot/channels/auth_store.py",
+            "deploy/**",
+            "dockerignore",
+            "scripts/smoke_remote_access.py",
+        ),
+        (
+            "tests/subsystem/access",
+            "tests/integration/access",
+            "tests/subsystem/mobile",
+            "tests/integration/mobile",
+            "tests/contracts/installers/test_remote_access_deployment_contract.py",
+            "tests/test_browser_local_voice.py",
+            "tests/test_secret_store.py",
+            "tests/test_provider_auth_store.py",
+            "tests/test_channel_auth_store.py",
+        ),
+        "Remote access, server policy, deployment examples, and smoke changes need access security, legacy-mobile compatibility, and deployment contracts.",
+    ),
+    SourceTestRule(
+        "mobile_owner_access",
+        (
+            "src/row_bot/mobile/**",
+            "src/row_bot/ui/mobile*.py",
+            "src/row_bot/ui/settings.py",
+        ),
         (
             "tests/subsystem/mobile",
             "tests/integration/mobile",
         ),
-        "Mobile companion changes need auth, access-gate, pairing, PWA, and route coverage.",
+        "Compact owner UI changes need auth, access-gate, pairing, PWA, Settings, and route coverage.",
     ),
     SourceTestRule(
         "chat_composer",
@@ -218,6 +258,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "src/row_bot/agent_settings.py",
             "src/row_bot/agent_run_messages.py",
             "src/row_bot/agent_runner.py",
+            "src/row_bot/agent_orchestrator.py",
             "src/row_bot/agent_profiles.py",
             "src/row_bot/agent_runs.py",
             "src/row_bot/tools/agent_tool.py",
@@ -246,7 +287,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "tests/subsystem/channels/test_channel_thread_notifications.py",
             "tests/subsystem/workflows",
         ),
-        "Agent Profile, Agent Run, workflow UI, and agent-facing workflow tools need profile/runtime and workflow regressions.",
+        "Agent Profile, Agent Run/orchestration, workflow UI, and agent-facing workflow tools need profile/runtime and workflow regressions.",
     ),
     SourceTestRule(
         "mcp",
@@ -320,6 +361,29 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "tests/test_migration_wizard_ui.py",
         ),
         "Migration wizard changes need deterministic core, detection, planning, apply, and UI coverage.",
+    ),
+    SourceTestRule(
+        "document_ingestion",
+        (
+            "src/row_bot/document_jobs.py",
+            "src/row_bot/document_uploads.py",
+            "src/row_bot/document_index.py",
+            "src/row_bot/document_extraction.py",
+            "src/row_bot/documents.py",
+            "src/row_bot/tools/documents_tool.py",
+            "src/row_bot/ui/status_bar.py",
+            "src/row_bot/ui/status_checks.py",
+        ),
+        (
+            "tests/subsystem/knowledge_graph/test_document_ingestion_jobs.py",
+            "tests/subsystem/knowledge_graph/test_document_index_shards.py",
+            "tests/subsystem/knowledge_graph/test_document_extraction_resume.py",
+            "tests/test_memory_evolution.py",
+            "tests/test_embedding_provider_config.py",
+            "tests/test_home_status_workflow_buddy.py",
+            "tests/test_settings_overhaul_contracts.py",
+        ),
+        "Document ingestion changes need durable queue, bounded parsing/indexing, resumable extraction, retrieval compatibility, and UI/status coverage.",
     ),
     SourceTestRule(
         "memory_and_knowledge",
@@ -407,8 +471,12 @@ class ChangeSelection:
     reasons: tuple[str, ...]
 
 
-def select_tests_for_changes(changed_files: list[str] | tuple[str, ...]) -> ChangeSelection:
-    normalized_files = tuple(normalize_repo_path(path) for path in changed_files if str(path).strip())
+def select_tests_for_changes(
+    changed_files: list[str] | tuple[str, ...],
+) -> ChangeSelection:
+    normalized_files = tuple(
+        normalize_repo_path(path) for path in changed_files if str(path).strip()
+    )
     selected: list[str] = []
     matched_rules: list[str] = []
     reasons: list[str] = []

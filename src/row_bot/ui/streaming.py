@@ -1113,6 +1113,22 @@ def _tool_result_changes_model_setting(raw_tool_name: Any, content: Any) -> bool
     ))
 
 
+def _required_orchestration_from_tool_result(
+    tool_name: Any,
+    content: Any,
+) -> tuple[str, bool]:
+    payload = parse_agent_tool_payload(
+        {"name": str(tool_name or ""), "content": content}
+    )
+    if not payload:
+        return "", False
+    orchestration = payload.get("orchestration")
+    if not isinstance(orchestration, dict):
+        return "", False
+    orchestration_id = str(orchestration.get("id") or "").strip()
+    return orchestration_id, bool(orchestration_id and orchestration.get("required"))
+
+
 def _looks_like_new_agent_request(text: str) -> bool:
     normalized = " ".join(str(text or "").strip().lower().split())
     if not normalized:
@@ -1883,6 +1899,9 @@ def _is_async_delegated_agent_tool_result(tool_result: dict) -> bool:
     payload = parse_agent_tool_payload(tool_result)
     if not isinstance(payload, dict):
         return False
+    orchestration = payload.get("orchestration")
+    if isinstance(orchestration, dict) and orchestration.get("required"):
+        return False
     # wait=True returns "Child Agent completed." or a timeout message.  Only
     # the non-waiting spawn needs a later natural completion update.
     return str(payload.get("message") or "").strip().lower() == "child agent started."
@@ -1903,6 +1922,20 @@ def _append_async_delegated_agent_completion_messages(
         clean = str(run_id or "").strip()
         if not clean:
             return
+        try:
+            from row_bot.agent_orchestrator import get_member_for_run
+
+            member = get_member_for_run(clean)
+            if member and (
+                member.get("required")
+                or str(member.get("status") or "") in {"retried", "retrying"}
+            ):
+                return
+        except Exception:
+            logger.debug(
+                "Could not inspect orchestration membership for Agent completion",
+                exc_info=True,
+            )
         if target_ids and clean not in target_ids:
             return
         if clean not in seen_candidates:
@@ -2491,6 +2524,14 @@ async def consume_generation(
     def _speak_realtime_text(text: str, *, origin: str = "final") -> bool:
         from row_bot.voice.realtime_client import send_realtime_function_output_js, send_realtime_run_event_js
 
+        if state.voice_coordinator.transport == "browser":
+            from row_bot.voice.browser_client import speak_browser_voice_js
+
+            return run_realtime_client_js(
+                p,
+                speak_browser_voice_js(text),
+                context=f"browser_voice_{origin}",
+            )
         if (
             origin == "final"
             and realtime_speech_queue is not None
@@ -2999,7 +3040,12 @@ async def consume_generation(
                 realtime_tool_events_since_cue += 1
                 state.voice_coordinator.mark_realtime_latency("row_bot_tool_started")
             _set_realtime_generation_state("row_bot_tool_running", detail=tool_name)
-            spoke_tool_cue = voice_output.speak_cue(tool_start_cue(tool_name), generation_elapsed=_generation_elapsed())
+            spoke_tool_cue = False
+            if tool_key not in {"agents", "delegate_work"}:
+                spoke_tool_cue = voice_output.speak_cue(
+                    tool_start_cue(tool_name),
+                    generation_elapsed=_generation_elapsed(),
+                )
             if spoke_tool_cue:
                 realtime_tool_events_since_cue = 0
             _voice_diag(
@@ -3205,6 +3251,80 @@ async def consume_generation(
     # ── Finalise ─────────────────────────────────────────────────────
     if gen.status == "streaming":
         gen.status = "done"
+    _orchestration_suspended = False
+    _orchestration_acknowledgement = ""
+    try:
+        from row_bot.agent_orchestrator import (
+            finalize_parent_generation,
+            get_generation_orchestration,
+        )
+
+        orchestration = await run.io_bound(
+            lambda: get_generation_orchestration(gen.thread_id, gen.generation_id)
+        )
+        if orchestration and int(orchestration.get("required_total") or 0) > 0:
+            provisional_text = str(gen.accumulated or "")
+            if provisional_text.strip():
+                from row_bot.threads import remove_latest_checkpoint_ai_message
+
+                await run.io_bound(
+                    lambda: remove_latest_checkpoint_ai_message(
+                        gen.thread_id,
+                        provisional_text,
+                    )
+                )
+            _orchestration_suspended = await run.io_bound(
+                lambda: finalize_parent_generation(
+                    str(orchestration["id"]),
+                    continuation_state={
+                        "config": gen.config,
+                        "enabled_tool_names": list(gen.enabled_tools),
+                        "provisional_text": provisional_text,
+                        "voice_mode": bool(gen.voice_mode),
+                    },
+                    delivery_context={
+                        "voice_mode": bool(gen.voice_mode),
+                        "voice_transport": str(state.voice_coordinator.transport or ""),
+                        "runtime_surface": str(
+                            (gen.config.get("configurable") or {}).get(
+                                "runtime_surface",
+                                "",
+                            )
+                        ),
+                    },
+                )
+            )
+            if _orchestration_suspended:
+                gen.orchestration_id = str(orchestration["id"])
+                gen.orchestration_required = True
+                gen.orchestration_suspended = True
+                required_total = int(orchestration.get("required_total") or 0)
+                _orchestration_acknowledgement = (
+                    "I'm working on this with 1 agent."
+                    if required_total == 1
+                    else f"I'm working on this with {required_total} agents."
+                )
+                if gen.voice_mode:
+                    voice_output.speak_final(_orchestration_acknowledgement)
+                gen.tts_active = False
+                gen.tts_buffer = ""
+                gen.accumulated = ""
+                gen.tool_results = []
+                if state.thread_id == gen.thread_id:
+                    state.messages.append({
+                        "role": "assistant",
+                        "content": _orchestration_acknowledgement,
+                        "orchestration_id": gen.orchestration_id,
+                        "orchestration_message_kind": "acknowledgement",
+                    })
+                    state.cache_active_messages()
+                state.mark_thread_dirty(gen.thread_id)
+                if not gen.detached:
+                    _delete_live_generation_row(gen)
+                    cb.refresh_chat_messages()
+                _refresh_parent_agent_strip(cb)
+    except Exception:
+        logger.exception("Required Agent orchestration suspension failed")
     _voice_diag("generation_finalizing")
     _finalization_started = time.perf_counter()
 
@@ -3214,7 +3334,7 @@ async def consume_generation(
 
         if not gen.detached:
             _flush_live_renders("post-stream finalization", force=True)
-            if gen.tts_active and gen.status == "done":
+            if gen.tts_active and gen.status == "done" and not _orchestration_suspended:
                 if (
                     state.voice_coordinator.transport == "realtime"
                     and realtime_chunker is not None
@@ -3254,7 +3374,10 @@ async def consume_generation(
             # Developer Studio's streamed markdown node in place: deleting and
             # recreating the final message is the path most likely to detach a
             # still-active Developer workspace and collapse the inspector.
-            if gen.accumulated and not state.active_developer_workspace_id:
+            if (
+                gen.accumulated and not state.active_developer_workspace_id
+                and not _orchestration_suspended
+            ):
                 if gen.assistant_md:
                     try:
                         gen.assistant_md.delete()
@@ -3734,6 +3857,18 @@ async def _handle_tool_done(
     if not isinstance(tool_content, str):
         # content may be a list of content-blocks (e.g. Anthropic cache_control format)
         tool_content = " ".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in tool_content) if isinstance(tool_content, list) else str(tool_content)
+
+    orchestration_id, orchestration_required = _required_orchestration_from_tool_result(
+        raw_tool_name,
+        tool_content,
+    )
+    if orchestration_required:
+        gen.orchestration_id = orchestration_id
+        gen.orchestration_required = True
+        # Required voice work speaks a compact acknowledgement at the durable
+        # suspension boundary, not provisional parent text or child progress.
+        gen.tts_active = False
+        gen.tts_buffer = ""
 
     if _tool_result_changes_model_setting(raw_tool_name, tool_content):
         gen.refresh_model_controls_on_done = True
@@ -4458,6 +4593,7 @@ async def send_message(
             "runtime_surface": runtime_surface,
             "runtime_mode": runtime_mode,
             "generation_id": generation_id,
+            "root_objective": str(text or "").strip(),
             "approval_mode": _thread_approval_mode,
             **({"internal_goal_continuation": True} if internal_goal_continuation else {}),
             **({"model_override": _thread_mo} if _thread_mo else {}),
@@ -4496,7 +4632,10 @@ async def send_message(
         generation_id=generation_id,
         queued_message_ids=list(queued_message_ids or []),
         voice_mode=voice_mode,
-        tts_active=voice_mode and (state.tts_service.enabled or state.voice_coordinator.transport == "realtime"),
+        tts_active=voice_mode and (
+            state.tts_service.enabled
+            or state.voice_coordinator.transport in {"realtime", "browser"}
+        ),
         tts_allow_long=voice_mode and not internal_goal_continuation and user_requested_read_aloud(text),
         baseline_child_agent_run_ids=_child_agent_run_ids_for_thread(gen_thread_id),
     )

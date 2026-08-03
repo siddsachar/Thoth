@@ -4,13 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script>document.documentElement.classList.add('js');</script>
-    <title>Contact — Row-Bot</title>
-    <meta name="description" content="Contact the Row-Bot project for feedback, questions, partnerships, and security reports.">
+    <title>Contact &mdash; Row-Bot</title>
+    <meta name="description" content="Contact the Row-Bot project with questions, feedback, partnership notes, release issues, and responsible security reports.">
     <link rel="canonical" href="https://row-bot.ai/contact.html">
+    <meta name="theme-color" content="#080b0f">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://row-bot.ai/contact.html">
+    <meta property="og:title" content="Contact Row-Bot">
+    <meta property="og:description" content="Project channels for Row-Bot questions, feedback, issues, partnerships, and responsible security reports.">
+    <meta property="og:image" content="https://row-bot.ai/row_bot_preview.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Contact Row-Bot">
+    <meta name="twitter:description" content="Project channels for Row-Bot questions, feedback, issues, partnerships, and responsible security reports.">
+    <meta name="twitter:image" content="https://row-bot.ai/row_bot_preview.png">
     <link rel="icon" href="favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="site.css">
     <script src="site.js" defer></script>
     <script>
         window.ROW_BOT_GA_MEASUREMENT_ID = 'G-0YYKPX5M5E';
@@ -25,211 +36,10 @@
             window.dataLayer = window.dataLayer || [];
             window.gtag = function(){ dataLayer.push(arguments); };
             gtag('js', new Date());
-            if (window.ROW_BOT_GA_MEASUREMENT_ID) {
-                gtag('config', window.ROW_BOT_GA_MEASUREMENT_ID);
-            }
-            if (window.ROW_BOT_GOOGLE_ADS_ID) {
-                gtag('config', window.ROW_BOT_GOOGLE_ADS_ID);
-            }
+            if (window.ROW_BOT_GA_MEASUREMENT_ID) gtag('config', window.ROW_BOT_GA_MEASUREMENT_ID);
+            if (window.ROW_BOT_GOOGLE_ADS_ID) gtag('config', window.ROW_BOT_GOOGLE_ADS_ID);
         }
     </script>
-    <style>
-        :root {
-            --bg: #0b0d10;
-            --surface: #151920;
-            --surface-raised: #1c2129;
-            --border: #232a35;
-            --border-hover: #3a4556;
-            --text: #e2e6ed;
-            --text-dim: #9aa3b4;
-            --text-faint: #636d7e;
-            --accent: #4F78A4;
-            --accent-hover: #6C93BC;
-            --serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;
-            --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-        }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            min-height: 100vh;
-            font-family: var(--sans);
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.65;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        nav {
-            position: fixed;
-            top: 0;
-            width: 100%;
-            padding: 0 2rem;
-            height: 56px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(11, 13, 16, 0.9);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-            z-index: 100;
-        }
-
-        .nav-wordmark {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            font-family: var(--serif);
-            font-size: 1.4rem;
-            color: var(--accent);
-            text-decoration: none;
-        }
-
-        .nav-glyph {
-            width: 28px;
-            height: 28px;
-            object-fit: contain;
-            flex: 0 0 auto;
-        }
-        .nav-links { display: flex; align-items: center; gap: 0.2rem; }
-        .nav-links a {
-            color: var(--text-dim);
-            text-decoration: none;
-            font-size: 0.85rem;
-            padding: 0.35rem 0.7rem;
-            border-radius: 6px;
-        }
-        .nav-links a:hover { color: var(--text); background: rgba(255,255,255,0.04); }
-
-        main {
-            width: min(920px, calc(100% - 4rem));
-            margin: 0 auto;
-            padding: 8rem 0 5rem;
-        }
-
-        .eyebrow {
-            font-family: var(--mono);
-            font-size: 0.78rem;
-            color: var(--accent);
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            margin-bottom: 1rem;
-        }
-
-        h1 {
-            font-family: var(--serif);
-            font-size: clamp(2.6rem, 7vw, 4.4rem);
-            font-weight: 400;
-            line-height: 1.05;
-            margin-bottom: 1rem;
-        }
-
-        .intro {
-            max-width: 680px;
-            color: var(--text-dim);
-            font-size: 1.05rem;
-            margin-bottom: 2.25rem;
-        }
-
-        .contact-grid {
-            display: grid;
-            grid-template-columns: 1.25fr 0.75fr;
-            gap: 1.25rem;
-        }
-
-        form, .side-panel {
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            background: var(--surface);
-            padding: 1.5rem;
-        }
-
-        label {
-            display: block;
-            font-size: 0.78rem;
-            font-family: var(--mono);
-            color: var(--text-faint);
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-            margin-bottom: 0.4rem;
-        }
-
-        input, select, textarea {
-            width: 100%;
-            margin-bottom: 1rem;
-            padding: 0.8rem 0.9rem;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: var(--surface-raised);
-            color: var(--text);
-            font: inherit;
-        }
-
-        textarea { min-height: 150px; resize: vertical; }
-        input:focus, select:focus, textarea:focus { outline: none; border-color: var(--border-hover); }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.45rem;
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
-            border: 0;
-            background: var(--accent);
-            color: var(--bg);
-            font-weight: 700;
-            text-decoration: none;
-            cursor: pointer;
-            font-family: var(--sans);
-        }
-
-        .btn:hover { background: var(--accent-hover); }
-        .btn[disabled] { opacity: 0.65; cursor: progress; }
-        .btn--ghost {
-            background: transparent;
-            color: var(--text-dim);
-            border: 1px solid var(--border);
-        }
-
-        .btn--ghost:hover { color: var(--text); border-color: var(--border-hover); background: transparent; }
-        .form-status {
-            display: none;
-            margin-bottom: 1rem;
-            padding: 0.85rem 0.95rem;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            background: var(--surface-raised);
-            color: var(--text-dim);
-            font-size: 0.9rem;
-        }
-        .form-status.is-visible { display: block; }
-        .form-status.is-success { border-color: rgba(64, 184, 122, 0.55); color: #b8e8cb; }
-        .form-status.is-error { border-color: rgba(218, 88, 88, 0.65); color: #f2b5b5; }
-        .side-panel h2 { font-size: 1rem; margin-bottom: 0.6rem; }
-        .side-panel p { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 1rem; }
-        .link-stack { display: grid; gap: 0.65rem; margin-top: 1rem; }
-
-        footer {
-            border-top: 1px solid var(--border);
-            padding: 1.5rem 2rem;
-            text-align: center;
-            font-family: var(--mono);
-            font-size: 0.75rem;
-            color: var(--text-faint);
-        }
-
-        footer a { color: var(--text-faint); text-decoration: none; }
-        footer a:hover { color: var(--text-dim); }
-
-        @media (max-width: 760px) {
-            nav { padding: 0 1rem; }
-            .nav-links a { padding: 0.35rem 0.45rem; }
-            main { width: min(100% - 2rem, 920px); padding-top: 7rem; }
-            .contact-grid { grid-template-columns: 1fr; }
-        }
-    </style>
-    <link rel="stylesheet" href="site.css">
 </head>
 <body class="contact-page">
     <div class="site-progress" aria-hidden="true"></div>
@@ -238,22 +48,18 @@
     <nav class="site-nav" aria-label="Primary navigation">
         <div class="site-nav__inner shell">
             <a class="wordmark" href="index.html" aria-label="Row-Bot home">
-                <img src="row_bot_glyph_256.png" alt="">
+                <img src="row_bot_glyph_256.png" width="256" height="256" alt="">
                 <strong>Row-Bot</strong>
                 <small>formerly Thoth</small>
             </a>
             <button class="nav-hamburger" type="button" aria-controls="nav-menu" aria-expanded="false" aria-label="Open navigation"><span></span></button>
             <div class="nav-menu" id="nav-menu">
-                <a href="index.html#new">What’s new</a>
                 <a href="features.html">Features</a>
                 <a href="architecture.html">Architecture</a>
                 <a href="docs/">Docs</a>
-                <a href="index.html#comparison">Compare</a>
-                <a href="index.html#privacy">Privacy</a>
-                <a href="https://sydsachar.com/category/row-bot/" target="_blank" rel="noopener noreferrer">Blog</a>
                 <a href="contact.html" aria-current="page">Contact</a>
                 <a href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">GitHub</a>
-                <a class="nav-download" href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-Windows-x64.exe" data-os-primary data-os-label="short" data-download="windows">Download</a>
+                <a class="nav-download" href="index.html#install" data-os-primary data-os-label="short" data-placement="navigation">Desktop install</a>
             </div>
         </div>
     </nav>
@@ -262,7 +68,7 @@
         <header class="page-hero page-hero--visual contact-page-hero">
             <div class="shell page-hero__grid">
                 <div class="page-hero__content">
-                    <a class="release-pill" href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">Open source · community built</a>
+                    <a class="release-pill" href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">Open source &middot; community built</a>
                     <p class="eyebrow">Contact</p>
                     <h1>Tell us what you are <em>building.</em></h1>
                     <p class="page-hero__copy">Questions, feedback, partnership notes, release issues, and thoughtful bug reports are welcome. Security reports should go directly by email.</p>
@@ -275,55 +81,58 @@
             </div>
         </header>
 
-        <section class="contact-section">
-        <div class="shell contact-grid">
-            <form action="https://formspree.io/f/mwvagdzv" method="POST" data-contact-form>
-                <div class="form-status" role="status" aria-live="polite" data-contact-status></div>
-                <input type="hidden" name="_subject" value="New Row-Bot website contact">
-                <input type="text" name="_gotcha" tabindex="-1" autocomplete="off" style="display:none">
+        <section class="contact-section" aria-label="Contact options">
+            <div class="shell contact-grid">
+                <form action="https://formspree.io/f/mwvagdzv" method="POST" data-contact-form>
+                    <div class="form-status" role="status" aria-live="polite" data-contact-status></div>
+                    <input type="hidden" name="_subject" value="New Row-Bot website contact">
+                    <input class="form-honeypot" type="text" name="_gotcha" tabindex="-1" autocomplete="off" aria-hidden="true">
 
-                <label for="name">Name</label>
-                <input id="name" name="name" autocomplete="name" required>
+                    <label for="name">Name</label>
+                    <input id="name" name="name" autocomplete="name" required>
 
-                <label for="email">Email</label>
-                <input id="email" name="email" type="email" autocomplete="email" required>
+                    <label for="email">Email</label>
+                    <input id="email" name="email" type="email" autocomplete="email" required>
 
-                <label for="topic">Topic</label>
-                <select id="topic" name="topic">
-                    <option>General question</option>
-                    <option>Bug or release issue</option>
-                    <option>Plugin or MCP idea</option>
-                    <option>Partnership</option>
-                    <option>Security</option>
-                </select>
+                    <label for="topic">Topic</label>
+                    <select id="topic" name="topic">
+                        <option>General question</option>
+                        <option>Bug or release issue</option>
+                        <option>Plugin or MCP idea</option>
+                        <option>Partnership</option>
+                    </select>
 
-                <label for="message">Message</label>
-                <textarea id="message" name="message" required></textarea>
+                    <label for="message">Message</label>
+                    <textarea id="message" name="message" required></textarea>
 
-                <button class="button button--primary" type="submit" data-contact-submit>Send Message</button>
-            </form>
+                    <p class="contact-disclosure">Submitting sends these form fields to Formspree so the project can receive your message. You can use the public project channels instead.</p>
+                    <button class="button button--primary" type="submit" data-contact-submit>Send message</button>
+                </form>
 
-            <aside class="side-panel">
-                <h2>Project channels</h2>
-                <p>Use GitHub for public questions, feature ideas, and reproducible bugs.</p>
-                <div class="link-stack">
-                    <a class="button button--secondary" href="https://github.com/siddsachar/row-bot/discussions" target="_blank" rel="noopener noreferrer" data-track="contact_discussions">GitHub Discussions</a>
-                    <a class="button button--secondary" href="https://github.com/siddsachar/row-bot/issues/new/choose" target="_blank" rel="noopener noreferrer" data-track="contact_issue">Open an Issue</a>
-                    <a class="button button--secondary" href="mailto:siddsachar@gmail.com?subject=Row-Bot%20security%20report" data-track="contact_security">Security Email</a>
-                </div>
-            </aside>
-        </div>
+                <aside class="side-panel">
+                    <h2>Project channels</h2>
+                    <p>Use GitHub for public questions, feature ideas, and reproducible bugs. Send sensitive vulnerability details only through the security email.</p>
+                    <div class="link-stack">
+                        <a class="button button--secondary" href="https://github.com/siddsachar/row-bot/discussions" target="_blank" rel="noopener noreferrer" data-track="contact_discussions">GitHub Discussions</a>
+                        <a class="button button--secondary" href="https://github.com/siddsachar/row-bot/issues/new/choose" target="_blank" rel="noopener noreferrer" data-track="contact_issue">Open an issue</a>
+                        <a class="button button--secondary" href="mailto:siddsachar@gmail.com?subject=Row-Bot%20security%20report" data-track="contact_security">Security email</a>
+                    </div>
+                </aside>
+            </div>
         </section>
     </main>
 
     <footer class="site-footer">
         <div class="shell footer-grid">
-            <span>Row-Bot · v4.5.0 · Apache 2.0</span>
+            <span>Row-Bot &middot; v4.5.0 &middot; Apache 2.0</span>
             <div class="footer-links">
+                <a href="index.html">Home</a>
                 <a href="features.html">Features</a>
                 <a href="architecture.html">Architecture</a>
                 <a href="docs/">Docs</a>
-                <a href="contact.html">Contact</a>
+                <a href="index.html#privacy">Privacy</a>
+                <a href="index.html#comparison">Compare</a>
+                <a href="contact.html" aria-current="page">Contact</a>
                 <a href="https://sydsachar.com/category/row-bot/" target="_blank" rel="noopener noreferrer">Blog</a>
                 <a href="https://github.com/siddsachar/row-bot" target="_blank" rel="noopener noreferrer">GitHub</a>
             </div>
@@ -332,9 +141,7 @@
 
     <script>
         function trackSiteEvent(name, params) {
-            if (typeof window.gtag === 'function') {
-                window.gtag('event', name, params || {});
-            }
+            if (typeof window.gtag === 'function') window.gtag('event', name, params || {});
         }
 
         function trackAdsConversion(params) {
@@ -355,7 +162,7 @@
             contactStatus.className = `form-status is-visible is-${type}`;
         }
 
-        contactForm.addEventListener('submit', async event => {
+        contactForm?.addEventListener('submit', async event => {
             event.preventDefault();
             contactSubmit.disabled = true;
             contactSubmit.textContent = 'Sending...';
@@ -368,20 +175,18 @@
                     headers: { 'Accept': 'application/json' }
                 });
 
-                if (!response.ok) {
-                    throw new Error('Form submission failed');
-                }
+                if (!response.ok) throw new Error('Form submission failed');
 
                 contactForm.reset();
                 showContactStatus('Thanks. Your message has been sent.', 'success');
                 trackSiteEvent('contact_submit', { method: 'formspree' });
                 trackAdsConversion({ method: 'formspree' });
-            } catch (error) {
-                showContactStatus('Something went wrong. Please try again or use the security email link.', 'error');
+            } catch (_error) {
+                showContactStatus('Something went wrong. Please try again or use one of the project channels.', 'error');
                 trackSiteEvent('contact_submit_error', { method: 'formspree' });
             } finally {
                 contactSubmit.disabled = false;
-                contactSubmit.textContent = 'Send Message';
+                contactSubmit.textContent = 'Send message';
             }
         });
 

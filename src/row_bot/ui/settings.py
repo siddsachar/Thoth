@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import pathlib
-import tempfile
 import time
 from datetime import datetime
 from typing import Any, Callable
@@ -37,6 +36,39 @@ from row_bot.ui.performance import (
 from row_bot.ui.timer_utils import defer_ui, safe_ui_task
 
 logger = logging.getLogger(__name__)
+
+_DOCUMENT_JOB_STATUS_LABELS = {
+    "staging": "Queued",
+    "queued": "Queued",
+    "indexing": "Indexing",
+    "searchable": "Searchable",
+    "extracting": "Extracting",
+    "completed": "Complete",
+    "failed": "Failed",
+    "cancelled": "Cancelled",
+    "skipped_duplicate": "Duplicate skipped",
+}
+
+_PROCESS_TAILSCALE_STATUS_CACHE: Any | None = None
+
+
+def _process_tailscale_status_cache() -> Any:
+    """Return the one command-free Tailscale status cache for this process."""
+
+    global _PROCESS_TAILSCALE_STATUS_CACHE
+    if _PROCESS_TAILSCALE_STATUS_CACHE is None:
+        from row_bot.access.tailscale import TailscaleStatusCache
+
+        _PROCESS_TAILSCALE_STATUS_CACHE = TailscaleStatusCache()
+    return _PROCESS_TAILSCALE_STATUS_CACHE
+
+
+def document_job_status_label(status: str) -> str:
+    """Return the agreed user-facing document-ingestion milestone."""
+    return _DOCUMENT_JOB_STATUS_LABELS.get(
+        str(status),
+        str(status).replace("_", " ").title(),
+    )
 
 _MOBILE_SETTINGS_CSS = """
 <style>
@@ -360,7 +392,6 @@ def open_settings(
     from row_bot.documents import (
         document_vector_status,
         load_processed_files,
-        load_and_vectorize_document,
         rebuild_vector_store_from_vault,
         release_document_embedding_resources,
         remove_document,
@@ -419,6 +450,10 @@ def open_settings(
             return f"Saved securely ({fingerprint})"
         if source == "environment":
             return f"Set by environment ({fingerprint})"
+        if source == "secret_file":
+            return f"Mounted read-only secret ({fingerprint})"
+        if source == "conflict":
+            return "Secret file conflicts with the environment"
         if source == "legacy_plaintext":
             return f"Saved in legacy plaintext ({fingerprint})"
         return f"Saved for this session ({fingerprint})"
@@ -461,6 +496,9 @@ def open_settings(
         *,
         password: bool = True,
     ):
+        from row_bot.channels.auth_store import channel_secret_status
+
+        secret_status = channel_secret_status(channel_name, env_var)
         status_label = ui.label(
             _channel_secret_status_text(channel_name, env_var)
         ).classes("text-grey-6 text-xs")
@@ -472,6 +510,9 @@ def open_settings(
         if password:
             inp_kwargs.update({"password": True, "password_toggle_button": True})
         inp = ui.input(**inp_kwargs).classes("w-full")
+        if secret_status.get("externally_managed"):
+            inp.disable()
+            inp.props("hint='Managed by the server operator'")
 
         def refresh_status() -> None:
             status_label.text = _channel_secret_status_text(channel_name, env_var)
@@ -590,6 +631,7 @@ def open_settings(
         *,
         icon: str | None = None,
         tone: str = "default",
+        docs_id: str | None = None,
     ):
         border = "rgba(148, 163, 184, 0.22)"
         background = "rgba(148, 163, 184, 0.045)"
@@ -599,9 +641,14 @@ def open_settings(
         elif tone == "danger":
             border = "rgba(239, 68, 68, 0.42)"
             background = "rgba(239, 68, 68, 0.06)"
-        with ui.column().classes("w-full gap-3 q-pa-md rounded-borders q-mb-md").style(
+        section = ui.column().classes(
+            "w-full gap-3 q-pa-md rounded-borders q-mb-md"
+        ).style(
             f"border: 1px solid {border}; background: {background};"
-        ):
+        )
+        if docs_id:
+            section.props(f'data-docs-id="{docs_id}"')
+        with section:
             with ui.row().classes("items-start gap-2 w-full no-wrap"):
                 if icon:
                     ui.icon(icon, size="1.15rem").classes("text-grey-5 q-mt-xs")
@@ -942,6 +989,15 @@ def open_settings(
         local_embedding_status = get_local_embedding_status()
         memory_status = kg.memory_vector_status()
         processed = load_processed_files()
+        from row_bot.document_jobs import (
+            MAX_UPLOAD_BYTES,
+            DocumentJobService,
+            ensure_document_supervisor,
+        )
+
+        document_job_service = DocumentJobService()
+        ensure_document_supervisor(document_job_service)
+        durable_records = document_job_service.list_document_records()
         with ui.row().classes("items-center gap-2 q-mb-sm"):
             _metric_chip("indexed", len(processed), icon="library_books")
             _metric_chip("embedding", describe_active_embedding(emb_cfg), icon="hub")
@@ -990,13 +1046,6 @@ def open_settings(
                 min=0,
                 step=1,
             ).classes("w-full").props("dense outlined").tooltip("Leave blank or 0 for the model default.")
-            batch_input = ui.number(
-                label="Batch size",
-                value=emb_cfg.get("batch_size", 32),
-                min=1,
-                max=256,
-                step=1,
-            ).classes("w-full").props("dense outlined")
             unload_switch = ui.switch(
                 "Auto-unload local embedding resources after heavy work",
                 value=bool(emb_cfg.get("auto_unload", False)),
@@ -1005,7 +1054,14 @@ def open_settings(
                 "Cloud embeddings send document chunks and memory text to the selected provider."
             ).classes("text-warning text-xs")
 
-            local_status_panel = ui.column().classes("w-full gap-1 q-pa-sm bg-grey-2 rounded-borders")
+            local_status_panel = (
+                ui.column()
+                .classes("w-full gap-1 q-pa-sm rounded-borders")
+                .style(
+                    "border: 1px solid rgba(148, 163, 184, 0.24); "
+                    "background: rgba(148, 163, 184, 0.08);"
+                )
+            )
             with local_status_panel:
                 ui.label(
                     f"Local model: {local_embedding_status['state']} — "
@@ -1034,7 +1090,6 @@ def open_settings(
                     "local_model": local_sel.value,
                     "cloud_model": cloud_sel.value,
                     "dimension": int(dimension_input.value or 0) or None,
-                    "batch_size": int(batch_input.value or 32),
                     "auto_unload": bool(unload_switch.value),
                 })
                 release_document_embedding_resources("embedding settings changed")
@@ -1146,80 +1201,235 @@ def open_settings(
                 lambda _: setattr(local_action_row, "visible", provider_sel.value == "local"),
             )
 
-        async def _handle_doc_upload(e: events.UploadEventArguments):
-            name = e.file.name
-            n = ui.notification(f"📄 Indexing {name}…", type="ongoing", spinner=True, timeout=None)
-            tmp_path = None
-            try:
-                data = await e.file.read()
-                if not data:
-                    raise ValueError(f"Uploaded file {name} is empty or could not be read")
-                with tempfile.NamedTemporaryFile(delete=False, suffix=pathlib.Path(name).suffix) as tmp:
-                    tmp.write(data)
-                    tmp_path = tmp.name
-                await run.io_bound(load_and_vectorize_document, tmp_path, True, name)
-                doc_upload.reset()
-                ui.notify(f"✅ {name} indexed", type="positive")
+        async def _handle_doc_upload_batch(e: events.MultiUploadEventArguments):
+            from row_bot.document_uploads import stage_upload
 
-                # Queue background knowledge extraction
+            batch_id = document_job_service.create_batch()
+            accepted = 0
+            for sequence, upload in enumerate(e.files):
                 try:
-                    from row_bot.document_extraction import queue_extraction
-                    staging_dir = get_row_bot_data_dir() / "doc_staging"
-                    staging_dir.mkdir(parents=True, exist_ok=True)
-                    staging_path = staging_dir / name
-                    import shutil
-                    shutil.copy2(tmp_path, staging_path)
-                    queue_extraction(str(staging_path), name)
-                    ui.notify(f"🧠 Extracting knowledge from {name}…", type="info")
+                    await stage_upload(
+                        document_job_service,
+                        batch_id,
+                        sequence,
+                        upload.name,
+                        upload,
+                        declared_size=upload.size(),
+                    )
+                    accepted += 1
                 except Exception as exc:
-                    logger.warning("Failed to queue document extraction for %s: %s", name, exc, exc_info=True)
-            except Exception as exc:
-                logger.error("Document upload/index failed for %s", name, exc_info=True)
-                ui.notify(f"Failed: {exc}", type="negative")
-            finally:
-                n.dismiss()
-                if tmp_path:
-                    with contextlib.suppress(FileNotFoundError):
-                        os.unlink(tmp_path)
+                    logger.error(
+                        "Document upload staging rejected for %s",
+                        upload.name,
+                        exc_info=True,
+                    )
+                    ui.notify(
+                        f"{upload.name} was not accepted: {exc}",
+                        type="negative",
+                        close_button=True,
+                    )
+            try:
+                document_job_service.finish_batch_staging(batch_id)
+            except Exception:
+                logger.error("Document batch staging finalization failed", exc_info=True)
+                ui.notify("The document batch could not be queued.", type="negative")
+                return
+            doc_upload.reset()
+            if accepted:
+                ui.notify(
+                    f"Accepted {accepted} document{'s' if accepted != 1 else ''} for processing.",
+                    type="positive",
+                )
+            queue_panel.refresh()
 
         with _settings_section(
             "Upload & Index",
-            "Supported files: PDF, DOCX, TXT, MD, HTML, and EPUB.",
+            "Supported files: PDF, DOC, DOCX, TXT, MD, HTML, HTM, and EPUB.",
             icon="upload_file",
         ):
             doc_upload = ui.upload(
                 label="Upload documents",
-                on_upload=_handle_doc_upload,
+                on_multi_upload=_handle_doc_upload_batch,
                 auto_upload=True,
                 multiple=True,
+                max_file_size=MAX_UPLOAD_BYTES,
             ).classes("w-full").props('flat bordered hide-upload-btn')
 
+        with _settings_section(
+            "Ingestion Queue",
+            "Documents become searchable before knowledge extraction finishes.",
+            icon="pending_actions",
+        ):
+            @ui.refreshable
+            def queue_panel() -> None:
+                batches = document_job_service.list_batches()
+                jobs_by_batch: dict[str, list] = {}
+                for job in document_job_service.list_jobs():
+                    jobs_by_batch.setdefault(job.batch_id, []).append(job)
+                if not batches:
+                    ui.label("No queued document work.").classes("text-grey-6 text-sm")
+                for batch in batches:
+                    with ui.card().classes("w-full q-pa-sm"):
+                        with ui.row().classes("w-full items-center gap-2"):
+                            ui.label(
+                                f"Batch · {batch.status.replace('_', ' ').title()}"
+                            ).classes("text-sm font-bold")
+                            ui.space()
+                            if batch.status not in {
+                                "completed",
+                                "completed_with_errors",
+                                "cancelled",
+                            }:
+                                if batch.pause_requested:
+                                    ui.button(
+                                        "Resume",
+                                        icon="play_arrow",
+                                        on_click=lambda batch_id=batch.id: (
+                                            document_job_service.pause_batch(batch_id, False),
+                                            queue_panel.refresh(),
+                                        ),
+                                    ).props("flat dense no-caps")
+                                else:
+                                    ui.button(
+                                        "Pause",
+                                        icon="pause",
+                                        on_click=lambda batch_id=batch.id: (
+                                            document_job_service.pause_batch(batch_id, True),
+                                            queue_panel.refresh(),
+                                        ),
+                                    ).props("flat dense no-caps")
+                                ui.button(
+                                    "Cancel remaining",
+                                    icon="stop",
+                                    on_click=lambda batch_id=batch.id: (
+                                        document_job_service.cancel_batch(batch_id),
+                                        queue_panel.refresh(),
+                                    ),
+                                ).props("flat dense no-caps color=negative")
+                        for job in jobs_by_batch.get(batch.id, []):
+                            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                                ui.icon("description", size="xs").classes("text-grey-6")
+                                ui.label(job.original_name).classes("text-sm").style(
+                                    "min-width:0; flex:1; overflow:hidden; "
+                                    "text-overflow:ellipsis; white-space:nowrap;"
+                                )
+                                ui.badge(document_job_status_label(job.status)).props(
+                                    "outline dense"
+                                ).style("flex-shrink:0;")
+                                current = (
+                                    job.index_progress_current
+                                    if job.status == "indexing"
+                                    else job.extraction_progress_current
+                                )
+                                total = (
+                                    job.index_progress_total
+                                    if job.status == "indexing"
+                                    else job.extraction_progress_total
+                                )
+                                if total and job.status in {"indexing", "extracting"}:
+                                    ui.label(f"{current}/{total}").classes(
+                                        "text-xs text-grey-6"
+                                    )
+                                if job.status in {
+                                    "staging",
+                                    "queued",
+                                    "indexing",
+                                    "searchable",
+                                    "extracting",
+                                }:
+                                    ui.button(
+                                        icon="cancel",
+                                        on_click=lambda job_id=job.id: (
+                                            document_job_service.cancel_job(job_id),
+                                            queue_panel.refresh(),
+                                        ),
+                                    ).props(
+                                        "flat dense round size=xs color=negative"
+                                    ).style("flex-shrink:0;").tooltip(
+                                        f"Cancel {job.original_name}"
+                                    )
+                                elif job.status == "failed":
+                                    ui.button(
+                                        icon="replay",
+                                        on_click=lambda job_id=job.id: (
+                                            document_job_service.retry_failed(job_id),
+                                            queue_panel.refresh(),
+                                        ),
+                                    ).props("flat dense round size=xs").style(
+                                        "flex-shrink:0;"
+                                    ).tooltip(f"Retry {job.original_name}")
+                if any(
+                    batch.status
+                    in {"completed", "completed_with_errors", "cancelled"}
+                    for batch in batches
+                ):
+                    ui.button(
+                        "Clear finished",
+                        icon="clear_all",
+                        on_click=lambda: (
+                            document_job_service.clear_finished(),
+                            queue_panel.refresh(),
+                        ),
+                    ).props("flat dense no-caps")
+
+            queue_panel()
+            ui.timer(1.0, queue_panel.refresh)
+
         with _settings_section("Indexed Documents", "Remove individual sources when they are no longer needed.", icon="inventory_2"):
-            if processed:
-                ui.label(f"{len(processed)} indexed document(s)").classes("font-bold")
-                for f in sorted(processed):
+            durable_names = {
+                str(record["original_name"]) for record in durable_records
+            }
+            indexed_rows = [
+                (
+                    str(record["document_id"]),
+                    str(record["original_name"]),
+                    False,
+                )
+                for record in durable_records
+            ] + [
+                (name, name, True)
+                for name in sorted(set(processed) - durable_names)
+            ]
+            if indexed_rows:
+                ui.label(f"{len(indexed_rows)} indexed document(s)").classes("font-bold")
+                name_counts: dict[str, int] = {}
+                for _identifier, display_name, _legacy in indexed_rows:
+                    name_counts[display_name] = name_counts.get(display_name, 0) + 1
+                for identifier, display_name, is_legacy in indexed_rows:
                     with ui.row().classes("items-center gap-1 w-full no-wrap"):
                         ui.icon("description", size="sm").classes("text-grey-6")
-                        ui.label(f).classes("text-sm").style("min-width: 0; flex: 1;")
+                        shown_name = display_name
+                        if name_counts[display_name] > 1 and not is_legacy:
+                            shown_name = f"{display_name} · {identifier[:8]}"
+                        ui.label(shown_name).classes("text-sm").style("min-width: 0; flex: 1;")
 
-                        def _make_delete(name=f):
+                        def _make_delete(
+                            doc_id=identifier,
+                            name=display_name,
+                            legacy=is_legacy,
+                        ):
                             async def _do_delete():
                                 import row_bot.knowledge_graph as kg
                                 n = ui.notification(f"Removing {name}...", type="ongoing", spinner=True, timeout=None)
                                 try:
-                                    await run.io_bound(remove_document, name)
-                                    await run.io_bound(kg.delete_entities_by_source, f"document:{name}")
+                                    await run.io_bound(remove_document, doc_id)
+                                    source = (
+                                        f"document:{name}"
+                                        if legacy
+                                        else f"document:{doc_id}"
+                                    )
+                                    await run.io_bound(kg.delete_entities_by_source, source)
                                     n.dismiss()
                                     ui.notify(f"Removed {name}", type="info")
-                                    _reopen("documents")
+                                    _reopen("Documents")
                                 except Exception as exc:
                                     n.dismiss()
                                     ui.notify(f"Delete failed: {exc}", type="negative")
                             return _do_delete
 
-                        ui.button(icon="delete", on_click=_make_delete(f)).props(
+                        ui.button(icon="delete", on_click=_make_delete()).props(
                             "flat dense round size=xs color=negative"
-                        ).tooltip(f"Remove {f}")
+                        ).tooltip(f"Remove {display_name}")
             else:
                 ui.label("No documents indexed yet.").classes("text-grey-6")
 
@@ -1244,9 +1454,10 @@ def open_settings(
                     if confirm:
                         import row_bot.knowledge_graph as kg
                         reset_vector_store()
+                        document_job_service.clear_document_records()
                         kg.delete_entities_by_source_prefix("document:")
                         ui.notify("All documents and extracted knowledge cleared.", type="info")
-                        _reopen("documents")
+                        _reopen("Documents")
                 finally:
                     _clearing_docs = False
 
@@ -3221,10 +3432,98 @@ def open_settings(
 
         _build_tunnel_settings_section()
 
-        from row_bot.ui.mobile_access_settings import build_mobile_access_settings_section
+        from row_bot.access.access_routes import (
+            AccessRouteConfigStore,
+            build_route_inventory,
+            discover_private_lan_addresses,
+        )
+        from row_bot.access.launcher_control import request_launcher_restart
+        from row_bot.access.tailscale import (
+            TailscaleOwnershipStore,
+            TailscaleServeController,
+        )
+        from row_bot.app_port import get_app_port
+        from row_bot.tunnel import tunnel_manager
+        from row_bot.ui.remote_access_settings import (
+            build_remote_access_settings_section,
+        )
 
-        build_mobile_access_settings_section(
+        _access_route_store = AccessRouteConfigStore()
+        _access_port = get_app_port()
+        _tailscale_ownership_store = TailscaleOwnershipStore()
+        _tailscale_instance_key = str(
+            _tailscale_ownership_store.path.resolve(strict=False)
+        )
+        _tailscale_status_cache = _process_tailscale_status_cache()
+        from row_bot.access.config import AccessConfig, DeploymentMode
+        from row_bot.ui.access_context import current_access_context
+
+        _validated_access_context = current_access_context()
+        _current_server_origin = (
+            _validated_access_context.origin
+            if _validated_access_context
+            and (
+                _validated_access_context.deployment_mode is DeploymentMode.SERVER
+                or not _validated_access_context.is_local_owner
+            )
+            else None
+        )
+        _public_access_origins = AccessConfig.from_env().public_origins
+
+        def _tailscale_status_snapshot():
+            return _tailscale_status_cache.get(
+                instance_key=_tailscale_instance_key,
+                port=_access_port,
+                ownership=_tailscale_ownership_store.load(),
+            )
+
+        def _remember_tailscale_status(status: object | None) -> None:
+            _tailscale_status_cache.remember(
+                instance_key=_tailscale_instance_key,
+                port=_access_port,
+                status=status,
+                ownership=_tailscale_ownership_store.load(),
+            )
+
+        def _route_inventory_provider():
+            tailscale_snapshot = _tailscale_status_snapshot()
+            return build_route_inventory(
+                port=_access_port,
+                config=_access_route_store.load_or_default(),
+                lan_addresses=discover_private_lan_addresses(),
+                tailscale_state=(
+                    tailscale_snapshot.status if tailscale_snapshot else None
+                ),
+                ngrok_url=tunnel_manager.get_url(_access_port),
+                reverse_proxy_origins=_public_access_origins,
+                current_server_origin=_current_server_origin,
+            )
+
+        _access_inventory = _route_inventory_provider()
+        _initial_tailscale_snapshot = _tailscale_status_snapshot()
+
+        def _request_access_restart() -> bool:
+            return request_launcher_restart().accepted
+
+        build_remote_access_settings_section(
             settings_section=_settings_section,
+            route_store=_access_route_store,
+            route_inventory=_access_inventory,
+            route_inventory_provider=_route_inventory_provider,
+            tailscale_status_sink=_remember_tailscale_status,
+            tailscale_status=(
+                _initial_tailscale_snapshot.status
+                if _initial_tailscale_snapshot
+                else None
+            ),
+            tailscale_verified_at=(
+                _initial_tailscale_snapshot.verified_at
+                if _initial_tailscale_snapshot
+                else None
+            ),
+            restart_child=_request_access_restart,
+            tailscale_controller=TailscaleServeController(),
+            port=_access_port,
             status_dot=_status_dot,
             metric_chip=_metric_chip,
         )

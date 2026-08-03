@@ -280,7 +280,26 @@ def _find_playwright_chromium_executable(browsers_dir: Path) -> Path | None:
     return None
 
 
-def playwright_browser_executable_path() -> str:
+def _playwright_browser_from_env(env: dict[str, str]) -> tuple[Path | None, Path | None]:
+    executable_value = str(env.get("PLAYWRIGHT_MCP_EXECUTABLE_PATH") or "").strip()
+    executable = Path(executable_value) if executable_value else None
+    if executable is not None and executable.exists():
+        browsers_value = str(env.get("PLAYWRIGHT_BROWSERS_PATH") or "").strip()
+        return executable, Path(browsers_value) if browsers_value else executable.parent
+    browsers_value = str(env.get("PLAYWRIGHT_BROWSERS_PATH") or "").strip()
+    browsers_dir = Path(browsers_value) if browsers_value else None
+    if browsers_dir is None:
+        return None, None
+    return _find_playwright_chromium_executable(browsers_dir), browsers_dir
+
+
+def playwright_browser_executable_path(
+    env: dict[str, str] | None = None,
+) -> str:
+    environment = os.environ if env is None else env
+    executable, _browsers_dir = _playwright_browser_from_env(environment)
+    if executable is not None:
+        return str(executable)
     manifest = _read_manifest("playwright-chrome")
     executable_path = manifest.get("executable_path")
     if executable_path and Path(str(executable_path)).exists():
@@ -329,6 +348,18 @@ def _env_path(env: dict[str, str]) -> str | None:
 def check_requirement(requirement: RuntimeRequirement, env: dict[str, str] | None = None) -> RuntimeCheck:
     env = env or os.environ.copy()
     if requirement.id == "playwright-chrome":
+        environment_executable, environment_browsers_dir = _playwright_browser_from_env(env)
+        if environment_executable is not None and environment_browsers_dir is not None:
+            return RuntimeCheck(
+                requirement=requirement,
+                available=True,
+                source="environment",
+                paths={
+                    "PLAYWRIGHT_BROWSERS_PATH": str(environment_browsers_dir),
+                    "PLAYWRIGHT_MCP_EXECUTABLE_PATH": str(environment_executable),
+                },
+                message="Playwright browser is available from the configured browser runtime.",
+            )
         manifest = _read_manifest("playwright-chrome")
         browsers_dir = Path(str(manifest.get("browsers_dir") or playwright_browsers_path()))
         executable_path = playwright_browser_executable_path()
