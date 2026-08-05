@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path("src/row_bot")
@@ -8,6 +9,48 @@ ROOT = Path("src/row_bot")
 
 def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_shared_chat_surface_binds_checkpoint_reconciliation_state():
+    from row_bot.ui.chat_components import _bind_shared_transcript_state
+    from row_bot.ui.transcript import message_keys
+
+    surface = SimpleNamespace(
+        transcript_thread_id="stale-thread",
+        transcript_generation=4,
+        transcript_rendered_keys=["stale"],
+        transcript_window_start=10,
+        transcript_window_size=1,
+        transcript_total=99,
+    )
+    state = SimpleNamespace(thread_id="developer-thread")
+    messages = [
+        {"role": "user", "content": "Build the calculator"},
+        {"role": "assistant", "content": "Inspection is still active"},
+    ]
+
+    _bind_shared_transcript_state(surface, state, messages)
+
+    assert surface.transcript_thread_id == "developer-thread"
+    assert surface.transcript_generation == 5
+    assert surface.transcript_rendered_keys == message_keys(messages)
+    assert surface.transcript_window_start == 0
+    assert surface.transcript_window_size == 2
+    assert surface.transcript_total == 2
+
+
+def test_terminal_orchestration_never_offers_stop_for_stale_active_counts():
+    from row_bot.ui.agent_drawer import (
+        agent_retry_available,
+        orchestration_group_control,
+    )
+
+    assert orchestration_group_control("stopped", {"active": 1}) == ""
+    assert orchestration_group_control("completed_partial", {"active": 2}) == ""
+    assert orchestration_group_control("waiting_children", {"active": 1}) == "stop_all"
+    assert agent_retry_available("stopped", "waiting_children") is True
+    assert agent_retry_available("failed", "completed_partial") is False
+    assert agent_retry_available("stopped", "stopped") is False
 
 
 def test_activity_center_uses_current_agent_goal_runs_and_channel_monitor():
@@ -177,6 +220,17 @@ def test_channel_monitor_component_preserves_channel_contract():
     assert "whatsapp" in src
 
 
+def test_transcript_uses_one_standalone_actionable_child_approval_card():
+    src = _read("ui/render.py")
+    agent_card = src.split("def _render_agent_run_card", 1)[1].split(
+        "def _agent_card_runs_from_tool_results",
+        1,
+    )[0]
+
+    assert "_render_approval_request_card" not in agent_card
+    assert 'if role == "assistant" and msg.get("approval_request_id")' in src
+
+
 def test_global_profile_picker_contract():
     picker = _read("ui/profile_picker.py")
     controls = _read("ui/chat_components.py")
@@ -243,6 +297,13 @@ def test_agent_drawer_contract_and_surface_usage():
     app = Path("src/row_bot/app.py").read_text(encoding="utf-8")
 
     assert "build_parent_agent_drawer" in drawer
+    assert "Ã‚" not in drawer
+    assert "Â" not in drawer
+    assert "orchestration_status_label" in drawer
+    assert "orchestration_group_control" in drawer
+    assert "Cancel final answer" in drawer
+    assert '"min-height: 30px; flex-wrap: wrap;"' in drawer
+    assert "-webkit-line-clamp: 2" in drawer
     assert "open_agent_peek_dialog" in drawer
     assert "open_in_new" in drawer
     assert "_open_agent_thread" in drawer
@@ -263,6 +324,8 @@ def test_agent_drawer_contract_and_surface_usage():
     assert "difference" in drawer
     assert "Open worktree" in drawer
     assert "Compare" in drawer
+    assert "model_iterations_used" not in drawer
+    assert "delegation depth" not in drawer
     assert "open_agent_thread" in drawer
     assert "_get_thread_developer_workspace" in drawer
     assert "_get_thread_type" in drawer
@@ -283,8 +346,23 @@ def test_agent_drawer_contract_and_surface_usage():
     assert "agent_child_open" not in chat
 
     streaming = _read("ui/streaming.py")
+    render = _read("ui/render.py")
+    assert "model_iterations_used" not in render
+    assert "delegation depth" not in render
+    assert 'f"{turns_used}/{max_turns} turns"' in render
     assert "def _detach_if_thread_changed" in streaming
     assert '_detach_if_thread_changed(gen, state, "active thread changed")' in streaming
+
+
+def test_code_highlighting_only_processes_plain_unhighlighted_nodes():
+    head = _read("ui/head_html.py")
+    render = _read("ui/render.py").replace('\\"', '"')
+    streaming = _read("ui/streaming.py").replace('\\"', '"')
+
+    assert 'pre code:not([data-highlighted="yes"])' in head
+    assert "el.children.length" in head
+    assert 'pre code:not([data-highlighted="yes"])' in render
+    assert 'pre code:not([data-highlighted="yes"])' in streaming
 
 
 def test_shared_goal_ui_is_used_by_all_chat_surfaces():
@@ -379,6 +457,28 @@ def test_main_shell_reserves_fixed_drawers_and_activity_center_width():
     assert "--row-bot-command-center-width" in command_center
     assert "_sync_shell_width_var(width)" in command_center
     assert "__rowBotApplyDrawerOverlapGuard" in command_center
+
+
+def test_activity_center_uses_responsive_drawer_with_narrow_screen_toggle():
+    command_center = _read("ui/command_center.py")
+
+    assert "ui.right_drawer(value=False, fixed=True)" in command_center
+    assert "show-if-above breakpoint=900" in command_center
+    assert ".row-bot-activity-mobile-toggle.q-btn" in command_center
+    assert "@media (max-width: 900px)" in command_center
+    assert 'ui.button(icon="pending_actions", on_click=drawer.toggle)' in command_center
+    assert "aria-label='Toggle Activity Center'" in command_center
+
+
+def test_sidebar_uses_responsive_drawer_with_narrow_screen_toggle():
+    sidebar = _read("ui/sidebar.py")
+
+    assert "ui.left_drawer(value=False, fixed=True)" in sidebar
+    assert "show-if-above breakpoint=900" in sidebar
+    assert ".row-bot-navigation-mobile-toggle.q-btn" in sidebar
+    assert "@media (max-width: 900px)" in sidebar
+    assert 'ui.button(icon="menu", on_click=drawer.toggle)' in sidebar
+    assert "aria-label='Toggle navigation'" in sidebar
 
 
 def test_sidebar_hides_child_agent_threads_by_default():

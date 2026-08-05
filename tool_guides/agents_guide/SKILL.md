@@ -29,6 +29,9 @@ DELEGATING:
 - The `/agent` command is a direct command shortcut, not a natural-language planner. When a user explicitly types `/agent --model=model:provider:model-id ...`, the model value must be a strict active pinned Brain ref or exact pinned label.
 - Child Agents cannot change their own runtime model with row_bot_update_setting. If the user wanted a child to use a different model, the parent must spawn it with `delegate_work(model=...)` or the user must use `/agent --model=...`.
 - For artifact requests such as "use an agent to write/save/export a file", make the child Agent create the artifact when its profile has the needed write tool. Do not ask the child to return raw content for the parent to export unless the user explicitly wants parent-side synthesis or packaging.
+- A review, critique, or edit Agent must receive the complete material it is reviewing: include the complete draft in `context`, or include a concrete workspace-relative artifact path plus the review criteria. Never launch a reviewer against a draft that does not exist yet.
+- When the parent will draft the material, finish the draft before delegating the reviewer. When a child drafts it, use a real later wave: let the drafting child finish, then delegate the reviewer from the resumed parent with the returned draft or stable artifact path in `context`.
+- `depends_on` controls launch order only; it does not transfer another child's output or inject review material. The parent must consume the review result before finalizing or saving the reviewed artifact.
 - Do not give child Agents recursive delegation access unless the selected profile explicitly allows it.
 
 TRACKING:

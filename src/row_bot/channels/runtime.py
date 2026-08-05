@@ -138,6 +138,11 @@ def finalize_channel_orchestration(
     orchestration = get_generation_orchestration(thread_id, generation_id)
     if not orchestration or int(orchestration.get("required_total") or 0) <= 0:
         return False
+    if int(orchestration.get("orchestration_version") or 0) >= 2:
+        # The shared agent completion guard already persisted the real parent
+        # output and moved the turn to waiting. Channels deliver that output
+        # normally; they do not replace it with adapter-authored narration.
+        return False
     text = str(assistant_text or "")
     if text.strip():
         from row_bot.threads import remove_latest_checkpoint_ai_message
@@ -167,6 +172,33 @@ def orchestration_suspended_final() -> str:
 
 def channel_turn_is_suspended(answer: Any) -> bool:
     return str(answer or "").strip() == orchestration_suspended_final()
+
+
+def channel_turn_waiting_on_parent(config: dict | None) -> bool:
+    """Return whether the unified parent is awaiting child/event work.
+
+    Version 2 parents keep and deliver their real model-authored progress.  The
+    channel Goal loop still needs to pause at that point instead of evaluating
+    the progress text as a completed Goal turn.
+    """
+
+    configurable = (config or {}).get("configurable") or {}
+    thread_id = str(configurable.get("thread_id") or "")
+    generation_id = str(configurable.get("generation_id") or "")
+    if not thread_id or not generation_id:
+        return False
+    try:
+        from row_bot.agent_orchestrator import get_generation_orchestration
+
+        orchestration = get_generation_orchestration(thread_id, generation_id)
+    except Exception:
+        return False
+    return bool(
+        orchestration
+        and int(orchestration.get("orchestration_version") or 0) >= 2
+        and str(orchestration.get("parent_state") or "")
+        in {"waiting", "runnable", "running"}
+    )
 
 
 def _has_assistant_after_latest_human(messages: list[object]) -> bool:
@@ -363,6 +395,12 @@ def run_channel_goal_sync(
             )
         if answer:
             send_text(answer)
+        if channel_turn_waiting_on_parent(config):
+            return ChannelGoalRunResult(
+                turns=turns,
+                status="waiting_children",
+                reason="The original parent is waiting for child Agent events.",
+            )
         decision = _after_goal_turn(
             channel_name=channel_name,
             thread_id=thread_id,
@@ -397,6 +435,12 @@ def continue_channel_goal_after_turn_sync(
 ) -> ChannelGoalRunResult:
     """Evaluate a just-finished channel turn and continue the Goal if needed."""
 
+    if channel_turn_waiting_on_parent(config):
+        return ChannelGoalRunResult(
+            turns=0,
+            status="waiting_children",
+            reason="The original parent is waiting for child Agent events.",
+        )
     decision = _after_goal_turn(
         channel_name=channel_name,
         thread_id=thread_id,
@@ -458,6 +502,12 @@ async def run_channel_goal_async(
             )
         if answer:
             await _maybe_await(send_text(answer))
+        if channel_turn_waiting_on_parent(config):
+            return ChannelGoalRunResult(
+                turns=turns,
+                status="waiting_children",
+                reason="The original parent is waiting for child Agent events.",
+            )
         decision = _after_goal_turn(
             channel_name=channel_name,
             thread_id=thread_id,
@@ -492,6 +542,12 @@ async def continue_channel_goal_after_turn_async(
 ) -> ChannelGoalRunResult:
     """Evaluate a just-finished async channel turn and continue the Goal."""
 
+    if channel_turn_waiting_on_parent(config):
+        return ChannelGoalRunResult(
+            turns=0,
+            status="waiting_children",
+            reason="The original parent is waiting for child Agent events.",
+        )
     decision = _after_goal_turn(
         channel_name=channel_name,
         thread_id=thread_id,

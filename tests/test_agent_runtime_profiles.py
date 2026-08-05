@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from types import SimpleNamespace
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -43,6 +44,43 @@ def _fresh_runtime_modules(tmp_path, monkeypatch):
 
 def _prompt_text(result: dict) -> str:
     return "\n".join(str(message.content) for message in result["llm_input_messages"])
+
+
+def test_graph_interrupt_result_extracts_paused_state_for_non_streaming_invoke(
+    tmp_path,
+    monkeypatch,
+):
+    _threads, _profiles, agent, _streaming, _picker, _library = _fresh_runtime_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    state = SimpleNamespace(
+        next=("tools",),
+        tasks=[
+            SimpleNamespace(
+                interrupts=[
+                    SimpleNamespace(
+                        id="interrupt-parent-1",
+                        value={
+                            "tool": "run_command",
+                            "approval_reason": "Authorize the disposable smoke file.",
+                        },
+                    )
+                ]
+            )
+        ],
+    )
+
+    assert agent._graph_interrupt_result(state) == {
+        "type": "interrupt",
+        "interrupts": [
+            {
+                "tool": "run_command",
+                "approval_reason": "Authorize the disposable smoke file.",
+                "__interrupt_id": "interrupt-parent-1",
+            }
+        ],
+    }
 
 
 def test_thread_agent_profile_is_injected_into_agent_mode_prompt(tmp_path, monkeypatch):

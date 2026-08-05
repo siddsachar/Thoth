@@ -50,6 +50,23 @@ _SIDEBAR_AVATAR_CSS = """
 .sb-state-label { font-size: 11px; }
 .sb-ring-spin { animation: sb-ring-spin 1.1s linear infinite; }
 @keyframes sb-ring-spin { to { transform: rotate(360deg); } }
+.row-bot-navigation-mobile-toggle.q-btn {
+  display: none;
+}
+@media (max-width: 900px) {
+  .row-bot-navigation-mobile-toggle.q-btn {
+    display: inline-flex;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 6100;
+    width: 42px;
+    height: 42px;
+    border: 1px solid rgba(255, 215, 0, 0.34);
+    background: rgba(10, 12, 16, 0.96);
+    color: #ffd700;
+  }
+}
 .row-bot-thread-row .row-bot-pin-toggle {
   width: 24px;
   height: 24px;
@@ -114,6 +131,19 @@ def _thread_row_updated_at(row: tuple) -> str:
 def _thread_has_active_generation(thread_id: str) -> bool:
     gen = _active_generations.get(thread_id)
     return bool(gen and str(getattr(gen, "status", "") or "").lower() == "streaming")
+
+
+def _orchestration_activity_label(activity: dict[str, Any] | None) -> str:
+    if not activity or str(activity.get("state") or "") != "active":
+        return ""
+    return {
+        "child_running": "Child Agents working",
+        "later_wave_parent": "Preparing the next Agent wave",
+        "approval_wait": "Agent group needs approval",
+        "retry": "Retrying Agent work",
+        "stopping": "Stopping Agent work",
+        "background": "Background Agent working",
+    }.get(str(activity.get("phase") or ""), "Agents working")
 
 
 def _sort_classified_thread_rows(
@@ -384,9 +414,11 @@ def build_sidebar(
     # Keep a reference the caller can use
     _rebuild_thread_list_ref: list[Callable[[], None]] = [lambda: None]
 
-    with ui.left_drawer(value=True, fixed=True).style(
+    with ui.left_drawer(value=False, fixed=True).style(
         "width: var(--row-bot-left-drawer-width, 280px);"
-    ).classes("row-bot-panel-card") as drawer:
+    ).classes("row-bot-panel-card").props(
+        "show-if-above breakpoint=900 no-swipe-open no-swipe-close"
+    ) as drawer:
         drawer._props["data-row-bot-left-drawer"] = "1"
         # Logo - always app branding, independent of identity settings
         ui.html(
@@ -533,6 +565,15 @@ def build_sidebar(
             p.thread_filter_container.clear()
         threads = _list_threads(include_details=True)
         running_tids = get_running_tasks()
+        try:
+            from row_bot.agent_orchestrator import get_thread_orchestration_activity
+
+            orchestration_activity = get_thread_orchestration_activity(
+                [str(row[0]) for row in threads]
+            )
+        except Exception:
+            logger.debug("Could not load sidebar Agent activity", exc_info=True)
+            orchestration_activity = {}
 
         # Classify every thread once so pills + list share the same data.
         from row_bot.threads import get_workflow_thread_ids
@@ -730,6 +771,10 @@ def build_sidebar(
                         state.active_developer_workspace_id == workspace_id
                         or any(row[0] == state.thread_id for row, _child_cat in group_rows)
                         or any(row[0] in running_tids for row, _child_cat in group_rows)
+                        or any(
+                            bool(orchestration_activity.get(str(row[0]), {}).get("blocking"))
+                            for row, _child_cat in group_rows
+                        )
                     )
 
                     def _toggle_workspace(wsid=workspace_id):
@@ -777,9 +822,17 @@ def build_sidebar(
                 is_pinned = _thread_row_is_pinned(row)
                 is_running = tid in running_tids
                 is_generating_tid = _thread_has_active_generation(tid)
+                agent_activity = orchestration_activity.get(str(tid)) or {}
+                agent_activity_label = (
+                    _orchestration_activity_label(agent_activity)
+                    if bool(agent_activity.get("blocking"))
+                    else ""
+                )
                 activity_label = (
                     "Generating response"
                     if is_generating_tid
+                    else agent_activity_label
+                    if agent_activity_label
                     else "Running workflow"
                     if is_running
                     else ""
@@ -1429,5 +1482,11 @@ def build_sidebar(
 
     _rebuild_thread_list_ref[0] = _rebuild_thread_list
     _rebuild_thread_list()
+
+    ui.button(icon="menu", on_click=drawer.toggle).classes(
+        "row-bot-navigation-mobile-toggle"
+    ).props(
+        "round dense aria-label='Toggle navigation'"
+    ).tooltip("Toggle navigation")
 
     return _rebuild_thread_list

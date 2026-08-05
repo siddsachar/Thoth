@@ -548,6 +548,9 @@ def langchain_messages_to_ui_messages(messages: list) -> list[dict]:
     import re as _re
 
     def _restore_row_bot_ui_metadata(msg_dict: dict, m: object) -> dict:
+        checkpoint_message_id = str(getattr(m, "id", "") or "").strip()
+        if checkpoint_message_id:
+            msg_dict["checkpoint_message_id"] = checkpoint_message_id
         ak = getattr(m, "additional_kwargs", None) or {}
         metadata = ak.get("row_bot_ui") if isinstance(ak, dict) else None
         if not isinstance(metadata, dict):
@@ -564,6 +567,8 @@ def langchain_messages_to_ui_messages(messages: list) -> list[dict]:
             "approval_resume_token",
             "approval_status",
             "channel_notification_key",
+            "orchestration_id",
+            "orchestration_message_kind",
             "goal_completion_for",
             "goal_run_id",
             "goal_status",
@@ -618,6 +623,16 @@ def langchain_messages_to_ui_messages(messages: list) -> list[dict]:
             _restore_row_bot_ui_metadata(msg_dict, m)
             msgs.append(msg_dict)
         elif m_type == "ai":
+            ai_kwargs = getattr(m, "additional_kwargs", None) or {}
+            ui_metadata = (
+                ai_kwargs.get("row_bot_ui")
+                if isinstance(ai_kwargs, dict)
+                else None
+            )
+            if isinstance(ui_metadata, dict) and ui_metadata.get("hidden"):
+                pending_tool_results.clear()
+                pending_charts.clear()
+                continue
             ai_content = getattr(m, "content", "") or ""
             if isinstance(ai_content, list):
                 text_parts = []
@@ -630,7 +645,7 @@ def langchain_messages_to_ui_messages(messages: list) -> list[dict]:
             if not isinstance(ai_content, str):
                 ai_content = str(ai_content) if ai_content else ""
             if not ai_content.strip():
-                ak = getattr(m, "additional_kwargs", None) or {}
+                ak = ai_kwargs
                 if ak.get("reasoning_content") and not getattr(m, "tool_calls", []):
                     continue
                 if pending_tool_results and not getattr(m, "tool_calls", []):
@@ -642,7 +657,7 @@ def langchain_messages_to_ui_messages(messages: list) -> list[dict]:
                     msgs.append(msg_dict)
                 continue
             thinking = ""
-            ak = getattr(m, "additional_kwargs", None) or {}
+            ak = ai_kwargs
             if ak.get("reasoning_content"):
                 thinking = ak["reasoning_content"]
             think_parts = _re.findall(r"<think>(.*?)</think>", ai_content, flags=_re.DOTALL)

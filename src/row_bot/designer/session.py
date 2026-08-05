@@ -31,7 +31,31 @@ def _get_execution_key() -> str | None:
         thread_id = get_current_thread_id()
     except Exception:
         return None
-    if thread_id and thread_id in _active_projects_by_key:
+    if thread_id:
+        if thread_id in _active_projects_by_key:
+            return thread_id
+        try:
+            from row_bot.threads import _get_thread_project_id
+
+            project_id = _get_thread_project_id(thread_id)
+        except Exception:
+            project_id = ""
+        if project_id:
+            # A background parent/child must resolve its own durable project.
+            # Returning the thread key even when loading fails prevents a
+            # fallback to an unrelated project currently visible in the UI.
+            try:
+                bind_project_to_thread(thread_id, project_id)
+            except Exception:
+                logger.warning(
+                    "Could not restore Designer project %s for thread %s",
+                    project_id,
+                    thread_id,
+                    exc_info=True,
+                )
+        # An Agent execution thread without a Designer binding must resolve to
+        # no project. Falling back to the visible UI project would let normal
+        # chat, channels, Goals, or workflows inspect/edit an unrelated design.
         return thread_id
     return None
 
@@ -63,6 +87,26 @@ def set_active_project(project: DesignerProject | None) -> None:
 
     if prev_key != _ui_active_key:
         _clear_agent_cache()
+
+
+def bind_project_to_thread(thread_id: str, project_id: str) -> DesignerProject:
+    """Load and bind the exact durable Designer project to an execution thread."""
+
+    thread_id = str(thread_id or "").strip()
+    project_id = str(project_id or "").strip()
+    if not thread_id or not project_id:
+        raise ValueError("Designer thread and project ids are required.")
+    existing = _active_projects_by_key.get(thread_id)
+    if existing is not None and str(existing.id) == project_id:
+        return existing
+    from row_bot.designer.storage import load_project
+
+    project = load_project(project_id)
+    if project is None:
+        raise RuntimeError(f"Designer project {project_id} no longer exists.")
+    _active_projects_by_key[thread_id] = project
+    _undo_stacks_by_key.setdefault(thread_id, UndoStack())
+    return project
 
 
 def get_ui_active_project() -> DesignerProject | None:

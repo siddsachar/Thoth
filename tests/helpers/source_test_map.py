@@ -46,6 +46,38 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
         "Prompt assembly changes need stable/ephemeral context, provider cache marker, Chat Only, memory, and skill regressions.",
     ),
     SourceTestRule(
+        "orchestration_transcript_surfaces",
+        (
+            "src/row_bot/app.py",
+            "src/row_bot/ui/transcript.py",
+            "src/row_bot/ui/sidebar.py",
+        ),
+        (
+            "tests/test_transcript_loading.py",
+            "tests/test_thread_pinning.py",
+            "tests/test_orchestration_activity_ui.py",
+            "tests/subsystem/agents",
+            "tests/subsystem/channels/test_channel_thread_notifications.py",
+        ),
+        "Parent checkpoint reconciliation and thread activity indicators need transcript, sidebar, orchestration, and fake-channel regressions.",
+    ),
+    SourceTestRule(
+        "developer_agent_context",
+        ("src/row_bot/developer/agent_context.py",),
+        (
+            "tests/test_developer_studio_phase3.py",
+            "tests/test_developer_studio_phase10.py",
+            "tests/subsystem/developer",
+        ),
+        "Developer context changes must preserve natural model routing and safe Git/non-Git workspace behavior.",
+    ),
+    SourceTestRule(
+        "filesystem_write_contract",
+        ("src/row_bot/tools/filesystem_tool.py",),
+        ("tests/subsystem/tools/test_filesystem_confirmation_contract.py",),
+        "Workspace write semantics need direct-save and conversational-confirmation coverage without changing destructive classification.",
+    ),
+    SourceTestRule(
         "providers",
         (
             "src/row_bot/models.py",

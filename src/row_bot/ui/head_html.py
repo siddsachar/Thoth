@@ -94,16 +94,19 @@ mermaid.initialize({
   ['keydown', 'pointerdown', 'input', 'wheel'].forEach(function(name) {
     window.addEventListener(name, function() { reportActivity(name); }, {passive: true, capture: true});
   });
-  new MutationObserver(function() {
-    try {
-      var body = document.body;
-      if (!body) return;
-      var text = body.innerText || '';
-      if (text.indexOf('trying to connect') !== -1 || text.indexOf('Disconnected') !== -1) {
-        reportConnectionState('NiceGUI client reconnecting');
-      }
-    } catch (err) {}
-  }).observe(document.documentElement, {childList: true, subtree: true, characterData: true});
+  var connectionObserverRoot = document.documentElement;
+  if (connectionObserverRoot instanceof Node) {
+    new MutationObserver(function() {
+      try {
+        var body = document.body;
+        if (!body) return;
+        var text = body.innerText || '';
+        if (text.indexOf('trying to connect') !== -1 || text.indexOf('Disconnected') !== -1) {
+          reportConnectionState('NiceGUI client reconnecting');
+        }
+      } catch (err) {}
+    }).observe(connectionObserverRoot, {childList: true, subtree: true, characterData: true});
+  }
 })();
 </script>
 <script>
@@ -115,6 +118,7 @@ mermaid.initialize({
     if (typeof hljs === 'undefined') return;
     document.querySelectorAll('pre code:not([data-highlighted="yes"])').forEach(function(el) {
       if (el.closest('.row-bot-live-stream')) return;
+      if (el.children.length) return;
       try { hljs.highlightElement(el); } catch (err) {}
     });
   }
@@ -124,9 +128,12 @@ mermaid.initialize({
       requestAnimationFrame(highlightCodeBlocks);
     }, 80);
   };
-  new MutationObserver(function() {
-    window.rowBotHighlightCodeBlocks();
-  }).observe(document.documentElement, {childList: true, subtree: true});
+  var highlightObserverRoot = document.documentElement;
+  if (highlightObserverRoot instanceof Node) {
+    new MutationObserver(function() {
+      window.rowBotHighlightCodeBlocks();
+    }).observe(highlightObserverRoot, {childList: true, subtree: true});
+  }
   window.addEventListener('load', window.rowBotHighlightCodeBlocks);
   window.rowBotHighlightCodeBlocks();
 })();
@@ -165,17 +172,20 @@ mermaid.initialize({
       requestAnimationFrame(function() { window.rowBotNormalizeMermaidDiagrams(root); });
     }).catch(function() {});
   };
-  new MutationObserver(function() {
-    var nodes = Array.from(document.querySelectorAll('pre.mermaid')).filter(function(node) {
-      return !node.closest('.row-bot-live-stream');
-    });
-    if (nodes.length > 0) {
-      clearTimeout(_mermaidTimer);
-      _mermaidTimer = setTimeout(function() {
-        window.rowBotRenderMermaidDiagrams(document);
-      }, 150);
-    }
-  }).observe(document.documentElement, {childList: true, subtree: true});
+  var mermaidObserverRoot = document.documentElement;
+  if (mermaidObserverRoot instanceof Node) {
+    new MutationObserver(function() {
+      var nodes = Array.from(document.querySelectorAll('pre.mermaid')).filter(function(node) {
+        return !node.closest('.row-bot-live-stream');
+      });
+      if (nodes.length > 0) {
+        clearTimeout(_mermaidTimer);
+        _mermaidTimer = setTimeout(function() {
+          window.rowBotRenderMermaidDiagrams(document);
+        }, 150);
+      }
+    }).observe(mermaidObserverRoot, {childList: true, subtree: true});
+  }
 })();
 </script>
 <style>

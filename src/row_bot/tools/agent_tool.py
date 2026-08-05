@@ -180,7 +180,10 @@ class _DelegateWorkInput(BaseModel):
     )
     context: str = Field(
         default="",
-        description="Focused context packet for the child. Include only relevant facts, files, constraints, and expected output.",
+        description=(
+            "Focused context packet for the child. Include only relevant facts, files, constraints, and expected output. "
+            "A reviewer must receive the complete material or a concrete workspace-relative artifact path plus review criteria."
+        ),
     )
     context_mode: str = Field(
         default="auto",
@@ -234,7 +237,10 @@ class _DelegateWorkInput(BaseModel):
     )
     depends_on: list[str] = Field(
         default=[],
-        description="Earlier child run ids in this orchestration that must finish before this child starts.",
+        description=(
+            "Earlier child run ids in this orchestration that must finish before this child starts. "
+            "This controls launch order only and never transfers dependency output into context."
+        ),
     )
 
 
@@ -382,6 +388,7 @@ def _delegate_work(
                         model_ref=parent_model_ref,
                         approval_mode=str(runtime.get("approval_mode") or ""),
                         runtime_surface=str(runtime.get("runtime_surface") or "chat"),
+                        orchestration_version=2,
                     )
             orchestration_id = str(orchestration["id"])
             if has_duplicate_objective(orchestration_id, objective):

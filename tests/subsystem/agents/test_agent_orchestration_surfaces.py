@@ -417,12 +417,15 @@ def test_ui_and_voice_source_contract_has_durable_refresh_without_cutoff():
     app_source = Path("src/row_bot/app.py").read_text(encoding="utf-8")
 
     assert "gen.tts_active = False" in streaming_source
-    assert "voice_output.speak_final(_orchestration_acknowledgement)" in streaming_source
-    assert "and not _orchestration_suspended" in streaming_source
+    assert "voice_output.speak_final(speakable.text)" in streaming_source
+    assert "_orchestration_acknowledgement" not in streaming_source
+    assert "remove_latest_checkpoint_ai_message" not in streaming_source
     assert "get_generation_orchestration" in streaming_source
     assert "retry_pending_deliveries" in app_source
     assert "speak_orchestration_final" in app_source
     assert "voice_final" in app_source
+    assert '"parent_progress"' in app_source
+    assert '"parent_final"' in app_source
     assert "240" not in "\n".join(
         line
         for line in app_source.splitlines()
@@ -458,3 +461,43 @@ def test_detached_voice_final_uses_saved_transport():
         realtime_speaker=None,
         now=lambda: 0.0,
     )
+
+
+def test_agent_entrypoints_route_later_input_without_starting_another_graph(
+    monkeypatch,
+):
+    import row_bot.agent as agent
+
+    monkeypatch.setattr(
+        agent,
+        "_route_waiting_parent_input",
+        lambda _text, _config: {"id": "orchestration-1"},
+    )
+    monkeypatch.setattr(
+        agent,
+        "_invoke_agent_graph",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a second graph must not start for parent steering")
+        ),
+    )
+    config = {
+        "configurable": {
+            "thread_id": "thread-1",
+            "generation_id": "later-generation",
+        }
+    }
+
+    assert agent.invoke_agent("Use this too", ["agents"], config) == {
+        "type": "orchestration_waiting",
+        "orchestration_id": "orchestration-1",
+    }
+    assert list(agent.stream_agent("Use this too", ["agents"], config)) == [
+        (
+            "orchestration_waiting",
+            {
+                "orchestration_id": "orchestration-1",
+                "text": "",
+                "output_kind": "steering",
+            },
+        )
+    ]

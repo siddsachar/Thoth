@@ -994,6 +994,12 @@ def open_agent_peek_dialog(
             return
         run_id = str(run_row.get("id") or run_id or "").strip()
         status = str(run_row.get("status") or "unknown").strip()
+        try:
+            from row_bot.agent_orchestrator import agent_member_status_label
+
+            status_label = agent_member_status_label(status)
+        except Exception:
+            status_label = status.replace("_", " ").title()
         name = str(run_row.get("display_name") or run_id or "Agent").strip()
         profile = str(
             run_row.get("profile_display_name")
@@ -1036,7 +1042,7 @@ def open_agent_peek_dialog(
                 ui.icon("hub", size="20px").classes("text-primary q-mt-xs")
                 with ui.column().classes("gap-0").style("flex: 1; min-width: 0;"):
                     with ui.row().classes("w-full items-center no-wrap gap-2"):
-                        ui.badge(status or "unknown", color=_agent_status_color(status)).props("outline dense")
+                        ui.badge(status_label, color=_agent_status_color(status)).props("outline dense")
                         ui.label(name).classes("text-sm font-bold ellipsis").style("flex: 1; min-width: 0;")
                         ui.label(profile).classes("text-xs text-grey-6 ellipsis").style("max-width: 160px;")
                         if workspace_details["mode"] == "worktree":
@@ -1152,6 +1158,12 @@ def _render_agent_run_card(
 ) -> None:
     run_id = str(run.get("id") or "").strip()
     status = str(run.get("status") or "unknown").strip()
+    try:
+        from row_bot.agent_orchestrator import agent_member_status_label
+
+        status_label = agent_member_status_label(status)
+    except Exception:
+        status_label = status.replace("_", " ").title()
     name = str(run.get("display_name") or run_id or "Agent").strip()
     profile = run.get("profile") if isinstance(run.get("profile"), dict) else {}
     profile_label = str(
@@ -1174,8 +1186,6 @@ def _render_agent_run_card(
     latest_parent_note = _short_text(run.get("latest_parent_message") or "", 110)
     turns_used = int(run.get("turns_used") or 0)
     max_turns = int(run.get("max_turns") or 0)
-    model_iterations_used = int(run.get("model_iterations_used") or 0)
-    model_iterations_max = int(run.get("model_iterations_max") or 0)
     terminal = status.lower() in {
         "completed",
         "failed",
@@ -1194,7 +1204,7 @@ def _render_agent_run_card(
     ):
         with ui.row().classes("w-full items-center no-wrap gap-2"):
             ui.icon("hub", size="16px").classes("text-primary")
-            ui.badge(status or "unknown", color=_agent_status_color(status)).props("outline dense")
+            ui.badge(status_label, color=_agent_status_color(status)).props("outline dense")
             ui.label(name).classes("text-sm font-semibold ellipsis").style("flex: 1; min-width: 0;")
             if profile_label:
                 ui.label(profile_label).classes("text-xs text-grey-6 ellipsis").style("max-width: 130px;")
@@ -1204,10 +1214,6 @@ def _render_agent_run_card(
                 )
             if turns_used or max_turns:
                 ui.label(f"{turns_used}/{max_turns} turns").classes("text-xs text-grey-6 no-wrap")
-            if model_iterations_max:
-                ui.label(
-                    f"{model_iterations_used}/{model_iterations_max} rounds · depth {int(run.get('depth') or 0)}"
-                ).classes("text-xs text-grey-6 no-wrap")
 
         detail_bits = []
         if activity:
@@ -1223,14 +1229,6 @@ def _render_agent_run_card(
             ui.label(" | ".join(detail_bits)).classes("text-xs text-grey-5").style(
                 "display: -webkit-box; -webkit-line-clamp: 2; "
                 "-webkit-box-orient: vertical; overflow: hidden; line-height: 1.32;"
-            )
-
-        if status.lower() == "waiting_approval" and run_id:
-            approval = _load_pending_approval(agent_run_id=run_id)
-            _render_approval_request_card(
-                approval,
-                fallback_message=activity or f"{name} is waiting for approval.",
-                compact=True,
             )
 
         with ui.row().classes("w-full items-center gap-1"):
@@ -1736,7 +1734,7 @@ def render_message_content(
     try:
         ui.run_javascript(
             "if (window.rowBotHighlightCodeBlocks) { window.rowBotHighlightCodeBlocks(); } "
-            "else { setTimeout(function() { document.querySelectorAll('pre code').forEach(function(el) { if (!el.closest('.row-bot-live-stream')) hljs.highlightElement(el); }); }, 80); }"
+            "else { setTimeout(function() { document.querySelectorAll('pre code:not([data-highlighted=\"yes\"])').forEach(function(el) { if (!el.closest('.row-bot-live-stream') && !el.children.length) hljs.highlightElement(el); }); }, 80); }"
         )
         ui.run_javascript(
             "document.querySelectorAll('pre code.language-mermaid').forEach(function(el) {"

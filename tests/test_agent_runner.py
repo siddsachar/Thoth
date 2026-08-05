@@ -124,10 +124,15 @@ def test_child_dispatcher_queues_fifo_at_global_and_parent_capacity(tmp_path, mo
     monkeypatch.setattr(agent_runner, "_invoke_agent", fake_invoke)
     first = agent_runner.spawn_agent_run("First", parent_thread_id=parent_thread_id)
     assert first_started.wait(2)
+    first_live = agent_runs.get_agent_run(first["id"])
+    assert first_live["status"] == "running"
+    assert first_live["status_message"] == ""
     second = agent_runner.spawn_agent_run("Second", parent_thread_id=parent_thread_id)
 
     assert not second_started.wait(0.15)
-    assert agent_runs.get_agent_run(second["id"])["status"] == "queued"
+    second_queued = agent_runs.get_agent_run(second["id"])
+    assert second_queued["status"] == "queued"
+    assert second_queued["status_message"] == "Queued for Agent capacity"
     assert agent_runner.child_dispatch_state() == {
         "queued": 1,
         "active": 1,
@@ -940,6 +945,11 @@ def test_orchestrated_write_children_are_forced_into_distinct_worktrees(
     import row_bot.developer.worktrees as worktrees
 
     monkeypatch.setattr(worktrees, "allocate_agent_worktree", fake_allocate)
+    monkeypatch.setattr(
+        agent_runner,
+        "_developer_workspace_supports_auto_worktree",
+        lambda workspace_id: workspace_id == "dev_parent",
+    )
     monkeypatch.setattr(agent_runner, "_invoke_agent", lambda *args, **kwargs: "done")
 
     first = agent_runner.spawn_agent_run(
@@ -962,6 +972,60 @@ def test_orchestrated_write_children_are_forced_into_distinct_worktrees(
     assert first["workspace_mode"] == second["workspace_mode"] == "worktree"
     assert first["workspace_id"] != second["workspace_id"]
     assert first["write_lock_key"] != second["write_lock_key"]
+
+
+def test_orchestrated_writer_keeps_single_writer_mode_for_non_git_workspace(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runner, _agent_runs, profiles, _context, threads = _fresh_agent_runner_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    from row_bot.agent_orchestrator import create_or_get_orchestration
+
+    parent_thread_id = threads.create_thread(
+        "Non-Git parent",
+        developer_workspace_id="dev_folder",
+        model_override="provider:parent-model",
+    )
+    writer = profiles.save_agent_profile(
+        slug="folder_writer",
+        display_name="Folder Writer",
+        instructions="Edit the selected folder.",
+        tool_policy_json={"capability": "write_capable"},
+        workspace_policy_json={"workspace_mode_default": "single_writer"},
+    )
+    orchestration = create_or_get_orchestration(
+        parent_thread_id=parent_thread_id,
+        parent_generation_id="generation",
+        root_objective="Implement a small local tool.",
+        model_ref="provider:parent-model",
+        approval_mode="block",
+        runtime_surface="developer",
+    )
+
+    monkeypatch.setattr(
+        agent_runner,
+        "_developer_workspace_supports_auto_worktree",
+        lambda _workspace_id: False,
+    )
+    monkeypatch.setattr(agent_runner, "_invoke_agent", lambda *args, **kwargs: "done")
+
+    run = agent_runner.spawn_agent_run(
+        "Inspect and edit the folder.",
+        parent_thread_id=parent_thread_id,
+        profile=writer["id"],
+        orchestration_id=orchestration["id"],
+        wait=True,
+    )
+
+    assert run["status"] == "completed"
+    assert run["workspace_mode"] == "single_writer"
+    assert run["workspace_id"] == "dev_folder"
+    assert run["workspace_path"] == ""
+    assert run["write_lock_key"] == "developer:dev_folder"
+    assert threads._get_thread_developer_workspace(run["thread_id"]) == "dev_folder"
 
 
 def test_worktree_requires_developer_workspace(tmp_path, monkeypatch):

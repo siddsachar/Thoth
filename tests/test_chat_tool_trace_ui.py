@@ -276,7 +276,10 @@ def test_chat_tool_trace_source_contracts():
     assert "_async_delegated_run_ids_from_tool_results" in streaming_src
     assert "_async_child_agent_run_ids_for_generation" in streaming_src
     assert "_current_child_agent_run_ids" in app_src
-    assert "candidate_run_ids=_current_child_agent_run_ids(tid)" in app_src
+    assert "child_run_ids = _current_child_agent_run_ids(tid)" in app_src
+    assert "candidate_run_ids=child_run_ids" in app_src
+    assert "_update_direct_agent_refresh_keys(" in app_src
+    assert "card_changed" in app_src
     assert "async_completion_run_ids" in streaming_src
     assert "refresh_model_controls_on_done" in state_src
     assert "model_controls_container" in state_src
@@ -286,8 +289,29 @@ def test_chat_tool_trace_source_contracts():
     assert "_last_agent_run_refresh" in app_src
     assert "list_agent_runs(parent_thread_id=tid, kind=\"subagent\"" in app_src
     assert "def _thread_has_live_generation(tid: str)" in app_src
-    assert "if _thread_has_live_generation(tid):" in app_src
-    assert "p.transcript_rendered_keys = []" in app_src
+    assert "live_generation = _thread_has_live_generation(tid)" in app_src
+    assert "_thread_has_attached_live_generation(tid)" in app_src
+    agent_poll = app_src.split("def _poll_agent_card_refresh", 1)[1].split(
+        "def _poll_notifications",
+        1,
+    )[0]
+    orchestration_reload = app_src.split(
+        "def _reload_completed_orchestration_transcript",
+        1,
+    )[1].split("def _current_child_agent_run_ids", 1)[0]
+    assert "p.transcript_rendered_keys = []" not in agent_poll
+    assert "state.messages = load_thread_messages(tid)" not in orchestration_reload
+    assert "upsert_durable_transcript_message" in orchestration_reload
+    assert 'keys["sidebar"]' in agent_poll
+    assert 'keys["strip"]' in agent_poll
+    assert 'keys["transcript"]' in agent_poll
+    assert agent_poll.index("if not transcript_inspection_needed:") < agent_poll.index(
+        "child_run_ids = _current_child_agent_run_ids(tid)"
+    )
+    assert agent_poll.index(
+        "_sync_thread_approval_messages("
+    ) < agent_poll.index("if live_generation:")
+    assert "_sync_child_agent_approval_messages(" not in agent_poll
     assert "p.refresh_model_controls = _refresh_model_controls" in chat_src
     assert "_interrupt_changes_model_setting(pending)" in streaming_src
     assert "_schedule_model_controls_refresh(cb)" in streaming_src

@@ -130,6 +130,121 @@ def test_developer_write_file_records_agent_change(tmp_path, monkeypatch):
         tool_context.reset_context(tokens)
 
 
+def test_developer_ordinary_write_policy_allows_ask_and_auto_but_blocks_block(
+    tmp_path,
+    monkeypatch,
+):
+    storage, _tool_context, edits, _ledger, _sandbox_runtime, _developer_tool = _fresh_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    workspace = storage.add_or_update_local_workspace(str(repo))
+
+    for mode, path in (("approve", "ask.txt"), ("allow_all", "auto.txt")):
+        change_set, decision = edits.write_file_to_workspace(
+            workspace_id=workspace.id,
+            thread_id="thread-ordinary",
+            path=path,
+            content=f"{mode}\n",
+            approval_mode=mode,
+        )
+        assert decision.allowed is True
+        assert decision.requires_approval is False
+        assert change_set is not None
+        assert (repo / path).read_text(encoding="utf-8") == f"{mode}\n"
+
+    blocked, decision = edits.write_file_to_workspace(
+        workspace_id=workspace.id,
+        thread_id="thread-ordinary",
+        path="blocked.txt",
+        content="must not write\n",
+        approval_mode="block",
+    )
+    assert blocked is None
+    assert decision.decision == "block"
+    assert not (repo / "blocked.txt").exists()
+
+
+def test_developer_ordinary_patch_in_ask_mode_does_not_request_approval(
+    tmp_path,
+    monkeypatch,
+):
+    storage, _tool_context, edits, _ledger, _sandbox_runtime, _developer_tool = _fresh_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "README.md").write_text("before\n", encoding="utf-8")
+    workspace = storage.add_or_update_local_workspace(str(repo))
+    patch = """diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-before
++after
+"""
+
+    change_set, decision = edits.apply_patch_to_workspace(
+        workspace_id=workspace.id,
+        thread_id="thread-ordinary",
+        patch=patch,
+        approval_mode="approve",
+    )
+
+    assert decision.allowed is True
+    assert decision.requires_approval is False
+    assert change_set is not None
+    assert (repo / "README.md").read_text(encoding="utf-8") == "after\n"
+
+
+def test_developer_non_git_workspace_writes_and_surfaces_changed_path(
+    tmp_path,
+    monkeypatch,
+):
+    storage, tool_context, _edits, change_ledger, _sandbox_runtime, developer_tool = _fresh_modules(tmp_path, monkeypatch)
+    folder = tmp_path / "budget-calc"
+    folder.mkdir()
+    import row_bot.developer.git as developer_git
+
+    monkeypatch.setattr(
+        developer_git,
+        "get_git_status",
+        lambda path: developer_git.GitStatus(path=str(path), is_git=False),
+    )
+    workspace = storage.add_or_update_local_workspace(str(folder))
+    storage.set_workspace_approval_mode(workspace.id, "auto_edit")
+    thread_id = storage.ensure_workspace_thread(workspace.id)
+    tokens = tool_context.set_context(workspace_id=workspace.id, thread_id=thread_id)
+    try:
+        result = developer_tool._write_file(
+            "index.html",
+            "<h1>Budget calculator</h1>\n",
+            "Create budget calculator",
+        )
+        assert "change set" in result
+        assert (folder / "index.html").read_text(encoding="utf-8") == (
+            "<h1>Budget calculator</h1>\n"
+        )
+        [change_set] = change_ledger.list_change_sets(
+            workspace_id=workspace.id,
+            thread_id=thread_id,
+        )
+        assert change_set.files[0].path == "index.html"
+
+        from row_bot.developer.inspector_snapshot import _collect_snapshot_sync
+
+        snapshot = _collect_snapshot_sync(workspace.id, thread_id)
+        assert snapshot.git_summary["is_git"] is False
+        assert [item.files[0].path for item in snapshot.agent_changes] == [
+            "index.html"
+        ]
+    finally:
+        tool_context.reset_context(tokens)
+
+
 def test_developer_write_file_uses_docker_shadow_when_enabled(tmp_path, monkeypatch):
     storage, tool_context, _edits, _ledger, sandbox_runtime, developer_tool = _fresh_modules(tmp_path, monkeypatch)
     repo = tmp_path / "repo"

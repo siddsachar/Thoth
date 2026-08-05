@@ -181,6 +181,24 @@ _COMMAND_CENTER_CSS = """
 .row-bot-command-center-drawer.workflow-console-collapsed .workflow-console-scroll {
     display: none;
 }
+.row-bot-activity-mobile-toggle.q-btn {
+    display: none;
+}
+@media (max-width: 900px) {
+    .row-bot-activity-mobile-toggle.q-btn {
+        display: inline-flex;
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 6100;
+        width: 42px;
+        height: 42px;
+        border: 1px solid rgba(255, 215, 0, 0.34);
+        background: rgba(20, 20, 20, 0.94);
+        color: __ROW_BOT_BRAND_ACCENT__;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    }
+}
 </style>
 """
 _COMMAND_CENTER_CSS = _COMMAND_CENTER_CSS.replace("__ROW_BOT_BRAND_ACCENT__", APP_BRAND_ACCENT)
@@ -331,10 +349,10 @@ def build_command_center(
         except Exception:
             logger.debug("Could not sync Activity Center width CSS variable", exc_info=True)
 
-    with ui.right_drawer(value=True, fixed=True).style(
+    with ui.right_drawer(value=False, fixed=True).style(
         f"width: {_drawer_width()}px; padding: 0; position: relative;"
     ).classes("row-bot-panel-card row-bot-command-center-drawer").props(
-        f"no-swipe-open no-swipe-close width={_drawer_width()}"
+        f"show-if-above breakpoint=900 no-swipe-open no-swipe-close width={_drawer_width()}"
     ) as drawer:
         drawer._props["data-workflow-console-drawer"] = "1"
 
@@ -1434,6 +1452,12 @@ def build_command_center(
 
                 _rebuild_insights()
                 safe_timer(30.0, _rebuild_insights)
+
+    ui.button(icon="pending_actions", on_click=drawer.toggle).classes(
+        "row-bot-activity-mobile-toggle"
+    ).props(
+        "round dense aria-label='Toggle Activity Center'"
+    ).tooltip("Toggle Activity Center")
 
 
 def _proposal_type_order(proposal_type: str) -> int:

@@ -9,6 +9,7 @@ import pathlib
 import re
 import shutil
 import tempfile
+import threading
 import time
 from typing import Optional
 
@@ -27,6 +28,25 @@ _REPLACE_RETRIES = 5
 _REPLACE_BACKOFF_SECONDS = 0.05
 _REPLACE_RETRY_WINERRORS = {5, 32}
 _MAX_PERSISTED_STEM_LENGTH = 64
+_PROJECT_SAVE_LOCKS: dict[str, threading.RLock] = {}
+_PROJECT_SAVE_LOCKS_GUARD = threading.Lock()
+
+
+class StaleDesignerProjectError(RuntimeError):
+    """Raised when an older in-memory project would overwrite newer data."""
+
+
+def _project_save_lock(project_id: str) -> threading.RLock:
+    with _PROJECT_SAVE_LOCKS_GUARD:
+        return _PROJECT_SAVE_LOCKS.setdefault(str(project_id), threading.RLock())
+
+
+def _persisted_project_version(path: pathlib.Path) -> str:
+    if not path.exists():
+        return ""
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    return str(data.get("updated_at") or "") if isinstance(data, dict) else ""
 
 
 def _ensure_dirs() -> None:
@@ -208,15 +228,35 @@ def delete_project_assets(project_id: str) -> bool:
 
 
 def save_project(project: DesignerProject) -> None:
-    """Persist a project to disk as JSON."""
+    """Persist a project atomically without overwriting a newer loaded copy."""
+
     _ensure_dirs()
-    project.touch()
     path = PROJECTS_DIR / f"{project.id}.json"
-    try:
-        _write_json_atomic(path, project.to_dict())
-    except Exception:
-        logger.exception("Failed to save designer project %s", project.id)
-        raise
+    with _project_save_lock(project.id):
+        expected_version = getattr(
+            project,
+            "_row_bot_persisted_updated_at",
+            None,
+        )
+        try:
+            current_version = _persisted_project_version(path)
+            if (
+                expected_version is not None
+                and current_version
+                and str(expected_version) != current_version
+            ):
+                raise StaleDesignerProjectError(
+                    f"Designer project {project.id} changed after this copy was loaded. "
+                    "Reload it before saving so newer work is not overwritten."
+                )
+            project.touch()
+            _write_json_atomic(path, project.to_dict())
+            project._row_bot_persisted_updated_at = project.updated_at
+        except StaleDesignerProjectError:
+            raise
+        except Exception:
+            logger.exception("Failed to save designer project %s", project.id)
+            raise
 
 
 def load_project(project_id: str) -> Optional[DesignerProject]:
@@ -229,6 +269,7 @@ def load_project(project_id: str) -> Optional[DesignerProject]:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         project = DesignerProject.from_dict(data)
+        project._row_bot_persisted_updated_at = str(data.get("updated_at") or "")
         try:
             from row_bot.designer.render_assets import normalize_project_inline_assets
 

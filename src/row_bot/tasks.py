@@ -76,6 +76,7 @@ _WORKFLOW_READ_ONLY_DEFAULT_DENY_TOOLS = {
     "x",
 }
 _SCHEMA_LOCK = threading.RLock()
+_APPROVAL_CHANNEL_PUSH_LOCK = threading.RLock()
 _SCHEMA_READY_PATH: str | None = None
 _LAST_SCHEMA_REPAIR: dict[str, object] = {}
 F = TypeVar("F", bound=Callable[..., object])
@@ -3055,44 +3056,49 @@ def push_approval_to_parent_channel(approval_id: str) -> bool:
     target = str(ref.get("target") or "").strip()
     if not channel_name or not target:
         return False
-    if _approval_channel_ref_exists(str(approval.get("id") or ""), channel_name):
-        return True
-    try:
-        from row_bot.approval_messages import channel_message, payload_from_row
-        from row_bot.channels import registry as channel_registry
+    with _APPROVAL_CHANNEL_PUSH_LOCK:
+        if _approval_channel_ref_exists(str(approval.get("id") or ""), channel_name):
+            return True
+        try:
+            from row_bot.approval_messages import channel_message, payload_from_row
+            from row_bot.channels import registry as channel_registry
 
-        ch = channel_registry.get(channel_name)
-        if not ch or not ch.is_running():
+            ch = channel_registry.get(channel_name)
+            if not ch or not ch.is_running():
+                return False
+            payload = payload_from_row(approval)
+            msg_ref = ch.send_approval_request(
+                target,
+                {},
+                {
+                    "approval_kind": "agent_run",
+                    "task_name": str(
+                        payload.get("source_label")
+                        or approval.get("source_label")
+                        or "Child Agent"
+                    ),
+                    "message": channel_message(payload),
+                    "resume_token": str(approval.get("resume_token") or ""),
+                    "approval_id": str(approval.get("id") or ""),
+                    "agent_run_id": str(approval.get("agent_run_id") or ""),
+                    "parent_thread_id": parent_thread_id,
+                },
+            )
+            if msg_ref:
+                _store_approval_channel_ref(
+                    str(approval.get("id") or ""),
+                    channel_name,
+                    str(msg_ref),
+                )
+            return bool(msg_ref)
+        except Exception as exc:
+            logger.warning(
+                "Failed to push approval %s to parent channel %s: %s",
+                approval_id,
+                channel_name,
+                exc,
+            )
             return False
-        payload = payload_from_row(approval)
-        msg_ref = ch.send_approval_request(
-            target,
-            {},
-            {
-                "approval_kind": "agent_run",
-                "task_name": str(
-                    payload.get("source_label")
-                    or approval.get("source_label")
-                    or "Child Agent"
-                ),
-                "message": channel_message(payload),
-                "resume_token": str(approval.get("resume_token") or ""),
-                "approval_id": str(approval.get("id") or ""),
-                "agent_run_id": str(approval.get("agent_run_id") or ""),
-                "parent_thread_id": parent_thread_id,
-            },
-        )
-        if msg_ref:
-            _store_approval_channel_ref(str(approval.get("id") or ""), channel_name, str(msg_ref))
-        return bool(msg_ref)
-    except Exception as exc:
-        logger.warning(
-            "Failed to push approval %s to parent channel %s: %s",
-            approval_id,
-            channel_name,
-            exc,
-        )
-        return False
 
 
 def _resolve_approval_on_channels(approval_id: str, status: str,
@@ -3469,10 +3475,7 @@ def run_task_background(
                                         exc_info=True,
                                     )
                             if not isinstance(result, dict):
-                                from row_bot.agent_orchestrator import (
-                                    finalize_parent_generation,
-                                    get_generation_orchestration,
-                                )
+                                from row_bot.agent_orchestrator import get_generation_orchestration
 
                                 orchestration = get_generation_orchestration(
                                     thread_id,
@@ -3481,15 +3484,8 @@ def run_task_background(
                                 if (
                                     orchestration
                                     and int(orchestration.get("required_total") or 0) > 0
+                                    and str(orchestration.get("parent_state") or "") == "waiting"
                                 ):
-                                    provisional_text = str(result or "")
-                                    if provisional_text.strip():
-                                        from row_bot.threads import remove_latest_checkpoint_ai_message
-
-                                        remove_latest_checkpoint_ai_message(
-                                            thread_id,
-                                            provisional_text,
-                                        )
                                     _save_pipeline_state(
                                         run_id=run_id,
                                         task_id=task_id,
@@ -3503,20 +3499,6 @@ def run_task_background(
                                             str(orchestration["id"]),
                                             step_id,
                                         ),
-                                    )
-                                    finalize_parent_generation(
-                                        str(orchestration["id"]),
-                                        continuation_state={
-                                            "config": config,
-                                            "enabled_tool_names": effective_tool_names,
-                                            "provisional_text": provisional_text,
-                                            "workflow_run_id": run_id,
-                                            "workflow_step_id": step_id,
-                                        },
-                                        delivery_context={
-                                            "runtime_surface": "workflow",
-                                            "workflow_run_id": run_id,
-                                        },
                                     )
                                     paused = True
                                     paused_message = "Waiting for required child Agents"
@@ -3880,6 +3862,7 @@ def run_task_background(
                                     "workflow_run_id": run_id,
                                     "workflow_step_id": step_id,
                                 },
+                                orchestration_version=2,
                             )
                             child_run = spawn_agent_run(
                                 objective,
@@ -3901,7 +3884,7 @@ def run_task_background(
                             )
                             child_run_id = str((child_run or {}).get("id") or "")
                             if wait_for_result:
-                                from row_bot.agent_orchestrator import finalize_parent_generation
+                                from row_bot.agent_orchestrator import arm_parent_wait
                                 from row_bot.agent_runs import get_agent_run
 
                                 child_run = get_agent_run(child_run_id) or child_run
@@ -3924,7 +3907,7 @@ def run_task_background(
                                         step_id,
                                     ),
                                 )
-                                finalize_parent_generation(
+                                arm_parent_wait(
                                     str(orchestration["id"]),
                                     continuation_state={
                                         "config": config,
@@ -4016,8 +3999,8 @@ def run_task_background(
                         ]
                         if run_ids:
                             from row_bot.agent_orchestrator import (
+                                arm_parent_wait,
                                 create_or_get_orchestration,
-                                finalize_parent_generation,
                                 get_member_for_run,
                                 register_member,
                                 transfer_member,
@@ -4037,6 +4020,7 @@ def run_task_background(
                                 approval_mode=approval_mode,
                                 runtime_surface="workflow",
                                 delivery_context={"workflow_run_id": run_id},
+                                orchestration_version=2,
                             )
                             for child_run_id in run_ids:
                                 existing_member = get_member_for_run(child_run_id)
@@ -4075,7 +4059,7 @@ def run_task_background(
                                     step_id,
                                 ),
                             )
-                            finalize_parent_generation(
+                            arm_parent_wait(
                                 str(orchestration["id"]),
                                 continuation_state={
                                     "config": config,
@@ -5184,7 +5168,10 @@ def resume_workflows_waiting_for_orchestration(orchestration_id: str) -> int:
         "stopped",
     }:
         return 0
-    final_messages = list_messages(orchestration_id, kinds=["final"])
+    final_messages = list_messages(
+        orchestration_id,
+        kinds=["parent_final", "final"],
+    )
     final_text = str(final_messages[-1].get("content") or "") if final_messages else ""
     continuation = orchestration.get("continuation_state_json") or {}
     members = [
@@ -5466,6 +5453,31 @@ def get_pending_approval_for_agent_run(agent_run_id: str) -> dict | None:
 
 
 @_schema_retry
+def get_approval_request_statuses(approval_ids: Sequence[str]) -> dict[str, str]:
+    """Return authoritative statuses for a bounded set of approval cards."""
+
+    clean_ids = list(
+        dict.fromkeys(
+            str(approval_id or "").strip()
+            for approval_id in approval_ids
+            if str(approval_id or "").strip()
+        )
+    )[:200]
+    if not clean_ids:
+        return {}
+    conn = _get_conn()
+    try:
+        placeholders = ", ".join("?" for _ in clean_ids)
+        rows = conn.execute(
+            f"SELECT id, status FROM approval_requests WHERE id IN ({placeholders})",
+            clean_ids,
+        ).fetchall()
+    finally:
+        conn.close()
+    return {str(row["id"]): str(row["status"] or "") for row in rows}
+
+
+@_schema_retry
 def respond_to_approval(resume_token: str, approved: bool,
                          note: str = "",
                          source: str = "web") -> bool:
@@ -5505,11 +5517,15 @@ def respond_to_approval(resume_token: str, approved: bool,
         return False
 
     new_status = "approved" if approved else "denied"
-    conn.execute(
+    changed = conn.execute(
         "UPDATE approval_requests SET status = ?, responded_at = ?, response_note = ? "
-        "WHERE resume_token = ?",
+        "WHERE resume_token = ? AND status = 'pending'",
         (new_status, datetime.now().isoformat(), note, resume_token),
-    )
+    ).rowcount
+    if not changed:
+        conn.rollback()
+        conn.close()
+        return False
     conn.commit()
 
     approval_id = dict(row)["id"]
@@ -5537,6 +5553,17 @@ def respond_to_approval(resume_token: str, approved: bool,
 
         resume_agent_run(
             str(r.get("agent_run_id") or r.get("run_id") or ""),
+            resume_token=resume_token,
+            approved=approved,
+        )
+    elif str(r.get("resume_kind") or "") == "parent_orchestration":
+        from row_bot.agent_orchestrator import resume_parent_orchestration
+
+        orchestration_id = str(r.get("step_id") or "").removeprefix(
+            "orchestration:"
+        )
+        resume_parent_orchestration(
+            orchestration_id,
             resume_token=resume_token,
             approved=approved,
         )
@@ -5582,6 +5609,14 @@ def _check_approval_timeouts() -> None:
 
             resume_agent_run(
                 str(r.get("agent_run_id") or r.get("run_id") or ""),
+                resume_token=str(r.get("resume_token") or ""),
+                approved=False,
+            )
+        elif str(r.get("resume_kind") or "") == "parent_orchestration":
+            from row_bot.agent_orchestrator import resume_parent_orchestration
+
+            resume_parent_orchestration(
+                str(r.get("step_id") or "").removeprefix("orchestration:"),
                 resume_token=str(r.get("resume_token") or ""),
                 approved=False,
             )

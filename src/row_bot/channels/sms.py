@@ -228,13 +228,7 @@ def _run_agent_sync(user_text: str, config: dict) -> tuple[str, dict | None, lis
     answer = "".join(full_answer)
     if tool_reports and answer:
         answer = "\n".join(tool_reports) + "\n\n" + answer
-    if interrupt_data is None and orchestration_runtime.finalize_channel_orchestration(
-        config,
-        answer,
-        enabled,
-    ):
-        answer = orchestration_runtime.orchestration_suspended_final()
-    elif tool_reports:
+    if tool_reports and not answer:
         answer = "\n".join(tool_reports)
 
     return answer or "(No response)", interrupt_data, []

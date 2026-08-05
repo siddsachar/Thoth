@@ -52,6 +52,19 @@ def teardown_function() -> None:
     _active_generations.clear()
 
 
+def test_suspended_orchestration_does_not_block_durable_transcript_refresh() -> None:
+    gen = _generation("thread-orchestration-wait")
+    gen.status = "streaming"
+    gen.live_row = object()
+    _active_generations[gen.thread_id] = gen
+
+    assert streaming._thread_has_attached_live_generation(gen.thread_id) is True
+
+    gen.orchestration_suspended = True
+
+    assert streaming._thread_has_attached_live_generation(gen.thread_id) is False
+
+
 def test_request_generation_stop_detaches_wakes_queue_and_cancels_scope(monkeypatch) -> None:
     gen = _generation()
     callback_calls: list[str] = []

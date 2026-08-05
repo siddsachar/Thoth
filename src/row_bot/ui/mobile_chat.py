@@ -560,6 +560,15 @@ def build_mobile_thread_list(
             except Exception:
                 logger.warning("Could not list mobile chat threads", exc_info=True)
                 threads = []
+            try:
+                from row_bot.agent_orchestrator import get_thread_orchestration_activity
+
+                orchestration_activity = get_thread_orchestration_activity(
+                    [str(row[0]) for row in threads]
+                )
+            except Exception:
+                logger.debug("Could not load mobile Agent activity", exc_info=True)
+                orchestration_activity = {}
             if not threads:
                 with ui.element("div").classes("row-bot-mobile-empty"):
                     ui.icon("chat_bubble_outline").classes("text-grey-6")
@@ -571,8 +580,18 @@ def build_mobile_thread_list(
                 thread_id = str(row[0])
                 name = str(row[1] or "Untitled")
                 updated = format_mobile_timestamp(row[3] if len(row) > 3 else "")
+                agent_activity = orchestration_activity.get(thread_id) or {}
+                agent_is_blocking = bool(
+                    agent_activity.get("blocking")
+                    and str(agent_activity.get("state") or "") == "active"
+                )
                 with ui.row().classes("row-bot-mobile-thread-row w-full items-center gap-2 no-wrap"):
-                    ui.icon("chat_bubble_outline").classes("text-grey-6")
+                    if agent_is_blocking:
+                        ui.spinner("oval", size="xs", color="primary").props(
+                            'role="status" aria-label="Child Agents working"'
+                        ).tooltip("Child Agents working")
+                    else:
+                        ui.icon("chat_bubble_outline").classes("text-grey-6")
                     with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
                         ui.label(name).classes("text-sm text-weight-medium ellipsis")
                         ui.label(updated).classes("text-grey-6 text-xs")

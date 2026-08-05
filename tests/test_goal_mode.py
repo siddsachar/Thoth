@@ -15,6 +15,7 @@ def _fresh_goal_modules(tmp_path, monkeypatch):
         "row_bot.threads",
         "row_bot.agent_profiles",
         "row_bot.agent_runs",
+        "row_bot.agent_orchestrator",
         "row_bot.goals",
         "row_bot.slash_commands",
         "row_bot.channels.commands",
@@ -314,6 +315,60 @@ def test_repeated_same_blocker_marks_goal_blocked(tmp_path, monkeypatch):
     assert final_goal["blocker_count"] == 3
     assert decision.should_continue is False
     assert decision.status == "blocked"
+
+
+def test_goal_continuation_is_posted_to_shared_parent_runner(tmp_path, monkeypatch):
+    threads, _agent_runs, goals, _slash, _commands, _goal_tool = _fresh_goal_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    import row_bot.agent_orchestrator as orchestrator
+
+    thread_id = threads.create_thread("Goal shared runner")
+    goal = goals.start_goal(thread_id, "finish after child evidence")
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        goals,
+        "after_turn",
+        lambda **_kwargs: goals.GoalContinuationDecision(
+            goal=goal,
+            should_continue=True,
+            continuation_prompt="[Goal continuation] Verify the child evidence.",
+            reason="one more check",
+            status="active",
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "get_orchestration",
+        lambda _orchestration_id: {
+            "root_objective": goal["objective"],
+            "model_ref": "fake:model",
+            "approval_mode": "block",
+            "continuation_state_json": {
+                "config": {"configurable": {"thread_id": thread_id}},
+                "enabled_tool_names": ["agents", "goal"],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "start_parent_event_turn",
+        lambda **kwargs: captured.append(kwargs) or {"id": "goal-parent-turn"},
+    )
+
+    goals.after_orchestration_completion(
+        thread_id,
+        "previous-orchestration",
+        "The first child result is ready.",
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["runtime_surface"] == "goal"
+    assert captured[0]["event_kind"] == "goal_continuation"
+    assert captured[0]["parent_thread_id"] == thread_id
+    assert captured[0]["enabled_tool_names"] == ["agents", "goal"]
+    assert captured[0]["event_payload"]["goal_id"] == goal["id"]
 
 
 def test_goal_streaming_and_ui_contracts_are_wired():

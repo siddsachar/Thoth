@@ -207,6 +207,21 @@ def test_transcript_rendering_is_bounded_and_generation_safe() -> None:
     assert "window.rowBotHighlightCodeBlocks" in render_src
 
 
+def test_chat_autoscroll_observer_rejects_non_node_targets() -> None:
+    chat_src = _read("src/row_bot/ui/chat.py")
+    components_src = _read("src/row_bot/ui/chat_components.py")
+    head_src = _read("src/row_bot/ui/head_html.py")
+
+    # Studio rebuilds can invalidate the Quasar scroll container between
+    # lookup and observer setup. The embedded browser guard is an intentional
+    # source-level contract because this JavaScript runs outside Python.
+    guard = "if (!c || !(c instanceof Node)) return;"
+    assert guard in chat_src
+    assert guard in components_src
+    assert ").observe(document.documentElement" not in head_src
+    assert head_src.count("ObserverRoot instanceof Node") == 3
+
+
 def test_detached_finalize_marks_live_render_state_without_repaint() -> None:
     app_src = _read("src/row_bot/app.py")
     streaming_src = _read("src/row_bot/ui/streaming.py")

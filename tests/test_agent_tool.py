@@ -277,6 +277,10 @@ def test_agents_guide_mentions_pinned_model_resolution() -> None:
     assert "inherits the parent model" in guide
     assert "required=true" in guide
     assert "required=false" in guide
+    assert "complete material" in guide
+    assert "real later wave" in guide
+    assert "launch order only" in guide
+    assert "does not transfer" in guide
 
 
 def test_delegate_work_schema_is_async_first() -> None:
@@ -290,6 +294,16 @@ def test_delegate_work_schema_is_async_first() -> None:
         _DelegateWorkInput.model_fields["use_worktree"].description or ""
     ).lower()
     assert "local git worktree" in worktree_description
+    context_description = str(
+        _DelegateWorkInput.model_fields["context"].description or ""
+    ).lower()
+    dependency_description = str(
+        _DelegateWorkInput.model_fields["depends_on"].description or ""
+    ).lower()
+    assert "complete material" in context_description
+    assert "artifact path" in context_description
+    assert "launch order only" in dependency_description
+    assert "never transfers" in dependency_description
 
     delegate_tool = next(
         tool

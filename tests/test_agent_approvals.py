@@ -110,6 +110,39 @@ def test_agent_interrupt_creates_approval_and_resume_routes_to_agent_runner(
     assert "needs approval" in approval["message"]
     assert "Check the project state." in approval["message"]
 
+    parent_messages = threads.get_latest_checkpoint_messages(parent_thread_id)
+    approval_messages = [
+        message
+        for message in parent_messages
+        if (
+            getattr(message, "additional_kwargs", {})
+            .get("row_bot_ui", {})
+            .get("approval_request_id")
+            == approval["id"]
+        )
+    ]
+    assert len(approval_messages) == 1
+    metadata = approval_messages[0].additional_kwargs["row_bot_ui"]
+    assert metadata["agent_approval_for"] == run["id"]
+    assert metadata["agent_run_ids"] == [run["id"]]
+    assert metadata["approval_resume_token"] == approval["resume_token"]
+
+    from row_bot.channels.thread_notifications import notify_agent_run_approval
+
+    assert notify_agent_run_approval(approval["id"]) is True
+    assert len(
+        [
+            message
+            for message in threads.get_latest_checkpoint_messages(parent_thread_id)
+            if (
+                getattr(message, "additional_kwargs", {})
+                .get("row_bot_ui", {})
+                .get("approval_request_id")
+                == approval["id"]
+            )
+        ]
+    ) == 1
+
     assert tasks.respond_to_approval(approval["resume_token"], True) is True
     final = agent_runner.wait_for_agent_run(run["id"], timeout=2.0)
 

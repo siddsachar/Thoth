@@ -40,6 +40,24 @@ _model_picker_options_last_diagnostics: dict[str, Any] = {}
 _composer_css_added = False
 
 
+def _bind_shared_transcript_state(
+    p: P,
+    state: AppState,
+    messages: list[dict] | None,
+) -> None:
+    """Bind a shared chat surface to the transcript reconciliation state."""
+
+    from row_bot.ui.transcript import message_keys
+
+    rows = list(messages or [])
+    p.transcript_thread_id = str(state.thread_id or "")
+    p.transcript_generation += 1
+    p.transcript_rendered_keys = message_keys(rows)
+    p.transcript_window_start = 0
+    p.transcript_window_size = len(rows)
+    p.transcript_total = len(rows)
+
+
 def ensure_composer_control_css() -> None:
     """Install shared composer toolbar CSS once per process."""
 
@@ -406,6 +424,8 @@ def build_chat_messages(
         with p.chat_container:
             ui.label(placeholder_text).classes("text-grey-5 text-sm q-pa-md")
 
+    _bind_shared_transcript_state(p, state, messages)
+
     # Auto-scroll MutationObserver
     if p.chat_scroll:
         p.chat_scroll.scroll_to(percent=1.0)
@@ -414,7 +434,7 @@ def build_chat_messages(
             var el = getElement({_sid});
             if (!el || !el.$el) return;
             var c = el.$el.querySelector('.q-scrollarea__container');
-            if (!c) return;
+            if (!c || !(c instanceof Node)) return;
             el._tSS = true;
             var uTs = 0;
             c.addEventListener('wheel', function() {{ uTs = Date.now(); }}, {{passive:true}});

@@ -517,12 +517,6 @@ def _run_agent_sync(user_text: str, config: dict,
     from row_bot.channels.agent_output import assemble_agent_answer
 
     answer = assemble_agent_answer("".join(full_answer), tool_reports)
-    if interrupt_data is None and orchestration_runtime.finalize_channel_orchestration(
-        config,
-        answer,
-        enabled,
-    ):
-        answer = orchestration_runtime.orchestration_suspended_final()
 
     captured_images: list[bytes] = []
     captured_video_paths: list[str] = []

@@ -102,6 +102,60 @@ def test_channel_goal_loop_stops_on_approval_interrupt(tmp_path, monkeypatch):
     assert goals.get_current_goal(thread_id)["status"] == "waiting_approval"
 
 
+def test_channel_goal_delivers_real_progress_then_waits_for_unified_parent(
+    tmp_path,
+    monkeypatch,
+):
+    threads, _agent_runs, goals, runtime = _fresh_channel_goal_modules(tmp_path, monkeypatch)
+    import row_bot.agent_orchestrator as orchestrator
+
+    orchestrator = importlib.reload(orchestrator)
+    thread_id = threads.create_thread("Channel child progress")
+    generation_id = "channel-generation"
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "generation_id": generation_id,
+        }
+    }
+    orchestration = orchestrator.create_or_get_orchestration(
+        parent_thread_id=thread_id,
+        parent_generation_id=generation_id,
+        root_objective="Research the answer",
+        model_ref="fake:model",
+        approval_mode="block",
+        runtime_surface="channel",
+        orchestration_version=2,
+    )
+    orchestrator.arm_parent_wait(
+        orchestration["id"],
+        continuation_state={"config": config, "enabled_tool_names": ["agents"]},
+    )
+    monkeypatch.setattr(
+        goals,
+        "_verify_goal",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("progress must not be evaluated as a finished Goal turn")
+        ),
+    )
+    sent: list[str] = []
+
+    result = runtime.run_channel_goal_sync(
+        channel_name="sms",
+        thread_id=thread_id,
+        config=config,
+        first_prompt="initial goal prompt",
+        run_turn=lambda _prompt, _config: (
+            "I delegated the research and will continue when it returns.",
+            None,
+        ),
+        send_text=sent.append,
+    )
+
+    assert result.status == "waiting_children"
+    assert sent == ["I delegated the research and will continue when it returns."]
+
+
 def test_channel_goal_approval_grant_resumes_and_continues(tmp_path, monkeypatch):
     threads, _agent_runs, goals, runtime = _fresh_channel_goal_modules(tmp_path, monkeypatch)
     thread_id = threads.create_thread("Channel approval resume")
@@ -182,6 +236,7 @@ def test_channel_adapters_use_shared_goal_runtime():
 
     for filename in ("sms.py", "whatsapp.py"):
         src = (root / filename).read_text(encoding="utf-8")
+        assert "finalize_channel_orchestration(" not in src
         assert "prepare_channel_goal_start" in src
         assert "format_goal_started_ack" in src
         assert "run_channel_goal_sync" in src
@@ -193,6 +248,7 @@ def test_channel_adapters_use_shared_goal_runtime():
 
     for filename in ("telegram.py", "slack.py", "discord_channel.py"):
         src = (root / filename).read_text(encoding="utf-8")
+        assert "finalize_channel_orchestration(" not in src
         assert "prepare_channel_goal_start" in src
         assert "format_goal_started_ack" in src
         assert "run_channel_goal_async" in src

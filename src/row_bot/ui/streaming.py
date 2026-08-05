@@ -22,7 +22,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from nicegui import run, ui
 
@@ -453,6 +453,17 @@ def _delete_live_generation_row(gen: GenerationState) -> None:
     gen.thinking_code = None
 
 
+def _delete_ui_handle_safely(handle: Any, label: str) -> None:
+    """Delete a NiceGUI handle that may already have left its parent slot."""
+
+    if handle is None:
+        return
+    try:
+        handle.delete()
+    except (RuntimeError, ValueError):
+        logger.debug("%s delete skipped because the UI handle is stale", label)
+
+
 def _handle_ui_runtime_error(
     gen: GenerationState,
     state: AppState,
@@ -548,7 +559,7 @@ def _render_thinking_collapse(gen: GenerationState) -> bool:
             ).classes("w-full text-xs")
 
     if gen.thinking_md:
-        gen.thinking_md.delete()
+        _delete_ui_handle_safely(gen.thinking_md, "Thinking markdown")
         gen.thinking_md = None
     gen.thinking_collapsed = True
     return True
@@ -1350,10 +1361,71 @@ def _agent_run_card_refresh_key(run_row: dict | None) -> str:
             str(run_row.get("error") or ""),
             str(run_row.get("turns_used") or 0),
             str(run_row.get("finished_at") or ""),
-            str(run_row.get("updated_at") or ""),
             str(run_row.get("stop_requested") or 0),
         ]
     )
+
+
+def _agent_poll_refresh_keys(
+    *,
+    run_rows: list[dict],
+    orchestration_rows: list[dict],
+    orchestration_messages: list[dict],
+    activity: dict[str, Any],
+    checkpoint_revision: str,
+) -> dict[str, str]:
+    """Split one poll snapshot into the three visible refresh boundaries."""
+
+    activity_key = "|".join(
+        str(activity.get(field) or "")
+        for field in (
+            "orchestration_id",
+            "state",
+            "blocking",
+            "background",
+            "phase",
+            "active_members",
+            "failed_members",
+        )
+    )
+    run_key = ";".join(_agent_run_card_refresh_key(row) for row in run_rows)
+    orchestration_key = ";".join(
+        "|".join(
+            str(row.get(field) or "")
+            for field in (
+                "id",
+                "status",
+                "parent_state",
+                "error_message",
+                "completed_at",
+            )
+        )
+        for row in orchestration_rows
+    )
+    message_key = ";".join(
+        "|".join(
+            str(row.get(field) or "")
+            for field in (
+                "id",
+                "kind",
+                "delivery_status",
+                "delivered_at",
+            )
+        )
+        for row in orchestration_messages
+    )
+    return {
+        "sidebar": activity_key,
+        "strip": "\n".join((activity_key, run_key, orchestration_key)),
+        "transcript": "\n".join(
+            (
+                str(checkpoint_revision or ""),
+                run_key,
+                message_key,
+                str(activity.get("phase") == "approval_wait"),
+            )
+        ),
+    }
 
 
 def _refresh_key_for_agent_run_ids(run_ids: list[str]) -> str:
@@ -1535,6 +1607,8 @@ def _thread_has_attached_live_generation(thread_id: str) -> bool:
         return False
     if str(getattr(gen, "status", "") or "").lower() != "streaming":
         return False
+    if bool(getattr(gen, "orchestration_suspended", False)):
+        return False
     return not bool(getattr(gen, "detached", False)) and getattr(gen, "live_row", None) is not None
 
 
@@ -1621,6 +1695,8 @@ def _checkpoint_ui_metadata(msg: dict) -> dict:
         "approval_resume_token",
         "approval_status",
         "channel_notification_key",
+        "orchestration_id",
+        "orchestration_message_kind",
         "goal_completion_for",
         "goal_run_id",
         "goal_status",
@@ -1730,7 +1806,14 @@ def _append_child_agent_approval_messages(
     *,
     checkpoint_thread_id: str = "",
 ) -> bool:
-    clean_ids = {str(run_id) for run_id in run_ids if str(run_id or "").strip()}
+    clean_run_ids = list(
+        dict.fromkeys(
+            str(run_id).strip()
+            for run_id in run_ids
+            if str(run_id or "").strip()
+        )
+    )
+    clean_ids = set(clean_run_ids)
     if not clean_ids:
         return False
     try:
@@ -1783,6 +1866,7 @@ def _append_child_agent_approval_messages(
             "approval_resume_token": str(approval.get("resume_token") or ""),
             "approval_status": "pending",
             "agent_run_ids": [run_id],
+            "channel_notification_key": f"agent_approval:{approval_id}",
         }
         _insert_assistant_before_future_queued_turns(
             messages,
@@ -1790,7 +1874,17 @@ def _append_child_agent_approval_messages(
             current_generation_id=str((lifecycle or {}).get("source_generation_id") or ""),
         )
         if checkpoint_thread_id:
-            _append_ui_messages_to_checkpoint(checkpoint_thread_id, [approval_msg])
+            try:
+                from row_bot.channels.thread_notifications import (
+                    notify_agent_run_approval,
+                )
+
+                notify_agent_run_approval(approval)
+            except Exception:
+                logger.debug(
+                    "Could not repair child Agent approval checkpoint message",
+                    exc_info=True,
+                )
         if lifecycle is not None:
             lifecycle["approval_message_emitted"] = True
             lifecycle["approval_id"] = approval_id
@@ -1819,7 +1913,99 @@ def _append_child_agent_approval_messages(
                 continue
             if _append_for_run(run_id):
                 handled_run_ids.add(run_id)
+    # Retry attempts are durable child runs but do not have to appear on the
+    # original spawn card. Reconcile every observed child id so replacement
+    # approvals surface in the parent transcript too.
+    for run_id in clean_run_ids:
+        if run_id in handled_run_ids:
+            continue
+        if _append_for_run(run_id):
+            handled_run_ids.add(run_id)
     return changed
+
+
+def _merge_checkpoint_approval_messages(
+    messages: list[dict],
+    checkpoint_messages: list[dict],
+    *,
+    approval_statuses: Mapping[str, str] | None = None,
+) -> bool:
+    """Upsert only durable approval cards from an authoritative checkpoint."""
+
+    from row_bot.ui.transcript import upsert_durable_transcript_message
+
+    changed = False
+    for incoming in checkpoint_messages:
+        if not isinstance(incoming, dict) or not incoming.get("approval_request_id"):
+            continue
+        approval_id = str(incoming.get("approval_request_id") or "").strip()
+        status = str((approval_statuses or {}).get(approval_id) or "").strip()
+        if status:
+            incoming = {**incoming, "approval_status": status}
+            if status != "pending":
+                incoming["approval_resume_token"] = ""
+        item_changed, _index = upsert_durable_transcript_message(
+            messages,
+            incoming,
+        )
+        changed = changed or item_changed
+    return changed
+
+
+def _sync_thread_approval_messages(
+    *,
+    state: AppState,
+    cb: _Callbacks,
+    thread_id: str,
+    run_ids: list[str],
+    refresh_transcript: bool = False,
+) -> bool:
+    """Merge child rows plus parent/child checkpoint approval cards."""
+
+    changed = _append_child_agent_approval_messages(
+        state.messages,
+        run_ids,
+        checkpoint_thread_id=thread_id,
+    )
+    try:
+        from row_bot.ui.helpers import load_thread_messages
+        from row_bot.tasks import get_approval_request_statuses
+
+        checkpoint_messages = load_thread_messages(thread_id)
+        approval_ids = [
+            str(message.get("approval_request_id") or "").strip()
+            for message in checkpoint_messages
+            if isinstance(message, dict)
+            and str(message.get("approval_request_id") or "").strip()
+        ]
+        changed = (
+            _merge_checkpoint_approval_messages(
+                state.messages,
+                checkpoint_messages,
+                approval_statuses=get_approval_request_statuses(approval_ids),
+            )
+            or changed
+        )
+    except Exception:
+        logger.debug("Could not reconcile thread checkpoint approvals", exc_info=True)
+    if not changed:
+        return False
+    state.cache_active_messages()
+    if refresh_transcript and state.thread_id == thread_id:
+        try:
+            cb.refresh_chat_messages()
+        except Exception:
+            logger.debug(
+                "Live child Agent approval transcript refresh failed",
+                exc_info=True,
+            )
+    return True
+
+
+def _sync_child_agent_approval_messages(**kwargs: Any) -> bool:
+    """Compatibility alias for older UI adapters."""
+
+    return _sync_thread_approval_messages(**kwargs)
 
 
 def _append_direct_agent_completion_messages(
@@ -2236,12 +2422,51 @@ def _append_delegated_agent_card_message(
     generation_id: str = "",
     queued_message_ids: list[str] | None = None,
     wait_mode: bool = False,
+    orchestration_id: str = "",
+    required: bool = False,
 ) -> bool:
     run_id = str((run_row or {}).get("id") or "").strip()
     if not thread_id or not run_id:
         return False
     messages = _direct_agent_thread_messages(state, thread_id)
     if run_id in _visible_agent_run_ids(messages):
+        metadata_changed = False
+        for existing in messages:
+            if run_id not in {
+                str(item).strip()
+                for item in (existing.get("agent_run_ids") or [])
+                if str(item or "").strip()
+            }:
+                continue
+            lifecycle = existing.get("agent_lifecycle")
+            if not isinstance(lifecycle, dict):
+                lifecycle = {
+                    "kind": "delegated_agent_spawn",
+                    "run_id": run_id,
+                    "source_generation_id": str(generation_id or ""),
+                    "wait_mode": bool(wait_mode),
+                    "completion_summary_emitted": False,
+                }
+                existing["agent_lifecycle"] = lifecycle
+                metadata_changed = True
+            if orchestration_id:
+                if lifecycle.get("orchestration_id") != str(orchestration_id):
+                    lifecycle["orchestration_id"] = str(orchestration_id)
+                    metadata_changed = True
+                if lifecycle.get("required") is not bool(required):
+                    lifecycle["required"] = bool(required)
+                    metadata_changed = True
+            refresh_key = _agent_run_card_refresh_key(run_row)
+            if existing.get("agent_run_refresh_key") != refresh_key:
+                existing["agent_run_refresh_key"] = refresh_key
+                metadata_changed = True
+        if metadata_changed:
+            if state.thread_id == thread_id:
+                state.messages = messages
+                state.cache_active_messages()
+            else:
+                state.message_cache[thread_id] = list(messages)
+                state.message_cache_dirty.discard(thread_id)
         return False
     msg = {
         "role": "assistant",
@@ -2253,6 +2478,8 @@ def _append_delegated_agent_card_message(
             "kind": "delegated_agent_spawn",
             "run_id": run_id,
             "source_generation_id": str(generation_id or ""),
+            "orchestration_id": str(orchestration_id or ""),
+            "required": bool(required),
             "wait_mode": bool(wait_mode),
             "completion_summary_emitted": False,
         },
@@ -2291,6 +2518,123 @@ def _append_delegated_agent_card_message(
     )
     _schedule_parent_agent_strip_refresh(cb)
     return True
+
+
+def _register_delegated_agent_tool_result(
+    gen: GenerationState,
+    state: AppState,
+    cb: _Callbacks,
+    *,
+    raw_tool_name: str,
+    tool_content: str,
+) -> list[str]:
+    """Register authoritative delegated run ids at the tool completion boundary."""
+
+    tool_key = str(raw_tool_name or "").strip().lower()
+    if tool_key not in {"delegate_work", "agents"}:
+        return []
+    tool_result = {"name": tool_key, "content": tool_content}
+    payload = parse_agent_tool_payload(tool_result)
+    if not isinstance(payload, dict) or payload.get("ok") is False:
+        return []
+    run_ids = _ordered_agent_run_ids_from_tool_result(tool_result)
+    if not run_ids:
+        return []
+    orchestration = payload.get("orchestration")
+    orchestration_id = ""
+    required = False
+    if isinstance(orchestration, dict):
+        orchestration_id = str(orchestration.get("id") or "").strip()
+        required = bool(orchestration_id and orchestration.get("required"))
+    wait_mode = (
+        str(payload.get("message") or "").strip().lower()
+        != "child agent started."
+    )
+    try:
+        from row_bot.agent_runs import get_agent_run
+        from row_bot.channels.thread_notifications import (
+            append_agent_lifecycle_message_once,
+        )
+    except Exception:
+        logger.debug("Could not import delegated Agent registration helpers", exc_info=True)
+        return []
+
+    registered: list[str] = []
+    for run_id in run_ids:
+        try:
+            run_row = get_agent_run(run_id)
+        except Exception:
+            logger.debug(
+                "Could not load delegated Agent Run %s at tool completion",
+                run_id,
+                exc_info=True,
+            )
+            continue
+        if not run_row:
+            continue
+        append_agent_lifecycle_message_once(
+            run_row,
+            source_generation_id=str(gen.generation_id or ""),
+            orchestration_id=orchestration_id,
+            required=required,
+            wait_mode=wait_mode,
+        )
+        if not wait_mode:
+            gen.live_async_agent_run_ids.add(run_id)
+        _render_live_agent_run_card(gen, run_row)
+        _append_delegated_agent_card_message(
+            state=state,
+            cb=cb,
+            thread_id=str(gen.thread_id or ""),
+            run_row=run_row,
+            generation_id=str(gen.generation_id or ""),
+            queued_message_ids=list(gen.queued_message_ids or []),
+            wait_mode=wait_mode,
+            orchestration_id=orchestration_id,
+            required=required,
+        )
+        registered.append(run_id)
+    return registered
+
+
+def _republish_required_orchestration_lifecycle(
+    orchestration_id: str,
+    *,
+    source_generation_id: str,
+) -> int:
+    """Ensure required child cards remain visible beside parent progress."""
+
+    clean_orchestration_id = str(orchestration_id or "").strip()
+    if not clean_orchestration_id:
+        return 0
+    try:
+        from row_bot.agent_orchestrator import list_members
+        from row_bot.channels.thread_notifications import (
+            append_agent_lifecycle_message_once,
+        )
+
+        published = 0
+        for member in list_members(clean_orchestration_id):
+            if not member.get("required") or str(member.get("status") or "") == "transferred":
+                continue
+            run_row = member.get("run") or {}
+            if not isinstance(run_row, dict) or not str(run_row.get("id") or "").strip():
+                continue
+            if append_agent_lifecycle_message_once(
+                run_row,
+                source_generation_id=str(source_generation_id or ""),
+                orchestration_id=clean_orchestration_id,
+                required=True,
+                wait_mode=False,
+            ):
+                published += 1
+        return published
+    except Exception:
+        logger.debug(
+            "Required orchestration lifecycle checkpoint repair failed",
+            exc_info=True,
+        )
+        return 0
 
 
 def _agent_tool_result_already_live(gen: GenerationState, tool_result: dict) -> bool:
@@ -3221,7 +3565,6 @@ async def consume_generation(
             _break_loop = True
 
         elif event_type == "done":
-            _buddy(BuddyEventType.GENERATION_DONE, "Done")
             _voice_diag("generation_event:done", final_chars=len(str(payload or "")))
             gen.accumulated = payload
             if not gen.detached:
@@ -3242,6 +3585,16 @@ async def consume_generation(
                     _handle_ui_runtime_error(gen, state, exc, "done-event finalization")
                     logger.debug("Done-event UI finalization failed", exc_info=True)
 
+        elif event_type == "orchestration_waiting":
+            orchestration_payload = payload if isinstance(payload, dict) else {}
+            gen.orchestration_id = str(
+                orchestration_payload.get("orchestration_id") or ""
+            )
+            gen.orchestration_required = True
+            gen.orchestration_suspended = True
+            state.mark_thread_dirty(gen.thread_id)
+            _refresh_parent_agent_strip(cb)
+
         if _break_loop:
             break
 
@@ -3251,11 +3604,11 @@ async def consume_generation(
     # ── Finalise ─────────────────────────────────────────────────────
     if gen.status == "streaming":
         gen.status = "done"
-    _orchestration_suspended = False
-    _orchestration_acknowledgement = ""
+    _orchestration_suspended = bool(
+        getattr(gen, "orchestration_suspended", False)
+    )
     try:
         from row_bot.agent_orchestrator import (
-            finalize_parent_generation,
             get_generation_orchestration,
         )
 
@@ -3263,68 +3616,27 @@ async def consume_generation(
             lambda: get_generation_orchestration(gen.thread_id, gen.generation_id)
         )
         if orchestration and int(orchestration.get("required_total") or 0) > 0:
-            provisional_text = str(gen.accumulated or "")
-            if provisional_text.strip():
-                from row_bot.threads import remove_latest_checkpoint_ai_message
-
-                await run.io_bound(
-                    lambda: remove_latest_checkpoint_ai_message(
-                        gen.thread_id,
-                        provisional_text,
-                    )
-                )
-            _orchestration_suspended = await run.io_bound(
-                lambda: finalize_parent_generation(
+            await run.io_bound(
+                lambda: _republish_required_orchestration_lifecycle(
                     str(orchestration["id"]),
-                    continuation_state={
-                        "config": gen.config,
-                        "enabled_tool_names": list(gen.enabled_tools),
-                        "provisional_text": provisional_text,
-                        "voice_mode": bool(gen.voice_mode),
-                    },
-                    delivery_context={
-                        "voice_mode": bool(gen.voice_mode),
-                        "voice_transport": str(state.voice_coordinator.transport or ""),
-                        "runtime_surface": str(
-                            (gen.config.get("configurable") or {}).get(
-                                "runtime_surface",
-                                "",
-                            )
-                        ),
-                    },
+                    source_generation_id=str(gen.generation_id or ""),
                 )
             )
             if _orchestration_suspended:
                 gen.orchestration_id = str(orchestration["id"])
                 gen.orchestration_required = True
-                gen.orchestration_suspended = True
-                required_total = int(orchestration.get("required_total") or 0)
-                _orchestration_acknowledgement = (
-                    "I'm working on this with 1 agent."
-                    if required_total == 1
-                    else f"I'm working on this with {required_total} agents."
-                )
-                if gen.voice_mode:
-                    voice_output.speak_final(_orchestration_acknowledgement)
-                gen.tts_active = False
-                gen.tts_buffer = ""
-                gen.accumulated = ""
-                gen.tool_results = []
-                if state.thread_id == gen.thread_id:
-                    state.messages.append({
-                        "role": "assistant",
-                        "content": _orchestration_acknowledgement,
-                        "orchestration_id": gen.orchestration_id,
-                        "orchestration_message_kind": "acknowledgement",
-                    })
-                    state.cache_active_messages()
                 state.mark_thread_dirty(gen.thread_id)
-                if not gen.detached:
-                    _delete_live_generation_row(gen)
-                    cb.refresh_chat_messages()
                 _refresh_parent_agent_strip(cb)
     except Exception:
-        logger.exception("Required Agent orchestration suspension failed")
+        logger.exception("Required Agent orchestration presentation failed")
+    if _orchestration_suspended:
+        _buddy(
+            BuddyEventType.ORCHESTRATION_ACTIVE,
+            "Child Agents working",
+            orchestration_id=str(getattr(gen, "orchestration_id", "") or ""),
+        )
+    elif gen.status == "done":
+        _buddy(BuddyEventType.GENERATION_DONE, "Done")
     _voice_diag("generation_finalizing")
     _finalization_started = time.perf_counter()
 
@@ -3334,7 +3646,7 @@ async def consume_generation(
 
         if not gen.detached:
             _flush_live_renders("post-stream finalization", force=True)
-            if gen.tts_active and gen.status == "done" and not _orchestration_suspended:
+            if gen.tts_active and gen.status == "done":
                 if (
                     state.voice_coordinator.transport == "realtime"
                     and realtime_chunker is not None
@@ -3376,7 +3688,6 @@ async def consume_generation(
             # still-active Developer workspace and collapse the inspector.
             if (
                 gen.accumulated and not state.active_developer_workspace_id
-                and not _orchestration_suspended
             ):
                 if gen.assistant_md:
                     try:
@@ -3396,7 +3707,7 @@ async def consume_generation(
             try:
                 ui.run_javascript(
                     "if (window.rowBotHighlightCodeBlocks) { window.rowBotHighlightCodeBlocks(); } "
-                    "else { setTimeout(function() { document.querySelectorAll('pre code').forEach(function(el) { if (!el.closest('.row-bot-live-stream')) hljs.highlightElement(el); }); }, 80); }"
+                    "else { setTimeout(function() { document.querySelectorAll('pre code:not([data-highlighted=\"yes\"])').forEach(function(el) { if (!el.closest('.row-bot-live-stream') && !el.children.length) hljs.highlightElement(el); }); }, 80); }"
                 )
                 ui.run_javascript(
                     "setTimeout(function() {"
@@ -3677,6 +3988,7 @@ async def consume_generation(
         (gen.status == "done" or gen.interrupt_data)
         and (_has_final_output or gen.interrupt_data)
         and not gen.stop_event.is_set()
+        and not _orchestration_suspended
     ):
         try:
             from row_bot import goals
@@ -3869,6 +4181,14 @@ async def _handle_tool_done(
         # suspension boundary, not provisional parent text or child progress.
         gen.tts_active = False
         gen.tts_buffer = ""
+
+    _register_delegated_agent_tool_result(
+        gen,
+        state,
+        cb,
+        raw_tool_name=str(raw_tool_name or ""),
+        tool_content=tool_content,
+    )
 
     if _tool_result_changes_model_setting(raw_tool_name, tool_content):
         gen.refresh_model_controls_on_done = True
@@ -4440,41 +4760,6 @@ async def send_message(
         touch_thread(state.thread_id)
         return
 
-    if (
-        not internal_goal_continuation
-        and getattr(state, "active_developer_workspace_id", None)
-        and not _files_snapshot
-    ):
-        try:
-            from row_bot.developer.agent_context import maybe_answer_workspace_identity
-
-            direct_answer = await run.io_bound(
-                maybe_answer_workspace_identity,
-                state.active_developer_workspace_id,
-                text,
-            )
-        except Exception:
-            direct_answer = None
-            logger.debug("Failed to build Developer Studio direct identity answer", exc_info=True)
-        if direct_answer:
-            assistant_msg = {"role": "assistant", "content": direct_answer}
-            state.messages.append(assistant_msg)
-            persist_thread_media_state(state.thread_id, state.messages)
-            state.cache_active_messages()
-            cb.add_chat_message(assistant_msg)
-            if should_auto_rename_thread(state.thread_id, state.thread_name):
-                state.thread_name = rename_thread(
-                    state.thread_id,
-                    build_auto_thread_title(display_content, current_name=state.thread_name),
-                    source="auto",
-                )
-                cb.rebuild_thread_list()
-                if p.chat_header_label:
-                    p.chat_header_label.set_text(str(state.thread_name))
-            else:
-                touch_thread(state.thread_id)
-            return
-
     # Process attached files (slow - vision analysis etc.)
     file_context = ""
     file_warnings: list[str] = []
@@ -4578,6 +4863,16 @@ async def send_message(
     state.thread_approval_mode = _thread_approval_mode
     is_developer = bool(getattr(state, "active_developer_workspace_id", None))
     is_designer = bool(getattr(state, "active_designer_project", None))
+    project_workspace_id = ""
+    if is_developer:
+        try:
+            from row_bot.threads import _get_thread_project_workspace
+
+            project_workspace_id = str(
+                await run.io_bound(_get_thread_project_workspace, gen_thread_id) or ""
+            )
+        except Exception:
+            logger.debug("Could not resolve Developer project binding", exc_info=True)
     runtime_surface = "developer" if is_developer else "designer" if is_designer else "normal_chat"
     runtime_mode = "agent" if is_developer or is_designer else "auto"
     generation_id = f"{gen_thread_id}:{uuid.uuid4().hex[:12]}"
@@ -4595,9 +4890,14 @@ async def send_message(
             "generation_id": generation_id,
             "root_objective": str(text or "").strip(),
             "approval_mode": _thread_approval_mode,
+            "voice_mode": bool(voice_mode),
+            "voice_transport": str(state.voice_coordinator.transport or ""),
             **({"internal_goal_continuation": True} if internal_goal_continuation else {}),
             **({"model_override": _thread_mo} if _thread_mo else {}),
             **({"developer_workspace_id": state.active_developer_workspace_id} if getattr(state, "active_developer_workspace_id", None) else {}),
+            **({"project_workspace_id": project_workspace_id} if project_workspace_id else {}),
+            **({"designer_project_id": str(state.active_designer_project.id)} if getattr(state, "active_designer_project", None) else {}),
+            **({"designer_mode": str(state.active_designer_project.mode)} if getattr(state, "active_designer_project", None) else {}),
             **({"developer_context": developer_context} if developer_context else {}),
             **profile_runtime_config,
         },
@@ -4966,6 +5266,19 @@ async def resume_after_interrupt(
             logger.debug("Failed to build Developer Studio context for resume", exc_info=True)
     is_developer = bool(getattr(state, "active_developer_workspace_id", None))
     is_designer = bool(getattr(state, "active_designer_project", None))
+    project_workspace_id = ""
+    if is_developer:
+        try:
+            from row_bot.threads import _get_thread_project_workspace
+
+            project_workspace_id = str(
+                await run.io_bound(_get_thread_project_workspace, gen_thread_id) or ""
+            )
+        except Exception:
+            logger.debug(
+                "Could not resolve Developer project binding for resume",
+                exc_info=True,
+            )
     try:
         runtime_surface = _approval_resume_runtime_surface(
             source_runtime_surface,
@@ -5000,6 +5313,9 @@ async def resume_after_interrupt(
             "approval_mode": _thread_approval_mode,
             **({"model_override": _thread_mo} if _thread_mo else {}),
             **({"developer_workspace_id": state.active_developer_workspace_id} if getattr(state, "active_developer_workspace_id", None) else {}),
+            **({"project_workspace_id": project_workspace_id} if project_workspace_id else {}),
+            **({"designer_project_id": str(state.active_designer_project.id)} if getattr(state, "active_designer_project", None) else {}),
+            **({"designer_mode": str(state.active_designer_project.mode)} if getattr(state, "active_designer_project", None) else {}),
             **({"developer_context": developer_context} if developer_context else {}),
             **profile_runtime_config,
         },

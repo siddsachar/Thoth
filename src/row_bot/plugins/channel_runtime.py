@@ -566,21 +566,13 @@ async def _collect_agent_turn(
         events_factory,
         callbacks,
         use_stream=use_stream,
-        # Buffer orchestration-capable turns until the required-child decision
-        # is durable; this prevents plugin callbacks from leaking a draft.
+        # Buffer Agent-capable turns so the shared completion guard can classify
+        # this parent pass before its real model-authored output is delivered.
         deliver_final=deliver_final and not orchestration_capable,
     )
     if orchestration_capable:
-        if channel_runtime.finalize_channel_orchestration(
-            config,
-            turn.answer,
-            enabled,
-        ):
-            turn.answer = channel_runtime.orchestration_suspended_final()
-            turn.delivered_final = True
-        else:
-            await _send_text(callbacks, turn.answer)
-            turn.delivered_final = True
+        await _send_text(callbacks, turn.answer)
+        turn.delivered_final = True
     return turn
 
 

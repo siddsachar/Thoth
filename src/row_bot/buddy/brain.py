@@ -9,7 +9,6 @@ state can only remain active while the owning fact is still active.
 from __future__ import annotations
 
 import logging
-import sys
 import time
 from dataclasses import dataclass, replace
 from typing import Any
@@ -36,6 +35,8 @@ _EVENT_REACTIONS: dict[BuddyEventType, tuple[BuddyMood, str, int, int, int, str]
     BuddyEventType.GENERATION_STOPPED: (BuddyMood.CONCERNED, "pause", 48, 30, 18, "Stopped"),
     BuddyEventType.GENERATION_DONE: (BuddyMood.PROUD, "celebrate_small", 88, 28, 0, "Done"),
     BuddyEventType.GENERATION_ERROR: (BuddyMood.CONCERNED, "worry", 42, 44, 95, "Error"),
+    BuddyEventType.ORCHESTRATION_ACTIVE: (BuddyMood.FOCUSED, "think_loop", 72, 82, 12, "Agents working"),
+    BuddyEventType.ORCHESTRATION_DONE: (BuddyMood.PROUD, "nod", 78, 32, 0, "Agent work done"),
     BuddyEventType.WORKFLOW_STARTED: (BuddyMood.EXCITED, "pack_bag", 82, 65, 0, "Workflow running"),
     BuddyEventType.WORKFLOW_STEP: (BuddyMood.FOCUSED, "step_check", 74, 76, 0, "Workflow step"),
     BuddyEventType.WORKFLOW_DONE: (BuddyMood.PROUD, "celebrate_big", 90, 25, 0, "Workflow done"),
@@ -49,11 +50,12 @@ _EVENT_REACTIONS: dict[BuddyEventType, tuple[BuddyMood, str, int, int, int, str]
 _IDLE_GRACE_SECONDS = 2.0
 _STALE_ACTIVITY_SECONDS = 120.0
 _DURABLE_RECONCILE_SECONDS = 5.0
-_ACTIVE_PRIORITY = ("approval", "tool", "generation", "workflow", "voice")
+_ACTIVE_PRIORITY = ("approval", "tool", "generation", "orchestration", "workflow", "voice")
 _ACTIVITY_STARTS: dict[BuddyEventType, str] = {
     BuddyEventType.GENERATION_STARTED: "generation",
     BuddyEventType.THINKING: "generation",
     BuddyEventType.TOKEN: "generation",
+    BuddyEventType.ORCHESTRATION_ACTIVE: "orchestration",
     BuddyEventType.TOOL_STARTED: "tool",
     BuddyEventType.APPROVAL_NEEDED: "approval",
     BuddyEventType.WORKFLOW_STARTED: "workflow",
@@ -69,6 +71,7 @@ _ACTIVITY_ENDS: dict[BuddyEventType, tuple[str, ...]] = {
     BuddyEventType.GENERATION_ERROR: ("generation", "tool", "approval"),
     BuddyEventType.GENERATION_INTERRUPTED: ("generation", "tool"),
     BuddyEventType.GENERATION_STOPPED: ("generation", "tool", "approval"),
+    BuddyEventType.ORCHESTRATION_DONE: ("orchestration",),
     BuddyEventType.WORKFLOW_DONE: ("workflow",),
     BuddyEventType.WORKFLOW_ERROR: ("workflow",),
     BuddyEventType.WORKFLOW_CANCELLED: ("workflow",),
@@ -114,6 +117,8 @@ def _owner_from_payload(kind: str, payload: dict[str, Any]) -> str:
         return str(payload.get("thread_id") or "generation")
     if kind == "tool":
         return str(payload.get("tool_call_id") or payload.get("tool") or "tool")
+    if kind == "orchestration":
+        return str(payload.get("orchestration_id") or payload.get("thread_id") or "orchestration")
     if kind == "voice":
         return "voice"
     return kind
@@ -234,6 +239,14 @@ class BuddyBrain:
             payload = dict(event.payload)
             self._last_event_id = event.id
             self._apply_event_to_activities(event_type, source, payload, now)
+            if event_type == BuddyEventType.ORCHESTRATION_DONE:
+                remaining = self._dominant_activity()
+                if remaining is not None:
+                    event_type = remaining.event_type
+                    source = remaining.source
+                    payload = dict(remaining.payload)
+                    payload.setdefault("label", remaining.label)
+                    payload.setdefault("owner_id", remaining.owner_id)
 
         return self._build_state(event_type, event_id, source, payload, cfg, now)
 
@@ -363,12 +376,12 @@ class BuddyBrain:
         if now - self._last_reconcile_at < _DURABLE_RECONCILE_SECONDS:
             return
         self._last_reconcile_at = now
-        if "row_bot.tasks" not in sys.modules and "tasks" not in sys.modules:
-            return
         try:
             from row_bot.tasks import get_pending_approvals, get_running_tasks
+            from row_bot.agent_orchestrator import get_thread_orchestration_activity
             pending = get_pending_approvals()
             running = get_running_tasks()
+            orchestration_activity = get_thread_orchestration_activity()
         except Exception:
             return
 
@@ -423,6 +436,51 @@ class BuddyBrain:
             )
         if not workflow_owners:
             self._active.pop("workflow", None)
+
+        orchestration_owners = self._active.setdefault("orchestration", {})
+        durable_orchestration_ids = {
+            str(info.get("orchestration_id") or thread_id)
+            for thread_id, info in orchestration_activity.items()
+            if str(info.get("state") or "") == "active"
+        }
+        for owner_id in list(orchestration_owners):
+            if owner_id not in durable_orchestration_ids:
+                orchestration_owners.pop(owner_id, None)
+        phase_labels = {
+            "child_running": "Child Agents working",
+            "later_wave_parent": "Preparing the next Agent wave",
+            "approval_wait": "Agent group needs approval",
+            "retry": "Retrying Agent work",
+            "stopping": "Stopping Agent work",
+            "background": "Background Agent working",
+        }
+        for thread_id, info in orchestration_activity.items():
+            if str(info.get("state") or "") != "active":
+                continue
+            owner_id = str(info.get("orchestration_id") or thread_id)
+            phase = str(info.get("phase") or "child_running")
+            label = phase_labels.get(phase, "Agents working")
+            orchestration_owners[owner_id] = _Activity(
+                kind="orchestration",
+                event_type=BuddyEventType.ORCHESTRATION_ACTIVE,
+                owner_id=owner_id,
+                source="agent_orchestrator.reconcile",
+                label=label,
+                payload={
+                    "orchestration_id": owner_id,
+                    "thread_id": thread_id,
+                    "phase": phase,
+                    "blocking": bool(info.get("blocking")),
+                    "background": bool(info.get("background")),
+                    "active_members": int(info.get("active_members") or 0),
+                    "failed_members": int(info.get("failed_members") or 0),
+                    "label": label,
+                },
+                updated_at=now,
+                reconciled=True,
+            )
+        if not orchestration_owners:
+            self._active.pop("orchestration", None)
 
     def tick(self) -> BuddyState:
         events = get_buddy_event_bus().recent(after_id=self._last_event_id, limit=512)
