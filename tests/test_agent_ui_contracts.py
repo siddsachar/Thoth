@@ -349,7 +349,6 @@ def test_agent_drawer_contract_and_surface_usage():
     render = _read("ui/render.py")
     assert "model_iterations_used" not in render
     assert "delegation depth" not in render
-    assert 'f"{turns_used}/{max_turns} turns"' in render
     assert "def _detach_if_thread_changed" in streaming
     assert '_detach_if_thread_changed(gen, state, "active thread changed")' in streaming
 
@@ -507,25 +506,64 @@ def test_sidebar_hides_child_agent_threads_by_default():
 
 def test_agent_card_uses_compact_peek_contract():
     src = _read("ui/render.py")
+    head = _read("ui/head_html.py")
     agent_card = src.split("def _render_agent_run_card", 1)[1].split(
         "def _current_agent_run_for_card",
         1,
     )[0]
+    status_colors = src.split("def _agent_status_color", 1)[1].split(
+        "def _short_text",
+        1,
+    )[0]
 
-    assert "open_agent_peek_dialog" in src
-    assert "Peek Agent activity" in src
+    assert "open_agent_peek_dialog" in agent_card
     assert "Open thread" in src
     assert "Open worktree" in src
     assert "Compare" in src
     assert "agent_lifecycle" in src
-    assert "row-bot-agent-run-card w-full items-center no-wrap" in agent_card
-    assert "min-height: 44px" in agent_card
-    assert "min-width: 0; max-width: 100%; overflow: hidden" in agent_card
-    assert 'ui.element("div").style("flex: 1 1 auto; min-width: 0;")' in agent_card
+    assert agent_card.count("ui.button(") == 1
+    assert "row-bot-agent-run-stud" in agent_card
+    assert 'ui.icon("hub", size="17px")' in agent_card
+    assert 'ui.label(name).classes("row-bot-agent-run-name' in agent_card
+    assert "row-bot-agent-run-status-dot" in agent_card
+    assert 'role="img" aria-label="Agent status: {status_label}"' in agent_card
+    assert "rid or row" in agent_card
+    assert "row-bot-agent-run-list w-full items-center flex-wrap gap-1" in src
+    assert ".row-bot-agent-run-stud.q-btn:hover" in head
+    assert ".row-bot-agent-run-stud.q-btn:focus-visible" in head
+    assert "text-overflow: ellipsis" in head
+    assert "transition: none !important" in head
+    for durable_status in (
+        "queued",
+        "running",
+        "waiting_approval",
+        "waiting_user",
+        "paused",
+        "interrupted",
+        "completed",
+        "completed_delivery_failed",
+        "failed",
+        "stopped",
+        "blocked",
+        "timed_out",
+        "cancelled",
+    ):
+        assert f'"{durable_status}"' in status_colors
     assert 'run.get("status_message")' not in agent_card
     assert 'run.get("summary")' not in agent_card
     assert 'run.get("latest_parent_message")' not in agent_card
-    assert 'with ui.row().classes("items-center no-wrap gap-0")' in agent_card
-    assert "-webkit-line-clamp" not in agent_card
+    assert "ui.badge(" not in agent_card
+    assert "profile_label" not in agent_card
+    assert "turns_used" not in agent_card
+    assert "max_turns" not in agent_card
+    assert "workspace_details" not in agent_card
+    assert "_open_agent_worktree" not in agent_card
+    assert "_show_agent_worktree_compare" not in agent_card
+    assert "agent_result_use_available" not in agent_card
+    assert "stop_agent_run" not in agent_card
+    assert 'icon="open_in_new"' not in agent_card
+    assert 'icon="content_copy"' not in agent_card
+    assert 'icon="summarize"' not in agent_card
+    assert 'icon="stop"' not in agent_card
     assert "Raw Agent tool output" in src
     assert "Open the full child thread from the Agents drawer" not in src
