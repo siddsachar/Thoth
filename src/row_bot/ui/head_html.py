@@ -6,7 +6,7 @@ vis-network, and custom Row-Bot styles/scripts.
 
 from __future__ import annotations
 
-from row_bot.brand import APP_BRAND_ACCENT
+from row_bot.brand import APP_BRAND_ACCENT, APP_BRAND_ACCENT_RGB
 from nicegui import ui
 
 HEAD_HTML = """\
@@ -342,11 +342,11 @@ mermaid.initialize({
         transition: none !important;
     }
     .row-bot-agent-run-stud.q-btn:hover {
-        border-color: rgba(96, 165, 250, 0.34);
-        background: rgba(96, 165, 250, 0.09);
+        border-color: rgba(__ROW_BOT_BRAND_ACCENT_RGB__, 0.34);
+        background: rgba(__ROW_BOT_BRAND_ACCENT_RGB__, 0.09);
     }
     .row-bot-agent-run-stud.q-btn:focus-visible {
-        outline: 2px solid rgba(96, 165, 250, 0.78);
+        outline: 2px solid rgba(__ROW_BOT_BRAND_ACCENT_RGB__, 0.78);
         outline-offset: 2px;
     }
     .row-bot-agent-run-name {
@@ -609,7 +609,10 @@ window.rowBotCloseManagedWindow = async function(name) {
 })();
 </script>
 """
-HEAD_HTML = HEAD_HTML.replace("__ROW_BOT_BRAND_ACCENT__", APP_BRAND_ACCENT)
+HEAD_HTML = HEAD_HTML.replace("__ROW_BOT_BRAND_ACCENT__", APP_BRAND_ACCENT).replace(
+    "__ROW_BOT_BRAND_ACCENT_RGB__",
+    APP_BRAND_ACCENT_RGB,
+)
 
 
 def inject_head_html() -> None:
