@@ -649,12 +649,10 @@ def test_required_group_join_stays_in_one_streamed_parent_generation(
         thread_id="stream-child-thread",
     )
     orchestrator.register_member(orchestration["id"], child["id"], required=True)
-    wait_started = threading.Event()
     child_finished = threading.Event()
     checkpoint_messages: list[ToolMessage] = []
 
     def finish_child():
-        assert wait_started.wait(timeout=2)
         agent_runs.finish_agent_run(
             child["id"],
             "completed",
@@ -663,14 +661,13 @@ def test_required_group_join_stays_in_one_streamed_parent_generation(
         child_finished.set()
 
     child_thread = threading.Thread(target=finish_child, daemon=True)
-    child_thread.start()
 
     def fake_stream_graph(_graph, _initial_input, _config, **_kwargs):
         yield "token", "I started the delegated check."
         yield "tool_done", {"name": "delegate_work", "run_id": child["id"]}
         yield "token", " I am checking the local constraints meanwhile."
         yield "tool_call", {"name": "agent_wait", "orchestration_id": orchestration["id"]}
-        wait_started.set()
+        child_thread.start()
         assert child_finished.wait(timeout=2)
         joined = orchestrator.wait_for_required_group(orchestration["id"], timeout=0)
         checkpoint_messages.append(
