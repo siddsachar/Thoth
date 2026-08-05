@@ -1175,15 +1175,6 @@ def _render_agent_run_card(
         or "Agent"
     ).strip()
     thread_id = str(run.get("thread_id") or "").strip()
-    activity = _short_text(
-        run.get("status_message")
-        or run.get("summary")
-        or run.get("error")
-        or payload_message,
-        190,
-    )
-    parent_note_count = int(run.get("parent_message_count") or 0)
-    latest_parent_note = _short_text(run.get("latest_parent_message") or "", 110)
     turns_used = int(run.get("turns_used") or 0)
     max_turns = int(run.get("max_turns") or 0)
     terminal = status.lower() in {
@@ -1196,42 +1187,37 @@ def _render_agent_run_card(
     }
     workspace_details = _agent_workspace_details(run)
 
-    with ui.column().classes("w-full gap-1 q-pa-sm").style(
+    with ui.row().classes(
+        "row-bot-agent-run-card w-full items-center no-wrap gap-2 q-px-sm"
+    ).style(
         "border: 1px solid rgba(96, 165, 250, 0.22); "
-        "border-radius: 8px; background: rgba(15, 23, 42, 0.30); "
+        "border-radius: 10px; "
+        "background: linear-gradient(180deg, rgba(15, 23, 42, 0.42), rgba(15, 23, 42, 0.28)); "
         "box-shadow: inset 0 1px 0 rgba(255,255,255,0.035); "
-        "min-height: 74px;"
+        "min-height: 44px; min-width: 0; max-width: 100%; overflow: hidden;"
     ):
-        with ui.row().classes("w-full items-center no-wrap gap-2"):
-            ui.icon("hub", size="16px").classes("text-primary")
-            ui.badge(status_label, color=_agent_status_color(status)).props("outline dense")
-            ui.label(name).classes("text-sm font-semibold ellipsis").style("flex: 1; min-width: 0;")
-            if profile_label:
-                ui.label(profile_label).classes("text-xs text-grey-6 ellipsis").style("max-width: 130px;")
-            if workspace_details["mode"] == "worktree":
-                ui.badge("Worktree", color="blue-grey").props("outline dense").tooltip(
-                    workspace_details["tooltip"]
-                )
-            if turns_used or max_turns:
-                ui.label(f"{turns_used}/{max_turns} turns").classes("text-xs text-grey-6 no-wrap")
+        ui.icon("hub", size="17px").classes("text-primary").style("flex: 0 0 auto;")
+        ui.badge(status_label, color=_agent_status_color(status)).props(
+            "outline dense"
+        ).classes("no-wrap").style("flex: 0 0 auto;")
+        ui.label(name).classes("text-sm font-semibold ellipsis").style(
+            "flex: 0 1 260px; min-width: 72px; max-width: 260px;"
+        )
+        ui.element("div").style("flex: 1 1 auto; min-width: 0;")
+        if profile_label:
+            ui.label(profile_label).classes(
+                "text-xs text-grey-6 ellipsis gt-xs"
+            ).style("flex: 0 1 130px; max-width: 130px;")
+        if workspace_details["mode"] == "worktree":
+            ui.badge("Worktree", color="blue-grey").props(
+                "outline dense"
+            ).classes("no-wrap gt-sm").tooltip(workspace_details["tooltip"])
+        if turns_used or max_turns:
+            ui.label(f"{turns_used}/{max_turns} turns").classes(
+                "text-xs text-grey-6 no-wrap gt-sm"
+            ).style("flex: 0 0 auto;")
 
-        detail_bits = []
-        if activity:
-            detail_bits.append(activity)
-        if parent_note_count:
-            note_label = f"{parent_note_count} parent note"
-            if parent_note_count != 1:
-                note_label += "s"
-            if latest_parent_note:
-                note_label += f": {latest_parent_note}"
-            detail_bits.append(note_label)
-        if detail_bits:
-            ui.label(" | ".join(detail_bits)).classes("text-xs text-grey-5").style(
-                "display: -webkit-box; -webkit-line-clamp: 2; "
-                "-webkit-box-orient: vertical; overflow: hidden; line-height: 1.32;"
-            )
-
-        with ui.row().classes("w-full items-center gap-1"):
+        with ui.row().classes("items-center no-wrap gap-0").style("flex: 0 0 auto;"):
             if run_id:
                 ui.button(
                     icon="visibility",

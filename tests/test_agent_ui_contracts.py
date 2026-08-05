@@ -507,6 +507,10 @@ def test_sidebar_hides_child_agent_threads_by_default():
 
 def test_agent_card_uses_compact_peek_contract():
     src = _read("ui/render.py")
+    agent_card = src.split("def _render_agent_run_card", 1)[1].split(
+        "def _current_agent_run_for_card",
+        1,
+    )[0]
 
     assert "open_agent_peek_dialog" in src
     assert "Peek Agent activity" in src
@@ -514,6 +518,14 @@ def test_agent_card_uses_compact_peek_contract():
     assert "Open worktree" in src
     assert "Compare" in src
     assert "agent_lifecycle" in src
-    assert "-webkit-line-clamp: 2" in src
+    assert "row-bot-agent-run-card w-full items-center no-wrap" in agent_card
+    assert "min-height: 44px" in agent_card
+    assert "min-width: 0; max-width: 100%; overflow: hidden" in agent_card
+    assert 'ui.element("div").style("flex: 1 1 auto; min-width: 0;")' in agent_card
+    assert 'run.get("status_message")' not in agent_card
+    assert 'run.get("summary")' not in agent_card
+    assert 'run.get("latest_parent_message")' not in agent_card
+    assert 'with ui.row().classes("items-center no-wrap gap-0")' in agent_card
+    assert "-webkit-line-clamp" not in agent_card
     assert "Raw Agent tool output" in src
     assert "Open the full child thread from the Agents drawer" not in src
