@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from row_bot.ui.tool_trace import (
     agent_runs_from_payload,
@@ -207,6 +208,23 @@ def test_agent_tool_cards_dedupe_runs_by_id_without_dropping_raw_payloads():
     assert raw_results == results
 
 
+def test_add_chat_message_returns_the_created_message_row(monkeypatch):
+    from nicegui import ui
+    from row_bot.ui import render
+
+    monkeypatch.setattr(render, "render_message_content", lambda *_args, **_kwargs: None)
+    chat_container = ui.column()
+    row = render.add_chat_message(
+        {"role": "user", "content": "hello", "timestamp": "12:00"},
+        SimpleNamespace(chat_container=chat_container),
+    )
+
+    assert row is not None
+    assert row in chat_container.default_slot.children
+    assert "row-bot-msg-row-user" in str(row.classes)
+    chat_container.delete()
+
+
 def test_chat_tool_trace_source_contracts():
     agent_src = Path("src/row_bot/agent.py").read_text(encoding="utf-8")
     app_src = Path("src/row_bot/app.py").read_text(encoding="utf-8")
@@ -248,6 +266,17 @@ def test_chat_tool_trace_source_contracts():
     assert "live_row" in state_src
     assert "def _delete_live_generation_row" in streaming_src
     assert "_delete_live_generation_row(gen)" in streaming_src
+    final_reconcile = streaming_src.split(
+        "needs_transcript_reconcile =",
+        1,
+    )[1].split("if promoted_agent_run_ids:", 1)[0]
+    assert final_reconcile.index("_delete_live_generation_row(gen)") < (
+        final_reconcile.index("cb.refresh_chat_messages()")
+    )
+    assert "insert_chat_message_before_live_row" in streaming_src
+    assert "cb.insert_chat_message_before_live_row" in app_src
+    assert "message_row.move(p.chat_container" in app_src
+    assert "p.transcript_rendered_keys = all_keys[window_start:]" in app_src
     assert "_add_live_tool_pending" in streaming_src
     assert "_finish_live_tool_result" in streaming_src
     assert "_agent_tool_results," in chat_src

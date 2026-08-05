@@ -1979,17 +1979,52 @@ async def index():
         except Exception:
             logger.debug("Transcript render-state mark failed", exc_info=True)
 
-    def _add_chat_message_and_track(msg: dict) -> None:
-        add_chat_message(
+    def _add_chat_message_and_track(msg: dict) -> Any | None:
+        message_row = add_chat_message(
             msg,
             p,
             state.thread_id,
             on_use_agent_result=_ask_parent_to_use_agent_result,
         )
         _mark_chat_message_rendered(msg)
+        return message_row
+
+    def _insert_chat_message_before_live_row(msg: dict, live_row: Any) -> None:
+        if (
+            p.chat_container is None
+            or p.transcript_thread_id != state.thread_id
+        ):
+            return
+        live_slot = getattr(live_row, "parent_slot", None)
+        if (
+            live_slot is None
+            or getattr(live_slot, "parent", None) is not p.chat_container
+        ):
+            return
+        live_children = list(getattr(live_slot, "children", []) or [])
+        if live_row not in live_children:
+            return
+        message_row = add_chat_message(
+            msg,
+            p,
+            state.thread_id,
+            on_use_agent_result=_ask_parent_to_use_agent_result,
+        )
+        if message_row is None:
+            return
+        message_row.move(p.chat_container, live_children.index(live_row))
+        all_keys = message_keys(state.messages)
+        window_start = max(
+            0,
+            min(int(p.transcript_window_start or 0), len(all_keys)),
+        )
+        p.transcript_rendered_keys = all_keys[window_start:]
+        p.transcript_total = len(state.messages)
+        p.transcript_window_size = len(p.transcript_rendered_keys)
 
     cb.add_chat_message = _add_chat_message_and_track
     cb.mark_chat_message_rendered = _mark_chat_message_rendered
+    cb.insert_chat_message_before_live_row = _insert_chat_message_before_live_row
     cb.render_text_with_embeds = render_text_with_embeds
     cb.refresh_parent_agent_strip = lambda: (
         p.refresh_parent_agent_strip()

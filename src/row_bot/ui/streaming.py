@@ -962,6 +962,7 @@ class _Callbacks:
         "mark_chat_message_rendered",
         "render_text_with_embeds",
         "refresh_chat_messages",
+        "insert_chat_message_before_live_row",
         "refresh_parent_agent_strip",
         "refresh_goal_strip",
         "refresh_model_controls",
@@ -2501,12 +2502,33 @@ def _append_delegated_agent_card_message(
     if state.thread_id == thread_id:
         state.messages = messages
         state.cache_active_messages()
-        refresh = getattr(cb, "refresh_chat_messages", None)
-        if callable(refresh) and not _thread_has_attached_live_generation(thread_id):
-            try:
-                refresh()
-            except Exception:
-                logger.debug("Delegated Agent card transcript refresh failed", exc_info=True)
+        has_live_generation = _thread_has_attached_live_generation(thread_id)
+        if has_live_generation:
+            insert_before_live_row = getattr(
+                cb,
+                "insert_chat_message_before_live_row",
+                None,
+            )
+            live_generation = _active_generations.get(thread_id)
+            live_row = getattr(live_generation, "live_row", None)
+            if callable(insert_before_live_row) and live_row is not None:
+                try:
+                    insert_before_live_row(msg, live_row)
+                except Exception:
+                    logger.debug(
+                        "Delegated Agent card live transcript insertion failed",
+                        exc_info=True,
+                    )
+        else:
+            refresh = getattr(cb, "refresh_chat_messages", None)
+            if callable(refresh):
+                try:
+                    refresh()
+                except Exception:
+                    logger.debug(
+                        "Delegated Agent card transcript refresh failed",
+                        exc_info=True,
+                    )
     else:
         state.message_cache[thread_id] = list(messages)
         state.message_cache_dirty.discard(thread_id)
@@ -3820,8 +3842,7 @@ async def consume_generation(
                     logger.debug("Final assistant render-state mark failed", exc_info=True)
             elif not gen.detached:
                 try:
-                    if has_refreshable_agent_cards:
-                        _delete_live_generation_row(gen)
+                    _delete_live_generation_row(gen)
                     cb.refresh_chat_messages()
                 except Exception:
                     logger.debug("Final assistant queued-turn transcript refresh failed", exc_info=True)

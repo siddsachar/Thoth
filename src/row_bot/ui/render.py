@@ -20,6 +20,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from nicegui import ui
+from nicegui.element import Element
 from row_bot.ui.state import P
 
 logger = logging.getLogger(__name__)
@@ -1647,7 +1648,7 @@ def add_chat_message(
     *,
     on_use_agent_result: Callable[[str], None] | None = None,
     on_open_agent_thread: Callable[[dict], None] | None = None,
-) -> None:
+) -> Element | None:
     """Append a rendered chat message to the chat container."""
     if p.chat_container is None:
         return
@@ -1664,7 +1665,7 @@ def add_chat_message(
     stamp = msg.get("timestamp", datetime.now().strftime("%H:%M"))
     with p.chat_container:
         row_cls = "row-bot-msg-row row-bot-msg-row-user" if is_user else "row-bot-msg-row"
-        with ui.element("div").classes(row_cls):
+        with ui.element("div").classes(row_cls) as message_row:
             ui.html(f'<div class="{avatar_cls}">{avatar_content}</div>', sanitize=False)
             with ui.column().classes("row-bot-msg-body gap-1"):
                 ui.html(
@@ -1680,3 +1681,4 @@ def add_chat_message(
                     on_use_agent_result=on_use_agent_result,
                     on_open_agent_thread=on_open_agent_thread,
                 )
+    return message_row

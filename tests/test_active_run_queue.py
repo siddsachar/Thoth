@@ -1113,45 +1113,105 @@ def test_delegated_agent_card_message_inserts_before_future_queued_turn(tmp_path
     assert streaming._append_direct_agent_completion_messages(state.messages, ["delegated-1"]) is False
 
 
-def test_delegated_agent_card_message_defers_refresh_during_live_parent(tmp_path, monkeypatch):
+def test_delegated_agent_card_messages_insert_during_live_parent_in_order(
+    tmp_path,
+    monkeypatch,
+):
     agent_runs, streaming, _transcript = _fresh_modules(tmp_path, monkeypatch)
 
-    run = agent_runs.create_agent_run(
-        run_id="delegated-live",
+    first_run = agent_runs.create_agent_run(
+        run_id="delegated-live-1",
         kind="subagent",
         status="running",
         parent_thread_id="parent",
-        display_name="Live Child",
+        display_name="First Live Child",
+    )
+    second_run = agent_runs.create_agent_run(
+        run_id="delegated-live-2",
+        kind="subagent",
+        status="running",
+        parent_thread_id="parent",
+        display_name="Second Live Child",
+    )
+    queued = streaming._queued_control_message(
+        "queued follow-up",
+        kind="follow_up",
+        status="queued_parent_turn",
+        label="Queued as your next chat message",
+        message_id="queued-live",
     )
     state = SimpleNamespace(
         thread_id="parent",
-        messages=[{"role": "user", "content": "first"}],
+        messages=[{"role": "user", "content": "first"}, queued],
         message_cache={},
         message_cache_dirty=set(),
         cache_active_messages=lambda: None,
     )
     refreshed: list[str] = []
+    inserted: list[tuple[str, object]] = []
     cb = streaming.Callbacks()
     cb.refresh_chat_messages = lambda: refreshed.append("chat")
     cb.refresh_parent_agent_strip = lambda: refreshed.append("strip")
+    cb.insert_chat_message_before_live_row = lambda msg, row: inserted.append(
+        (msg["agent_run_ids"][0], row)
+    )
+    live_row = object()
     streaming._active_generations["parent"] = SimpleNamespace(
         status="streaming",
         detached=False,
-        live_row=object(),
+        live_row=live_row,
     )
     try:
         assert streaming._append_delegated_agent_card_message(
             state=state,
             cb=cb,
             thread_id="parent",
-            run_row=run,
+            run_row=first_run,
             generation_id="gen-live",
         ) is True
+        assert streaming._append_delegated_agent_card_message(
+            state=state,
+            cb=cb,
+            thread_id="parent",
+            run_row=second_run,
+            generation_id="gen-live",
+        ) is True
+        assert streaming._append_delegated_agent_card_message(
+            state=state,
+            cb=cb,
+            thread_id="parent",
+            run_row=first_run,
+            generation_id="gen-live",
+        ) is False
     finally:
         streaming._active_generations.pop("parent", None)
 
     assert "chat" not in refreshed
-    assert state.messages[1]["agent_run_ids"] == ["delegated-live"]
+    assert inserted == [
+        ("delegated-live-1", live_row),
+        ("delegated-live-2", live_row),
+    ]
+    assert [msg["role"] for msg in state.messages] == [
+        "user",
+        "assistant",
+        "assistant",
+        "user",
+    ]
+    assert state.messages[1]["agent_run_ids"] == ["delegated-live-1"]
+    assert state.messages[2]["agent_run_ids"] == ["delegated-live-2"]
+    assert state.messages[3]["queued_control"]["id"] == "queued-live"
+
+    final = {"role": "assistant", "content": "one final parent response"}
+    streaming._insert_assistant_before_future_queued_turns(state.messages, final)
+
+    assert [msg["content"] for msg in state.messages] == [
+        "first",
+        "Started a Subagent agent for this. I'll keep this thread updated.",
+        "Started a Subagent agent for this. I'll keep this thread updated.",
+        "one final parent response",
+        "queued follow-up",
+    ]
+    assert sum(msg is final for msg in state.messages) == 1
 
 
 def test_live_agent_run_card_tracks_rendered_ids_once(tmp_path, monkeypatch):
