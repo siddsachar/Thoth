@@ -484,6 +484,68 @@ def test_agent_refresh_key_tracks_checkpoint_revision_source_contract():
     assert "get_latest_checkpoint_revision(tid)" in reload_block
 
 
+def test_orchestration_transcript_refresh_is_retryable_across_live_generation():
+    from pathlib import Path
+
+    source = Path("src/row_bot/app.py").read_text(encoding="utf-8")
+    poll = source.split("def _poll_agent_card_refresh", 1)[1].split(
+        "def _poll_notifications",
+        1,
+    )[0]
+    reload_block = source.split(
+        "def _reload_completed_orchestration_transcript",
+        1,
+    )[1].split("def _current_child_agent_run_ids", 1)[0]
+
+    assert 'return "processed_no_change"' in reload_block
+    assert 'return "processed_changed"' in reload_block
+    assert 'return "retry"' in reload_block
+    assert "if latest_output and not orchestration_messages:" in reload_block
+    assert reload_block.index("for incoming_output in orchestration_messages:") < (
+        reload_block.index('_last_orchestration_transcript["key"] = refresh_key')
+    )
+    assert '_last_agent_run_refresh.update({"thread_id": tid, **keys})' not in poll
+    live_return = poll.index("if live_generation:")
+    transcript_ack = poll.index(
+        '_last_agent_run_refresh["transcript"] = keys["transcript"]'
+    )
+    assert live_return < transcript_ack
+    assert 'if reload_result != "retry":' in poll
+
+
+def test_transient_durable_output_match_miss_retries_then_merges_exactly_once():
+    from row_bot.ui.transcript import (
+        match_durable_orchestration_outputs,
+        upsert_durable_transcript_message,
+    )
+
+    output = {
+        "id": "orchestration:orch-retry:parent_final:1",
+        "kind": "parent_final",
+        "content": "Durable fallback final",
+    }
+    active: list[dict] = []
+
+    first_match = match_durable_orchestration_outputs(
+        [],
+        [output],
+        orchestration_id="orch-retry",
+    )
+    assert first_match == []
+    assert active == []
+
+    loaded = [{"role": "assistant", "content": "Durable fallback final"}]
+    second_match = match_durable_orchestration_outputs(
+        loaded,
+        [output],
+        orchestration_id="orch-retry",
+    )
+    assert len(second_match) == 1
+    assert upsert_durable_transcript_message(active, second_match[0]) == (True, 0)
+    assert upsert_durable_transcript_message(active, second_match[0]) == (False, 0)
+    assert len(active) == 1
+
+
 def test_checkpoint_parent_approval_upserts_live_by_stable_approval_key():
     from row_bot.ui.streaming import _merge_checkpoint_approval_messages
 

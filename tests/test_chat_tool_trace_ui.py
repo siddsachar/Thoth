@@ -311,6 +311,15 @@ def test_chat_tool_trace_source_contracts():
     assert agent_poll.index(
         "_sync_thread_approval_messages("
     ) < agent_poll.index("if live_generation:")
+    assert agent_poll.index('keys["sidebar"]') < agent_poll.index(
+        "if not transcript_inspection_needed:"
+    )
+    assert agent_poll.index('keys["strip"]') < agent_poll.index(
+        "if not transcript_inspection_needed:"
+    )
+    assert agent_poll.index("if live_generation:") < agent_poll.index(
+        '_last_agent_run_refresh["transcript"] = keys["transcript"]'
+    )
     assert "_sync_child_agent_approval_messages(" not in agent_poll
     assert "p.refresh_model_controls = _refresh_model_controls" in chat_src
     assert "_interrupt_changes_model_setting(pending)" in streaming_src

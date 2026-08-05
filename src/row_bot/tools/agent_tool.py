@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from row_bot import agent_runner
 from row_bot.agent_profiles import (
@@ -254,9 +254,23 @@ class _AgentStatusInput(BaseModel):
 
 
 class _AgentWaitInput(BaseModel):
-    run_id: str = Field(description="Agent Run id to wait for.")
+    run_id: str = Field(default="", description="One Agent Run id to wait for.")
+    orchestration_id: str = Field(
+        default="",
+        description=(
+            "Orchestration id whose current required cohort must be joined before the parent finalizes."
+        ),
+    )
     timeout_seconds: float = Field(default=60.0, description="Maximum seconds to wait.")
     include_events: bool = Field(default=True, description="Include recent events in the result.")
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self):
+        if bool(str(self.run_id or "").strip()) == bool(
+            str(self.orchestration_id or "").strip()
+        ):
+            raise ValueError("Supply exactly one of run_id or orchestration_id.")
+        return self
 
 
 class _AgentStopInput(BaseModel):
@@ -447,6 +461,12 @@ def _delegate_work(
             "required": bool(required and not wait),
         },
         "message": message,
+        "next_action": (
+            "Continue useful independent work and give a natural concise update while "
+            f"the required child runs. Before finalizing, call agent_wait(orchestration_id='{orchestration.get('id', '')}')."
+            if not wait and required
+            else ""
+        ),
     })
 
 
@@ -483,7 +503,57 @@ def _agent_status(
     })
 
 
-def _agent_wait(run_id: str, timeout_seconds: float = 60.0, include_events: bool = True) -> str:
+def _agent_wait(
+    run_id: str = "",
+    orchestration_id: str = "",
+    timeout_seconds: float = 60.0,
+    include_events: bool = True,
+) -> str:
+    run_id = str(run_id or "").strip()
+    orchestration_id = str(orchestration_id or "").strip()
+    if bool(run_id) == bool(orchestration_id):
+        return _json_response({
+            "ok": False,
+            "message": "Supply exactly one of run_id or orchestration_id.",
+        })
+    if orchestration_id:
+        from row_bot.agent_orchestrator import (
+            get_orchestration,
+            wait_for_required_group,
+        )
+
+        orchestration = get_orchestration(orchestration_id)
+        if not orchestration:
+            return _json_response({
+                "ok": False,
+                "message": "Orchestration not found.",
+            })
+        parent_thread_id = str((_runtime_context()).get("thread_id") or "")
+        if (
+            not parent_thread_id
+            or str(orchestration.get("parent_thread_id") or "") != parent_thread_id
+        ):
+            return _json_response({
+                "ok": False,
+                "message": "The orchestration belongs to another parent thread.",
+            })
+        try:
+            group = wait_for_required_group(
+                orchestration_id,
+                timeout=timeout_seconds,
+            )
+        except Exception as exc:
+            return _json_response({"ok": False, "message": str(exc)})
+        return _json_response({
+            "ok": True,
+            **group,
+            "runs": [_public_run(run) for run in group.get("runs") or []],
+            "message": (
+                "Required Agent cohort joined."
+                if group.get("barrier_complete")
+                else "Required Agent cohort is still running after the wait timeout."
+            ),
+        })
     run = agent_runner.wait_for_agent_run(run_id, timeout=timeout_seconds)
     payload: dict[str, Any] = {"ok": bool(run), "run": _public_run(run)}
     if include_events and run:
@@ -712,7 +782,10 @@ class AgentsTool(BaseTool):
             StructuredTool.from_function(
                 func=_delegate_work,
                 name="delegate_work",
-                description="Start a child Agent for focused async background work.",
+                description=(
+                    "Start a child Agent for focused async background work. With wait=false, "
+                    "continue useful independent work, then group-join required work before finalizing."
+                ),
                 args_schema=_DelegateWorkInput,
             ),
             StructuredTool.from_function(
@@ -724,7 +797,10 @@ class AgentsTool(BaseTool):
             StructuredTool.from_function(
                 func=_agent_wait,
                 name="agent_wait",
-                description="Wait for a child Agent Run and return its latest durable status.",
+                description=(
+                    "Wait for one child run, or join an orchestration's current required cohort "
+                    "with orchestration_id before finalizing the parent answer."
+                ),
                 args_schema=_AgentWaitInput,
             ),
             StructuredTool.from_function(

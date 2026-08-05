@@ -145,6 +145,12 @@ THREAD_EVENT_KINDS = {
     "goal_continuation",
     "workflow_continuation",
 }
+CHILD_LIFECYCLE_EVENT_KINDS = {
+    "child_terminal",
+    "child_approval_requested",
+    "child_approval_resolved",
+    "child_retry_scheduled",
+}
 _LEGAL_TRANSITIONS = {
     "planning": {"running", "failed", "stopped", "interrupted"},
     "running": {
@@ -1412,6 +1418,170 @@ def pending_thread_events(orchestration_id: str) -> list[ThreadEvent]:
     ]
 
 
+def _parent_wake_ready(orchestration_id: str) -> bool:
+    """Return whether durable inputs justify one detached recovery pass."""
+
+    events = pending_thread_events(orchestration_id)
+    if any(
+        event.kind
+        in {
+            "parent_steering",
+            "stop_requested",
+            "goal_continuation",
+            "workflow_continuation",
+        }
+        for event in events
+    ):
+        return True
+    return bool(events) and _barrier_ready(orchestration_id)
+
+
+def sanitize_pending_child_event_ids(
+    orchestration_id: str,
+    event_ids: Sequence[str] | None,
+) -> list[str]:
+    """Keep only currently pending child lifecycle events from this orchestration."""
+
+    requested = {str(event_id) for event_id in event_ids or () if str(event_id)}
+    if not requested:
+        return []
+    return [
+        event.id
+        for event in pending_thread_events(orchestration_id)
+        if event.id in requested and event.kind in CHILD_LIFECYCLE_EVENT_KINDS
+    ]
+
+
+def _required_group_event_ids(
+    orchestration_id: str,
+    members: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    current_run_ids = {
+        str(member.get("run_id") or "")
+        for member in members
+        if member.get("required") and str(member.get("run_id") or "")
+    }
+    lineage_run_ids = set(current_run_ids)
+    by_run_id = {
+        str(member.get("run_id") or ""): member
+        for member in list_members(orchestration_id, include_runs=False)
+    }
+    pending = list(current_run_ids)
+    while pending:
+        member = by_run_id.get(pending.pop()) or {}
+        prior_run_id = str(member.get("retry_of_run_id") or "")
+        if prior_run_id and prior_run_id not in lineage_run_ids:
+            lineage_run_ids.add(prior_run_id)
+            pending.append(prior_run_id)
+    return [
+        event.id
+        for event in pending_thread_events(orchestration_id)
+        if event.kind in CHILD_LIFECYCLE_EVENT_KINDS
+        and (
+            event.run_id in lineage_run_ids
+            or str(event.payload.get("failed_run_id") or "") in lineage_run_ids
+            or str(event.payload.get("replacement_run_id") or "") in lineage_run_ids
+        )
+    ]
+
+
+def wait_for_required_group(
+    orchestration_id: str,
+    timeout: float | None = 60.0,
+) -> dict[str, Any]:
+    """Join the current required cohort without invoking a provider."""
+
+    import time
+
+    from row_bot import agent_runner
+
+    orchestration = get_orchestration(orchestration_id)
+    if not orchestration:
+        raise OrchestrationError("Orchestration not found.")
+    deadline = (
+        time.monotonic() + max(0.0, float(timeout))
+        if timeout is not None
+        else None
+    )
+
+    while True:
+        members = [
+            member
+            for member in list_members(orchestration_id)
+            if member.get("required")
+        ]
+        outstanding = [
+            member
+            for member in members
+            if str(
+                (member.get("run") or {}).get("status")
+                or member.get("status")
+                or ""
+            )
+            not in TERMINAL_MEMBER_STATUSES
+        ]
+        if not outstanding:
+            break
+        remaining = (
+            None if deadline is None else max(0.0, deadline - time.monotonic())
+        )
+        if remaining is not None and remaining <= 0:
+            break
+        awaited = outstanding[0]
+        agent_runner.wait_for_agent_run_terminal(
+            str(awaited["run_id"]),
+            timeout=remaining,
+        )
+        refreshed = get_member_for_run(str(awaited["run_id"])) or awaited
+        refreshed_run = next(
+            (
+                member.get("run") or {}
+                for member in list_members(orchestration_id)
+                if str(member.get("run_id") or "") == str(awaited["run_id"])
+            ),
+            {},
+        )
+        refreshed_status = str(
+            refreshed_run.get("status") or refreshed.get("status") or ""
+        )
+        if (
+            refreshed_status not in TERMINAL_MEMBER_STATUSES
+            and deadline is not None
+            and time.monotonic() >= deadline
+        ):
+            break
+
+    members = [
+        member
+        for member in list_members(orchestration_id)
+        if member.get("required")
+    ]
+    runs: list[dict[str, Any]] = []
+    outstanding_run_ids: list[str] = []
+    for member in members:
+        run = dict(member.get("run") or {})
+        status = str(run.get("status") or member.get("status") or "")
+        if not run:
+            run = {"id": str(member.get("run_id") or ""), "status": status}
+        if status not in TERMINAL_MEMBER_STATUSES:
+            outstanding_run_ids.append(str(member.get("run_id") or ""))
+        runs.append(run)
+    required_total = int(orchestration.get("required_total") or 0)
+    barrier_complete = (
+        required_total > 0
+        and len(members) == required_total
+        and not outstanding_run_ids
+    )
+    return {
+        "orchestration_id": str(orchestration_id),
+        "runs": runs,
+        "barrier_complete": barrier_complete,
+        "timed_out": bool(outstanding_run_ids),
+        "outstanding_run_ids": outstanding_run_ids,
+        "child_event_ids": _required_group_event_ids(orchestration_id, members),
+    }
+
+
 def _format_thread_events(
     orchestration: Mapping[str, Any],
     events: Sequence[ThreadEvent],
@@ -1662,7 +1832,7 @@ def complete_parent_pass(
             text=text,
             message_key=message_id,
         )
-    if waiting and pending_thread_events(orchestration_id):
+    if waiting and _parent_wake_ready(orchestration_id):
         request_parent_wake(orchestration_id)
     if not waiting:
         _notify_surface_completion(final_row, text)
@@ -1709,7 +1879,7 @@ def arm_parent_wait(
         conn.commit()
     finally:
         conn.close()
-    if pending_thread_events(orchestration_id):
+    if _parent_wake_ready(orchestration_id):
         request_parent_wake(orchestration_id)
     return True
 
@@ -1780,6 +1950,8 @@ def request_parent_wake(orchestration_id: str) -> bool:
         "interrupted",
     }:
         return False
+    if not _parent_wake_ready(orchestration_id):
+        return True
     parent_state = str(orchestration.get("parent_state") or "")
     now = _now()
     conn = _conn()
@@ -2367,7 +2539,7 @@ def _run_parent_thread(orchestration_id: str) -> None:
         if (
             _is_unified_parent(current)
             and str(current.get("parent_state") or "") == "runnable"
-            and pending_thread_events(orchestration_id)
+            and _parent_wake_ready(orchestration_id)
         ):
             _schedule_parent_runner(orchestration_id)
 
@@ -3803,7 +3975,7 @@ def resume_orchestration(orchestration_id: str) -> dict[str, Any]:
             conn.commit()
         finally:
             conn.close()
-        if continuation.get("finalization_ready") and pending_thread_events(
+        if continuation.get("finalization_ready") and _parent_wake_ready(
             orchestration_id
         ):
             request_parent_wake(orchestration_id)

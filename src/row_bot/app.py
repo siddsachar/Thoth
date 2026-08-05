@@ -2292,7 +2292,7 @@ async def index():
             checkpoint_revision=checkpoint_revision,
         )
 
-    def _reload_completed_orchestration_transcript(tid: str) -> bool:
+    def _reload_completed_orchestration_transcript(tid: str) -> str:
         """Merge the latest durable parent output after a detached wake."""
 
         try:
@@ -2306,7 +2306,7 @@ async def index():
 
             rows = list_orchestrations(parent_thread_id=tid, limit=1)
             if not rows:
-                return False
+                return "processed_no_change"
             orchestration = rows[0]
             status = str(orchestration.get("status") or "")
             output_messages = list_messages(
@@ -2331,6 +2331,10 @@ async def index():
                 )
                 for msg in orchestration_messages
             ]
+            if latest_output and not orchestration_messages:
+                return "retry"
+            if latest_output and output_key not in checkpoint_keys:
+                return "retry"
             refresh_key = "|".join(
                 [
                     status,
@@ -2343,13 +2347,15 @@ async def index():
                 _last_orchestration_transcript.get("thread_id") == tid
                 and _last_orchestration_transcript.get("key") == refresh_key
             ):
-                return False
+                return "processed_no_change"
             transcript_changed = False
             for incoming_output in orchestration_messages:
-                changed, _index = upsert_durable_transcript_message(
+                changed, index = upsert_durable_transcript_message(
                     state.messages,
                     incoming_output,
                 )
+                if index < 0:
+                    return "retry"
                 transcript_changed = transcript_changed or changed
             if transcript_changed:
                 state.cache_active_messages()
@@ -2415,10 +2421,12 @@ async def index():
                             ),
                             delivery_status="delivered",
                         )
-            return transcript_changed
+            if transcript_changed:
+                return "processed_changed"
+            return "processed_no_change"
         except Exception:
             logger.debug("Completed orchestration transcript reload failed", exc_info=True)
-            return False
+            return "retry"
 
     def _current_child_agent_run_ids(tid: str) -> list[str]:
         if not tid:
@@ -2456,7 +2464,11 @@ async def index():
         transcript_inspection_needed = thread_changed or (
             keys["transcript"] != _last_agent_run_refresh.get("transcript")
         )
-        _last_agent_run_refresh.update({"thread_id": tid, **keys})
+        _last_agent_run_refresh.update({
+            "thread_id": tid,
+            "sidebar": keys["sidebar"],
+            "strip": keys["strip"],
+        })
         if sidebar_changed:
             try:
                 rebuild_thread_list()
@@ -2481,7 +2493,10 @@ async def index():
         )
         if live_generation:
             return
-        transcript_changed = _reload_completed_orchestration_transcript(tid)
+        reload_result = _reload_completed_orchestration_transcript(tid)
+        if reload_result != "retry":
+            _last_agent_run_refresh["transcript"] = keys["transcript"]
+        transcript_changed = reload_result == "processed_changed"
         completion_changed = False
         card_changed = False
         try:

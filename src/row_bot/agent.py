@@ -1,4 +1,5 @@
 import copy
+import json
 import threading
 import time
 import re
@@ -3398,6 +3399,50 @@ def _invoke_agent_graph(user_input: str, enabled_tool_names: list[str], config: 
     return "I wasn't able to generate a response."
 
 
+def _checkpoint_joined_child_event_ids(
+    parent_thread_id: str,
+    orchestration_id: str,
+) -> list[str]:
+    """Read durable group-wait acknowledgements from the parent checkpoint."""
+
+    try:
+        from row_bot.agent_orchestrator import sanitize_pending_child_event_ids
+        from row_bot.threads import get_latest_checkpoint_messages
+
+        reported_ids: list[str] = []
+        for message in get_latest_checkpoint_messages(parent_thread_id):
+            if not isinstance(message, ToolMessage):
+                continue
+            if str(getattr(message, "name", "") or "") != "agent_wait":
+                continue
+            content = _content_to_str(getattr(message, "content", ""))
+            try:
+                payload = json.loads(content)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if (
+                not isinstance(payload, dict)
+                or not payload.get("ok")
+                or str(payload.get("orchestration_id") or "") != orchestration_id
+                or "barrier_complete" not in payload
+                or not isinstance(payload.get("child_event_ids"), list)
+            ):
+                continue
+            reported_ids.extend(
+                str(event_id)
+                for event_id in payload["child_event_ids"]
+                if str(event_id or "")
+            )
+        return sanitize_pending_child_event_ids(orchestration_id, reported_ids)
+    except Exception:
+        logger.exception(
+            "Could not read joined child events from parent checkpoint: thread=%s orchestration=%s",
+            parent_thread_id,
+            orchestration_id,
+        )
+        return []
+
+
 def _complete_unified_parent_pass(
     result: str | dict,
     enabled_tool_names: list[str],
@@ -3442,6 +3487,10 @@ def _complete_unified_parent_pass(
                 "voice_transport": str(configurable.get("voice_transport") or ""),
             },
             foreground=True,
+            consumed_event_ids=_checkpoint_joined_child_event_ids(
+                thread_id,
+                str(orchestration["id"]),
+            ),
         )
     except Exception:
         logger.exception(

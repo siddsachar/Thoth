@@ -701,8 +701,6 @@ def test_v2_multiple_children_complete_out_of_order_before_one_final(
 
     def parent_executor(_row, context, _tools, _config):
         calls.append(context)
-        if len(calls) == 1:
-            return "The second check is back; I am still waiting for the first."
         return "Both checks are now reconciled in one final answer."
 
     orchestrator.set_test_executors(
@@ -724,25 +722,120 @@ def test_v2_multiple_children_complete_out_of_order_before_one_final(
         "completed",
         summary="Second completed first",
     )
-    waiting = orchestrator.wait_for_parent(
-        orchestration["id"],
-        terminal_only=False,
-        minimum_attempts=1,
-    )
-    assert waiting["parent_state"] == "waiting"
+    assert orchestrator.get_orchestration(orchestration["id"])["parent_attempt"] == 0
+    assert calls == []
     agent_runs.finish_agent_run(
         first["id"],
         "completed",
         summary="First completed second",
     )
-    final = orchestrator.wait_for_parent(orchestration["id"], minimum_attempts=2)
+    final = orchestrator.wait_for_parent(orchestration["id"], minimum_attempts=1)
 
     assert final["status"] == "completed"
     assert "Second completed first" in calls[0]
-    assert "First completed second" in calls[1]
+    assert "First completed second" in calls[0]
+    assert len(calls) == 1
     assert len(
         orchestrator.list_messages(orchestration["id"], kinds=["parent_final"])
     ) == 1
+
+
+def test_timed_out_group_wait_falls_back_once_when_child_later_finishes(
+    tmp_path,
+    monkeypatch,
+):
+    _tasks, agent_runs, orchestrator = _fresh_modules(tmp_path, monkeypatch)
+    orchestration = _orchestration(orchestrator, version=2)
+    child = _run(agent_runs, "timeout-fallback-child")
+    orchestrator.register_member(orchestration["id"], child["id"], required=True)
+    calls: list[str] = []
+    orchestrator.set_test_executors(
+        parent=lambda _row, context, _tools, _config: (
+            calls.append(context) or "Recovered after the required barrier."
+        ),
+        delivery=lambda *_args: True,
+    )
+
+    joined = orchestrator.wait_for_required_group(orchestration["id"], timeout=0)
+    foreground = orchestrator.complete_parent_pass(
+        orchestration["id"],
+        "The bounded wait expired before the child completed.",
+        continuation_state={
+            "config": {"configurable": {"thread_id": "parent-thread"}},
+            "enabled_tool_names": ["agents"],
+        },
+        foreground=True,
+        consumed_event_ids=joined["child_event_ids"],
+    )
+
+    assert joined["timed_out"] is True
+    assert foreground.waiting is True
+    assert calls == []
+    agent_runs.finish_agent_run(
+        child["id"],
+        "completed",
+        summary="Late child evidence",
+    )
+    final = orchestrator.wait_for_parent(orchestration["id"], minimum_attempts=1)
+
+    assert final["status"] == "completed"
+    assert len(calls) == 1
+    assert "Late child evidence" in calls[0]
+
+
+def test_parent_steering_wakes_promptly_while_child_events_stay_coalesced(
+    tmp_path,
+    monkeypatch,
+):
+    _tasks, agent_runs, orchestrator = _fresh_modules(tmp_path, monkeypatch)
+    orchestration = _orchestration(orchestrator, version=2)
+    fast = _run(agent_runs, "steering-fast")
+    slow = _run(agent_runs, "steering-slow")
+    orchestrator.register_member(orchestration["id"], fast["id"], required=True)
+    orchestrator.register_member(orchestration["id"], slow["id"], required=True)
+    calls: list[str] = []
+
+    def parent_executor(_row, context, _tools, _config):
+        calls.append(context)
+        if len(calls) == 1:
+            return "I applied the steering while the slow child continues."
+        return "I reconciled the steering with both child results."
+
+    orchestrator.set_test_executors(
+        parent=parent_executor,
+        delivery=lambda *_args: True,
+    )
+    orchestrator.complete_parent_pass(
+        orchestration["id"],
+        "I delegated both checks.",
+        continuation_state={
+            "config": {"configurable": {"thread_id": "parent-thread"}},
+            "enabled_tool_names": ["agents"],
+        },
+        foreground=True,
+    )
+
+    agent_runs.finish_agent_run(fast["id"], "completed", summary="Fast evidence")
+    assert orchestrator.get_orchestration(orchestration["id"])["parent_attempt"] == 0
+    orchestrator.route_parent_steering(
+        parent_thread_id="parent-thread",
+        incoming_generation_id="steering-generation",
+        content="Prioritize the Windows result.",
+    )
+    waiting = orchestrator.wait_for_parent(
+        orchestration["id"],
+        terminal_only=False,
+        minimum_attempts=1,
+    )
+
+    assert waiting["parent_state"] == "waiting"
+    assert "Fast evidence" in calls[0]
+    assert "Prioritize the Windows result." in calls[0]
+    agent_runs.finish_agent_run(slow["id"], "completed", summary="Slow evidence")
+    final = orchestrator.wait_for_parent(orchestration["id"], minimum_attempts=2)
+    assert final["status"] == "completed"
+    assert len(calls) == 2
+    assert "Slow evidence" in calls[1]
 
 
 def test_v2_child_approval_does_not_freeze_original_parent(
@@ -776,15 +869,12 @@ def test_v2_child_approval_does_not_freeze_original_parent(
         {"config": {"configurable": {"thread_id": child["thread_id"]}}},
         status_message="Needs approval",
     )
-    waiting = orchestrator.wait_for_parent(
-        orchestration["id"],
-        terminal_only=False,
-        minimum_attempts=1,
-    )
+    waiting = orchestrator.get_orchestration(orchestration["id"])
 
     assert waiting["status"] == "waiting_children"
     assert waiting["parent_state"] == "waiting"
-    assert "CHILD_APPROVAL_REQUESTED" in calls[0]
+    assert calls == []
+    assert waiting["parent_attempt"] == 0
     assert agent_runs.get_agent_run(child["id"])["status"] == "waiting_approval"
 
 
@@ -813,8 +903,6 @@ def test_v2_transient_retry_returns_replacement_to_same_parent(
 
     def parent_executor(_row, context, _tools, _config):
         calls.append(context)
-        if "CHILD_RETRY_SCHEDULED" in context:
-            return "The transient failure is retrying in the same delegated slot."
         return "The replacement result completed the original delegated task."
 
     orchestrator.set_test_executors(
@@ -837,19 +925,17 @@ def test_v2_transient_retry_returns_replacement_to_same_parent(
         "failed",
         error="Provider temporarily unavailable; try again",
     )
-    waiting = orchestrator.wait_for_parent(
-        orchestration["id"],
-        terminal_only=False,
-        minimum_attempts=1,
-    )
+    waiting = orchestrator.get_orchestration(orchestration["id"])
     assert waiting["parent_state"] == "waiting"
+    assert waiting["parent_attempt"] == 0
+    assert calls == []
     assert replacement_ids == ["retry-replacement"]
     agent_runs.finish_agent_run(
         replacement_ids[0],
         "completed",
         summary="Replacement evidence",
     )
-    final = orchestrator.wait_for_parent(orchestration["id"], minimum_attempts=2)
+    final = orchestrator.wait_for_parent(orchestration["id"], minimum_attempts=1)
 
     assert final["status"] == "completed"
     current_required = [
@@ -863,6 +949,67 @@ def test_v2_transient_retry_returns_replacement_to_same_parent(
     assert [member["run_id"] for member in current_required] == replacement_ids
     assert current_required[0]["attempt"] == 2
     assert "Replacement evidence" in calls[-1]
+    assert "CHILD_RETRY_SCHEDULED" in calls[-1]
+    assert len(calls) == 1
+
+
+def test_required_group_wait_follows_retry_replacement_and_excludes_superseded(
+    tmp_path,
+    monkeypatch,
+):
+    _tasks, agent_runs, orchestrator = _fresh_modules(tmp_path, monkeypatch)
+    orchestration = _orchestration(orchestrator, version=2)
+    original = _run(agent_runs, "group-retry-original")
+    orchestrator.register_member(orchestration["id"], original["id"], required=True)
+    waited: list[str] = []
+
+    def retry_executor(row, member, _explicit_resume):
+        replacement = _run(agent_runs, "group-retry-replacement")
+        orchestrator.register_member(
+            row["id"],
+            replacement["id"],
+            required=member["required"],
+            attempt=2,
+            retry_of_run_id=member["run_id"],
+        )
+        return replacement
+
+    def wait_for_terminal(run_id, timeout=None):
+        waited.append(run_id)
+        if run_id == original["id"]:
+            return agent_runs.finish_agent_run(
+                run_id,
+                "failed",
+                error="Provider temporarily unavailable; try again",
+            )
+        return agent_runs.finish_agent_run(
+            run_id,
+            "completed",
+            summary="Replacement result",
+        )
+
+    orchestrator.set_test_executors(retry=retry_executor)
+    monkeypatch.setattr(
+        "row_bot.agent_runner.wait_for_agent_run_terminal",
+        wait_for_terminal,
+    )
+
+    joined = orchestrator.wait_for_required_group(
+        orchestration["id"],
+        timeout=1,
+    )
+
+    assert waited == ["group-retry-original", "group-retry-replacement"]
+    assert joined["barrier_complete"] is True
+    assert joined["timed_out"] is False
+    assert [run["id"] for run in joined["runs"]] == ["group-retry-replacement"]
+    assert joined["runs"][0]["summary"] == "Replacement result"
+    pending = orchestrator.pending_thread_events(orchestration["id"])
+    assert joined["child_event_ids"] == [event.id for event in pending]
+    assert {event.kind for event in pending} == {
+        "child_retry_scheduled",
+        "child_terminal",
+    }
 
 
 def test_v2_detached_child_does_not_block_parent_final(tmp_path, monkeypatch):
