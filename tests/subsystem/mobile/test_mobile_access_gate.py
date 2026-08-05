@@ -99,8 +99,9 @@ def _header(messages, name: bytes) -> bytes:
     return headers.get(name, b"")
 
 
-def _valid_cookie(store: MobileAuthStore) -> tuple[str, str]:
+def _valid_cookie(store: MobileAuthStore, monkeypatch) -> tuple[str, str]:
     now = datetime(2026, 7, 5, 9, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("row_bot.access.store.utc_now", lambda: now)
     ticket = create_pairing_ticket(store, now=now)
     confirmation = confirm_pairing(
         store, code=ticket.code, display_name="Phone", now=now
@@ -193,10 +194,11 @@ def test_remote_pairing_and_session_routes_are_allowed_without_cookie(tmp_path) 
 
 def test_valid_mobile_cookie_allows_remote_http_and_revocation_blocks_it(
     tmp_path,
+    monkeypatch,
 ) -> None:
     store = MobileAuthStore(tmp_path / "mobile.db")
     gate = MobileAccessGate(_ok_app, store=store)
-    device_id, cookie = _valid_cookie(store)
+    device_id, cookie = _valid_cookie(store, monkeypatch)
 
     allowed = _run_http(
         gate,
@@ -229,10 +231,10 @@ def test_websocket_scope_is_gated_without_cookie(tmp_path, caplog) -> None:
     assert "decision=authentication_required" in caplog.text
 
 
-def test_valid_cookie_allows_remote_websocket_scope(tmp_path) -> None:
+def test_valid_cookie_allows_remote_websocket_scope(tmp_path, monkeypatch) -> None:
     store = MobileAuthStore(tmp_path / "mobile.db")
     gate = MobileAccessGate(_ok_app, store=store)
-    _device_id, cookie = _valid_cookie(store)
+    _device_id, cookie = _valid_cookie(store, monkeypatch)
 
     messages = _run_websocket(
         gate,
