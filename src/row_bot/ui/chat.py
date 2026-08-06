@@ -800,7 +800,7 @@ def build_chat(
                 var el = getElement({_sid});
                 if (!el || !el.$el) return;
                 var c = el.$el.querySelector('.q-scrollarea__container');
-                if (!c) return;
+                if (!c || !(c instanceof Node)) return;
                 el._tSS = true;
                 var uTs = 0;
                 c.addEventListener('wheel', function() {{ uTs = Date.now(); }}, {{passive:true}});

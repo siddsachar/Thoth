@@ -1,3 +1,5 @@
+import copy
+import json
 import threading
 import time
 import re
@@ -511,9 +513,72 @@ def _normalize_agent_config(config: dict | None) -> dict:
     return normalized
 
 
-def _new_agent_graph_input(user_input: str, config: dict) -> tuple[dict, dict]:
+def _new_agent_graph_input(user_input: str, config: dict, *, agent=None) -> tuple[dict, dict]:
     """Create one logical-turn budget and its derived graph ceiling."""
 
+    configurable = (config or {}).get("configurable") or {}
+    if configurable.get("thread_event_context"):
+        if agent is None:
+            raise ValueError("Thread event continuation requires the active agent graph.")
+        starts_new_turn = bool(configurable.get("thread_event_new_turn"))
+        if starts_new_turn:
+            normalized = _normalize_agent_config(config)
+            budget = new_execution_budget(
+                str(configurable.get("generation_id") or "")
+            )
+            normalized["recursion_limit"] = framework_recursion_limit(
+                remaining_iterations(budget)
+            )
+        else:
+            normalized = _resume_agent_graph_config(agent, config)
+            budget = None
+        event_messages: list[BaseMessage] = []
+        raw_event_messages = configurable.get("thread_event_messages") or []
+        if isinstance(raw_event_messages, list):
+            for item in raw_event_messages:
+                if not isinstance(item, dict):
+                    continue
+                content = str(item.get("content") or "")
+                if not content:
+                    continue
+                if str(item.get("role") or "") == "human":
+                    event_messages.append(
+                        HumanMessage(
+                            content=content,
+                            additional_kwargs={
+                                "row_bot_ui": {
+                                    "thread_event": True,
+                                    "source_event_id": str(
+                                        item.get("source_event_id") or ""
+                                    ),
+                                }
+                            },
+                        )
+                    )
+                else:
+                    event_messages.append(
+                        AIMessage(
+                            content=content,
+                            additional_kwargs={
+                                "row_bot_internal_event": True,
+                                "row_bot_ui": {"hidden": True},
+                            },
+                        )
+                    )
+        if not event_messages:
+            event_messages = [
+                AIMessage(
+                    content=user_input,
+                    additional_kwargs={
+                        "row_bot_internal_event": True,
+                        "row_bot_ui": {"hidden": True},
+                    },
+                )
+            ]
+        initial_input = {"messages": event_messages}
+        if budget is not None:
+            initial_input["execution_budget"] = budget
+        return normalized, initial_input
     normalized = _normalize_agent_config(config)
     configurable = normalized.get("configurable") or {}
     budget = new_execution_budget(str(configurable.get("generation_id") or ""))
@@ -3101,8 +3166,50 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
     return _agent_cache[cache_key]
 
 
-def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
-                 *, stop_event: threading.Event | None = None) -> str | dict:
+def _graph_interrupt_result(state: Any) -> dict[str, Any] | None:
+    """Return normalized interrupt data from a paused LangGraph state."""
+
+    if not state or not getattr(state, "next", None):
+        return None
+    all_interrupts: list[dict[str, Any]] = []
+    for task in getattr(state, "tasks", ()) or ():
+        for intr in getattr(task, "interrupts", ()) or ():
+            value = getattr(intr, "value", None)
+            item = (
+                dict(value)
+                if isinstance(value, dict)
+                else {"description": str(value)}
+            )
+            item["__interrupt_id"] = str(getattr(intr, "id", "") or "")
+            all_interrupts.append(item)
+    if not all_interrupts:
+        return None
+    return {"type": "interrupt", "interrupts": all_interrupts}
+
+
+def get_invoke_agent_interrupts(
+    enabled_tool_names: list[str],
+    config: dict,
+) -> list[dict[str, Any]]:
+    """Read the current paused interrupt group without invoking the model."""
+
+    normalized = _normalize_agent_config(config)
+    configurable = normalized.get("configurable") or {}
+    model_override = configurable.get("model_override")
+    agent = get_agent_graph(
+        enabled_tool_names,
+        model_override=model_override,
+        tool_allowlist=_runtime_tool_allowlist(configurable),
+    )
+    result = _graph_interrupt_result(agent.get_state(normalized))
+    if not result:
+        return []
+    interrupts = result.get("interrupts") or []
+    return [dict(item) for item in interrupts if isinstance(item, dict)]
+
+
+def _invoke_agent_graph(user_input: str, enabled_tool_names: list[str], config: dict,
+                        *, stop_event: threading.Event | None = None) -> str | dict:
     """Invoke the ReAct agent and return the final answer text.
 
     If *stop_event* is provided and becomes set, the function raises
@@ -3190,7 +3297,7 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         _do_summarize(agent, config, model_override=_model_ov)
     if stop_event and stop_event.is_set():
         raise TaskStoppedError("Task stopped after summarization")
-    config, initial_input = _new_agent_graph_input(user_input, config)
+    config, initial_input = _new_agent_graph_input(user_input, config, agent=agent)
 
     # Use node-level streaming so we can check stop_event between nodes
     if stop_event is not None:
@@ -3240,18 +3347,11 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         # ── Interrupt detection ──────────────────────────────────────
         # If the graph paused due to an interrupt() call (e.g. shell
         # tool approval gate), return interrupt data instead of text.
-        if state and state.next:
-            all_interrupts: list[dict] = []
-            for task in state.tasks:
-                if hasattr(task, "interrupts") and task.interrupts:
-                    for intr in task.interrupts:
-                        item = dict(intr.value) if isinstance(intr.value, dict) else {"description": str(intr.value)}
-                        item["__interrupt_id"] = intr.id
-                        all_interrupts.append(item)
-            if all_interrupts:
-                logger.info("invoke_agent: interrupted after %.1fs",
-                            time.monotonic() - _invoke_t0)
-                return {"type": "interrupt", "interrupts": all_interrupts}
+        interrupt_result = _graph_interrupt_result(state)
+        if interrupt_result is not None:
+            logger.info("invoke_agent: interrupted after %.1fs",
+                        time.monotonic() - _invoke_t0)
+            return interrupt_result
 
         if state and state.values:
             for msg in reversed(state.values.get("messages", [])):
@@ -3276,6 +3376,12 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         )
     except (ExecutionBudgetExhausted, AgentNoProgress) as exc:
         return _handle_agent_terminal(agent, config, exc)
+    state = agent.get_state(config)
+    interrupt_result = _graph_interrupt_result(state)
+    if interrupt_result is not None:
+        logger.info("invoke_agent: interrupted after %.1fs",
+                    time.monotonic() - _invoke_t0)
+        return interrupt_result
     # The agent returns messages; the last AI message is the answer
     messages = result.get("messages", [])
     for msg in reversed(messages):
@@ -3291,6 +3397,153 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
     if finalized.strip():
         return finalized
     return "I wasn't able to generate a response."
+
+
+def _checkpoint_joined_child_event_ids(
+    parent_thread_id: str,
+    orchestration_id: str,
+) -> list[str]:
+    """Read durable group-wait acknowledgements from the parent checkpoint."""
+
+    try:
+        from row_bot.agent_orchestrator import sanitize_pending_child_event_ids
+        from row_bot.threads import get_latest_checkpoint_messages
+
+        reported_ids: list[str] = []
+        for message in get_latest_checkpoint_messages(parent_thread_id):
+            if not isinstance(message, ToolMessage):
+                continue
+            if str(getattr(message, "name", "") or "") != "agent_wait":
+                continue
+            content = _content_to_str(getattr(message, "content", ""))
+            try:
+                payload = json.loads(content)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if (
+                not isinstance(payload, dict)
+                or not payload.get("ok")
+                or str(payload.get("orchestration_id") or "") != orchestration_id
+                or "barrier_complete" not in payload
+                or not isinstance(payload.get("child_event_ids"), list)
+            ):
+                continue
+            reported_ids.extend(
+                str(event_id)
+                for event_id in payload["child_event_ids"]
+                if str(event_id or "")
+            )
+        return sanitize_pending_child_event_ids(orchestration_id, reported_ids)
+    except Exception:
+        logger.exception(
+            "Could not read joined child events from parent checkpoint: thread=%s orchestration=%s",
+            parent_thread_id,
+            orchestration_id,
+        )
+        return []
+
+
+def _complete_unified_parent_pass(
+    result: str | dict,
+    enabled_tool_names: list[str],
+    config: dict,
+):
+    """Apply the shared final-answer guard after the original parent graph."""
+
+    configurable = (config or {}).get("configurable") or {}
+    if configurable.get("orchestration_internal_wake"):
+        return None
+    thread_id = str(configurable.get("thread_id") or "")
+    generation_id = str(configurable.get("generation_id") or "")
+    if not thread_id or not generation_id:
+        return None
+    try:
+        from row_bot.agent_orchestrator import (
+            CURRENT_ORCHESTRATION_VERSION,
+            complete_parent_pass,
+            get_generation_orchestration,
+        )
+
+        orchestration = get_generation_orchestration(thread_id, generation_id)
+        if (
+            not orchestration
+            or int(orchestration.get("orchestration_version") or 0)
+            < CURRENT_ORCHESTRATION_VERSION
+        ):
+            return None
+        return complete_parent_pass(
+            str(orchestration["id"]),
+            result,
+            continuation_state={
+                "config": copy.deepcopy(config),
+                "enabled_tool_names": list(enabled_tool_names),
+            },
+            delivery_context={
+                "runtime_surface": str(configurable.get("runtime_surface") or ""),
+                "runtime_channel": str(configurable.get("runtime_channel") or ""),
+                "plugin_id": str(configurable.get("plugin_id") or ""),
+                "channel_streaming": bool(configurable.get("channel_streaming")),
+                "voice_mode": bool(configurable.get("voice_mode")),
+                "voice_transport": str(configurable.get("voice_transport") or ""),
+            },
+            foreground=True,
+            consumed_event_ids=_checkpoint_joined_child_event_ids(
+                thread_id,
+                str(orchestration["id"]),
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "Unified parent final-answer guard failed: thread=%s generation=%s",
+            thread_id,
+            generation_id,
+        )
+        raise
+
+
+def _route_waiting_parent_input(user_input: str, config: dict):
+    configurable = (config or {}).get("configurable") or {}
+    if (
+        configurable.get("orchestration_internal_wake")
+        or configurable.get("internal_goal_continuation")
+        or configurable.get("thread_event_context")
+    ):
+        return None
+    thread_id = str(configurable.get("thread_id") or "")
+    generation_id = str(configurable.get("generation_id") or "")
+    if not thread_id or not generation_id:
+        return None
+    try:
+        from row_bot.agent_orchestrator import route_parent_steering
+
+        return route_parent_steering(
+            parent_thread_id=thread_id,
+            incoming_generation_id=generation_id,
+            content=user_input,
+        )
+    except Exception:
+        logger.exception("Could not route user input to the waiting parent turn")
+        raise
+
+
+def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
+                 *, stop_event: threading.Event | None = None) -> str | dict:
+    """Invoke the shared parent graph and apply the durable orchestration guard."""
+
+    routed = _route_waiting_parent_input(user_input, config)
+    if routed is not None:
+        return {
+            "type": "orchestration_waiting",
+            "orchestration_id": str(routed.get("id") or ""),
+        }
+    result = _invoke_agent_graph(
+        user_input,
+        enabled_tool_names,
+        config,
+        stop_event=stop_event,
+    )
+    _complete_unified_parent_pass(result, enabled_tool_names, config)
+    return result
 
 
 import re as _re
@@ -3751,6 +4004,17 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
     * ``"summarizing"`` – payload = ``None`` (condensing older context)
     * ``"done"``        – payload = full answer text (str)
     """
+    routed = _route_waiting_parent_input(user_input, config)
+    if routed is not None:
+        yield (
+            "orchestration_waiting",
+            {
+                "orchestration_id": str(routed.get("id") or ""),
+                "text": "",
+                "output_kind": "steering",
+            },
+        )
+        return
     _disabled_custom_tool_response = _custom_tool_builder_disabled_response(
         user_input, enabled_tool_names
     )
@@ -3908,12 +4172,27 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
             time.perf_counter() - _summarize_started
         ) * 1000.0
 
-    config, initial_input = _new_agent_graph_input(user_input, config)
+    config, initial_input = _new_agent_graph_input(user_input, config, agent=agent)
     for event in _stream_graph(agent, initial_input, config,
                                stop_event=stop_event,
                                phase_timings=phase_timings):
         yield from _memory_recall_warning_events(config)
         yield event
+        if event[0] == "done":
+            parent_pass = _complete_unified_parent_pass(
+                event[1],
+                enabled_tool_names,
+                config,
+            )
+            if parent_pass is not None and parent_pass.waiting:
+                yield (
+                    "orchestration_waiting",
+                    {
+                        "orchestration_id": parent_pass.orchestration_id,
+                        "text": parent_pass.text,
+                        "output_kind": parent_pass.output_kind,
+                    },
+                )
     yield from _memory_recall_warning_events(config)
 
 
@@ -4039,12 +4318,27 @@ def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: b
     ):
         yield from _memory_recall_warning_events(config)
         yield event
+        if event[0] == "done":
+            parent_pass = _complete_unified_parent_pass(
+                event[1],
+                enabled_tool_names,
+                config,
+            )
+            if parent_pass is not None and parent_pass.waiting:
+                yield (
+                    "orchestration_waiting",
+                    {
+                        "orchestration_id": parent_pass.orchestration_id,
+                        "text": parent_pass.text,
+                        "output_kind": parent_pass.output_kind,
+                    },
+                )
     yield from _memory_recall_warning_events(config)
 
 
-def resume_invoke_agent(enabled_tool_names: list[str], config: dict, approved: bool,
-                        *, interrupt_ids: list[str] | None = None,
-                        stop_event: threading.Event | None = None) -> str | dict:
+def _resume_invoke_agent_graph(enabled_tool_names: list[str], config: dict, approved: bool,
+                               *, interrupt_ids: list[str] | None = None,
+                               stop_event: threading.Event | None = None) -> str | dict:
     """Resume an interrupted agent graph (non-streaming, for tasks).
 
     Returns the final answer text, or an interrupt dict if the graph
@@ -4141,6 +4435,22 @@ def resume_invoke_agent(enabled_tool_names: list[str], config: dict, approved: b
                 if text.strip():
                     return text
     return "I wasn't able to generate a response."
+
+
+def resume_invoke_agent(enabled_tool_names: list[str], config: dict, approved: bool,
+                        *, interrupt_ids: list[str] | None = None,
+                        stop_event: threading.Event | None = None) -> str | dict:
+    """Resume the shared graph and apply the durable orchestration guard."""
+
+    result = _resume_invoke_agent_graph(
+        enabled_tool_names,
+        config,
+        approved,
+        interrupt_ids=interrupt_ids,
+        stop_event=stop_event,
+    )
+    _complete_unified_parent_pass(result, enabled_tool_names, config)
+    return result
 
 
 def _latest_ai_text_from_state(agent, config: dict) -> str:

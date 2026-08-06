@@ -84,6 +84,97 @@ def test_child_agent_terminal_notification_delivers_once_and_persists_checkpoint
     ]) == 1
 
 
+def test_unified_parent_final_uses_fake_channel_outbox_exactly_once(
+    tmp_path,
+    monkeypatch,
+):
+    tasks, threads, _agent_runs, registry, notifications = _fresh_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    channel = FakeChannel(name="fake")
+    channel._running = True
+    registry.register(channel)
+    tasks.record_thread_channel_ref(
+        "parent-thread",
+        channel="fake",
+        target="conversation-1",
+        external_conversation_id="conversation-1",
+    )
+    key = "orchestration:one:parent_final:2"
+    from langchain_core.messages import AIMessage
+
+    threads.append_checkpoint_messages(
+        "parent-thread",
+        [
+            AIMessage(
+                content="The original parent produced this final.",
+                id="parent-checkpoint-final",
+            )
+        ],
+    )
+
+    for _ in range(2):
+        assert notifications.deliver_parent_thread_notification(
+            key=key,
+            thread_id="parent-thread",
+            kind="orchestration_final",
+            text="The original parent produced this final.",
+            ui_metadata={
+                "orchestration_id": "one",
+                "orchestration_message_kind": "final",
+            },
+            checkpoint_authoritative=True,
+        )
+
+    assert [(msg.target, msg.text) for msg in channel.messages] == [
+        ("conversation-1", "The original parent produced this final.")
+    ]
+    checkpoint = [
+        message
+        for message in threads.get_latest_checkpoint_messages("parent-thread")
+        if getattr(message, "type", "") == "ai"
+    ]
+    assert len(checkpoint) == 1
+    assert checkpoint[0].id == "parent-checkpoint-final"
+    assert checkpoint[0].additional_kwargs == {}
+    record = tasks.get_channel_thread_notification(key)
+    assert record and record["status"] == "delivered"
+
+
+def test_unified_parent_delivery_never_invents_missing_checkpoint_output(
+    tmp_path,
+    monkeypatch,
+):
+    tasks, threads, _agent_runs, registry, notifications = _fresh_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    channel = FakeChannel(name="fake")
+    channel._running = True
+    registry.register(channel)
+    tasks.record_thread_channel_ref(
+        "parent-thread",
+        channel="fake",
+        target="conversation-1",
+        external_conversation_id="conversation-1",
+    )
+
+    assert notifications.deliver_parent_thread_notification(
+        key="orchestration:missing:parent_final:1",
+        thread_id="parent-thread",
+        kind="orchestration_final",
+        text="This output is not checkpointed.",
+        checkpoint_authoritative=True,
+    ) is False
+
+    assert channel.messages == []
+    assert threads.get_latest_checkpoint_messages("parent-thread") == []
+    assert tasks.get_channel_thread_notification(
+        "orchestration:missing:parent_final:1"
+    ) is None
+
+
 def test_pending_terminal_notification_retries_after_channel_starts(tmp_path, monkeypatch):
     tasks, _threads, agent_runs, registry, thread_notifications = _fresh_modules(tmp_path, monkeypatch)
     channel = FakeChannel(name="fake")

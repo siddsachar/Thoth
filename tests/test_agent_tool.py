@@ -4,6 +4,8 @@ import importlib
 import json
 import sys
 
+import pytest
+
 
 def _fresh_agent_tool_modules(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
@@ -122,6 +124,8 @@ def test_delegate_work_uses_runner_and_returns_public_run(tmp_path, monkeypatch)
     assert calls["kwargs"]["use_worktree"] is True
     assert payload["run"]["workspace"]["mode"] == "worktree"
     assert payload["run"]["workspace"]["id"] == "dev_parent"
+    assert "agent_wait(orchestration_id=" in payload["next_action"]
+    assert "continue useful independent work" in payload["next_action"].lower()
 
 
 def test_optional_background_child_is_still_a_durable_member(
@@ -277,6 +281,15 @@ def test_agents_guide_mentions_pinned_model_resolution() -> None:
     assert "inherits the parent model" in guide
     assert "required=true" in guide
     assert "required=false" in guide
+    assert "complete material" in guide
+    assert "real later wave" in guide
+    assert "launch order only" in guide
+    assert "does not transfer" in guide
+    assert "natural concise update" in guide
+    assert "agent_wait(orchestration_id=...)" in guide
+    assert "before finalizing" in guide
+    assert "later wave" in guide
+    assert "do not loop on `agent_status`" in guide
 
 
 def test_delegate_work_schema_is_async_first() -> None:
@@ -290,6 +303,16 @@ def test_delegate_work_schema_is_async_first() -> None:
         _DelegateWorkInput.model_fields["use_worktree"].description or ""
     ).lower()
     assert "local git worktree" in worktree_description
+    context_description = str(
+        _DelegateWorkInput.model_fields["context"].description or ""
+    ).lower()
+    dependency_description = str(
+        _DelegateWorkInput.model_fields["depends_on"].description or ""
+    ).lower()
+    assert "complete material" in context_description
+    assert "artifact path" in context_description
+    assert "launch order only" in dependency_description
+    assert "never transfers" in dependency_description
 
     delegate_tool = next(
         tool
@@ -297,6 +320,151 @@ def test_delegate_work_schema_is_async_first() -> None:
         if tool.name == "delegate_work"
     )
     assert "async background" in str(delegate_tool.description).lower()
+    assert "continue useful independent work" in str(delegate_tool.description).lower()
+
+    wait_tool = next(
+        tool
+        for tool in AgentsTool().as_langchain_tools()
+        if tool.name == "agent_wait"
+    )
+    assert "required cohort" in str(wait_tool.description).lower()
+    assert "before final" in str(wait_tool.description).lower()
+
+
+def test_agent_wait_schema_accepts_exactly_one_target() -> None:
+    from row_bot.tools.agent_tool import _AgentWaitInput
+
+    assert _AgentWaitInput.model_validate({"run_id": "run-1"}).run_id == "run-1"
+    assert (
+        _AgentWaitInput.model_validate({"orchestration_id": "orch-1"}).orchestration_id
+        == "orch-1"
+    )
+    with pytest.raises(ValueError, match="exactly one"):
+        _AgentWaitInput.model_validate({})
+    with pytest.raises(ValueError, match="exactly one"):
+        _AgentWaitInput.model_validate({
+            "run_id": "run-1",
+            "orchestration_id": "orch-1",
+        })
+
+
+def test_agent_wait_group_rejects_another_parent_thread(tmp_path, monkeypatch):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    import row_bot.agent_orchestrator as orchestrator
+
+    orchestration = orchestrator.create_or_get_orchestration(
+        parent_thread_id="owned-parent",
+        parent_generation_id="owned-generation",
+        root_objective="Owned work",
+        model_ref="provider:model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+        orchestration_version=2,
+    )
+    monkeypatch.setattr(
+        agent_tool,
+        "_runtime_context",
+        lambda: {"thread_id": "different-parent"},
+    )
+
+    payload = json.loads(
+        agent_tool._agent_wait(orchestration_id=orchestration["id"])
+    )
+
+    assert payload["ok"] is False
+    assert "another parent thread" in payload["message"]
+
+
+def test_agent_wait_group_returns_ordered_terminal_results_and_events(
+    tmp_path,
+    monkeypatch,
+):
+    agent_tool, agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    import row_bot.agent_orchestrator as orchestrator
+
+    orchestration = orchestrator.create_or_get_orchestration(
+        parent_thread_id="parent-thread",
+        parent_generation_id="group-generation",
+        root_objective="Join the required group",
+        model_ref="provider:model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+        orchestration_version=2,
+    )
+    for run_id in ("first-run", "second-run"):
+        agent_runs.create_agent_run(
+            run_id=run_id,
+            status="running",
+            parent_thread_id="parent-thread",
+            thread_id=f"thread-{run_id}",
+            display_name=run_id,
+        )
+        orchestrator.register_member(orchestration["id"], run_id, required=True)
+    agent_runs.finish_agent_run("second-run", "failed", error="Permanent failure")
+    agent_runs.finish_agent_run("first-run", "completed", summary="First result")
+    monkeypatch.setattr(
+        agent_tool,
+        "_runtime_context",
+        lambda: {"thread_id": "parent-thread"},
+    )
+
+    payload = json.loads(
+        agent_tool._agent_wait(
+            orchestration_id=orchestration["id"],
+            timeout_seconds=0,
+        )
+    )
+
+    assert payload["ok"] is True
+    assert [run["id"] for run in payload["runs"]] == ["first-run", "second-run"]
+    assert [run["status"] for run in payload["runs"]] == ["completed", "failed"]
+    assert payload["barrier_complete"] is True
+    assert payload["timed_out"] is False
+    assert payload["outstanding_run_ids"] == []
+    assert len(payload["child_event_ids"]) == 2
+
+
+def test_agent_wait_group_timeout_reports_outstanding_without_completion(
+    tmp_path,
+    monkeypatch,
+):
+    agent_tool, agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    import row_bot.agent_orchestrator as orchestrator
+
+    orchestration = orchestrator.create_or_get_orchestration(
+        parent_thread_id="parent-thread",
+        parent_generation_id="timeout-generation",
+        root_objective="Wait briefly",
+        model_ref="provider:model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+        orchestration_version=2,
+    )
+    agent_runs.create_agent_run(
+        run_id="slow-run",
+        status="running",
+        parent_thread_id="parent-thread",
+        thread_id="thread-slow-run",
+    )
+    orchestrator.register_member(orchestration["id"], "slow-run", required=True)
+    monkeypatch.setattr(
+        agent_tool,
+        "_runtime_context",
+        lambda: {"thread_id": "parent-thread"},
+    )
+
+    payload = json.loads(
+        agent_tool._agent_wait(
+            orchestration_id=orchestration["id"],
+            timeout_seconds=0,
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["barrier_complete"] is False
+    assert payload["timed_out"] is True
+    assert payload["outstanding_run_ids"] == ["slow-run"]
+    assert payload["child_event_ids"] == []
 
 
 def test_delegate_work_wait_timeout_message_is_explicit(tmp_path, monkeypatch):

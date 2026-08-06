@@ -20,6 +20,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from nicegui import ui
+from nicegui.element import Element
 from row_bot.ui.state import P
 
 logger = logging.getLogger(__name__)
@@ -814,7 +815,9 @@ def _agent_status_color(status: str) -> str:
         "waiting_approval": "warning",
         "waiting_user": "warning",
         "paused": "amber",
+        "interrupted": "orange",
         "completed": "positive",
+        "completed_delivery_failed": "warning",
         "failed": "negative",
         "blocked": "negative",
         "stopped": "orange",
@@ -994,6 +997,12 @@ def open_agent_peek_dialog(
             return
         run_id = str(run_row.get("id") or run_id or "").strip()
         status = str(run_row.get("status") or "unknown").strip()
+        try:
+            from row_bot.agent_orchestrator import agent_member_status_label
+
+            status_label = agent_member_status_label(status)
+        except Exception:
+            status_label = status.replace("_", " ").title()
         name = str(run_row.get("display_name") or run_id or "Agent").strip()
         profile = str(
             run_row.get("profile_display_name")
@@ -1036,7 +1045,7 @@ def open_agent_peek_dialog(
                 ui.icon("hub", size="20px").classes("text-primary q-mt-xs")
                 with ui.column().classes("gap-0").style("flex: 1; min-width: 0;"):
                     with ui.row().classes("w-full items-center no-wrap gap-2"):
-                        ui.badge(status or "unknown", color=_agent_status_color(status)).props("outline dense")
+                        ui.badge(status_label, color=_agent_status_color(status)).props("outline dense")
                         ui.label(name).classes("text-sm font-bold ellipsis").style("flex: 1; min-width: 0;")
                         ui.label(profile).classes("text-xs text-grey-6 ellipsis").style("max-width: 160px;")
                         if workspace_details["mode"] == "worktree":
@@ -1152,148 +1161,25 @@ def _render_agent_run_card(
 ) -> None:
     run_id = str(run.get("id") or "").strip()
     status = str(run.get("status") or "unknown").strip()
+    try:
+        from row_bot.agent_orchestrator import agent_member_status_label
+
+        status_label = agent_member_status_label(status)
+    except Exception:
+        status_label = status.replace("_", " ").title()
     name = str(run.get("display_name") or run_id or "Agent").strip()
-    profile = run.get("profile") if isinstance(run.get("profile"), dict) else {}
-    profile_label = str(
-        profile.get("display_name")
-        or profile.get("slug")
-        or run.get("profile_display_name")
-        or run.get("profile_slug")
-        or run.get("kind")
-        or "Agent"
-    ).strip()
-    thread_id = str(run.get("thread_id") or "").strip()
-    activity = _short_text(
-        run.get("status_message")
-        or run.get("summary")
-        or run.get("error")
-        or payload_message,
-        190,
-    )
-    parent_note_count = int(run.get("parent_message_count") or 0)
-    latest_parent_note = _short_text(run.get("latest_parent_message") or "", 110)
-    turns_used = int(run.get("turns_used") or 0)
-    max_turns = int(run.get("max_turns") or 0)
-    model_iterations_used = int(run.get("model_iterations_used") or 0)
-    model_iterations_max = int(run.get("model_iterations_max") or 0)
-    terminal = status.lower() in {
-        "completed",
-        "failed",
-        "blocked",
-        "stopped",
-        "cancelled",
-        "timed_out",
-    }
-    workspace_details = _agent_workspace_details(run)
 
-    with ui.column().classes("w-full gap-1 q-pa-sm").style(
-        "border: 1px solid rgba(96, 165, 250, 0.22); "
-        "border-radius: 8px; background: rgba(15, 23, 42, 0.30); "
-        "box-shadow: inset 0 1px 0 rgba(255,255,255,0.035); "
-        "min-height: 74px;"
-    ):
-        with ui.row().classes("w-full items-center no-wrap gap-2"):
-            ui.icon("hub", size="16px").classes("text-primary")
-            ui.badge(status or "unknown", color=_agent_status_color(status)).props("outline dense")
-            ui.label(name).classes("text-sm font-semibold ellipsis").style("flex: 1; min-width: 0;")
-            if profile_label:
-                ui.label(profile_label).classes("text-xs text-grey-6 ellipsis").style("max-width: 130px;")
-            if workspace_details["mode"] == "worktree":
-                ui.badge("Worktree", color="blue-grey").props("outline dense").tooltip(
-                    workspace_details["tooltip"]
-                )
-            if turns_used or max_turns:
-                ui.label(f"{turns_used}/{max_turns} turns").classes("text-xs text-grey-6 no-wrap")
-            if model_iterations_max:
-                ui.label(
-                    f"{model_iterations_used}/{model_iterations_max} rounds · depth {int(run.get('depth') or 0)}"
-                ).classes("text-xs text-grey-6 no-wrap")
-
-        detail_bits = []
-        if activity:
-            detail_bits.append(activity)
-        if parent_note_count:
-            note_label = f"{parent_note_count} parent note"
-            if parent_note_count != 1:
-                note_label += "s"
-            if latest_parent_note:
-                note_label += f": {latest_parent_note}"
-            detail_bits.append(note_label)
-        if detail_bits:
-            ui.label(" | ".join(detail_bits)).classes("text-xs text-grey-5").style(
-                "display: -webkit-box; -webkit-line-clamp: 2; "
-                "-webkit-box-orient: vertical; overflow: hidden; line-height: 1.32;"
-            )
-
-        if status.lower() == "waiting_approval" and run_id:
-            approval = _load_pending_approval(agent_run_id=run_id)
-            _render_approval_request_card(
-                approval,
-                fallback_message=activity or f"{name} is waiting for approval.",
-                compact=True,
-            )
-
-        with ui.row().classes("w-full items-center gap-1"):
-            if run_id:
-                ui.button(
-                    icon="visibility",
-                    on_click=lambda rid=run_id: open_agent_peek_dialog(
-                        rid,
-                        on_open_agent_thread=on_open_agent_thread,
-                    ),
-                ).props("flat dense round size=sm").tooltip("Peek Agent activity")
-            if thread_id and callable(on_open_agent_thread):
-                ui.button(
-                    icon="open_in_new",
-                    on_click=lambda row=run: on_open_agent_thread(row),
-                ).props("flat dense round size=sm").tooltip("Open thread")
-            if workspace_details["mode"] == "worktree":
-                ui.button(
-                    icon="folder_open",
-                    on_click=lambda row=run: _open_agent_worktree(row),
-                ).props("flat dense round size=sm").tooltip("Open worktree")
-                ui.button(
-                    icon="difference",
-                    on_click=lambda row=run: _show_agent_worktree_compare(row),
-                ).props("flat dense round size=sm").tooltip("Compare")
-            if run_id:
-                def _copy_run_id(rid=run_id) -> None:
-                    try:
-                        ui.run_javascript(f"navigator.clipboard && navigator.clipboard.writeText({_json.dumps(rid)});")
-                    except Exception:
-                        logger.debug("Could not copy Agent Run id", exc_info=True)
-                    ui.notify("Agent Run id copied.", type="info", close_button=True)
-
-                ui.button(icon="content_copy", on_click=_copy_run_id).props("flat dense round size=sm").tooltip(
-                    f"Agent Run id: {run_id}"
-                )
-            if agent_result_use_available(run) and callable(on_use_agent_result):
-                def _use_agent_result(rid=run_id) -> None:
-                    try:
-                        on_use_agent_result(rid)
-                    except Exception as exc:
-                        logger.debug("Agent result action failed", exc_info=True)
-                        ui.notify(f"Could not ask parent to use Agent result: {exc}", type="negative", close_button=True)
-
-                ui.button(icon="summarize", on_click=_use_agent_result).props(
-                    "flat dense round size=sm color=primary"
-                ).tooltip("Ask parent to use this result")
-            if run_id and not terminal:
-                def _stop_agent(rid=run_id) -> None:
-                    try:
-                        from row_bot.agent_runs import stop_agent_run
-
-                        stopped = stop_agent_run(rid)
-                        if stopped:
-                            ui.notify("Agent stop requested.", type="warning", close_button=True)
-                        else:
-                            ui.notify("Agent Run not found.", type="warning", close_button=True)
-                    except Exception as exc:
-                        ui.notify(f"Could not stop Agent: {exc}", type="negative", close_button=True)
-
-                ui.button(icon="stop", on_click=_stop_agent).props(
-                    "flat dense round size=sm color=orange"
-                ).tooltip("Stop Agent")
+    with ui.button(
+        on_click=lambda row=run, rid=run_id: open_agent_peek_dialog(
+            rid or row,
+            on_open_agent_thread=on_open_agent_thread,
+        ),
+    ).props("flat dense no-caps no-ripple").classes("row-bot-agent-run-stud"):
+        ui.icon("hub", size="17px").classes("text-primary").props('aria-hidden="true"')
+        ui.label(name).classes("row-bot-agent-run-name text-sm font-semibold")
+        ui.element("span").classes(
+            f"row-bot-agent-run-status-dot bg-{_agent_status_color(status)}"
+        ).props(f'role="img" aria-label="Agent status: {status_label}"')
 
 
 def _current_agent_run_for_card(run: dict) -> dict:
@@ -1389,13 +1275,14 @@ def render_agent_tool_results(
         try:
             card_container.clear()
             with card_container:
-                for run, message in current_runs:
-                    _render_agent_run_card(
-                        run,
-                        payload_message=message,
-                        on_use_agent_result=on_use_agent_result,
-                        on_open_agent_thread=on_open_agent_thread,
-                    )
+                with ui.row().classes("row-bot-agent-run-list w-full items-center flex-wrap gap-1"):
+                    for run, message in current_runs:
+                        _render_agent_run_card(
+                            run,
+                            payload_message=message,
+                            on_use_agent_result=on_use_agent_result,
+                            on_open_agent_thread=on_open_agent_thread,
+                        )
                 _render_raw_agent_tool_outputs(raw_results)
         except Exception:
             logger.debug("Agent tool-result card render failed", exc_info=True)
@@ -1458,12 +1345,13 @@ def render_agent_run_cards(
         try:
             card_container.clear()
             with card_container:
-                for run in current_runs:
-                    _render_agent_run_card(
-                        run,
-                        on_use_agent_result=on_use_agent_result,
-                        on_open_agent_thread=on_open_agent_thread,
-                    )
+                with ui.row().classes("row-bot-agent-run-list w-full items-center flex-wrap gap-1"):
+                    for run in current_runs:
+                        _render_agent_run_card(
+                            run,
+                            on_use_agent_result=on_use_agent_result,
+                            on_open_agent_thread=on_open_agent_thread,
+                        )
         except Exception:
             logger.debug("Direct Agent Run card render failed", exc_info=True)
         return current_runs
@@ -1595,7 +1483,7 @@ def render_message_content(
         try:
             from row_bot.agent_runs import get_agent_run
 
-            with ui.column().classes("w-full gap-2"):
+            with ui.row().classes("row-bot-agent-run-list w-full items-center flex-wrap gap-1"):
                 for run_id in agent_run_ids:
                     run = get_agent_run(str(run_id))
                     if run:
@@ -1736,7 +1624,7 @@ def render_message_content(
     try:
         ui.run_javascript(
             "if (window.rowBotHighlightCodeBlocks) { window.rowBotHighlightCodeBlocks(); } "
-            "else { setTimeout(function() { document.querySelectorAll('pre code').forEach(function(el) { if (!el.closest('.row-bot-live-stream')) hljs.highlightElement(el); }); }, 80); }"
+            "else { setTimeout(function() { document.querySelectorAll('pre code:not([data-highlighted=\"yes\"])').forEach(function(el) { if (!el.closest('.row-bot-live-stream') && !el.children.length) hljs.highlightElement(el); }); }, 80); }"
         )
         ui.run_javascript(
             "document.querySelectorAll('pre code.language-mermaid').forEach(function(el) {"
@@ -1760,7 +1648,7 @@ def add_chat_message(
     *,
     on_use_agent_result: Callable[[str], None] | None = None,
     on_open_agent_thread: Callable[[dict], None] | None = None,
-) -> None:
+) -> Element | None:
     """Append a rendered chat message to the chat container."""
     if p.chat_container is None:
         return
@@ -1777,7 +1665,7 @@ def add_chat_message(
     stamp = msg.get("timestamp", datetime.now().strftime("%H:%M"))
     with p.chat_container:
         row_cls = "row-bot-msg-row row-bot-msg-row-user" if is_user else "row-bot-msg-row"
-        with ui.element("div").classes(row_cls):
+        with ui.element("div").classes(row_cls) as message_row:
             ui.html(f'<div class="{avatar_cls}">{avatar_content}</div>', sanitize=False)
             with ui.column().classes("row-bot-msg-body gap-1"):
                 ui.html(
@@ -1793,3 +1681,4 @@ def add_chat_message(
                     on_use_agent_result=on_use_agent_result,
                     on_open_agent_thread=on_open_agent_thread,
                 )
+    return message_row

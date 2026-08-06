@@ -20,9 +20,7 @@ def test_sandbox_import_requires_approval_before_host_patch(tmp_path, monkeypatc
 
     def fake_apply_patch_to_workspace(*_args, confirmed: bool, **_kwargs):
         calls.append(confirmed)
-        if confirmed:
-            return change_set, ApprovalDecision("allow", "confirmed")
-        return None, ApprovalDecision("ask", "approval required")
+        return change_set, ApprovalDecision("allow", "confirmed")
 
     monkeypatch.setattr(developer_tool, "_active_workspace", lambda: (workspace, tmp_path / "workspace"))
     monkeypatch.setattr(developer_tool, "_active_approval_mode", lambda: "approve")
@@ -34,7 +32,7 @@ def test_sandbox_import_requires_approval_before_host_patch(tmp_path, monkeypatc
 
     result = developer_tool._import_sandbox_changes(pending.id, "Import test patch")
 
-    assert calls == [False, True]
+    assert calls == [True]
     assert marked == [pending.id]
     assert "Imported sandbox change pending-1 as change set change-1" in result
     assert "- update app.py" in result
@@ -64,7 +62,7 @@ def test_sandbox_import_cancel_does_not_apply_or_mark_pending(tmp_path, monkeypa
     result = developer_tool._import_sandbox_changes(pending.id, "Import test patch")
 
     assert result == "Sandbox import cancelled by user."
-    assert calls == [False]
+    assert calls == []
     assert marked == []
 
 

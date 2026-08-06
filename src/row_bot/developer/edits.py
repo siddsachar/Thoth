@@ -14,6 +14,18 @@ from row_bot.developer.storage import get_workspace
 _DIFF_PATH_RE = re.compile(r"^(?:diff --git a/(.+?) b/(.+)|--- (?:a/)?(.+)|\+\+\+ (?:b/)?(.+))$")
 
 
+def ordinary_edit_decision(approval_mode: ApprovalMode) -> ApprovalDecision:
+    """Apply the local policy for a contained ordinary workspace edit."""
+
+    decision = decide_action(approval_mode, "edit")
+    if decision.requires_approval:
+        return ApprovalDecision(
+            "allow",
+            "Ask allows ordinary contained workspace edits without an approval card.",
+        )
+    return decision
+
+
 def _workspace_root(workspace_id: str) -> pathlib.Path:
     workspace = get_workspace(workspace_id)
     if workspace is None:
@@ -75,7 +87,7 @@ def apply_patch_to_workspace(
     summary: str = "",
     confirmed: bool = False,
 ) -> tuple[ChangeSet | None, ApprovalDecision]:
-    decision = decide_action(approval_mode, "edit")
+    decision = ordinary_edit_decision(approval_mode)
     if decision.decision == "block":
         return None, decision
     if decision.requires_approval and not confirmed:
@@ -150,7 +162,7 @@ def write_file_to_workspace(
     summary: str = "",
     confirmed: bool = False,
 ) -> tuple[ChangeSet | None, ApprovalDecision]:
-    decision = decide_action(approval_mode, "edit")
+    decision = ordinary_edit_decision(approval_mode)
     if decision.decision == "block":
         return None, decision
     if decision.requires_approval and not confirmed:

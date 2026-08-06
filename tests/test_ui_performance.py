@@ -81,3 +81,23 @@ def test_transcript_window_bounds_large_threads() -> None:
     )
     assert keys[0].startswith("0:user:")
     assert keys[1].startswith("1:assistant:")
+
+
+def test_transcript_message_key_tracks_approval_state_not_durable_identity() -> None:
+    from row_bot.ui.transcript import durable_message_key, message_key
+
+    pending = {
+        "role": "assistant",
+        "content": "Parent Agent requests approval",
+        "approval_request_id": "approval-parent-1",
+        "approval_status": "pending",
+        "approval_resume_token": "opaque-token",
+    }
+    handled = {
+        **pending,
+        "approval_status": "denied",
+        "approval_resume_token": "",
+    }
+
+    assert durable_message_key(pending) == durable_message_key(handled)
+    assert message_key(0, pending) != message_key(0, handled)

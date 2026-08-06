@@ -17,6 +17,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 _APP_BOOT_STARTED = time.perf_counter()
 _LAUNCH_SESSION_ID = os.environ.get("ROW_BOT_LAUNCH_SESSION_ID", "")
@@ -363,7 +364,11 @@ from row_bot.ui.settings import open_settings
 from row_bot.ui.mobile import build_mobile_shell
 from row_bot.ui.streaming import (
     Callbacks,
+    _agent_poll_refresh_keys,
     _append_async_delegated_agent_completion_messages,
+    _sync_thread_approval_messages,
+    _thread_has_attached_live_generation,
+    _update_direct_agent_refresh_keys,
     build_interrupt_dialog,
     send_message,
 )
@@ -373,9 +378,13 @@ from row_bot.ui.transcript import (
     TRANSCRIPT_CHUNK_TARGET_MS,
     TRANSCRIPT_MAX_CHUNK_MESSAGES,
     choose_transcript_window,
+    common_key_prefix,
+    match_durable_orchestration_outputs,
     message_key,
     message_keys,
     rendered_window_matches,
+    transcript_message_child_bounds,
+    upsert_durable_transcript_message,
 )
 
 # ── Backend imports ──────────────────────────────────────────────────────────
@@ -481,6 +490,28 @@ def _schedule_background_task(coro, *, name: str):
 
     task.add_done_callback(_log_failure)
     return task
+
+
+async def _repair_orchestration_recovery_batch(after_id: str = "") -> None:
+    """Run one post-ready local repair batch and continue only if needed."""
+
+    from row_bot.agent_orchestrator import repair_interrupted_orchestrations_batch
+
+    result = await asyncio.to_thread(
+        repair_interrupted_orchestrations_batch,
+        limit=20,
+        after_id=after_id,
+    )
+    if int(result.get("processed") or 0):
+        logger.info("Deferred orchestration recovery: %s", result)
+    if result.get("has_more"):
+        await asyncio.sleep(0)
+        _schedule_background_task(
+            _repair_orchestration_recovery_batch(
+                str(result.get("next_cursor") or after_id)
+            ),
+            name="row-bot-orchestration-recovery-next",
+        )
 
 
 async def _auto_start_channel_background(channel, _st) -> None:
@@ -1049,6 +1080,10 @@ async def _run_startup_sequence():
 
     _set("✅ Ready")
     _st.startup_ready = True
+    _schedule_background_task(
+        _repair_orchestration_recovery_batch(),
+        name="row-bot-orchestration-recovery",
+    )
     _schedule_agent_graph_prewarm()
     _schedule_local_embedding_prewarm()
     _schedule_auto_start_channels(auto_start_channels, _st)
@@ -1944,17 +1979,52 @@ async def index():
         except Exception:
             logger.debug("Transcript render-state mark failed", exc_info=True)
 
-    def _add_chat_message_and_track(msg: dict) -> None:
-        add_chat_message(
+    def _add_chat_message_and_track(msg: dict) -> Any | None:
+        message_row = add_chat_message(
             msg,
             p,
             state.thread_id,
             on_use_agent_result=_ask_parent_to_use_agent_result,
         )
         _mark_chat_message_rendered(msg)
+        return message_row
+
+    def _insert_chat_message_before_live_row(msg: dict, live_row: Any) -> None:
+        if (
+            p.chat_container is None
+            or p.transcript_thread_id != state.thread_id
+        ):
+            return
+        live_slot = getattr(live_row, "parent_slot", None)
+        if (
+            live_slot is None
+            or getattr(live_slot, "parent", None) is not p.chat_container
+        ):
+            return
+        live_children = list(getattr(live_slot, "children", []) or [])
+        if live_row not in live_children:
+            return
+        message_row = add_chat_message(
+            msg,
+            p,
+            state.thread_id,
+            on_use_agent_result=_ask_parent_to_use_agent_result,
+        )
+        if message_row is None:
+            return
+        message_row.move(p.chat_container, live_children.index(live_row))
+        all_keys = message_keys(state.messages)
+        window_start = max(
+            0,
+            min(int(p.transcript_window_start or 0), len(all_keys)),
+        )
+        p.transcript_rendered_keys = all_keys[window_start:]
+        p.transcript_total = len(state.messages)
+        p.transcript_window_size = len(p.transcript_rendered_keys)
 
     cb.add_chat_message = _add_chat_message_and_track
     cb.mark_chat_message_rendered = _mark_chat_message_rendered
+    cb.insert_chat_message_before_live_row = _insert_chat_message_before_live_row
     cb.render_text_with_embeds = render_text_with_embeds
     cb.refresh_parent_agent_strip = lambda: (
         p.refresh_parent_agent_strip()
@@ -2054,8 +2124,88 @@ async def index():
                     _scroll_bottom()
                     _log_sync("append_tail", len(missing))
 
-            defer_ui(_append_chunk)
+            _append_chunk()
             return
+
+        if same_thread and rendered_keys:
+            desired_keys = all_keys[window_start:]
+            prefix_count = common_key_prefix(rendered_keys, desired_keys)
+            slot = getattr(p.chat_container, "default_slot", None)
+            children = list(getattr(slot, "children", []) or [])
+            if prefix_count > 0 and len(children) >= len(rendered_keys):
+                try:
+                    child_start, child_end = transcript_message_child_bounds(
+                        len(children),
+                        len(rendered_keys),
+                        prefix_count,
+                    )
+                    for child in reversed(children[child_start:child_end]):
+                        child.delete()
+                    p.transcript_rendered_keys = rendered_keys[:prefix_count]
+                    missing = list(
+                        enumerate(
+                            state.messages[window_start + prefix_count:],
+                            start=window_start + prefix_count,
+                        )
+                    )
+                    p.transcript_generation += 1
+                    sync_generation = p.transcript_generation
+                    chunk_state = {"idx": 0}
+
+                    def _append_suffix_chunk() -> None:
+                        if (
+                            p.transcript_generation != sync_generation
+                            or p.transcript_thread_id != state.thread_id
+                        ):
+                            return
+                        start_idx = chunk_state["idx"]
+                        end_idx = start_idx
+                        chunk_started = time.perf_counter()
+                        try:
+                            with p.chat_container:
+                                while end_idx < len(missing):
+                                    msg_index, msg = missing[end_idx]
+                                    add_chat_message(
+                                        msg,
+                                        p,
+                                        state.thread_id,
+                                        on_use_agent_result=_ask_parent_to_use_agent_result,
+                                    )
+                                    p.transcript_rendered_keys.append(
+                                        message_key(msg_index, msg)
+                                    )
+                                    end_idx += 1
+                                    if end_idx - start_idx >= TRANSCRIPT_MAX_CHUNK_MESSAGES:
+                                        break
+                                    elapsed_ms = (
+                                        time.perf_counter() - chunk_started
+                                    ) * 1000.0
+                                    if elapsed_ms >= TRANSCRIPT_CHUNK_TARGET_MS:
+                                        break
+                        except Exception:
+                            logger.debug(
+                                "Transcript suffix reconcile failed",
+                                exc_info=True,
+                            )
+                            return
+                        chunk_state["idx"] = end_idx
+                        p.transcript_total = len(state.messages)
+                        p.transcript_window_size = len(
+                            p.transcript_rendered_keys
+                        )
+                        if end_idx < len(missing):
+                            defer_ui(_append_suffix_chunk)
+                        else:
+                            _scroll_bottom()
+                            _log_sync("reconcile_suffix", len(missing))
+
+                    _append_suffix_chunk()
+                    return
+                except Exception:
+                    logger.debug(
+                        "Transcript suffix pruning failed",
+                        exc_info=True,
+                    )
 
         # Rare fallback: the rendered transcript no longer matches state
         # (for example after a stale client handle or a cross-thread race).
@@ -2120,65 +2270,66 @@ async def index():
 
     # ── Timers ───────────────────────────────────────────────────────────
 
-    _last_agent_run_refresh = {"thread_id": "", "key": ""}
+    _last_agent_run_refresh = {
+        "thread_id": "",
+        "sidebar": "",
+        "strip": "",
+        "transcript": "",
+    }
     _last_orchestration_transcript = {"thread_id": "", "key": ""}
 
-    def _current_agent_run_refresh_key(tid: str) -> str:
+    def _current_agent_run_refresh_key(tid: str) -> dict[str, str]:
         if not tid:
-            return ""
+            return {"sidebar": "", "strip": "", "transcript": ""}
         try:
             from row_bot.agent_runs import list_agent_runs
 
             rows = list_agent_runs(parent_thread_id=tid, kind="subagent", limit=12)
         except Exception:
             logger.debug("Agent run page refresh poll failed", exc_info=True)
-            return ""
-        parts: list[str] = []
-        for row in rows:
-            parts.append("|".join(
-                str(row.get(field) or "")
-                for field in (
-                    "id",
-                    "status",
-                    "status_message",
-                    "summary",
-                    "error",
-                    "steps_done",
-                    "steps_total",
-                    "updated_at",
-                    "finished_at",
-                    "stop_requested",
-                )
-            ))
+            rows = []
+        checkpoint_revision = ""
         try:
-            from row_bot.agent_orchestrator import list_messages, list_orchestrations
+            from row_bot.threads import get_latest_checkpoint_revision
 
-            for orchestration in list_orchestrations(parent_thread_id=tid, limit=5):
-                parts.append("|".join(
-                    [
-                        "orchestration",
-                        str(orchestration.get("id") or ""),
-                        str(orchestration.get("status") or ""),
-                        str(orchestration.get("updated_at") or ""),
-                    ]
-                ))
+            checkpoint_revision = get_latest_checkpoint_revision(tid)
+        except Exception:
+            logger.debug("Checkpoint revision refresh poll failed", exc_info=True)
+        orchestration_rows: list[dict] = []
+        orchestration_messages: list[dict] = []
+        activity: dict[str, Any] = {}
+        try:
+            from row_bot.agent_orchestrator import (
+                get_thread_orchestration_activity,
+                list_messages,
+                list_orchestrations,
+            )
+
+            activity = get_thread_orchestration_activity([tid]).get(tid, {})
+            orchestration_rows = list_orchestrations(parent_thread_id=tid, limit=5)
+            for orchestration in orchestration_rows:
                 for message in list_messages(str(orchestration.get("id") or "")):
-                    if str(message.get("kind") or "") not in {"acknowledgement", "final"}:
+                    if str(message.get("kind") or "") not in {
+                        "acknowledgement",
+                        "final",
+                        "parent_progress",
+                        "parent_final",
+                    }:
                         continue
-                    parts.append("|".join(
-                        [
-                            "orchestration_message",
-                            str(message.get("id") or ""),
-                            str(message.get("kind") or ""),
-                            str(message.get("delivery_status") or ""),
-                            str(message.get("delivered_at") or ""),
-                        ]
-                    ))
+                    orchestration_messages.append(message)
         except Exception:
             logger.debug("Orchestration page refresh poll failed", exc_info=True)
-        return "\n".join(parts)
+        return _agent_poll_refresh_keys(
+            run_rows=rows,
+            orchestration_rows=orchestration_rows,
+            orchestration_messages=orchestration_messages,
+            activity=activity,
+            checkpoint_revision=checkpoint_revision,
+        )
 
-    def _reload_completed_orchestration_transcript(tid: str) -> bool:
+    def _reload_completed_orchestration_transcript(tid: str) -> str:
+        """Merge the latest durable parent output after a detached wake."""
+
         try:
             from row_bot.agent_orchestrator import (
                 list_messages,
@@ -2186,32 +2337,72 @@ async def index():
                 record_message,
             )
             from row_bot.ui.helpers import load_thread_messages
+            from row_bot.threads import get_latest_checkpoint_revision
 
             rows = list_orchestrations(parent_thread_id=tid, limit=1)
             if not rows:
-                return False
+                return "processed_no_change"
             orchestration = rows[0]
             status = str(orchestration.get("status") or "")
-            if status not in {"completed", "completed_partial", "failed", "stopped"}:
-                return False
-            final_messages = list_messages(
+            output_messages = list_messages(
                 str(orchestration.get("id") or ""),
-                kinds=["final"],
+                kinds=["final", "parent_progress", "parent_final"],
             )
-            if not final_messages:
-                return False
-            final_key = str(final_messages[-1].get("id") or "")
+            latest_output = output_messages[-1] if output_messages else {}
+            output_key = str(latest_output.get("id") or "")
+            output_kind = str(latest_output.get("kind") or "").removeprefix("parent_")
+            loaded_messages = load_thread_messages(tid)
+            orchestration_messages = match_durable_orchestration_outputs(
+                loaded_messages,
+                output_messages,
+                orchestration_id=str(orchestration.get("id") or ""),
+            )
+            checkpoint_keys = [
+                str(
+                    msg.get("channel_notification_key")
+                    or msg.get("approval_request_id")
+                    or msg.get("durable_key")
+                    or ""
+                )
+                for msg in orchestration_messages
+            ]
+            if latest_output and not orchestration_messages:
+                return "retry"
+            if latest_output and output_key not in checkpoint_keys:
+                return "retry"
+            refresh_key = "|".join(
+                [
+                    status,
+                    output_key,
+                    get_latest_checkpoint_revision(tid),
+                    *[key for key in checkpoint_keys if key],
+                ]
+            )
             if (
                 _last_orchestration_transcript.get("thread_id") == tid
-                and _last_orchestration_transcript.get("key") == final_key
+                and _last_orchestration_transcript.get("key") == refresh_key
             ):
-                return False
-            state.messages = load_thread_messages(tid)
-            state.cache_active_messages()
+                return "processed_no_change"
+            transcript_changed = False
+            for incoming_output in orchestration_messages:
+                changed, index = upsert_durable_transcript_message(
+                    state.messages,
+                    incoming_output,
+                )
+                if index < 0:
+                    return "retry"
+                transcript_changed = transcript_changed or changed
+            if transcript_changed:
+                state.cache_active_messages()
             _last_orchestration_transcript["thread_id"] = tid
-            _last_orchestration_transcript["key"] = final_key
+            _last_orchestration_transcript["key"] = refresh_key
             delivery_context = orchestration.get("delivery_context_json") or {}
-            if delivery_context.get("voice_mode"):
+            if (
+                latest_output
+                and output_kind == "final"
+                and status in {"completed", "completed_partial", "failed", "stopped"}
+                and delivery_context.get("voice_mode")
+            ):
                 spoken_rows = list_messages(
                     str(orchestration.get("id") or ""),
                     kinds=["voice_final"],
@@ -2250,7 +2441,7 @@ async def index():
 
                     spoken = speak_orchestration_final(
                         delivery_context,
-                        str(final_messages[-1].get("content") or ""),
+                        str(latest_output.get("content") or ""),
                         tts_service=state.tts_service,
                         realtime_speaker=_realtime_speaker,
                         now=time.perf_counter,
@@ -2259,16 +2450,18 @@ async def index():
                         record_message(
                             str(orchestration.get("id") or ""),
                             kind="voice_final",
-                            content=str(final_messages[-1].get("content") or ""),
+                            content=str(latest_output.get("content") or ""),
                             message_id=(
                                 f"orchestration:{orchestration.get('id')}:voice_final"
                             ),
                             delivery_status="delivered",
                         )
-            return True
+            if transcript_changed:
+                return "processed_changed"
+            return "processed_no_change"
         except Exception:
             logger.debug("Completed orchestration transcript reload failed", exc_info=True)
-            return False
+            return "retry"
 
     def _current_child_agent_run_ids(tid: str) -> list[str]:
         if not tid:
@@ -2286,67 +2479,93 @@ async def index():
             return []
 
     def _thread_has_live_generation(tid: str) -> bool:
-        active_gen = _active_generations.get(tid)
-        return bool(
-            active_gen
-            and str(getattr(active_gen, "status", "") or "").lower() == "streaming"
-            and not bool(getattr(active_gen, "detached", False))
-            and getattr(active_gen, "live_row", None) is not None
-        )
+        return _thread_has_attached_live_generation(tid)
 
     def _poll_agent_card_refresh() -> None:
         tid = str(state.thread_id or "")
         if not tid:
-            _last_agent_run_refresh["thread_id"] = ""
-            _last_agent_run_refresh["key"] = ""
+            _last_agent_run_refresh.update(
+                {"thread_id": "", "sidebar": "", "strip": "", "transcript": ""}
+            )
             return
-        key = _current_agent_run_refresh_key(tid)
-        if _last_agent_run_refresh.get("thread_id") != tid:
-            _last_agent_run_refresh["thread_id"] = tid
-            _last_agent_run_refresh["key"] = key
-            if _thread_has_live_generation(tid):
-                return
-            _reload_completed_orchestration_transcript(tid)
+        keys = _current_agent_run_refresh_key(tid)
+        thread_changed = _last_agent_run_refresh.get("thread_id") != tid
+        sidebar_changed = thread_changed or (
+            keys["sidebar"] != _last_agent_run_refresh.get("sidebar")
+        )
+        strip_changed = thread_changed or (
+            keys["strip"] != _last_agent_run_refresh.get("strip")
+        )
+        transcript_inspection_needed = thread_changed or (
+            keys["transcript"] != _last_agent_run_refresh.get("transcript")
+        )
+        _last_agent_run_refresh.update({
+            "thread_id": tid,
+            "sidebar": keys["sidebar"],
+            "strip": keys["strip"],
+        })
+        if sidebar_changed:
             try:
-                completion_changed = _append_async_delegated_agent_completion_messages(
-                    state.messages,
-                    candidate_run_ids=_current_child_agent_run_ids(tid),
-                    checkpoint_thread_id=tid,
-                )
-                if completion_changed:
-                    state.cache_active_messages()
-                    if p.chat_container is not None and p.transcript_thread_id == tid:
-                        p.transcript_rendered_keys = []
-                        _refresh_chat_messages()
+                rebuild_thread_list()
             except Exception:
-                logger.debug("Initial async delegated Agent completion poll failed", exc_info=True)
+                logger.debug("Agent activity sidebar refresh failed", exc_info=True)
+        if strip_changed:
+            try:
+                if callable(getattr(p, "refresh_parent_agent_strip", None)):
+                    p.refresh_parent_agent_strip()
+            except Exception:
+                logger.debug("Parent Agent strip poll refresh failed", exc_info=True)
+        if not transcript_inspection_needed:
             return
-        if key == _last_agent_run_refresh.get("key"):
+        child_run_ids = _current_child_agent_run_ids(tid)
+        live_generation = _thread_has_live_generation(tid)
+        approval_changed = _sync_thread_approval_messages(
+            state=state,
+            cb=cb,
+            thread_id=tid,
+            run_ids=child_run_ids,
+            refresh_transcript=live_generation,
+        )
+        if live_generation:
             return
-        _last_agent_run_refresh["key"] = key
+        reload_result = _reload_completed_orchestration_transcript(tid)
+        if reload_result != "retry":
+            _last_agent_run_refresh["transcript"] = keys["transcript"]
+        transcript_changed = reload_result == "processed_changed"
+        completion_changed = False
+        card_changed = False
         try:
-            if callable(getattr(p, "refresh_parent_agent_strip", None)):
-                p.refresh_parent_agent_strip()
-        except Exception:
-            logger.debug("Parent Agent strip poll refresh failed", exc_info=True)
-        if _thread_has_live_generation(tid):
-            return
-        _reload_completed_orchestration_transcript(tid)
-        try:
-            if _append_async_delegated_agent_completion_messages(
+            card_changed, _terminal = _update_direct_agent_refresh_keys(
                 state.messages,
-                candidate_run_ids=_current_child_agent_run_ids(tid),
+                child_run_ids,
+            )
+            completion_changed = _append_async_delegated_agent_completion_messages(
+                state.messages,
+                candidate_run_ids=child_run_ids,
                 checkpoint_thread_id=tid,
+            )
+            if (
+                transcript_changed
+                or card_changed
+                or approval_changed
+                or completion_changed
             ):
                 state.cache_active_messages()
         except Exception:
-            logger.debug("Async delegated Agent completion poll failed", exc_info=True)
-        if p.chat_container is None or p.transcript_thread_id != tid:
+            logger.debug("Delegated Agent transcript repair failed", exc_info=True)
+        visible_changed = (
+            transcript_changed
+            or card_changed
+            or approval_changed
+            or completion_changed
+        )
+        if (
+            not visible_changed
+            or p.chat_container is None
+            or p.transcript_thread_id != tid
+        ):
             return
         try:
-            # Agent Run cards are backed by DB rows, so message keys may stay
-            # stable while card content changes from queued/running/completed.
-            p.transcript_rendered_keys = []
             _refresh_chat_messages()
         except Exception:
             logger.debug("Agent card transcript poll refresh failed", exc_info=True)

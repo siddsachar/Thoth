@@ -386,14 +386,10 @@ def _import_sandbox_changes(pending_change_id: str, summary: str = "") -> str:
         raise ValueError(f"Sandbox pending change not found: {pending_change_id}")
     if pending.imported:
         return f"Sandbox change {pending_change_id} was already imported."
-    change_set, decision = developer_edits.apply_patch_to_workspace(
-        workspace_id=workspace.id,
-        thread_id=thread_id,
-        patch=pending.patch,
-        approval_mode=_active_approval_mode(),
-        summary=summary or f"Import sandbox changes from: {pending.command[:80]}",
-        confirmed=False,
-    )
+    decision = decide_action(_active_approval_mode(), "edit")
+    if decision.decision == "block":
+        return decision.reason
+    confirmed = False
     if decision.requires_approval:
         approval = interrupt({
             "tool": "developer_import_sandbox_changes",
@@ -403,14 +399,15 @@ def _import_sandbox_changes(pending_change_id: str, summary: str = "") -> str:
         })
         if not approval:
             return "Sandbox import cancelled by user."
-        change_set, decision = developer_edits.apply_patch_to_workspace(
-            workspace_id=workspace.id,
-            thread_id=thread_id,
-            patch=pending.patch,
-            approval_mode=_active_approval_mode(),
-            summary=summary or f"Import sandbox changes from: {pending.command[:80]}",
-            confirmed=True,
-        )
+        confirmed = True
+    change_set, decision = developer_edits.apply_patch_to_workspace(
+        workspace_id=workspace.id,
+        thread_id=thread_id,
+        patch=pending.patch,
+        approval_mode=_active_approval_mode(),
+        summary=summary or f"Import sandbox changes from: {pending.command[:80]}",
+        confirmed=confirmed,
+    )
     if change_set is None:
         return decision.reason
     mark_pending_change_imported(pending_change_id)
@@ -434,7 +431,7 @@ def _apply_patch(patch: str, summary: str = "") -> str:
     workspace, _root = _active_workspace()
     thread_id = get_thread_id()
     if workspace.execution_mode == "docker":
-        decision = decide_action(_active_approval_mode(), "edit")
+        decision = developer_edits.ordinary_edit_decision(_active_approval_mode())
         if decision.decision == "block":
             return decision.reason
         if decision.requires_approval:
@@ -504,7 +501,7 @@ def _write_file(path: str, content: str, summary: str = "") -> str:
     workspace, _root = _active_workspace()
     thread_id = get_thread_id()
     if workspace.execution_mode == "docker":
-        decision = decide_action(_active_approval_mode(), "edit")
+        decision = developer_edits.ordinary_edit_decision(_active_approval_mode())
         if decision.decision == "block":
             return decision.reason
         if decision.requires_approval:

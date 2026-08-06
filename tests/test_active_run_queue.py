@@ -16,6 +16,7 @@ def _fresh_modules(tmp_path, monkeypatch):
         "row_bot.threads",
         "row_bot.tasks",
         "row_bot.agent_runs",
+        "row_bot.channels.thread_notifications",
         "row_bot.ui.streaming",
         "row_bot.ui.transcript",
     ):
@@ -54,6 +55,16 @@ def test_queued_control_message_dispatch_updates_render_key(tmp_path, monkeypatc
     assert msg["queued_control"]["status"] == "dispatching"
     assert msg["queued_control"]["label"] == "Sent after current response"
     assert before != after
+
+
+def test_stale_thinking_handle_delete_is_idempotent(tmp_path, monkeypatch):
+    _agent_runs, streaming, _transcript = _fresh_modules(tmp_path, monkeypatch)
+
+    class StaleHandle:
+        def delete(self):
+            raise ValueError("list.remove(x): x not in list")
+
+    streaming._delete_ui_handle_safely(StaleHandle(), "Thinking markdown")
 
 
 def test_queued_control_settlement_removes_rendered_badge(tmp_path, monkeypatch):
@@ -263,6 +274,289 @@ def test_child_agent_approval_message_appends_and_dedupes(tmp_path, monkeypatch)
     assert "Check the focused tests." in messages[1]["content"]
     assert streaming._append_child_agent_approval_messages(messages, ["run-approval"]) is False
     assert len([msg for msg in messages if msg.get("approval_request_id") == approval_id]) == 1
+
+
+def test_retry_child_approval_appends_without_replacement_lifecycle_card(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runs, streaming, _transcript = _fresh_modules(tmp_path, monkeypatch)
+    import row_bot.tasks as tasks
+
+    agent_runs.create_agent_run(
+        run_id="run-original",
+        kind="subagent",
+        status="stopped",
+        parent_thread_id="parent",
+        display_name="Original Child",
+    )
+    agent_runs.create_agent_run(
+        run_id="run-retry",
+        kind="subagent",
+        status="waiting_approval",
+        parent_thread_id="parent",
+        display_name="Replacement Child",
+    )
+    _token, approval_id = tasks.create_approval_request(
+        run_id="run-retry",
+        task_id="",
+        step_id="agent_interrupt",
+        message="Replacement Child needs approval.",
+        agent_run_id="run-retry",
+        resume_kind="agent_run",
+        source_label="Replacement Child",
+        source_thread_id="retry-thread",
+        parent_thread_id="parent",
+    )
+    messages = [
+        {
+            "role": "assistant",
+            "content": "Started original child.",
+            "agent_run_ids": ["run-original"],
+            "agent_lifecycle": {
+                "kind": "delegated_agent_spawn",
+                "run_id": "run-original",
+            },
+        }
+    ]
+
+    assert streaming._append_child_agent_approval_messages(
+        messages,
+        ["run-original", "run-retry"],
+    )
+    approval_messages = [
+        msg for msg in messages if msg.get("approval_request_id") == approval_id
+    ]
+    assert len(approval_messages) == 1
+    assert approval_messages[0]["agent_approval_for"] == "run-retry"
+    assert streaming._append_child_agent_approval_messages(
+        messages,
+        ["run-original", "run-retry"],
+    ) is False
+
+
+def test_child_agent_approval_sync_refreshes_during_live_parent(tmp_path, monkeypatch):
+    agent_runs, streaming, _transcript = _fresh_modules(tmp_path, monkeypatch)
+    import row_bot.tasks as tasks
+
+    agent_runs.create_agent_run(
+        run_id="run-live-approval",
+        kind="subagent",
+        status="waiting_approval",
+        parent_thread_id="parent",
+        display_name="Live Approval Child",
+    )
+    _token, approval_id = tasks.create_approval_request(
+        run_id="run-live-approval",
+        task_id="",
+        step_id="agent_interrupt",
+        message="Live Approval Child needs approval.",
+        agent_run_id="run-live-approval",
+        resume_kind="agent_run",
+        source_label="Live Approval Child",
+        source_thread_id="child-thread",
+        parent_thread_id="parent",
+    )
+    cached: list[str] = []
+    refreshed: list[str] = []
+    state = SimpleNamespace(
+        thread_id="parent",
+        messages=[
+            {
+                "role": "assistant",
+                "content": "Started child.",
+                "agent_run_ids": ["run-live-approval"],
+                "agent_lifecycle": {
+                    "kind": "delegated_agent_spawn",
+                    "run_id": "run-live-approval",
+                    "source_generation_id": "parent-generation",
+                },
+            }
+        ],
+        cache_active_messages=lambda: cached.append("cached"),
+    )
+    cb = streaming.Callbacks()
+    cb.refresh_chat_messages = lambda: refreshed.append("chat")
+
+    assert streaming._sync_child_agent_approval_messages(
+        state=state,
+        cb=cb,
+        thread_id="parent",
+        run_ids=["run-live-approval"],
+        refresh_transcript=True,
+    ) is True
+    assert cached == ["cached"]
+    assert refreshed == ["chat"]
+    assert state.messages[-1]["approval_request_id"] == approval_id
+
+    assert streaming._sync_child_agent_approval_messages(
+        state=state,
+        cb=cb,
+        thread_id="parent",
+        run_ids=["run-live-approval"],
+        refresh_transcript=True,
+    ) is False
+    assert cached == ["cached"]
+    assert refreshed == ["chat"]
+
+
+def test_required_delegate_tool_result_registers_durable_parent_card(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runs, streaming, _transcript = _fresh_modules(tmp_path, monkeypatch)
+
+    run = agent_runs.create_agent_run(
+        run_id="required-child",
+        kind="subagent",
+        status="running",
+        parent_thread_id="parent-thread",
+        display_name="Required Child",
+    )
+    state = SimpleNamespace(
+        thread_id="parent-thread",
+        messages=[{"role": "user", "content": "delegate this"}],
+        message_cache={},
+        message_cache_dirty=set(),
+        cache_active_messages=lambda: None,
+    )
+    gen = SimpleNamespace(
+        thread_id="parent-thread",
+        generation_id="generation-1",
+        queued_message_ids=[],
+        detached=True,
+        tool_col=None,
+        live_agent_run_ids=set(),
+        live_async_agent_run_ids=set(),
+    )
+    cb = streaming.Callbacks()
+    cb.refresh_chat_messages = lambda: None
+    cb.refresh_parent_agent_strip = lambda: None
+    monkeypatch.setattr(
+        streaming,
+        "_schedule_direct_agent_card_refresh",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        streaming,
+        "_schedule_parent_agent_strip_refresh",
+        lambda *_args, **_kwargs: None,
+    )
+    payload = json.dumps(
+        {
+            "ok": True,
+            "message": "Child Agent started.",
+            "run": {"id": run["id"], "status": "running"},
+            "orchestration": {"id": "orchestration-1", "required": True},
+        }
+    )
+
+    assert streaming._register_delegated_agent_tool_result(
+        gen,
+        state,
+        cb,
+        raw_tool_name="delegate_work",
+        tool_content=payload,
+    ) == ["required-child"]
+    assert state.messages[1]["agent_run_ids"] == ["required-child"]
+    assert state.messages[1]["agent_lifecycle"]["orchestration_id"] == "orchestration-1"
+    assert state.messages[1]["agent_lifecycle"]["required"] is True
+
+    from row_bot.ui.helpers import load_thread_messages
+
+    loaded = load_thread_messages("parent-thread")
+    assert [msg.get("agent_run_ids") for msg in loaded] == [["required-child"]]
+
+    assert streaming._register_delegated_agent_tool_result(
+        gen,
+        state,
+        cb,
+        raw_tool_name="delegate_work",
+        tool_content=payload,
+    ) == ["required-child"]
+    assert len(
+        [
+            msg
+            for msg in state.messages
+            if "required-child" in (msg.get("agent_run_ids") or [])
+        ]
+    ) == 1
+    assert len(
+        [
+            msg
+            for msg in load_thread_messages("parent-thread")
+            if "required-child" in (msg.get("agent_run_ids") or [])
+        ]
+    ) == 1
+    assert "_register_delegated_agent_tool_result" in inspect.getsource(
+        streaming._handle_tool_done
+    )
+
+
+def test_required_lifecycle_is_republished_without_parent_checkpoint_cleanup(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runs, streaming, _transcript = _fresh_modules(tmp_path, monkeypatch)
+    import row_bot.agent_orchestrator as orchestrator
+    import row_bot.channels.thread_notifications as thread_notifications
+
+    run = agent_runs.create_agent_run(
+        run_id="required-after-cleanup",
+        kind="subagent",
+        status="running",
+        parent_thread_id="parent-thread",
+        display_name="Required Child",
+    )
+    published: list[dict] = []
+    monkeypatch.setattr(
+        orchestrator,
+        "list_members",
+        lambda orchestration_id: [
+            {
+                "orchestration_id": orchestration_id,
+                "run_id": run["id"],
+                "required": True,
+                "status": "running",
+                "run": run,
+            },
+            {
+                "orchestration_id": orchestration_id,
+                "run_id": "optional-child",
+                "required": False,
+                "status": "running",
+                "run": {"id": "optional-child", "parent_thread_id": "parent-thread"},
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        thread_notifications,
+        "append_agent_lifecycle_message_once",
+        lambda row, **metadata: published.append(
+            {"run": row, **metadata}
+        ) or True,
+    )
+
+    assert streaming._republish_required_orchestration_lifecycle(
+        "orchestration-1",
+        source_generation_id="generation-1",
+    ) == 1
+    assert published == [
+        {
+            "run": run,
+            "source_generation_id": "generation-1",
+            "orchestration_id": "orchestration-1",
+            "required": True,
+            "wait_mode": False,
+        }
+    ]
+    suspension_source = inspect.getsource(streaming.consume_generation)
+    republish_index = suspension_source.index(
+        "_republish_required_orchestration_lifecycle"
+    )
+    assert republish_index >= 0
+    assert "remove_latest_checkpoint_ai_message" not in suspension_source
+    assert "finalize_parent_generation(" not in suspension_source
 
 
 def test_direct_agent_completion_summary_dedupes_existing_completion_row(tmp_path, monkeypatch):
@@ -819,45 +1113,105 @@ def test_delegated_agent_card_message_inserts_before_future_queued_turn(tmp_path
     assert streaming._append_direct_agent_completion_messages(state.messages, ["delegated-1"]) is False
 
 
-def test_delegated_agent_card_message_defers_refresh_during_live_parent(tmp_path, monkeypatch):
+def test_delegated_agent_card_messages_insert_during_live_parent_in_order(
+    tmp_path,
+    monkeypatch,
+):
     agent_runs, streaming, _transcript = _fresh_modules(tmp_path, monkeypatch)
 
-    run = agent_runs.create_agent_run(
-        run_id="delegated-live",
+    first_run = agent_runs.create_agent_run(
+        run_id="delegated-live-1",
         kind="subagent",
         status="running",
         parent_thread_id="parent",
-        display_name="Live Child",
+        display_name="First Live Child",
+    )
+    second_run = agent_runs.create_agent_run(
+        run_id="delegated-live-2",
+        kind="subagent",
+        status="running",
+        parent_thread_id="parent",
+        display_name="Second Live Child",
+    )
+    queued = streaming._queued_control_message(
+        "queued follow-up",
+        kind="follow_up",
+        status="queued_parent_turn",
+        label="Queued as your next chat message",
+        message_id="queued-live",
     )
     state = SimpleNamespace(
         thread_id="parent",
-        messages=[{"role": "user", "content": "first"}],
+        messages=[{"role": "user", "content": "first"}, queued],
         message_cache={},
         message_cache_dirty=set(),
         cache_active_messages=lambda: None,
     )
     refreshed: list[str] = []
+    inserted: list[tuple[str, object]] = []
     cb = streaming.Callbacks()
     cb.refresh_chat_messages = lambda: refreshed.append("chat")
     cb.refresh_parent_agent_strip = lambda: refreshed.append("strip")
+    cb.insert_chat_message_before_live_row = lambda msg, row: inserted.append(
+        (msg["agent_run_ids"][0], row)
+    )
+    live_row = object()
     streaming._active_generations["parent"] = SimpleNamespace(
         status="streaming",
         detached=False,
-        live_row=object(),
+        live_row=live_row,
     )
     try:
         assert streaming._append_delegated_agent_card_message(
             state=state,
             cb=cb,
             thread_id="parent",
-            run_row=run,
+            run_row=first_run,
             generation_id="gen-live",
         ) is True
+        assert streaming._append_delegated_agent_card_message(
+            state=state,
+            cb=cb,
+            thread_id="parent",
+            run_row=second_run,
+            generation_id="gen-live",
+        ) is True
+        assert streaming._append_delegated_agent_card_message(
+            state=state,
+            cb=cb,
+            thread_id="parent",
+            run_row=first_run,
+            generation_id="gen-live",
+        ) is False
     finally:
         streaming._active_generations.pop("parent", None)
 
     assert "chat" not in refreshed
-    assert state.messages[1]["agent_run_ids"] == ["delegated-live"]
+    assert inserted == [
+        ("delegated-live-1", live_row),
+        ("delegated-live-2", live_row),
+    ]
+    assert [msg["role"] for msg in state.messages] == [
+        "user",
+        "assistant",
+        "assistant",
+        "user",
+    ]
+    assert state.messages[1]["agent_run_ids"] == ["delegated-live-1"]
+    assert state.messages[2]["agent_run_ids"] == ["delegated-live-2"]
+    assert state.messages[3]["queued_control"]["id"] == "queued-live"
+
+    final = {"role": "assistant", "content": "one final parent response"}
+    streaming._insert_assistant_before_future_queued_turns(state.messages, final)
+
+    assert [msg["content"] for msg in state.messages] == [
+        "first",
+        "Started a Subagent agent for this. I'll keep this thread updated.",
+        "Started a Subagent agent for this. I'll keep this thread updated.",
+        "one final parent response",
+        "queued follow-up",
+    ]
+    assert sum(msg is final for msg in state.messages) == 1
 
 
 def test_live_agent_run_card_tracks_rendered_ids_once(tmp_path, monkeypatch):
