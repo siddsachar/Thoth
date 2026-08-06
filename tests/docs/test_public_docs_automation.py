@@ -282,6 +282,35 @@ def test_docs_ci_build_regenerates_llm_exports_before_building() -> None:
     assert scripts["build:ci"].startswith("npm run generate:llms && ")
 
 
+def test_docs_workflow_uses_the_canonical_build_container() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
+    )
+    build_job = workflow["jobs"]["build"]
+    image = build_job["env"]["DOCS_NODE_IMAGE"]
+    platform = build_job["env"]["DOCS_NODE_PLATFORM"]
+    steps = build_job["steps"]
+    build_step = next(
+        step
+        for step in steps
+        if step["name"] == "Build and verify published docs in canonical container"
+    )
+
+    assert image == "node:20.20.2-bookworm"
+    assert platform == "linux/amd64"
+    assert not any(
+        step.get("uses", "").startswith("actions/setup-node") for step in steps
+    )
+    assert "docker run --rm" in build_step["run"]
+    assert '"$DOCS_NODE_PLATFORM"' in build_step["run"]
+    assert '"$DOCS_NODE_IMAGE"' in build_step["run"]
+    assert "npm ci && npm run build:ci" in build_step["run"]
+    assert "sync_github_pages.py --check" in build_step["run"]
+    readme = (ROOT / "docs-site" / "README.md").read_text(encoding="utf-8")
+    assert image in readme
+    assert f"--platform {platform}" in readme
+
+
 def test_authoritative_surface_map_has_one_outcome_per_surface() -> None:
     data = yaml.safe_load(
         (ROOT / "docs-content" / "metadata" / "ui_surfaces.yml").read_text(encoding="utf-8")

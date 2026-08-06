@@ -72,6 +72,8 @@ jobs:
     name: Build docs
     runs-on: ubuntu-latest
     env:
+      DOCS_NODE_IMAGE: "node:20.20.2-bookworm"
+      DOCS_NODE_PLATFORM: "linux/amd64"
       NO_UPDATE_NOTIFIER: "1"
     steps:
       - name: Checkout
@@ -106,20 +108,11 @@ jobs:
       - name: Run docs automation tests
         run: pytest tests/docs -q
 
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: docs-site/package.json
-
-      - name: Install docs dependencies
-        working-directory: docs-site
-        run: npm ci
-
-      - name: Build docs site
-        working-directory: docs-site
-        run: npm run build:ci
-
-      - name: Check published GitHub Pages docs artifact
-        run: python scripts/docs/sync_github_pages.py --check
+      - name: Build and verify published docs in canonical container
+        run: |
+          docker run --rm \
+            --platform "$DOCS_NODE_PLATFORM" \
+            --mount "type=bind,src=${GITHUB_WORKSPACE},dst=/repo" \
+            --env NO_UPDATE_NOTIFIER \
+            "$DOCS_NODE_IMAGE" \
+            bash -lc "ln -sf /usr/bin/python3 /usr/local/bin/python && cd /repo/docs-site && npm ci && npm run build:ci && cd /repo && python scripts/docs/sync_github_pages.py --check"

@@ -32,17 +32,19 @@ npm run build:ci
 
 ## Publishable GitHub Pages Output
 
-The checked-in `docs/` tree must be generated with Linux and Node.js 20, the
-same environment used by `.github/workflows/docs.yml`. Pagefind and bundled
-asset filenames are platform-dependent, so a Windows-generated tree can look
-correct locally but fail `sync_github_pages.py --check` on CI.
+The checked-in `docs/` tree must be generated with the pinned Linux, CPU
+architecture, and Node.js container used by `.github/workflows/docs.yml`.
+Pagefind and bundled asset filenames are platform-dependent, so output
+generated in a different environment can look correct locally but fail
+`sync_github_pages.py --check` on CI.
 
 On Windows, use Docker Desktop from the repository root to produce the
 canonical artifact:
 
 ```powershell
-docker run --rm --mount "type=bind,src=$PWD,dst=/repo" node:20-bookworm `
-  bash -lc "apt-get update && apt-get install -y python3 && ln -s /usr/bin/python3 /usr/local/bin/python && cd /repo/docs-site && npm ci && npm run build:ci && cd /repo && python scripts/docs/sync_github_pages.py"
+docker run --rm --platform linux/amd64 --mount "type=bind,src=$PWD,dst=/repo" `
+  --env NO_UPDATE_NOTIFIER=1 node:20.20.2-bookworm `
+  bash -lc "ln -sf /usr/bin/python3 /usr/local/bin/python && cd /repo/docs-site && npm ci && npm run build:ci && cd /repo && python scripts/docs/sync_github_pages.py"
 ```
 
 Run the same command with `sync_github_pages.py --check` after generation, or
