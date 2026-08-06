@@ -516,7 +516,7 @@ def test_release_workflows_reference_linux_artifact():
     assert "HOME=\"$RUNNER_TEMP/row-bot-linux-home\"" in linux_smoke
     assert "bash \"$PACKAGE_ROOT/install.sh\"" in linux_smoke
     assert '"$HOME/.local/bin/row-bot"\n' in linux_smoke
-    assert "\"$HOME/.local/bin/row-bot\" --server --no-open --port 8091 --no-ollama" in linux_smoke
+    assert "\"$HOME/.local/bin/row-bot\" serve --port 8091 --no-ollama" in linux_smoke
     assert "Row-Bot-*-Linux-*.tar.gz" in manifest
     assert "Row-Bot-*-Windows-*.exe" in manifest
     assert "RowBotSetup_*.exe" not in manifest
