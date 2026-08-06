@@ -67,7 +67,15 @@ def test_public_guide_covers_lifecycle_backup_restore_and_deliberate_removal() -
         "docker compose -f compose.yaml stop row-bot",
         "docker compose -f compose.yaml start row-bot",
         "--force-recreate",
-        "docker compose -f compose.yaml cp row-bot:/data/.",
+        "--cap-add DAC_READ_SEARCH",
+        "--volumes-from \"${row_bot_container}:ro\"",
+        "tar -C /data -czf /backup/data.tar.gz .",
+        "tar -C /run/secrets -czf /backup/secrets.tar.gz",
+        "--cap-add DAC_OVERRIDE",
+        "--volumes-from \"${restore_app_container}\"",
+        "--volumes-from \"${restore_init_container}\"",
+        "tar -C /data -xzf /backup/data.tar.gz",
+        "tar -C /run/secrets -xzf /backup/secrets.tar.gz",
         "--project-name row-bot-restore",
         "docker compose -f compose.yaml pull row-bot",
         "matching pre-upgrade data backup",
@@ -76,6 +84,8 @@ def test_public_guide_covers_lifecycle_backup_restore_and_deliberate_removal() -
         "not recoverable unless you have a tested backup",
     ):
         assert phrase in source
+    assert "docker compose cp` for the complete `/data` tree" in source
+    assert "docker compose -f compose.yaml cp row-bot:/data/." not in source
 
 
 def test_public_guide_covers_secrets_source_build_and_vps_topology() -> None:
@@ -103,9 +113,9 @@ def test_public_guide_covers_secrets_source_build_and_vps_topology() -> None:
         "Reboot the VPS",
     ):
         assert phrase in source
-    assert source.index("## Before First Start: Preserve Account Credentials") < source.index(
-        "## First Start And Owner Invitation"
-    )
+    assert source.index(
+        "## Account Credential Persistence Is Automatic"
+    ) < source.index("## First Start And Owner Invitation")
 
 
 def test_public_guide_covers_embedding_setup_and_multiple_instances() -> None:
@@ -119,7 +129,7 @@ def test_public_guide_covers_embedding_setup_and_multiple_instances() -> None:
         "## Multiple Isolated Instances",
         "--project-name row-bot-main",
         "ROW_BOT_HOST_PORT=8081",
-        "its own data volume and external secret directory",
+        "its own data and encryption-key volumes",
     ):
         assert phrase in source
 

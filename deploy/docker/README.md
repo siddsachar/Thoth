@@ -44,8 +44,11 @@ in the normal image. There is no separate minimal/full choice and no Python
 extra installation is required after startup.
 
 The runtime process has UID/GID 10001, has no Linux capabilities, and writes
-durable state under `/data` in the project-scoped `row_bot_data` volume. The
-application runs in the foreground as `row-bot serve`; Compose owns restarts.
+durable state under `/data` in the project-scoped `row_bot_data` volume. A
+short-lived, network-disabled initializer creates a random encryption key once
+in the separate project-scoped `row_bot_secrets` volume; the application mounts
+that volume read-only. The application runs in the foreground as
+`row-bot serve`; Compose owns restarts.
 Python and browser assets under `/opt` are immutable. Build metadata at
 `/opt/row-bot/build-metadata.txt` records the dependency-lock digest and the
 Playwright Chromium revision. The base image versions are pinned in the
@@ -61,11 +64,12 @@ The image and Compose file contain no invitation, provider credential, or
 reusable session. Do not add those values as Docker build arguments, image
 environment variables, or Compose labels.
 
-Before connecting ChatGPT / Codex or saving any provider credential through
-the UI, configure the external `ROW_BOT_SECRET_STORE_KEY` described in
-[Read-only secret files](#read-only-secret-files). A headless container has no
-desktop keyring. Without that key, Row-Bot warns that newly entered credentials
-are session-only and can be lost when the process or container is replaced.
+No credential-storage setup is required for the normal Compose path. The
+generated key lets a headless container encrypt ChatGPT/Codex tokens and other
+owner-entered credentials under `/data/secure-secrets`, so they survive restart
+and container replacement. Back up the data and key volumes together. Advanced
+operators can replace the generated key volume with the external read-only
+secret directory described below.
 
 To build the same full image from the current checkout instead, add the source
 override explicitly:
@@ -197,15 +201,19 @@ that same instance.
 
 ## Back up, restore, and upgrade
 
-The named `/data` volume is the complete persistent Row-Bot state for this
-deployment. It can include conversations, access records, configuration, and
-other private user data. Treat backups as secrets.
+The named `/data` volume contains Row-Bot state such as conversations, access
+records, configuration, and other private user data. The separate named secret
+volume contains the encryption key required to recover credentials stored
+under `/data/secure-secrets`. Treat both backups as secrets.
 
 For a consistent offline backup:
 
 1. Run `docker compose -f deploy/docker/compose.yaml stop row-bot`.
-2. Archive the project-scoped `row_bot_data` volume with your normal encrypted
-   Docker-volume backup tool.
+2. Archive the project-scoped `row_bot_data` and `row_bot_secrets` volumes with
+   your normal encrypted Docker-volume backup tool, or use the network-disabled
+   tar-helper procedure in the public guide. Do not use `docker compose cp` for
+   the complete data tree on Windows because model caches can contain Linux
+   symbolic links.
 3. Restart with `docker compose -f deploy/docker/compose.yaml start row-bot`.
 4. Test restoration into a separate project name and unpublished port before
    relying on it.
@@ -221,9 +229,9 @@ incompatible with newer state.
 
 Provider and channel credentials must use Row-Bot's supported secret storage.
 Do not bake credentials into an image or commit them in an override file. On a
-headless host, run `row-bot access doctor` after restart and resolve any
-warning about process-only secret persistence before calling the service
-unattended.
+headless host, run `row-bot access doctor` after restart and confirm the
+generated or operator-managed encrypted store remains available before calling
+the service unattended.
 
 ## Complete server features and explicit downloads
 
@@ -290,13 +298,16 @@ it.
 
 ## Read-only secret files
 
-For an unattended server, mount one allowlisted provider or channel secret per
-file into `/run/secrets`. The filename is its canonical setting name, such as
-`OPENAI_API_KEY` or `TELEGRAM_BOT_TOKEN`; the file contains only the value and
-an optional trailing newline. `ROW_BOT_SECRETS_DIR` already points at
-`/run/secrets`.
+The default stack already persists UI-entered secrets through its generated
+key volume. For a centrally managed unattended server, you can instead mount
+one allowlisted provider or channel secret per file into `/run/secrets`. The
+filename is its canonical setting name, such as `OPENAI_API_KEY` or
+`TELEGRAM_BOT_TOKEN`; the file contains only the value and an optional trailing
+newline. `ROW_BOT_SECRETS_DIR` already points at `/run/secrets`.
 
-Keep secret files outside the repository. Copy
+This override replaces the automatic key volume, so the host directory must
+also contain `ROW_BOT_SECRET_STORE_KEY`. Keep secret files outside the
+repository. Copy
 `compose.secrets.yaml.example`, set `ROW_BOT_SECRETS_HOST_DIR` to the absolute
 private host directory, and add the override explicitly:
 
@@ -310,9 +321,7 @@ docker compose \
 
 The resulting mount is `/run/secrets:ro`.
 
-For persistent in-app OAuth and owner-entered secrets when the container has no
-desktop keyring, create a 32-byte master key as exactly 64 hexadecimal
-characters:
+Create the replacement 32-byte master key as exactly 64 hexadecimal characters:
 
 ```sh
 sudo install -d -o 10001 -g 10001 -m 0700 "$ROW_BOT_SECRETS_HOST_DIR"
@@ -324,7 +333,9 @@ sudo chmod 0400 \
   "$ROW_BOT_SECRETS_HOST_DIR/ROW_BOT_SECRET_STORE_KEY"
 ```
 
-Row-Bot keeps that master key read-only in `/run/secrets` and uses it to
+For the normal Compose path, the initializer creates this key automatically in
+`row_bot_secrets`. With the override, Row-Bot keeps your operator-managed key
+read-only in `/run/secrets` and uses it to
 encrypt rotating ChatGPT/Codex and other saved credentials under
 `/data/secure-secrets`. The encrypted records survive a restart or container
 replacement with the same data volume and key. Back up the key separately from
@@ -341,9 +352,10 @@ arguments, command line, or image layers.
 
 - `/healthz` is a minimal liveness endpoint. `/readyz` is the readiness check;
   neither should reveal providers, paths, devices, or configuration.
-- Stop with `docker compose -f deploy/docker/compose.yaml down`. The named data
-  volume is retained. Adding `--volumes` deletes persistent state and is
-  intentionally not part of the normal procedure.
+- Stop with `docker compose -f deploy/docker/compose.yaml down`. Both named
+  volumes are retained. Adding `--volumes` deletes persistent data and the
+  generated encryption key and is intentionally not part of the normal
+  procedure.
 - The container has a read-only root filesystem and a writable, `noexec` `/tmp`
   tmpfs. Python runtime temp files use `/data/tmp` so local phonemizer libraries
   can be loaded without weakening the shared `/tmp` mount.

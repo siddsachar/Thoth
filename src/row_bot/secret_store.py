@@ -52,6 +52,108 @@ class SecretStoreError(RuntimeError):
     """Raised when the platform secret store cannot complete an operation."""
 
 
+def initialize_persistent_server_secret_store(
+    directory: pathlib.Path | str,
+    *,
+    owner_uid: int | None = None,
+    owner_gid: int | None = None,
+    directory_mode: int = 0o700,
+    key_mode: int = 0o400,
+) -> pathlib.Path:
+    """Create or validate the master key used by a headless server deployment.
+
+    The key is generated once with an exclusive create and is never returned or
+    logged.  Existing keys are validated before their ownership or permissions
+    are normalized, so an invalid or replaced key always fails closed.
+    """
+    target_directory = pathlib.Path(directory)
+    if target_directory.is_symlink():
+        raise SecretStoreError(
+            "persistent server secret directory must not be a symlink"
+        )
+    try:
+        target_directory.mkdir(mode=directory_mode, parents=True, exist_ok=True)
+        if not target_directory.is_dir():
+            raise SecretStoreError("persistent server secret path must be a directory")
+    except SecretStoreError:
+        raise
+    except OSError as exc:
+        raise SecretStoreError(
+            "persistent server secret directory is unavailable"
+        ) from exc
+
+    key_path = target_directory / PERSISTENT_SERVER_SECRET_KEY_NAME
+    if key_path.is_symlink():
+        raise SecretStoreError("persistent server secret key must not be a symlink")
+    try:
+        descriptor = os.open(
+            key_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            key_mode,
+        )
+    except FileExistsError:
+        descriptor = None
+    except OSError as exc:
+        raise SecretStoreError(
+            "persistent server secret key could not be created"
+        ) from exc
+
+    if descriptor is not None:
+        try:
+            with os.fdopen(descriptor, "w", encoding="ascii", newline="") as handle:
+                descriptor = None
+                handle.write(secrets.token_hex(32))
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            try:
+                key_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise SecretStoreError(
+                "persistent server secret key could not be written"
+            ) from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+
+    try:
+        if key_path.is_symlink():
+            raise SecretStoreError("persistent server secret key must not be a symlink")
+        info = key_path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise SecretStoreError("persistent server secret key must be regular")
+        value = key_path.read_text(encoding="ascii")
+    except SecretStoreError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise SecretStoreError(
+            "persistent server secret key could not be validated"
+        ) from exc
+    if value.endswith("\r\n"):
+        value = value[:-2]
+    elif value.endswith("\n"):
+        value = value[:-1]
+    if not _PERSISTENT_SERVER_SECRET_KEY.fullmatch(value):
+        raise SecretStoreError(
+            f"{PERSISTENT_SERVER_SECRET_KEY_NAME} must contain exactly 64 hexadecimal characters"
+        )
+
+    uid = -1 if owner_uid is None else int(owner_uid)
+    gid = -1 if owner_gid is None else int(owner_gid)
+    try:
+        os.chmod(target_directory, directory_mode)
+        os.chmod(key_path, key_mode)
+        if uid != -1 or gid != -1:
+            os.chown(target_directory, uid, gid)
+            os.chown(key_path, uid, gid)
+    except OSError as exc:
+        raise SecretStoreError(
+            "persistent server secret permissions could not be secured"
+        ) from exc
+    return key_path
+
+
 def server_secrets_dir() -> pathlib.Path | None:
     """Return the explicitly configured server secret directory, if active."""
     configured = str(os.environ.get(SERVER_SECRETS_DIR_ENV) or "").strip()
