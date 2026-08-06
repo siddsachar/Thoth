@@ -290,7 +290,7 @@ screenshots:
     expected_text: [Invite a device, Desktop layout, Compact layout, full owner access, Connection route, Create invitation]
     output: remote-access-invitation.png
     alt: Device invitation dialog showing desktop and compact layout choices, full owner access disclosure, trusted and temporary lifetimes, and a live connection-route selector.
-    docs_pages: [/docs/operations/remote-access, /docs/mobile-native/]
+    docs_pages: [/docs/operations/remote-access, /docs/operations/docker, /docs/mobile-native/]
   settings-tracker:
     <<: *desktop
     title: Tracker settings
@@ -310,7 +310,7 @@ screenshots:
     expected_text: [Documents]
     output: settings-documents.png
     alt: Documents settings with fictional local document extraction, indexing, and search controls.
-    docs_pages: [/docs/settings/documents]
+    docs_pages: [/docs/getting-started/first-launch, /docs/operations/docker, /docs/settings/documents]
   settings-search:
     <<: *desktop
     title: Search settings

@@ -7,6 +7,8 @@ import yaml
 
 PUBLIC_GUIDE = Path("docs-site/docs/operations/docker.mdx")
 REMOTE_GUIDE = Path("docs-site/docs/operations/remote-access.mdx")
+FIRST_LAUNCH_GUIDE = Path("docs-site/docs/getting-started/first-launch.mdx")
+DOCUMENTS_GUIDE = Path("docs-site/docs/settings/documents.mdx")
 OPERATOR_GUIDE = Path("deploy/docker/README.md")
 ROOT_README = Path("README.md")
 SIDEBAR = Path("docs-site/sidebars.ts")
@@ -40,8 +42,10 @@ def test_public_guide_has_pull_first_start_health_and_invitation_commands() -> N
     source = _read(PUBLIC_GUIDE)
 
     for phrase in (
+        "ROW_BOT_VERSION=X.Y.Z",
         "raw.githubusercontent.com/siddsachar/row-bot/v${ROW_BOT_VERSION}",
         "ghcr.io/siddsachar/row-bot:${ROW_BOT_VERSION}",
+        'docker buildx imagetools inspect "${ROW_BOT_IMAGE}"',
         "docker compose -f compose.yaml up -d",
         "http://127.0.0.1:8080/healthz",
         "http://127.0.0.1:8080/readyz",
@@ -99,6 +103,69 @@ def test_public_guide_covers_secrets_source_build_and_vps_topology() -> None:
         "Reboot the VPS",
     ):
         assert phrase in source
+    assert source.index("## Before First Start: Preserve Account Credentials") < source.index(
+        "## First Start And Owner Invitation"
+    )
+
+
+def test_public_guide_covers_embedding_setup_and_multiple_instances() -> None:
+    source = _read(PUBLIC_GUIDE)
+
+    for phrase in (
+        "Mixedbread Embed Large v1",
+        "checked-by-default 675 MB download",
+        "Settings → Documents",
+        'Screenshot id="settings-documents"',
+        "## Multiple Isolated Instances",
+        "--project-name row-bot-main",
+        "ROW_BOT_HOST_PORT=8081",
+        "its own data volume and external secret directory",
+    ):
+        assert phrase in source
+
+
+def test_embedding_download_is_documented_for_every_install_type() -> None:
+    first_launch = _read(FIRST_LAUNCH_GUIDE)
+    documents = _read(DOCUMENTS_GUIDE)
+
+    for phrase in (
+        "desktop, source, and official Docker install",
+        "Mixedbread Embed Large v1",
+        "checked-by-default 675 MB download",
+        "Download model",
+        "Retry local load",
+        "Repair local model",
+        "bounded lexical and graph fallback",
+        'Screenshot id="settings-documents"',
+    ):
+        assert phrase in first_launch
+    for phrase in (
+        "separate from the chat model",
+        "Download model",
+        "Retry local load",
+        "Repair local model",
+        "cloud embedding provider is opt-in",
+    ):
+        assert phrase in documents
+
+
+def test_operator_guide_separates_container_verification_from_publication() -> None:
+    source = _read(OPERATOR_GUIDE)
+
+    for phrase in (
+        "Pull requests that touch container inputs",
+        "workflow_dispatch",
+        "does not publish",
+        "Publishing a GitHub Release",
+        "Stable releases also update",
+        "confirm the GHCR package is public",
+        "docker logout ghcr.io",
+        "--platform linux/amd64",
+        "--platform linux/arm64",
+        "manifest digest",
+    ):
+        assert phrase in source
+    assert "ghcr.io/siddsachar/row-bot:4.5.0" not in source
 
 
 def test_public_guide_separates_host_tailscale_and_session_renewal() -> None:

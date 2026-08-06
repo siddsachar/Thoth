@@ -3,6 +3,8 @@ title: "Docker And VPS Operations"
 description: "Run one persistent Row-Bot server with Docker Compose, private host access, or an operator-managed HTTPS edge."
 ---
 
+import Screenshot from '@site/src/components/Screenshot';
+
 # Docker And VPS Operations
 
 The official container runs one **single-owner, multi-device** Row-Bot instance. It is not a multi-user service or a hostile tenant-isolation boundary. Every browser, including one on the Docker host, must claim a one-time invitation before it receives a revocable owner session.
@@ -22,16 +24,19 @@ Release images are built from tagged source in GitHub Actions with the locked de
 You do not need to clone the repository. Choose a released version, create a private deployment directory, and download the Compose file from the same tag:
 
 ```bash
-export ROW_BOT_VERSION=4.5.0
+export ROW_BOT_VERSION=X.Y.Z
 mkdir -p row-bot-docker
 cd row-bot-docker
 curl -fsSLo compose.yaml \
   "https://raw.githubusercontent.com/siddsachar/row-bot/v${ROW_BOT_VERSION}/deploy/docker/compose.yaml"
 export ROW_BOT_IMAGE="ghcr.io/siddsachar/row-bot:${ROW_BOT_VERSION}"
+docker buildx imagetools inspect "${ROW_BOT_IMAGE}"
 docker compose -f compose.yaml config
 ```
 
-Keep `ROW_BOT_VERSION`, the downloaded file, and `ROW_BOT_IMAGE` aligned. The Compose default is `ghcr.io/siddsachar/row-bot:latest`, but an explicit version is easier to audit and roll back.
+Replace `X.Y.Z` with a release that lists the Row-Bot container in GitHub Packages. A source tag can exist without a published container, so confirm the image before starting. Pull requests and manually dispatched container checks verify builds but do not publish them; publishing happens only after a GitHub Release is published. If the registry reports `manifest unknown` for the version you chose, select a release with a container or use [Build From Source](#build-from-source).
+
+Keep `ROW_BOT_VERSION`, the downloaded file, and `ROW_BOT_IMAGE` aligned. The Compose default is `ghcr.io/siddsachar/row-bot:latest`, but an explicit version is easier to audit and roll back. Stable releases also update `latest`; prereleases do not.
 
 For an immutable image pin, replace the tag with the digest published for that release:
 
@@ -39,6 +44,12 @@ For an immutable image pin, replace the tag with the digest published for that r
 export ROW_BOT_IMAGE='ghcr.io/siddsachar/row-bot@sha256:RELEASE_MANIFEST_DIGEST'
 docker compose -f compose.yaml config
 ```
+
+## Before First Start: Preserve Account Credentials
+
+If you plan to connect ChatGPT / Codex or save provider keys through Row-Bot's UI, configure `ROW_BOT_SECRET_STORE_KEY` **before** the first account connection. Headless containers do not have a desktop keyring. With no external master key, Row-Bot warns that newly entered credentials are session-only and they can be lost on restart or container replacement.
+
+Follow [Read-Only Secret Files](#read-only-secret-files) to create the key and start with `compose.secrets.yaml.example`. Keep the same external key for backup, restore, upgrade, and rollback. It is not stored in `/data` and cannot be recovered from the encrypted records.
 
 ## First Start And Owner Invitation
 
@@ -60,6 +71,8 @@ docker compose -f compose.yaml exec row-bot \
 
 Open the printed URL, review the confirmation, and select **Connect**. Use `--layout compact` for phone presentation. Both layouts grant the same owner authority.
 
+<Screenshot id="remote-access-invitation" alt="Row-Bot device invitation dialog showing layout, lifetime, and connection route choices." caption="After connecting the first browser from the terminal invitation, use Settings → System to create later device invitations. Each invitation is a one-time owner credential." />
+
 Useful secret-free checks are:
 
 ```bash
@@ -69,6 +82,16 @@ docker compose -f compose.yaml logs --tail 200 row-bot
 ```
 
 Do not paste invitation URLs, cookies, provider credentials, or unredacted logs into issues or chat.
+
+## Finish Setup And Install Private Knowledge Search
+
+The normal first-launch wizard is the same in desktop, source, and Docker installations. It offers **Mixedbread Embed Large v1**, a separate local model used for semantic memory and document search, as a checked-by-default 675 MB download. The download begins only when you finish setup, requires internet access to Hugging Face, and does not upload documents or memories.
+
+In Docker, the downloaded files live in the `/data` cache, so the named volume preserves them across restarts and container replacement. Keep the option selected for the recommended semantic search experience. If you skip it, Row-Bot still works and uses bounded lexical and graph fallback until you install the model from [Settings → Documents](/docs/settings/documents).
+
+<Screenshot id="settings-documents" alt="Row-Bot Documents settings showing the local Mixedbread embedding model and its download, retry, repair, and vector rebuild actions." caption="Settings → Documents shows the active embedding model, cache status, Download model, Retry local load, Repair local model, and index rebuild actions." />
+
+After changing an embedding provider or model, rebuild the document and memory vectors from this screen. A cloud embedding provider is a separate opt-in choice and sends the indexed text to that provider; the recommended default stays local after the initial download.
 
 ## Stop, Restart, Reboot, And Replace
 
@@ -86,6 +109,20 @@ Replacing only the container preserves the same instance identity, settings, ses
 ```bash
 docker compose -f compose.yaml up -d --force-recreate row-bot
 ```
+
+## Multiple Isolated Instances
+
+Use a different Compose project name and host port for each instance. Compose project names isolate the containers, networks, and named `/data` volumes:
+
+```bash
+docker compose --project-name row-bot-main \
+  -f compose.yaml up -d
+
+ROW_BOT_HOST_PORT=8081 docker compose --project-name row-bot-lab \
+  -f compose.yaml up -d
+```
+
+Create invitations for `http://127.0.0.1:8080` and `http://127.0.0.1:8081`, respectively. Give every instance its own data volume and external secret directory. Do not copy one instance's access database into another unless you are deliberately restoring that same instance. Each fresh instance has a different identity, so its cookies and owner sessions remain isolated even when the hostname is the same.
 
 ## Consistent Offline Backup
 

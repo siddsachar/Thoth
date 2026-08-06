@@ -19,10 +19,16 @@ never grant owner access.
 From the repository root:
 
 ```sh
-export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.5.0
+export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:X.Y.Z
+docker buildx imagetools inspect "${ROW_BOT_IMAGE}"
 docker compose -f deploy/docker/compose.yaml up --detach
 docker compose -f deploy/docker/compose.yaml ps
 ```
+
+Replace `X.Y.Z` with a GitHub Release that has a published Row-Bot container.
+A source tag can exist without a container package; `manifest unknown` means
+you must choose a release that includes the image or use the source-build
+override below.
 
 The default image is `ghcr.io/siddsachar/row-bot:latest`; set `ROW_BOT_IMAGE`
 to a release tag or immutable digest for controlled upgrades and rollback. A
@@ -54,6 +60,12 @@ Row-Bot application.
 The image and Compose file contain no invitation, provider credential, or
 reusable session. Do not add those values as Docker build arguments, image
 environment variables, or Compose labels.
+
+Before connecting ChatGPT / Codex or saving any provider credential through
+the UI, configure the external `ROW_BOT_SECRET_STORE_KEY` described in
+[Read-only secret files](#read-only-secret-files). A headless container has no
+desktop keyring. Without that key, Row-Bot warns that newly entered credentials
+are session-only and can be lost when the process or container is replaced.
 
 To build the same full image from the current checkout instead, add the source
 override explicitly:
@@ -237,11 +249,16 @@ Interactive downloads chosen later by the owner are kept in the named volume:
 ```
 
 Whisper, Kokoro, embedding, and other model files are not baked into the image.
-First-run setup clearly discloses and selects the recommended private knowledge
-model download by default (about 700 MB), with an opt-out; other model downloads
-remain explicit owner actions. Reusing the same `/data` volume makes those
-caches available after an offline restart. Local embeddings use a CPU-only
-baseline; GPU/CUDA acceleration and host GPU access are not assumed.
+The same first-run flow is used by Docker, desktop, and source installs. It
+clearly discloses and selects **Mixedbread Embed Large v1**, the recommended
+private knowledge model, as a checked-by-default 675 MB download. It is separate
+from the chat model and provides semantic memory and document search. The
+download starts only when the owner finishes setup and can be skipped; bounded
+lexical and graph recall continue until it is installed later from
+**Settings -> Documents**. Other model downloads remain explicit owner actions.
+Reusing the same `/data` volume keeps those caches available after an offline
+restart. Local embeddings use a CPU-only baseline; GPU/CUDA acceleration and
+host GPU access are not assumed.
 
 The included `uv`/`uvx` and `node`/`npm`/`npx` commands support explicitly
 approved stdio MCP runtimes. They are general runtimes, not preinstalled MCP
@@ -365,3 +382,31 @@ Developer execution has three separate cases:
 3. An approved risky Custom Tool deliberately executes in Local mode inside
    the application container against its selected visible path. It is not a
    nested Docker sandbox or a fallback from a Docker workspace.
+
+## Container verification and publication
+
+`.github/workflows/container.yml` deliberately separates verification from
+publication:
+
+- Pull requests that touch container inputs build and smoke native amd64 and
+  arm64 images with `push: false`.
+- `workflow_dispatch` performs the same verification and does not publish.
+- Publishing a GitHub Release builds and smokes both native architectures,
+  pushes temporary architecture tags only after each smoke passes, and then
+  creates the multi-platform release manifest. Stable releases also update
+  `latest`; prereleases do not.
+
+After a release, a maintainer must confirm the GHCR package is public and linked
+to this repository, then test an anonymous pull. Verify both platforms and the
+manifest digest:
+
+```sh
+docker logout ghcr.io
+docker buildx imagetools inspect ghcr.io/siddsachar/row-bot:X.Y.Z
+docker pull --platform linux/amd64 ghcr.io/siddsachar/row-bot:X.Y.Z
+docker pull --platform linux/arm64 ghcr.io/siddsachar/row-bot:X.Y.Z
+```
+
+Run the normal authenticated-container smoke on clean native amd64 and arm64
+hosts, record the manifest digest in the release notes, and verify an immutable
+`ghcr.io/siddsachar/row-bot@sha256:...` pull before recommending the image.

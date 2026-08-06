@@ -26,7 +26,13 @@ For beginners, start with the provider path you already trust. If you are unsure
 
 ## Install Private Knowledge Search
 
-The wizard also offers the recommended local knowledge model as a checked-by-default download of about 700 MB. The model is downloaded from Hugging Face into Row-Bot's private cache; documents and memories are not uploaded, and normal recall stays offline after setup. You can uncheck the option and install it later from Settings -> Documents, but semantic document and memory search will use lexical and graph fallback until it is installed.
+Every normal desktop, source, and official Docker install uses the same setup step. The wizard offers **Mixedbread Embed Large v1**, a separate local model for semantic memory and document search, as a checked-by-default 675 MB download. It is not the model that writes chat responses.
+
+The download starts when you finish setup and requires internet access to Hugging Face. Files go into Row-Bot's private cache; documents and memories are not uploaded, and normal recall stays offline after the initial download. Docker keeps this cache in its named `/data` volume.
+
+You can uncheck the option and finish without it. Row-Bot continues with bounded lexical and graph fallback, so chat and memory do not stop working. Later, open [Settings → Documents](/docs/settings/documents) and use **Download model**. **Retry local load** retries an already cached model; **Repair local model** deliberately replaces a damaged download. Rebuild the document and memory vectors after changing the embedding provider or model.
+
+<Screenshot id="settings-documents" alt="Row-Bot Documents settings showing the Mixedbread local embedding model and download, retry, repair, and vector rebuild controls." caption="Settings → Documents shows whether the local embedding model is ready and provides explicit download, retry, repair, and index rebuild actions." />
 
 ## Setup Center
 
@@ -42,4 +48,5 @@ Local model runs can stay on your machine. Hosted, subscription, realtime voice,
 
 - If the wizard cannot find a local model, start Ollama and install a model first.
 - If a hosted provider connects but no models appear, refresh Providers and Models.
+- If the private knowledge model download fails, check internet access to Hugging Face and try finishing setup again, or uncheck it and install it later from Settings → Documents.
 - If you skip optional setup, open Setup Center or Settings later.

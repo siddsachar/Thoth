@@ -387,8 +387,8 @@ surfaces instead of chat and agent pickers.
 Embedding providers are configured separately from chat models. Local
 embeddings are available for private document and vector indexing and load
 strictly from the existing local Hugging Face cache during normal use. First-run
-setup offers the recommended model as a checked-by-default, disclosed download
-of about 700 MB; it can be skipped. Download or repair a local embedding model
+setup offers **Mixedbread Embed Large v1** as a checked-by-default, disclosed
+675 MB download; it can be skipped. Download or repair a local embedding model
 later from Settings; if it is missing, failed, or still loading, bounded memory
 recall continues with lexical and graph fallback instead of silently
 downloading or blocking the turn. Optional cloud embeddings show a privacy

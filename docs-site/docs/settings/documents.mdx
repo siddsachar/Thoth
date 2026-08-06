@@ -7,7 +7,7 @@ import Screenshot from '@site/src/components/Screenshot';
 
 # Settings: Documents
 
-Documents let Row-Bot search files you add to its local document library. This is different from attaching a file to one chat: indexed documents become reusable context for future questions.
+Documents let Row-Bot search files you add to its local document library. This is different from attaching a file to one chat: indexed documents become reusable context for future questions. Mixedbread Embed Large v1 is the recommended local embedding model; it is separate from the chat model and normal use loads it only from Row-Bot's private cache.
 
 <Screenshot id="settings-documents" alt="Settings: Documents in Row-Bot." caption="The Documents tab controls uploads, embedding models, indexed document state, and vector rebuild actions." />
 
@@ -19,6 +19,7 @@ Open **Settings**, then choose **Documents** from the left tab list.
 
 - Upload documents adds files to Row-Bot-managed storage for indexing.
 - Embedding provider and model controls choose how document chunks become searchable vectors.
+- Download model installs the selected local model, Retry local load retries a cached model, and Repair local model deliberately replaces a broken cache entry.
 - Dimension override is for advanced embedding models that need a specific vector size.
 - Batch size controls how much indexing work happens at once.
 - Auto-unload local embedding resources releases local model memory after heavy document work.
@@ -28,14 +29,14 @@ Open **Settings**, then choose **Documents** from the left tab list.
 
 ## Common Workflow
 
-1. Choose an embedding provider before adding a large document library.
+1. Keep the checked first-launch download, or choose Local runtime model and use Download model before adding a large document library.
 2. Upload a small test document and wait until it is indexed.
 3. Ask Chat a question that should require the document.
 4. Rebuild vectors only when you change embedding model settings or suspect stale search results.
 
 ## What Is Saved
 
-Uploaded files, extracted text, and vectors are stored in the local Row-Bot data directory. The active chat only sees relevant results when document search is enabled.
+Uploaded files, extracted text, vectors, and local embedding model caches are stored under the active Row-Bot data directory. In Docker, the named /data volume preserves the cache. The active chat only sees relevant results when document search is enabled. A cloud embedding provider is opt-in and sends indexed text to that provider; the recommended local model does not.
 
 ## Privacy And Safety
 
@@ -48,5 +49,6 @@ The [generated Settings Controls reference](/docs/reference/generated/settings-c
 ## Troubleshooting
 
 - If search misses obvious content, rebuild vectors and check the embedding provider.
+- If the local model is missing, use Download model. Use Retry local load for a cached model or Repair local model for a damaged download.
 - If local indexing is slow, lower batch size or enable auto-unload.
 - If a document contains private material, remove it from the document library before sharing screenshots or logs.

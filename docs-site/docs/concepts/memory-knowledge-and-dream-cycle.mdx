@@ -19,6 +19,8 @@ Row-Bot has several kinds of continuity. They work together, but none is a magic
 
 When extraction is enabled, Row-Bot can identify useful information from eligible conversations or documents and save structured records. Search combines the available lexical, vector, and graph signals to choose candidates relevant to a later request. Recall refreshes useful memories; it does not make every stored item equally likely to appear.
 
+Vector search uses an embedding model, which is separate from the chat model. First launch offers Mixedbread Embed Large v1 as a checked-by-default 675 MB local download. If it is skipped, unavailable, or still loading, Row-Bot continues with bounded lexical and graph fallback instead of silently downloading during a chat. Install, retry, or repair the local model later in [Documents Settings](/docs/settings/documents), then rebuild document and memory vectors after changing models. Cloud embeddings are an explicit alternative that sends indexed text to the selected provider.
+
 The source record matters. A graph relation or memory should remain traceable to the conversation, document, or process that produced it. Correct the underlying Knowledge record before rebuilding derived indexes or Wiki Vault pages.
 
 ## What Dream Cycle Does

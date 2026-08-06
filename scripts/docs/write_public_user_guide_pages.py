@@ -174,10 +174,11 @@ SETTINGS = {
         "desc": "Manage document ingestion, extraction, and vector indexing.",
         "shot": "settings-documents",
         "caption": "The Documents tab controls uploads, embedding models, indexed document state, and vector rebuild actions.",
-        "overview": "Documents let Row-Bot search files you add to its local document library. This is different from attaching a file to one chat: indexed documents become reusable context for future questions.",
+        "overview": "Documents let Row-Bot search files you add to its local document library. This is different from attaching a file to one chat: indexed documents become reusable context for future questions. Mixedbread Embed Large v1 is the recommended local embedding model; it is separate from the chat model and normal use loads it only from Row-Bot's private cache.",
         "controls": [
             "Upload documents adds files to Row-Bot-managed storage for indexing.",
             "Embedding provider and model controls choose how document chunks become searchable vectors.",
+            "Download model installs the selected local model, Retry local load retries a cached model, and Repair local model deliberately replaces a broken cache entry.",
             "Dimension override is for advanced embedding models that need a specific vector size.",
             "Batch size controls how much indexing work happens at once.",
             "Auto-unload local embedding resources releases local model memory after heavy document work.",
@@ -186,14 +187,15 @@ SETTINGS = {
             "Rebuild memory vectors refreshes memory search with the current embedding settings.",
         ],
         "workflow": [
-            "Choose an embedding provider before adding a large document library.",
+            "Keep the checked first-launch download, or choose Local runtime model and use Download model before adding a large document library.",
             "Upload a small test document and wait until it is indexed.",
             "Ask Chat a question that should require the document.",
             "Rebuild vectors only when you change embedding model settings or suspect stale search results.",
         ],
-        "saved": "Uploaded files, extracted text, and vectors are stored in the local Row-Bot data directory. The active chat only sees relevant results when document search is enabled.",
+        "saved": "Uploaded files, extracted text, vectors, and local embedding model caches are stored under the active Row-Bot data directory. In Docker, the named /data volume preserves the cache. The active chat only sees relevant results when document search is enabled. A cloud embedding provider is opt-in and sends indexed text to that provider; the recommended local model does not.",
         "troubleshoot": [
             "If search misses obvious content, rebuild vectors and check the embedding provider.",
+            "If the local model is missing, use Download model. Use Retry local load for a cached model or Repair local model for a damaged download.",
             "If local indexing is slow, lower batch size or enable auto-unload.",
             "If a document contains private material, remove it from the document library before sharing screenshots or logs.",
         ],
@@ -800,7 +802,13 @@ For beginners, start with the provider path you already trust. If you are unsure
 
 ## Install Private Knowledge Search
 
-The wizard also offers the recommended local knowledge model as a checked-by-default download of about 700 MB. The model is downloaded from Hugging Face into Row-Bot's private cache; documents and memories are not uploaded, and normal recall stays offline after setup. You can uncheck the option and install it later from Settings -> Documents, but semantic document and memory search will use lexical and graph fallback until it is installed.
+Every normal desktop, source, and official Docker install uses the same setup step. The wizard offers **Mixedbread Embed Large v1**, a separate local model for semantic memory and document search, as a checked-by-default 675 MB download. It is not the model that writes chat responses.
+
+The download starts when you finish setup and requires internet access to Hugging Face. Files go into Row-Bot's private cache; documents and memories are not uploaded, and normal recall stays offline after the initial download. Docker keeps this cache in its named `/data` volume.
+
+You can uncheck the option and finish without it. Row-Bot continues with bounded lexical and graph fallback, so chat and memory do not stop working. Later, open [Settings → Documents](/docs/settings/documents) and use **Download model**. **Retry local load** retries an already cached model; **Repair local model** deliberately replaces a damaged download. Rebuild the document and memory vectors after changing the embedding provider or model.
+
+<Screenshot id="settings-documents" alt="Row-Bot Documents settings showing the Mixedbread local embedding model and download, retry, repair, and vector rebuild controls." caption="Settings → Documents shows whether the local embedding model is ready and provides explicit download, retry, repair, and index rebuild actions." />
 
 ## Setup Center
 
@@ -816,6 +824,7 @@ Local model runs can stay on your machine. Hosted, subscription, realtime voice,
 
 - If the wizard cannot find a local model, start Ollama and install a model first.
 - If a hosted provider connects but no models appear, refresh Providers and Models.
+- If the private knowledge model download fails, check internet access to Hugging Face and try finishing setup again, or uncheck it and install it later from Settings → Documents.
 - If you skip optional setup, open Setup Center or Settings later.
 """,
         screenshot=True,
@@ -2138,6 +2147,8 @@ Row-Bot has several kinds of continuity. They work together, but none is a magic
 ## From Conversation To Recall
 
 When extraction is enabled, Row-Bot can identify useful information from eligible conversations or documents and save structured records. Search combines the available lexical, vector, and graph signals to choose candidates relevant to a later request. Recall refreshes useful memories; it does not make every stored item equally likely to appear.
+
+Vector search uses an embedding model, which is separate from the chat model. First launch offers Mixedbread Embed Large v1 as a checked-by-default 675 MB local download. If it is skipped, unavailable, or still loading, Row-Bot continues with bounded lexical and graph fallback instead of silently downloading during a chat. Install, retry, or repair the local model later in [Documents Settings](/docs/settings/documents), then rebuild document and memory vectors after changing models. Cloud embeddings are an explicit alternative that sends indexed text to the selected provider.
 
 The source record matters. A graph relation or memory should remain traceable to the conversation, document, or process that produced it. Correct the underlying Knowledge record before rebuilding derived indexes or Wiki Vault pages.
 
