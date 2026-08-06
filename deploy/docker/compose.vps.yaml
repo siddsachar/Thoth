@@ -1,0 +1,11 @@
+# Linux-only override for a host-installed HTTPS reverse proxy.
+# Requires Docker Compose 2.24.4 or newer for the !reset tag.
+services:
+  row-bot:
+    network_mode: host
+    ports: !reset []
+    environment:
+      ROW_BOT_HOST: 127.0.0.1
+      ROW_BOT_PUBLIC_URL: ${ROW_BOT_PUBLIC_URL:?Set ROW_BOT_PUBLIC_URL to the exact public HTTPS origin}
+      ROW_BOT_ALLOWED_HOSTS: ${ROW_BOT_ALLOWED_HOSTS:?Set ROW_BOT_ALLOWED_HOSTS to the exact public host}
+      ROW_BOT_TRUSTED_PROXY_CIDRS: 127.0.0.1/32

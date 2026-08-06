@@ -12,6 +12,11 @@ pytestmark = [pytest.mark.contract, pytest.mark.installer]
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = REPO_ROOT / "deploy" / "docker" / "Dockerfile"
 COMPOSE_FILE = REPO_ROOT / "deploy" / "docker" / "compose.yaml"
+COMPOSE_BUILD_FILE = REPO_ROOT / "deploy" / "docker" / "compose.build.yaml"
+COMPOSE_VPS_FILE = REPO_ROOT / "deploy" / "docker" / "compose.vps.yaml"
+COMPOSE_SECRETS_FILE = (
+    REPO_ROOT / "deploy" / "docker" / "compose.secrets.yaml.example"
+)
 DOCKER_README = REPO_ROOT / "deploy" / "docker" / "README.md"
 CADDYFILE = REPO_ROOT / "deploy" / "reverse-proxy" / "Caddyfile.example"
 SYSTEMD_UNIT = REPO_ROOT / "deploy" / "systemd" / "row-bot.service.example"
@@ -22,10 +27,32 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+class _ComposeLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_reset(loader: _ComposeLoader, node: yaml.Node) -> object:
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node)
+    return loader.construct_scalar(node)
+
+
+_ComposeLoader.add_constructor("!reset", _construct_reset)
+
+
+def _load_compose(path: Path) -> dict[str, object]:
+    return yaml.load(_read(path), Loader=_ComposeLoader)
+
+
 def test_deployment_artifacts_exist() -> None:
     for path in (
         DOCKERFILE,
         COMPOSE_FILE,
+        COMPOSE_BUILD_FILE,
+        COMPOSE_VPS_FILE,
+        COMPOSE_SECRETS_FILE,
         DOCKER_README,
         CADDYFILE,
         SYSTEMD_UNIT,
@@ -53,11 +80,27 @@ def test_dockerfile_uses_locked_python_313_build_and_non_root_runtime() -> None:
     assert "COPY static /opt/row-bot/app/static" in source
     assert 'ROW_BOT_DATA_DIR=/data' in source
     assert 'ROW_BOT_DEPLOYMENT_MODE=server' in source
+    assert 'ROW_BOT_CONTAINERIZED=1' in source
     assert 'VOLUME ["/data"]' in source
     assert "EXPOSE 8080" in source
     assert "/healthz" in source
     assert 'ENTRYPOINT ["row-bot"]' in source
     assert 'CMD ["serve"]' in source
+
+
+def test_dockerfile_has_release_identity_labels_and_build_arguments() -> None:
+    source = _read(DOCKERFILE)
+
+    assert "ARG ROW_BOT_VERSION=0.0.0" in source
+    assert "ARG ROW_BOT_SOURCE_REVISION=unknown" in source
+    assert (
+        'org.opencontainers.image.source="https://github.com/siddsachar/row-bot"'
+        in source
+    )
+    assert 'org.opencontainers.image.version="${ROW_BOT_VERSION}"' in source
+    assert 'org.opencontainers.image.revision="${ROW_BOT_SOURCE_REVISION}"' in source
+    assert 'org.opencontainers.image.title="Row-Bot authenticated server"' in source
+    assert "authenticated long-running server mode" in source
 
 
 def test_dockerfile_bundles_complete_server_runtimes_and_verifies_them() -> None:
@@ -110,13 +153,11 @@ def test_dockerfile_routes_browser_models_and_managed_runtimes_correctly() -> No
 
 
 def test_compose_defaults_to_loopback_and_isolated_persistent_state() -> None:
-    compose = yaml.safe_load(_read(COMPOSE_FILE))
+    compose = _load_compose(COMPOSE_FILE)
     service = compose["services"]["row-bot"]
 
-    assert service["build"] == {
-        "context": "../..",
-        "dockerfile": "deploy/docker/Dockerfile",
-    }
+    assert "build" not in service
+    assert service["image"] == "${ROW_BOT_IMAGE:-ghcr.io/siddsachar/row-bot:latest}"
     assert service["user"] == "10001:10001"
     assert service["restart"] == "unless-stopped"
     assert service["read_only"] is True
@@ -144,12 +185,16 @@ def test_compose_defaults_to_loopback_and_isolated_persistent_state() -> None:
     }
     assert service["shm_size"] == "256m"
     assert service["tmpfs"] == ["/tmp:rw,noexec,nosuid,nodev,size=256m"]
+    assert service["logging"] == {
+        "driver": "json-file",
+        "options": {"max-size": "10m", "max-file": "5"},
+    }
     assert "/healthz" in " ".join(service["healthcheck"]["test"])
     assert "container_name" not in service
 
 
 def test_compose_does_not_weaken_container_or_mount_host_resources() -> None:
-    compose = yaml.safe_load(_read(COMPOSE_FILE))
+    compose = _load_compose(COMPOSE_FILE)
     service = compose["services"]["row-bot"]
     serialized = _read(COMPOSE_FILE).lower()
 
@@ -165,7 +210,7 @@ def test_compose_does_not_weaken_container_or_mount_host_resources() -> None:
 
 
 def test_compose_does_not_embed_credentials_or_invitation_material() -> None:
-    compose = yaml.safe_load(_read(COMPOSE_FILE))
+    compose = _load_compose(COMPOSE_FILE)
     service = compose["services"]["row-bot"]
     environment = service.get("environment", {})
 
@@ -178,6 +223,79 @@ def test_compose_does_not_embed_credentials_or_invitation_material() -> None:
     }
     assert not sensitive_keys
     assert environment["ROW_BOT_SECRETS_DIR"] == "/run/secrets"
+    assert "ROW_BOT_SECRET_STORE_KEY" not in environment
+
+
+def test_source_build_override_changes_only_build_source_and_image_name() -> None:
+    compose = _load_compose(COMPOSE_BUILD_FILE)
+    assert set(compose) == {"services"}
+    assert set(compose["services"]) == {"row-bot"}
+    assert compose["services"]["row-bot"] == {
+        "build": {
+            "context": "../..",
+            "dockerfile": "deploy/docker/Dockerfile",
+        },
+        "image": "row-bot:source-build",
+    }
+
+
+def test_vps_override_uses_exact_host_loopback_proxy_contract() -> None:
+    source = _read(COMPOSE_VPS_FILE)
+    compose = _load_compose(COMPOSE_VPS_FILE)
+    service = compose["services"]["row-bot"]
+
+    assert "Linux-only" in source
+    assert "Compose 2.24.4" in source
+    assert service["network_mode"] == "host"
+    assert service["ports"] == []
+    assert "ports: !reset []" in source
+    assert service["environment"] == {
+        "ROW_BOT_HOST": "127.0.0.1",
+        "ROW_BOT_PUBLIC_URL": (
+            "${ROW_BOT_PUBLIC_URL:?Set ROW_BOT_PUBLIC_URL to the exact public "
+            "HTTPS origin}"
+        ),
+        "ROW_BOT_ALLOWED_HOSTS": (
+            "${ROW_BOT_ALLOWED_HOSTS:?Set ROW_BOT_ALLOWED_HOSTS to the exact "
+            "public host}"
+        ),
+        "ROW_BOT_TRUSTED_PROXY_CIDRS": "127.0.0.1/32",
+    }
+
+
+def test_secret_override_mounts_only_the_required_read_only_directory() -> None:
+    compose = _load_compose(COMPOSE_SECRETS_FILE)
+    service = compose["services"]["row-bot"]
+
+    assert set(service) == {"volumes"}
+    assert service["volumes"] == [
+        "${ROW_BOT_SECRETS_HOST_DIR:?Set ROW_BOT_SECRETS_HOST_DIR to an "
+        "absolute private host directory}:/run/secrets:ro"
+    ]
+    assert not re.search(
+        r"(?:TOKEN|PASSWORD|API_KEY|INVIT|OPENAI|ANTHROPIC)",
+        _read(COMPOSE_SECRETS_FILE),
+        re.IGNORECASE,
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    (COMPOSE_FILE, COMPOSE_BUILD_FILE, COMPOSE_VPS_FILE, COMPOSE_SECRETS_FILE),
+)
+def test_compose_surfaces_never_request_privilege_or_host_devices(path: Path) -> None:
+    source = _read(path).lower()
+    compose = _load_compose(path)
+    service = compose["services"]["row-bot"]
+
+    for key in ("privileged", "ipc", "pid", "devices"):
+        assert key not in service
+    assert "/var/run/docker.sock" not in source
+    assert "/dev/snd" not in source
+    assert "/dev/video" not in source
+    assert "/tmp/.x11-unix" not in source
+    assert "tailscale" not in source
+    assert "funnel" not in source
 
 
 def test_dockerignore_excludes_local_state_and_secret_file_patterns() -> None:
@@ -248,7 +366,7 @@ def test_caddy_example_is_a_dedicated_origin_with_explicit_proxy_contract() -> N
     assert re.search(r"(?m)^row-bot\.example\.com \{$", source)
     assert "ROW_BOT_PUBLIC_URL=https://row-bot.example.com" in source
     assert "ROW_BOT_ALLOWED_HOSTS=row-bot.example.com" in source
-    assert "ROW_BOT_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128" in source
+    assert "ROW_BOT_TRUSTED_PROXY_CIDRS=127.0.0.1/32" in source
     assert "reverse_proxy 127.0.0.1:8080" in source
     assert "header_up -Forwarded" in source
     assert "header_up -X-Real-IP" in source

@@ -1,0 +1,6 @@
+services:
+  row-bot:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: row-bot:source-build

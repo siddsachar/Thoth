@@ -956,6 +956,86 @@ class AccessStore:
             ).fetchone()
         return _session_from_row(row) if row else None
 
+    def renew_trusted_session_if_due(
+        self,
+        session_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[AccessSession | None, bool]:
+        """Atomically extend one active trusted session inside its final week."""
+
+        self.ensure_schema()
+        current = normalize_datetime(now)
+        current_iso = to_iso(current)
+        renewal_cutoff = to_iso(current + timedelta(days=7))
+        renewed_expiry = to_iso(current + timedelta(days=30))
+        with self._immediate_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT s.*
+                  FROM access_sessions AS s
+                  JOIN access_devices AS d ON d.id = s.device_id
+                 WHERE s.id = ?
+                   AND s.revoked_at IS NULL
+                   AND s.expires_at > ?
+                   AND d.revoked_at IS NULL
+                """,
+                (session_id, current_iso),
+            ).fetchone()
+            if row is None:
+                return None, False
+
+            session = _session_from_row(row)
+            if (
+                session.token_format is not TokenFormat.SESSION_V1
+                or session.lifetime is not SessionLifetime.TRUSTED
+                or session.expires_at > current + timedelta(days=7)
+            ):
+                return session, False
+
+            cursor = connection.execute(
+                """
+                UPDATE access_sessions
+                   SET expires_at = ?
+                 WHERE id = ?
+                   AND token_format = ?
+                   AND lifetime = ?
+                   AND revoked_at IS NULL
+                   AND expires_at > ?
+                   AND expires_at <= ?
+                   AND EXISTS (
+                       SELECT 1
+                         FROM access_devices AS d
+                        WHERE d.id = access_sessions.device_id
+                          AND d.revoked_at IS NULL
+                   )
+                """,
+                (
+                    renewed_expiry,
+                    session_id,
+                    TokenFormat.SESSION_V1.value,
+                    SessionLifetime.TRUSTED.value,
+                    current_iso,
+                    renewal_cutoff,
+                ),
+            )
+            refreshed = connection.execute(
+                """
+                SELECT s.*
+                  FROM access_sessions AS s
+                  JOIN access_devices AS d ON d.id = s.device_id
+                 WHERE s.id = ?
+                   AND s.revoked_at IS NULL
+                   AND s.expires_at > ?
+                   AND d.revoked_at IS NULL
+                """,
+                (session_id, current_iso),
+            ).fetchone()
+            return (
+                _session_from_row(refreshed) if refreshed is not None else None,
+                cursor.rowcount == 1,
+            )
+
     def get_legacy_session_for_device(self, device_id: str) -> AccessSession | None:
         self.ensure_schema()
         with self._read_connection() as connection:

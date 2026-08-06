@@ -1,0 +1,261 @@
+name: Container - Verify and Publish
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/container.yml"
+      - ".dockerignore"
+      - "deploy/docker/**"
+      - "deploy/reverse-proxy/Caddyfile.example"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements.txt"
+      - "app.py"
+      - "static/**"
+      - "sounds/**"
+      - "bundled_skills/**"
+      - "tool_guides/**"
+      - "src/**"
+      - "scripts/verify_runtime_dependencies.py"
+      - "scripts/smoke_docker_server.py"
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/siddsachar/row-bot
+
+jobs:
+  verify-image:
+    if: ${{ github.event_name != 'release' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build native verification image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          tags: row-bot:verify-${{ matrix.architecture }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          build-args: |
+            ROW_BOT_VERSION=0.0.0
+            ROW_BOT_SOURCE_REVISION=${{ github.sha }}
+
+      - name: Smoke native verification image
+        run: >-
+          python scripts/smoke_docker_server.py
+          --image row-bot:verify-${{ matrix.architecture }}
+
+  release-image:
+    if: ${{ github.event_name == 'release' }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Validate release version and tag commit
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if [[ -z "$version" || "$version" == v* || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::release tag must contain a version with at most one leading v"
+            exit 1
+          fi
+          expected="$(python - <<'PY'
+          from pathlib import Path
+          import re
+          source = Path('src/row_bot/version.py').read_text(encoding='utf-8')
+          match = re.search(r'__version__\s*=\s*["\x27]([^"\x27]+)["\x27]', source)
+          if not match:
+              raise SystemExit('version.py does not contain __version__')
+          print(match.group(1))
+          PY
+          )"
+          if [[ "$version" != "$expected" ]]; then
+            echo "::error::release tag version does not match src/row_bot/version.py"
+            exit 1
+          fi
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          revision="$(git rev-parse HEAD)"
+          if [[ -z "$tag_commit" || "$revision" != "$tag_commit" ]]; then
+            echo "::error::checked-out HEAD does not match the release tag commit"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build native release image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.version }}-${{ matrix.architecture }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          build-args: |
+            ROW_BOT_VERSION=${{ steps.release.outputs.version }}
+            ROW_BOT_SOURCE_REVISION=${{ steps.release.outputs.revision }}
+
+      - name: Smoke native release image
+        run: >-
+          python scripts/smoke_docker_server.py
+          --image ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.version }}-${{ matrix.architecture }}
+
+      - name: Log in to GHCR after smoke
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push architecture-specific temporary tag
+        run: >-
+          docker push
+          ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.version }}-${{ matrix.architecture }}
+
+  release-manifest:
+    if: ${{ github.event_name == 'release' }}
+    needs: release-image
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Validate release version and tag commit
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if [[ -z "$version" || "$version" == v* || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::release tag must contain a version with at most one leading v"
+            exit 1
+          fi
+          expected="$(python - <<'PY'
+          from pathlib import Path
+          import re
+          source = Path('src/row_bot/version.py').read_text(encoding='utf-8')
+          match = re.search(r'__version__\s*=\s*["\x27]([^"\x27]+)["\x27]', source)
+          if not match:
+              raise SystemExit('version.py does not contain __version__')
+          print(match.group(1))
+          PY
+          )"
+          if [[ "$version" != "$expected" ]]; then
+            echo "::error::release tag version does not match src/row_bot/version.py"
+            exit 1
+          fi
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          revision="$(git rev-parse HEAD)"
+          if [[ -z "$tag_commit" || "$revision" != "$tag_commit" ]]; then
+            echo "::error::checked-out HEAD does not match the release tag commit"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish release manifest
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:${{ steps.release.outputs.version }}" \
+            "${IMAGE_NAME}:${{ steps.release.outputs.version }}-amd64" \
+            "${IMAGE_NAME}:${{ steps.release.outputs.version }}-arm64"
+
+      - name: Publish stable latest manifest
+        if: ${{ github.event.release.prerelease == false }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}:${{ steps.release.outputs.version }}-amd64" \
+            "${IMAGE_NAME}:${{ steps.release.outputs.version }}-arm64"
+
+      - name: Inspect published manifest and summarize digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.release.outputs.version }}"
+          release_ref="${IMAGE_NAME}:${version}"
+          amd64_ref="${IMAGE_NAME}:${version}-amd64"
+          arm64_ref="${IMAGE_NAME}:${version}-arm64"
+          inspect_digest() {
+            docker buildx imagetools inspect "$1" | awk '$1 == "Digest:" { print $2; exit }'
+          }
+          release_digest="$(inspect_digest "$release_ref")"
+          amd64_digest="$(inspect_digest "$amd64_ref")"
+          arm64_digest="$(inspect_digest "$arm64_ref")"
+          test -n "$release_digest"
+          test -n "$amd64_digest"
+          test -n "$arm64_digest"
+          {
+            echo "## Row-Bot container release"
+            echo ""
+            echo "- Version: \`$version\`"
+            echo "- Source revision: \`${{ steps.release.outputs.revision }}\`"
+            echo "- Manifest digest: \`$release_digest\`"
+            echo "- linux/amd64 digest: \`$amd64_digest\`"
+            echo "- linux/arm64 digest: \`$arm64_digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -69,7 +69,7 @@ Download the latest installer from [GitHub Releases](https://github.com/siddsach
 |------|---------|
 | Agent orchestration | LangGraph ReAct agent, Goal Mode, Agent Profiles, Profile Library, child-agent delegation, durable child-agent runs and parent-thread approvals, checkpoint-safe work budgets, repeated-action protection, configurable nesting/concurrency/active-time limits, profile/tool allowlists, agent status and wait tools, promoted Agent-run workflows, generation-scoped cancellation, streaming activity, thinking bubbles, smart context trimming, and per-thread, per-workflow, per-profile, and per-Developer model overrides. |
 | Models and providers | Provider-qualified model selection, readiness routing, chat-only fallback for non-tool models, chat/agent/vision/image/video capability labels, custom endpoint profiles and probes, automatic live catalog discovery with last-known-good preservation, xAI Grok OAuth, ChatGPT / Codex and Claude Subscription providers, OpenCode providers, provider-scoped tool-schema compatibility, prompt-cache diagnostics, and background model cache. |
-| Memory and knowledge | Personal knowledge graph, 10 entity types, 67 typed relations, bounded semantic/lexical/graph recall, cache-only local embeddings with explicit download/repair and fast lexical/graph fallback, audit and review states, recall traces, graph visualization, Obsidian-compatible wiki export, document extraction with source provenance, Dream Cycle refinement, duplicate merging, stale-confidence decay, relationship inference, self-knowledge, insights, and conversation search. |
+| Memory and knowledge | Personal knowledge graph, 10 entity types, 67 typed relations, bounded semantic/lexical/graph recall, a disclosed checked-by-default local embedding setup download, cache-only normal recall, explicit repair, fast lexical/graph fallback, audit and review states, recall traces, graph visualization, Obsidian-compatible wiki export, document extraction with source provenance, Dream Cycle refinement, duplicate merging, stale-confidence decay, relationship inference, self-knowledge, insights, and conversation search. |
 | Tools | 30+ core tool modules for web search, DuckDuckGo, Wikipedia, arXiv, YouTube transcripts, URL reading, documents, wiki vault, Gmail, Google Calendar, filesystem, shell, visible browser automation, opt-in native Computer Use, workflows, Goal Mode, child-agent delegation, tracker, channels, X, image generation/editing, video generation, MCP, Developer Studio, Designer Studio, Custom Tool Builder, status, calculator, Wolfram Alpha, weather, vision, memory, system info, and charts. File tools read PDF, CSV, Excel, JSON, JSONL, TSV, and image files, with schema, stats, previews, and PDF export where supported. |
 | Developer Studio | Local Git workspace linking and cloning, code threads, per-thread and child-agent worktrees, repo inspector, file tree, diffs, todos, tests, branch, commit, push and PR prep, approval modes, and optional Docker Sandbox with a shadow workspace and explicit import back into the real repo. |
 | Designer Studio | Decks, documents, landing pages, app mockups, and storyboards with a sandboxed interactive runtime, templates, brand controls, critique and repair, AI image and video generation, chart insertion, Mermaid and Plotly rendering, shareable HTML, and export to PDF, HTML, PNG, and PPTX. |
@@ -232,9 +232,10 @@ active Tailscale route means a browser can reach the connection screen, not
 that the browser is trusted.
 
 The complete public guide, including current UI screenshots, invitation
-layouts and lifetimes, Tailscale ownership, server/Docker deployment,
-browser-local voice, recovery, and proxy diagnostics, is
-[`Remote Access And Server Mode`](docs-site/docs/operations/remote-access.mdx).
+layouts and lifetimes, Tailscale ownership, browser-local voice, recovery, and
+proxy diagnostics, is [Remote Access And Server Mode](https://row-bot.ai/docs/operations/remote-access).
+Docker and VPS operators should use the pull-first
+[Docker And VPS Operations](https://row-bot.ai/docs/operations/docker) runbook.
 
 When Row-Bot creates and verifies its own Tailscale Serve route, it persists an
 exact ownership record and restarts the child app. Startup then trusts only the
@@ -292,10 +293,11 @@ The list and doctor commands never print reusable session secrets. Invitation
 commands are the only commands that print the raw one-time link, so keep their
 terminal output and scrollback private.
 
-Docker users should follow
-[`deploy/docker/README.md`](deploy/docker/README.md). It covers the loopback-only
-Compose default, multiple isolated instances, invitation bootstrap, health
-checks, persistent volumes, encrypted backups, upgrades, and rollback.
+Docker users should follow the public
+[Docker And VPS Operations](https://row-bot.ai/docs/operations/docker) guide.
+The repository's [`deploy/docker/README.md`](deploy/docker/README.md) retains
+source-build and operator detail. Both preserve the loopback-only Compose
+default, explicit invitation bootstrap, and one persistent `/data` volume.
 `deploy/reverse-proxy/Caddyfile.example` and
 `deploy/systemd/row-bot.service.example` are reviewed starting points for
 operator-managed VPS deployments.
@@ -365,7 +367,7 @@ cached, and fallback catalog outcomes.
 | ngrok | `NGROK_AUTHTOKEN` | Tunnels for inbound webhooks. |
 | Gmail and Google Calendar | Google Cloud OAuth `credentials.json` | Email search/read/draft/send and request-scoped calendar search/create/bulk-create/update/move/delete with safe concurrent token refresh. |
 
-Configure providers in Settings, Channels, and Accounts. Keys and in-app ChatGPT / Codex, Claude Subscription, and xAI Grok OAuth tokens are stored in Windows Credential Manager, macOS Keychain, or Linux Secret Service/KWallet when available. If secure storage is unavailable, newly entered secrets are usable for the current Row-Bot process only and must be re-entered after restart unless a secure keyring backend is configured. `~/.row-bot/api_keys.json` and `~/.row-bot/providers.json` keep metadata only, such as saved state, provider status, Quick Choices, compatibility profiles, runtime and vision probe results, OAuth client-id diagnostics, model-count status, and masked fingerprints.
+Configure providers in Settings, Channels, and Accounts. Keys and in-app ChatGPT / Codex, Claude Subscription, and xAI Grok OAuth tokens are stored in Windows Credential Manager, macOS Keychain, or Linux Secret Service/KWallet when available. If secure storage is unavailable, newly entered secrets are usable for the current Row-Bot process only and must be re-entered after restart unless a secure keyring backend is configured. The official server container can instead use an explicit read-only `ROW_BOT_SECRET_STORE_KEY` file to encrypt owner-entered secrets under its persistent `/data` volume; see [Docker And VPS Operations](https://row-bot.ai/docs/operations/docker#read-only-secret-files). `~/.row-bot/api_keys.json` and `~/.row-bot/providers.json` keep metadata only, such as saved state, provider status, Quick Choices, compatibility profiles, runtime and vision probe results, OAuth client-id diagnostics, model-count status, and masked fingerprints.
 
 Atlas Cloud uses an OpenAI-compatible API, but Row-Bot treats it as a
 first-class provider with its own setup, auth, catalog refresh, provider
@@ -384,12 +386,13 @@ surfaces instead of chat and agent pickers.
 
 Embedding providers are configured separately from chat models. Local
 embeddings are available for private document and vector indexing and load
-strictly from the existing local Hugging Face cache during normal use. Download
-or repair a local embedding model explicitly from Settings; if it is missing,
-failed, or still loading, bounded memory recall continues with lexical and
-graph fallback instead of silently downloading or blocking the turn. Optional
-cloud embeddings show a privacy warning because document text is sent to the
-selected embedding provider.
+strictly from the existing local Hugging Face cache during normal use. First-run
+setup offers **Mixedbread Embed Large v1** as a checked-by-default, disclosed
+675 MB download; it can be skipped. Download or repair a local embedding model
+later from Settings; if it is missing, failed, or still loading, bounded memory
+recall continues with lexical and graph fallback instead of silently
+downloading or blocking the turn. Optional cloud embeddings show a privacy
+warning because document text is sent to the selected embedding provider.
 
 External Codex CLI and Claude Code login files are metadata/reference only. Row-Bot can detect that a CLI login exists, but direct Codex runtime requires the in-app ChatGPT sign-in and direct Claude Subscription runtime requires Row-Bot-owned Claude OAuth or an explicit user import. Row-Bot does not copy runnable tokens from `~/.codex/auth.json` or `~/.claude/*`, and Claude Subscription never falls back to `ANTHROPIC_API_KEY`.
 

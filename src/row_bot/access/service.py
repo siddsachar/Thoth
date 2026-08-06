@@ -33,6 +33,8 @@ from row_bot.access.tokens import (
 INVITATION_TTL = timedelta(minutes=10)
 TRUSTED_SESSION_TTL = timedelta(days=30)
 TEMPORARY_SESSION_TTL = timedelta(hours=12)
+TRUSTED_SESSION_RENEWAL_WINDOW = timedelta(days=7)
+SESSION_REFRESH_POLL_INTERVAL = timedelta(hours=12)
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,24 @@ class InvitationClaim:
     @property
     def intended_origin(self) -> str:
         return self.invitation.intended_origin
+
+
+@dataclass(frozen=True)
+class SessionRefreshRecord:
+    """Non-secret session state returned by a trusted-session refresh."""
+
+    id: str
+    device_id: str
+    expires_at: datetime
+    lifetime: SessionLifetime
+
+
+@dataclass(frozen=True)
+class SessionRefreshResult:
+    """Outcome of an atomic, bounded trusted-session refresh."""
+
+    session: SessionRefreshRecord | None
+    renewed: bool
 
 
 class AccessService:
@@ -307,6 +327,30 @@ class AccessService:
             device = self.store.get_device(device.id) or device
         return AuthenticatedSession(device=device, session=session)
 
+    def refresh_trusted_session(
+        self,
+        session_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> SessionRefreshResult:
+        """Extend an eligible trusted session without issuing a new secret."""
+
+        session, renewed = self.store.renew_trusted_session_if_due(
+            session_id,
+            now=now,
+        )
+        if session is None:
+            return SessionRefreshResult(session=None, renewed=False)
+        return SessionRefreshResult(
+            session=SessionRefreshRecord(
+                id=session.id,
+                device_id=session.device_id,
+                expires_at=session.expires_at,
+                lifetime=session.lifetime,
+            ),
+            renewed=renewed,
+        )
+
     def list_devices(self, *, include_revoked: bool = True) -> list[AccessDevice]:
         return self.store.list_devices(include_revoked=include_revoked)
 
@@ -429,6 +473,12 @@ __all__ = [
     "InvitationClaim",
     "InvitationClaimError",
     "InvitationInspection",
+    "SESSION_REFRESH_POLL_INTERVAL",
+    "SessionRefreshRecord",
+    "SessionRefreshResult",
+    "TEMPORARY_SESSION_TTL",
+    "TRUSTED_SESSION_RENEWAL_WINDOW",
+    "TRUSTED_SESSION_TTL",
     "canonicalize_origin",
     "session_ttl_for",
 ]

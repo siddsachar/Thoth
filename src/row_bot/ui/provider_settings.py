@@ -380,6 +380,7 @@ def _source_label(source: str) -> str:
         "secret_file": "Using read-only server secret",
         "conflict": "Server secret configuration conflict",
         "keyring": "Saved in keyring",
+        "encrypted_file": "Saved in encrypted server storage",
         "session": "Using session key",
         "legacy_plaintext": "Using legacy plaintext key",
         "api_keys": "Saved API key",
@@ -718,6 +719,9 @@ def build_provider_summary_cards() -> None:
                             return
                         token_set = await run.io_bound(exchange_codex_device_authorization, authorization)
                         await run.io_bound(save_codex_oauth_tokens, token_set)
+                        from row_bot.providers.auth_store import get_storage_warning
+
+                        storage_warning = get_storage_warning()
                     except Exception as exc:
                         check_note.dismiss()
                         status_label.text = f"Sign-in failed: {exc}"
@@ -727,6 +731,8 @@ def build_provider_summary_cards() -> None:
                     check_note.dismiss()
                     dialog.close()
                     ui.notify("ChatGPT / Codex connected", type="positive")
+                    if storage_warning:
+                        ui.notify(storage_warning, type="warning", close_button=True)
                     defer_ui(_load)
 
                 with ui.row().classes("w-full items-center justify-end gap-2"):

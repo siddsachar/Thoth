@@ -167,6 +167,14 @@ def set_workspace_execution_settings(
     if execution_mode is not None:
         if execution_mode not in {"local", "docker"}:
             raise ValueError(f"Unknown execution mode: {execution_mode}")
+        if execution_mode == "docker":
+            from row_bot.developer.sandbox_runtime import (
+                OFFICIAL_CONTAINER_SANDBOX_UNAVAILABLE,
+            )
+            from row_bot.runtime_paths import is_containerized_runtime
+
+            if is_containerized_runtime():
+                raise ValueError(OFFICIAL_CONTAINER_SANDBOX_UNAVAILABLE)
         workspace.execution_mode = execution_mode  # type: ignore[assignment]
     if sandbox_network is not None:
         if sandbox_network not in {"off", "ask", "on"}:

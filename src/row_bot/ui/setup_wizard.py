@@ -514,6 +514,7 @@ async def show_setup_wizard(
                                         authorization,
                                     )
                                     await run.io_bound(save_codex_oauth_tokens, token_set)
+                                    storage_warning = get_provider_storage_warning()
                                 except Exception as exc:
                                     check_note.dismiss()
                                     logger.warning("Codex setup sign-in failed", exc_info=True)
@@ -524,6 +525,8 @@ async def show_setup_wizard(
                                 check_note.dismiss()
                                 codex_dialog.close()
                                 ui.notify("ChatGPT / Codex connected", type="positive")
+                                if storage_warning:
+                                    ui.notify(storage_warning, type="warning", close_button=True)
                                 cloud_status.text = "ChatGPT / Codex connected. Fetching models..."
                                 cloud_status.visible = True
                                 await _load_codex_models()
@@ -1166,6 +1169,43 @@ async def show_setup_wizard(
 
             ui.separator()
 
+            # ── Private knowledge model ──────────────────────────────
+            from row_bot.embedding_config import DEFAULT_CONFIG, LOCAL_MODELS
+            from row_bot.embedding_providers import get_local_embedding_status
+
+            default_embedding_key = str(DEFAULT_CONFIG["local_model"])
+            default_embedding = LOCAL_MODELS[default_embedding_key]
+            default_embedding_status = get_local_embedding_status()
+            default_embedding_cached = default_embedding_status.get("state") in {
+                "cached",
+                "ready",
+            }
+
+            ui.label("Private knowledge model").classes("text-h6")
+            ui.label(
+                "Row-Bot uses a separate local model for semantic memory and document search. "
+                "Normal recall remains offline after setup."
+            ).classes("text-grey-6 text-sm")
+            install_default_embedding = ui.checkbox(
+                f"Install {default_embedding['label']} now (recommended, about "
+                f"{int(default_embedding.get('download_size_mb') or 700)} MB)",
+                value=True,
+            ).classes("text-sm")
+            ui.label(
+                "Downloaded from Hugging Face into Row-Bot's private local cache when you finish setup. "
+                "Documents and memories are not sent anywhere. Uncheck to skip and use lexical/graph "
+                "fallback until you install it from Settings → Documents."
+            ).classes("text-grey-6 text-xs")
+            embedding_setup_status = ui.label(
+                "Already installed in the local cache."
+                if default_embedding_cached
+                else "Ready to download when setup finishes."
+            ).classes("text-sm text-positive" if default_embedding_cached else "text-sm text-blue-3")
+            if default_embedding_cached:
+                install_default_embedding.disable()
+
+            ui.separator()
+
             # ── Optional import ──────────────────────────────────────
             ui.label("Migrate from OpenClaw or Hermes Agent?").classes("text-h6")
             ui.label(
@@ -1248,7 +1288,50 @@ async def show_setup_wizard(
 
             _update_finish()
 
+            async def _install_default_embedding_for_setup() -> bool:
+                if not bool(install_default_embedding.value):
+                    return True
+                if default_embedding_cached:
+                    return True
+
+                from row_bot.embedding_providers import download_local_embedding_model
+
+                notice = ui.notification(
+                    f"Downloading {default_embedding['label']} for private knowledge search...",
+                    type="ongoing",
+                    spinner=True,
+                    timeout=None,
+                )
+                embedding_setup_status.text = "Downloading the private knowledge model..."
+                try:
+                    await run.io_bound(
+                        download_local_embedding_model,
+                        default_embedding_key,
+                        repair=False,
+                    )
+                except Exception as exc:
+                    notice.dismiss()
+                    logger.error("Default embedding model setup download failed", exc_info=True)
+                    embedding_setup_status.text = "Download failed. Check the connection and try again."
+                    ui.notify(
+                        f"Private knowledge model download failed: {exc}",
+                        type="negative",
+                        close_button=True,
+                    )
+                    return False
+                notice.dismiss()
+                embedding_setup_status.text = "Private knowledge model installed."
+                ui.notify("Private knowledge model installed", type="positive")
+                return True
+
+            setup_finish_busy = {"value": False}
+
             async def _finish_setup(*, continue_setup: bool = False):
+                if setup_finish_busy["value"]:
+                    return
+                setup_finish_busy["value"] = True
+                open_btn.disable()
+                continue_btn.disable()
                 if setup_path["mode"] == "cloud":
                     sel = cloud_model_select.value
                     if sel:
@@ -1294,6 +1377,10 @@ async def show_setup_wizard(
                             capabilities_snapshot=info.capability_snapshot(),
                         )
                         clear_agent_cache()
+                if not await _install_default_embedding_for_setup():
+                    setup_finish_busy["value"] = False
+                    _update_finish()
+                    return
                 mark_onboarding_step("models")
                 if continue_setup:
                     setattr(state, "open_setup_center_on_next_load", True)

@@ -46,9 +46,13 @@ FROM ${PYTHON_IMAGE} AS runtime
 
 ARG ROW_BOT_UID=10001
 ARG ROW_BOT_GID=10001
+ARG ROW_BOT_VERSION=0.0.0
 ARG ROW_BOT_SOURCE_REVISION=unknown
 
-LABEL org.opencontainers.image.title="Row-Bot server" \
+LABEL org.opencontainers.image.title="Row-Bot authenticated server" \
+      org.opencontainers.image.description="Local-first Row-Bot AI assistant in authenticated long-running server mode" \
+      org.opencontainers.image.source="https://github.com/siddsachar/row-bot" \
+      org.opencontainers.image.version="${ROW_BOT_VERSION}" \
       org.opencontainers.image.revision="${ROW_BOT_SOURCE_REVISION}" \
       io.row-bot.python="3.13.5" \
       io.row-bot.node="24.4.1" \
@@ -60,6 +64,7 @@ ENV HOME=/data \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     ROW_BOT_APP_ROOT=/opt/row-bot/app \
+    ROW_BOT_CONTAINERIZED=1 \
     ROW_BOT_DATA_DIR=/data \
     ROW_BOT_DEPLOYMENT_MODE=server \
     ROW_BOT_HOST=0.0.0.0 \

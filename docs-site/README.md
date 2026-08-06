@@ -30,6 +30,33 @@ cd docs-site
 npm run build:ci
 ```
 
+## Publishable GitHub Pages Output
+
+The checked-in `docs/` tree must be generated with the pinned Linux, CPU
+architecture, and Node.js container used by `.github/workflows/docs.yml`.
+Pagefind and bundled asset filenames are platform-dependent, so output
+generated in a different environment can look correct locally but fail
+`sync_github_pages.py --check` on CI.
+
+The repository's `.gitattributes` keeps documentation build inputs and
+generated text output at LF line endings on every platform. Existing Windows
+clones created before that policy was added should refresh the affected files
+from Git before regenerating the published tree, while preserving or committing
+any local documentation edits.
+
+On Windows, use Docker Desktop from the repository root to produce the
+canonical artifact:
+
+```powershell
+docker run --rm --platform linux/amd64 --mount "type=bind,src=$PWD,dst=/repo" `
+  --env NO_UPDATE_NOTIFIER=1 node:20.20.2-bookworm `
+  bash -lc "ln -sf /usr/bin/python3 /usr/local/bin/python && cd /repo/docs-site && npm ci && npm run build:ci && cd /repo && python scripts/docs/sync_github_pages.py"
+```
+
+Run the same command with `sync_github_pages.py --check` after generation, or
+let the Docs workflow perform the final Linux check. Commit all resulting
+changes under the synchronization-owned paths; do not hand-edit them.
+
 Full screenshot recapture is local-only for now:
 
 ```powershell

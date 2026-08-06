@@ -36,6 +36,11 @@ _load_event = threading.Event()
 _load_thread: threading.Thread | None = None
 
 _BASE_LOCAL_PACKAGES = ("sentence_transformers", "langchain_huggingface")
+_LOCAL_MODEL_DOWNLOAD_IGNORE_PATTERNS = (
+    "gguf/*",
+    "onnx/*",
+    "openvino/*",
+)
 
 
 class LocalEmbeddingUnavailable(RuntimeError):
@@ -324,6 +329,10 @@ def download_local_embedding_model(model_key: str, *, repair: bool = False) -> p
     """Explicitly download or repair a selected model in the Hugging Face cache."""
     if model_key not in LOCAL_MODELS:
         raise ValueError(f"Unknown local embedding model: {model_key}")
+    if not repair:
+        cached = _cached_snapshot(model_key)
+        if cached is not None:
+            return cached
     from huggingface_hub import snapshot_download
 
     path = pathlib.Path(
@@ -331,6 +340,7 @@ def download_local_embedding_model(model_key: str, *, repair: bool = False) -> p
             repo_id=str(LOCAL_MODELS[model_key]["model"]),
             local_files_only=False,
             force_download=bool(repair),
+            ignore_patterns=list(_LOCAL_MODEL_DOWNLOAD_IGNORE_PATTERNS),
         )
     )
     cfg = get_embedding_config()

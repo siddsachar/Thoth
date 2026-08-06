@@ -427,6 +427,58 @@ def build_access_router(
             }
         )
 
+    async def refresh_session(request: Request) -> JSONResponse:
+        context = _owner_context(request)
+        if context is None or context.session_id is None:
+            return _error(401, "authentication_required", "Sign in required.")
+        if not _origin_ok(request, context):
+            return _error(403, "origin_required", "Exact same origin is required.")
+
+        current_token = cookies.extract_from_scope(
+            dict(request.scope),
+            context=context,
+        )
+        if current_token:
+            authenticated = service.validate_session(current_token, touch=False)
+        else:
+            legacy_token = cookies.extract_legacy_from_scope(
+                dict(request.scope),
+                context=context,
+            )
+            authenticated = (
+                service.validate_legacy_session(legacy_token, touch=False)
+                if legacy_token
+                else None
+            )
+        if authenticated is None or authenticated.session.id != context.session_id:
+            response = _error(401, "authentication_required", "Sign in required.")
+            cookies.clear(response)
+            return response
+
+        result = service.refresh_trusted_session(context.session_id)
+        if result.session is None:
+            response = _error(401, "authentication_required", "Sign in required.")
+            cookies.clear(response)
+            return response
+
+        response = _json(
+            {
+                "ok": True,
+                "authenticated": True,
+                "renewed": result.renewed,
+                "lifetime": result.session.lifetime.value,
+                "expires_at": result.session.expires_at.isoformat(),
+            }
+        )
+        if result.renewed and current_token:
+            cookies.set_session(
+                response,
+                current_token,
+                context=context,
+                expires_at=result.session.expires_at,
+            )
+        return response
+
     async def logout(request: Request) -> JSONResponse:
         context = _context(request)
         if context is None or not context.authenticated:
@@ -592,6 +644,11 @@ def build_access_router(
         methods=["POST"],
     )
     router.add_api_route("/api/access/session", current_session, methods=["GET"])
+    router.add_api_route(
+        "/api/access/session/refresh",
+        refresh_session,
+        methods=["POST"],
+    )
     router.add_api_route("/api/access/logout", logout, methods=["POST"])
     router.add_api_route("/api/access/status", status, methods=["GET"])
     router.add_api_route(
