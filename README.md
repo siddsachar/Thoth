@@ -297,7 +297,8 @@ Docker users should follow the public
 [Docker And VPS Operations](https://row-bot.ai/docs/operations/docker) guide.
 The repository's [`deploy/docker/README.md`](deploy/docker/README.md) retains
 source-build and operator detail. Both preserve the loopback-only Compose
-default, explicit invitation bootstrap, and one persistent `/data` volume.
+default, explicit invitation bootstrap, and separate persistent data and
+encryption-key volumes.
 `deploy/reverse-proxy/Caddyfile.example` and
 `deploy/systemd/row-bot.service.example` are reviewed starting points for
 operator-managed VPS deployments.

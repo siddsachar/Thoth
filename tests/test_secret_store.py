@@ -19,6 +19,43 @@ class _UnavailableKeyring:
         raise RuntimeError("No recommended backend was available")
 
 
+def test_persistent_server_secret_initializer_creates_once_and_reuses_key(
+    tmp_path,
+) -> None:
+    from row_bot import secret_store
+
+    secrets_dir = tmp_path / "mounted-secrets"
+    key_path = secret_store.initialize_persistent_server_secret_store(secrets_dir)
+    original = key_path.read_text(encoding="ascii")
+
+    assert key_path == secrets_dir / "ROW_BOT_SECRET_STORE_KEY"
+    assert len(original) == 64
+    assert all(character in "0123456789abcdef" for character in original)
+    assert (
+        secret_store.initialize_persistent_server_secret_store(secrets_dir) == key_path
+    )
+    assert key_path.read_text(encoding="ascii") == original
+    if os.name != "nt":
+        assert key_path.stat().st_mode & 0o777 == 0o400
+        assert secrets_dir.stat().st_mode & 0o777 == 0o700
+
+
+def test_persistent_server_secret_initializer_rejects_invalid_existing_key(
+    tmp_path,
+) -> None:
+    from row_bot import secret_store
+
+    secrets_dir = tmp_path / "mounted-secrets"
+    secrets_dir.mkdir()
+    key_path = secrets_dir / "ROW_BOT_SECRET_STORE_KEY"
+    key_path.write_text("invalid", encoding="ascii")
+
+    with pytest.raises(secret_store.SecretStoreError, match="64 hexadecimal"):
+        secret_store.initialize_persistent_server_secret_store(secrets_dir)
+
+    assert key_path.read_text(encoding="ascii") == "invalid"
+
+
 def test_server_secret_file_is_allowlisted_bounded_and_value_free(
     tmp_path,
     monkeypatch,

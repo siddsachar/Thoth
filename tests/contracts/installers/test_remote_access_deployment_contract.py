@@ -155,6 +155,7 @@ def test_dockerfile_routes_browser_models_and_managed_runtimes_correctly() -> No
 def test_compose_defaults_to_loopback_and_isolated_persistent_state() -> None:
     compose = _load_compose(COMPOSE_FILE)
     service = compose["services"]["row-bot"]
+    secret_init = compose["services"]["secret-store-init"]
 
     assert "build" not in service
     assert service["image"] == "${ROW_BOT_IMAGE:-ghcr.io/siddsachar/row-bot:latest}"
@@ -167,7 +168,41 @@ def test_compose_defaults_to_loopback_and_isolated_persistent_state() -> None:
         "${ROW_BOT_BIND_ADDRESS:-127.0.0.1}:${ROW_BOT_HOST_PORT:-8080}:8080"
     ]
     assert "row_bot_data:/data" in service["volumes"]
-    assert "row_bot_data" in compose["volumes"]
+    secret_mount = next(
+        mount
+        for mount in service["volumes"]
+        if isinstance(mount, dict) and mount.get("target") == "/run/secrets"
+    )
+    assert secret_mount == {
+        "type": "volume",
+        "source": "row_bot_secrets",
+        "target": "/run/secrets",
+        "read_only": True,
+        "volume": {"nocopy": True},
+    }
+    assert {"row_bot_data", "row_bot_secrets"} <= set(compose["volumes"])
+    assert service["depends_on"] == {
+        "secret-store-init": {"condition": "service_completed_successfully"}
+    }
+    assert secret_init["image"] == service["image"]
+    assert secret_init["user"] == "0:0"
+    assert secret_init["network_mode"] == "none"
+    assert secret_init["read_only"] is True
+    assert secret_init["restart"] == "no"
+    assert secret_init["cap_drop"] == ["ALL"]
+    assert secret_init["cap_add"] == ["CHOWN"]
+    assert secret_init["security_opt"] == ["no-new-privileges:true"]
+    assert secret_init["volumes"] == [
+        {
+            "type": "volume",
+            "source": "row_bot_secrets",
+            "target": "/run/secrets",
+            "volume": {"nocopy": True},
+        }
+    ]
+    assert "initialize_persistent_server_secret_store" in " ".join(
+        secret_init["command"]
+    )
     assert service["environment"] == {
         "ROW_BOT_DATA_DIR": "/data",
         "ROW_BOT_DEPLOYMENT_MODE": "server",
@@ -224,12 +259,14 @@ def test_compose_does_not_embed_credentials_or_invitation_material() -> None:
     assert not sensitive_keys
     assert environment["ROW_BOT_SECRETS_DIR"] == "/run/secrets"
     assert "ROW_BOT_SECRET_STORE_KEY" not in environment
+    assert "ROW_BOT_SECRET_STORE_KEY" not in _read(COMPOSE_FILE)
 
 
 def test_source_build_override_changes_only_build_source_and_image_name() -> None:
     compose = _load_compose(COMPOSE_BUILD_FILE)
     assert set(compose) == {"services"}
-    assert set(compose["services"]) == {"row-bot"}
+    assert set(compose["services"]) == {"secret-store-init", "row-bot"}
+    assert compose["services"]["secret-store-init"] == {"image": "row-bot:source-build"}
     assert compose["services"]["row-bot"] == {
         "build": {
             "context": "../..",

@@ -9,7 +9,7 @@ import Screenshot from '@site/src/components/Screenshot';
 
 The official container runs one **single-owner, multi-device** Row-Bot instance. It is not a multi-user service or a hostile tenant-isolation boundary. Every browser, including one on the Docker host, must claim a one-time invitation before it receives a revocable owner session.
 
-The default Compose topology publishes only `127.0.0.1:8080`, runs as UID/GID 10001 with a read-only root filesystem, and keeps private state in one named `/data` volume. It does not mount the Docker socket, host devices, a desktop display, or host audio.
+The default Compose topology publishes only `127.0.0.1:8080`, runs the application as UID/GID 10001 with a read-only root filesystem, and keeps private state in separate named data and encryption-key volumes. It does not mount the Docker socket, host devices, a desktop display, or host audio.
 
 ## Prerequisites
 
@@ -45,15 +45,15 @@ export ROW_BOT_IMAGE='ghcr.io/siddsachar/row-bot@sha256:RELEASE_MANIFEST_DIGEST'
 docker compose -f compose.yaml config
 ```
 
-## Before First Start: Preserve Account Credentials
+## Account Credential Persistence Is Automatic
 
-If you plan to connect ChatGPT / Codex or save provider keys through Row-Bot's UI, configure `ROW_BOT_SECRET_STORE_KEY` **before** the first account connection. Headless containers do not have a desktop keyring. With no external master key, Row-Bot warns that newly entered credentials are session-only and they can be lost on restart or container replacement.
+Headless containers do not have a desktop keyring. On every `docker compose up`, a short-lived, network-disabled initializer creates a random `ROW_BOT_SECRET_STORE_KEY` only when the project-scoped `row_bot_secrets` volume is empty. The application receives that volume read-only and uses the key to encrypt ChatGPT/Codex tokens and other owner-entered secrets under `/data/secure-secrets`.
 
-Follow [Read-Only Secret Files](#read-only-secret-files) to create the key and start with `compose.secrets.yaml.example`. Keep the same external key for backup, restore, upgrade, and rollback. It is not stored in `/data` and cannot be recovered from the encrypted records.
+There is no key to create or environment value to set for the normal Compose path. Keep both named volumes for restart, container replacement, upgrade, and rollback, and back up the key separately from `/data`. Advanced unattended deployments can replace the generated key volume with an operator-managed read-only directory as described in [Read-Only Secret Files](#read-only-secret-files).
 
 ## First Start And Owner Invitation
 
-A fresh `up` pulls the image only when it is absent locally, creates the named volume, and starts the foreground server:
+A fresh `up` pulls the image only when it is absent locally, creates the data and encryption-key volumes, initializes the key without network access, and starts the foreground server:
 
 ```bash
 docker compose -f compose.yaml up -d
@@ -112,7 +112,7 @@ docker compose -f compose.yaml up -d --force-recreate row-bot
 
 ## Multiple Isolated Instances
 
-Use a different Compose project name and host port for each instance. Compose project names isolate the containers, networks, and named `/data` volumes:
+Use a different Compose project name and host port for each instance. Compose project names isolate the containers, networks, and named data and encryption-key volumes:
 
 ```bash
 docker compose --project-name row-bot-main \
@@ -122,36 +122,82 @@ ROW_BOT_HOST_PORT=8081 docker compose --project-name row-bot-lab \
   -f compose.yaml up -d
 ```
 
-Create invitations for `http://127.0.0.1:8080` and `http://127.0.0.1:8081`, respectively. Give every instance its own data volume and external secret directory. Do not copy one instance's access database into another unless you are deliberately restoring that same instance. Each fresh instance has a different identity, so its cookies and owner sessions remain isolated even when the hostname is the same.
+Create invitations for `http://127.0.0.1:8080` and `http://127.0.0.1:8081`, respectively. Every project automatically receives its own data and encryption-key volumes. Do not copy one instance's access database or encryption key into another unless you are deliberately restoring that same instance. Each fresh instance has a different identity, so its cookies and owner sessions remain isolated even when the hostname is the same.
 
 ## Consistent Offline Backup
 
-Treat a backup as private user data. Stop the service before copying the whole volume so related SQLite files are one consistent set:
+Treat a backup as private user data. Stop the service before copying the whole volume so related SQLite files are one consistent set. Use a disposable helper container to create archives; do not use `docker compose cp` for the complete `/data` tree because model caches can contain symbolic links that a Windows host cannot reproduce.
+
+The helper has no network, receives the source volumes read-only, and adds only the capability needed to read every file in the stopped volume:
 
 ```bash
 backup_dir="$(pwd)/backups/row-bot-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$backup_dir"
 docker compose -f compose.yaml stop row-bot
-docker compose -f compose.yaml cp row-bot:/data/. "$backup_dir/"
+row_bot_container="$(docker compose -f compose.yaml ps -a -q row-bot)"
+docker run --rm \
+  --network none \
+  --read-only \
+  --user 0:0 \
+  --cap-drop ALL \
+  --cap-add DAC_READ_SEARCH \
+  --security-opt no-new-privileges \
+  --volumes-from "${row_bot_container}:ro" \
+  --mount "type=bind,src=${backup_dir},dst=/backup" \
+  --entrypoint sh \
+  "${ROW_BOT_IMAGE}" \
+  -c 'set -eu; tar -C /data -czf /backup/data.tar.gz .; tar -C /run/secrets -czf /backup/secrets.tar.gz ROW_BOT_SECRET_STORE_KEY'
 docker compose -f compose.yaml start row-bot
 ```
 
-Encrypt and protect that directory with your normal backup system. Record the image tag and digest beside it. Encrypted server credentials under `/data/secure-secrets` are usable only with the matching external `ROW_BOT_SECRET_STORE_KEY`; back up that key separately from the data volume and protect both. Other credentials held in read-only secret files need their own recovery procedure.
+Run the final `start` command even if archive creation reports an error. On Windows PowerShell, use `$backupDir = (New-Item -ItemType Directory -Force "backups\\row-bot-$((Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'))").FullName`, `$rowBotContainer = docker compose -f compose.yaml ps -a -q row-bot`, backticks instead of backslashes for line continuation, `$backupDir` in the bind mount, and `$env:ROW_BOT_IMAGE` as the image value. The archive work still runs inside Linux and therefore preserves cache symlinks.
+
+Encrypt and protect both `data.tar.gz` and `secrets.tar.gz` with your normal backup system. Record the image tag and digest beside them. Encrypted server credentials under `/data/secure-secrets` are usable only with the matching `ROW_BOT_SECRET_STORE_KEY`; protect both archives. Other credentials supplied through an operator-managed read-only directory need their own recovery procedure.
 
 Test a restore under a different Compose project name and port. This creates a separate named volume and does not overwrite the live instance:
 
 ```bash
 export ROW_BOT_HOST_PORT=18080
-docker compose --project-name row-bot-restore -f compose.yaml create row-bot
+restore_backup_dir="$(cd ./backups/RESTORE_SET && pwd)"
 docker compose --project-name row-bot-restore -f compose.yaml \
-  cp ./backups/RESTORE_SET/. row-bot:/data
+  create secret-store-init row-bot
+restore_app_container="$(docker compose --project-name row-bot-restore -f compose.yaml ps -a -q row-bot)"
+restore_init_container="$(docker compose --project-name row-bot-restore -f compose.yaml ps -a -q secret-store-init)"
+docker run --rm \
+  --network none \
+  --read-only \
+  --user 0:0 \
+  --cap-drop ALL \
+  --cap-add CHOWN \
+  --cap-add FOWNER \
+  --cap-add DAC_OVERRIDE \
+  --security-opt no-new-privileges \
+  --volumes-from "${restore_app_container}" \
+  --mount "type=bind,src=${restore_backup_dir},dst=/backup,readonly" \
+  --entrypoint sh \
+  "${ROW_BOT_IMAGE}" \
+  -c 'set -eu; tar -C /data -xzf /backup/data.tar.gz'
+docker run --rm \
+  --network none \
+  --read-only \
+  --user 0:0 \
+  --cap-drop ALL \
+  --cap-add CHOWN \
+  --cap-add FOWNER \
+  --cap-add DAC_OVERRIDE \
+  --security-opt no-new-privileges \
+  --volumes-from "${restore_init_container}" \
+  --mount "type=bind,src=${restore_backup_dir},dst=/backup,readonly" \
+  --entrypoint sh \
+  "${ROW_BOT_IMAGE}" \
+  -c 'set -eu; tar -C /run/secrets -xzf /backup/secrets.tar.gz'
 docker compose --project-name row-bot-restore -f compose.yaml up -d
 curl -fsS http://127.0.0.1:18080/readyz
 docker compose --project-name row-bot-restore -f compose.yaml exec row-bot \
   row-bot access doctor --host 127.0.0.1
 ```
 
-Inspect the restored data and authentication before changing any proxy or production route.
+Set `ROW_BOT_IMAGE` to the recorded image before restoring. On PowerShell, resolve the backup directory with `$restoreBackupDir = (Resolve-Path '.\\backups\\RESTORE_SET').Path`, capture the two container IDs with `$restoreAppContainer` and `$restoreInitContainer`, and use those variables in the same helper commands. Inspect the restored data and authentication before changing any proxy or production route. Remove the isolated project with `docker compose --project-name row-bot-restore -f compose.yaml down --volumes` only after you have finished the restore test.
 
 ## Explicit Upgrade And Rollback
 
@@ -171,7 +217,7 @@ Also verify an existing browser session and a normal streamed response. For roll
 
 ## Read-Only Secret Files
 
-Keep one allowlisted setting value per file in an absolute private host directory outside the repository. Download the example override from the same release tag:
+The default stack already provides encrypted persistence for secrets entered in the UI. For centrally managed or pre-provisioned deployments, you can instead keep one allowlisted setting value per file in an absolute private host directory outside the repository. This override replaces the automatic key volume, so the directory must also contain `ROW_BOT_SECRET_STORE_KEY`. Download the example override from the same release tag:
 
 ```bash
 curl -fsSLo compose.secrets.yaml.example \
@@ -190,7 +236,7 @@ docker compose -f compose.yaml -f compose.secrets.yaml.example up -d
 
 Restrict the host directory to the Docker operator and container UID/GID 10001. The override mounts only `/run/secrets:ro`; it does not put values into Compose environment, labels, command lines, or image layers. Externally managed provider and channel values remain read-only in Settings and are never copied into `/data`.
 
-`ROW_BOT_SECRET_STORE_KEY` is different: it is a 32-byte master key encoded as exactly 64 hexadecimal characters. When a desktop keyring is unavailable, Row-Bot uses it to encrypt in-app OAuth tokens and other owner-entered secrets under `/data/secure-secrets`. This allows ChatGPT/Codex and other rotating OAuth credentials to survive a process restart or container replacement without placing the tokens in environment variables. The master key itself remains only in `/run/secrets` and is never copied into `/data`.
+`ROW_BOT_SECRET_STORE_KEY` is different: it is a 32-byte master key encoded as exactly 64 hexadecimal characters. The default initializer generates it automatically in the project-scoped key volume; the override above makes you its operator. When a desktop keyring is unavailable, Row-Bot uses it to encrypt in-app OAuth tokens and other owner-entered secrets under `/data/secure-secrets`. This allows ChatGPT/Codex and other rotating OAuth credentials to survive a process restart or container replacement without placing the tokens in environment variables. The master key itself remains only in `/run/secrets` and is never copied into `/data`.
 
 Keep the same key for backup, restore, upgrade, and rollback. A missing key leaves newly entered credentials session-only; an invalid or changed key fails closed and cannot decrypt, replace, or delete existing encrypted records. There is no automatic key rotation. To replace a lost key, reconnect the affected accounts and re-enter secrets after deliberately starting with an empty encrypted secret directory.
 
@@ -298,10 +344,10 @@ Ordinary removal keeps private state:
 docker compose -f compose.yaml down
 ```
 
-To delete the named volume and all instance state deliberately, first verify the Compose project and backup, then run:
+To delete both named volumes and all instance state deliberately, first verify the Compose project and backup, then run:
 
 ```bash
 docker compose -f compose.yaml down --volumes
 ```
 
-That volume deletion is not recoverable unless you have a tested backup. External secret directories and backup directories are separate and are never removed by these Compose commands.
+Those volume deletions remove both private data and the generated encryption key and are not recoverable unless you have a tested backup. External secret directories and backup directories are separate and are never removed by these Compose commands.
