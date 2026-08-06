@@ -311,6 +311,28 @@ def test_docs_workflow_uses_the_canonical_build_container() -> None:
     assert f"--platform {platform}" in readme
 
 
+def test_docs_build_inputs_have_canonical_line_endings() -> None:
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+
+    for pattern in (
+        "docs-content/**/*.md",
+        "docs-content/**/*.yml",
+        "docs-site/**/*.css",
+        "docs-site/**/*.js",
+        "docs-site/**/*.json",
+        "docs-site/**/*.md",
+        "docs-site/**/*.mdx",
+        "docs-site/**/*.ts",
+        "docs-site/**/*.tsx",
+        "docs/assets/**/*.js",
+        "docs/docs/**/*.html",
+        "docs/pagefind/**/*.js",
+        "docs/search/**/*.html",
+        "scripts/docs/**/*.py",
+    ):
+        assert f"{pattern} text eol=lf" in attributes
+
+
 def test_authoritative_surface_map_has_one_outcome_per_surface() -> None:
     data = yaml.safe_load(
         (ROOT / "docs-content" / "metadata" / "ui_surfaces.yml").read_text(encoding="utf-8")

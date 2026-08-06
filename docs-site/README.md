@@ -38,6 +38,12 @@ Pagefind and bundled asset filenames are platform-dependent, so output
 generated in a different environment can look correct locally but fail
 `sync_github_pages.py --check` on CI.
 
+The repository's `.gitattributes` keeps documentation build inputs and
+generated text output at LF line endings on every platform. Existing Windows
+clones created before that policy was added should refresh the affected files
+from Git before regenerating the published tree, while preserving or committing
+any local documentation edits.
+
 On Windows, use Docker Desktop from the repository root to produce the
 canonical artifact:
 
