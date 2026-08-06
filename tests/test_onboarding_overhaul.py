@@ -215,6 +215,9 @@ def test_onboarding_source_contracts_are_wired():
         "Open {APP_DISPLAY_NAME}",
         "Continue setup",
         "Migrate from OpenClaw or Hermes Agent?",
+        "Private knowledge model",
+        "Install {default_embedding['label']} now (recommended, about",
+        "Downloaded from Hugging Face into Row-Bot's private local cache",
     ):
         assert marker in setup_src
 
@@ -225,11 +228,14 @@ def test_onboarding_source_contracts_are_wired():
     assert "save_onboarding_profile" in setup_src
     assert "request_setup_center_on_next_load" in setup_src
     assert "mark_onboarding_step(\"models\")" in setup_src
+    assert "download_local_embedding_model" in setup_src
+    assert "if not await _install_default_embedding_for_setup():" in setup_src
     assert "codex_runtime_available" in setup_src
     assert "start_codex_device_flow" in setup_src
     assert "poll_codex_device_authorization" in setup_src
     assert "exchange_codex_device_authorization" in setup_src
     assert "save_codex_oauth_tokens" in setup_src
+    assert "storage_warning = get_provider_storage_warning()" in setup_src
     assert "list_codex_model_infos" in setup_src
     assert "Open OpenAI Login" in setup_src
     assert "Open Settings -> Providers" not in setup_src

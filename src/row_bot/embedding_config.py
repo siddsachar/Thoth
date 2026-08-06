@@ -40,6 +40,7 @@ LOCAL_MODELS: dict[str, dict[str, Any]] = {
         "label": "Mixedbread Embed Large v1",
         "model": "mixedbread-ai/mxbai-embed-large-v1",
         "description": "Strong English retrieval local embeddings. Loads from the local cache.",
+        "download_size_mb": 675,
         "dimension": 1024,
         "context": 512,
         "trust_remote_code": False,

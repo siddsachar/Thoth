@@ -1,9 +1,6 @@
 services:
   row-bot:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
-    image: row-bot:remote-access-local
+    image: ${ROW_BOT_IMAGE:-ghcr.io/siddsachar/row-bot:latest}
     init: true
     restart: unless-stopped
     user: "10001:10001"
@@ -34,6 +31,11 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test:
         - CMD

@@ -798,6 +798,10 @@ A model is the AI system that writes responses and reasons through tasks. Row-Bo
 
 For beginners, start with the provider path you already trust. If you are unsure, Ollama is the simplest local-first path, while an API provider is usually the quickest path to strong hosted models.
 
+## Install Private Knowledge Search
+
+The wizard also offers the recommended local knowledge model as a checked-by-default download of about 700 MB. The model is downloaded from Hugging Face into Row-Bot's private cache; documents and memories are not uploaded, and normal recall stays offline after setup. You can uncheck the option and install it later from Settings -> Documents, but semantic document and memory search will use lexical and graph fallback until it is installed.
+
 ## Setup Center
 
 <Screenshot id="setup-center" alt="Row-Bot Setup Center." caption="Setup Center lets you finish optional setup areas later without blocking the first chat." />
@@ -1281,9 +1285,13 @@ Open Home -> Developer. Choose an existing folder, connect a repository already 
 
 ## Sandbox Modes
 
-Local mode lets Row-Bot operate in the selected workspace with your configured file and command permissions. Docker sandbox mode, when available, isolates command execution in a container and requires an import step before changes affect the real workspace. Docker is safer for risky commands but requires Docker setup and can differ from your local environment.
+Local mode lets Row-Bot operate in the selected workspace with your configured file and command permissions. Docker Sandbox mode, when available on a host installation, isolates command execution in a container and requires an import step before changes affect the real workspace. It requires a supported host Docker runtime and can differ from your local environment.
 
-For most users, start with local mode on a disposable branch. Use Docker when you want stronger isolation or are testing uncertain commands.
+Inside the official Row-Bot application container, Developer Docker Sandbox is unavailable and a requested Docker workspace fails closed; Row-Bot never probes a nested daemon or silently runs that workspace locally. Local mode remains an explicit choice and can see only workspace paths deliberately mounted into the application container.
+
+An approved risky Custom Tool is a third case: it deliberately executes in Local mode inside the application container against the selected visible Custom Tool path. That behavior is shown in the approval dialog and is not a nested Docker sandbox or fallback from a requested Docker workspace. See [Docker And VPS Operations](/docs/operations/docker#developer-and-headless-boundaries) for the complete container boundary.
+
+For a host installation, start with Local mode on a disposable branch. Use Docker Sandbox when you want stronger isolation and the supported host runtime is available.
 
 ## Troubleshooting
 
@@ -1708,7 +1716,7 @@ Computer Use is a distinct opt-in boundary. Row-Bot downloads the pinned Cua Dri
 
 ## Credentials
 
-Enter credentials only in the relevant Settings tab or provider sign-in flow. Row-Bot stores secrets in the operating system key store when available and keeps local metadata for status and diagnostics.
+Enter credentials only in the relevant Settings tab or provider sign-in flow. Row-Bot stores secrets in the operating system key store when available and keeps local metadata for status and diagnostics. An explicitly configured server deployment can use a read-only external master-key file to encrypt owner-entered secrets in its persistent data directory; see [Docker And VPS Operations](/docs/operations/docker#read-only-secret-files).
 
 ## Remote Access
 
@@ -2284,6 +2292,8 @@ Row-Bot is local-first, so operational safety starts with knowing which data dir
 ## Remote Access And Server Operations
 
 Use [Remote Access And Server Mode](/docs/operations/remote-access) for the complete guide to one-time invitations, desktop and compact owner sessions, Tailscale Serve, LAN, SSH forwarding, Docker, HTTPS reverse proxies, browser-local voice, access recovery, and proxy error diagnostics.
+
+Use [Docker And VPS Operations](/docs/operations/docker) for pull-first Compose startup, release and digest pins, persistent volumes, offline backup and restore, explicit upgrade and rollback, host Caddy or Tailscale, secret-file mounts, and container-specific Developer boundaries.
 
 Remote access remains off by default in ordinary desktop launches. Server operators should back up access state with the rest of the active data directory, keep one worker, publish one canonical origin, terminate remote traffic with HTTPS, and trust only the exact reverse proxy that connects to Row-Bot.
 

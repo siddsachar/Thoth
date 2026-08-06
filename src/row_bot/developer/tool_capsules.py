@@ -29,6 +29,7 @@ from row_bot.developer.storage import (
     remember_clone_parent_folder,
     suggested_clone_name,
 )
+from row_bot.runtime_paths import is_containerized_runtime
 
 
 logger = logging.getLogger(__name__)
@@ -1641,6 +1642,13 @@ def run_custom_tool_test_command(
         )
 
     if approved_once and action in {"run_network", "run_install", "start_server"}:
+        if is_containerized_runtime():
+            decision = ApprovalDecision(
+                "allow",
+                "User approved deliberate Local execution inside the Row-Bot "
+                "application container for this Custom Tool test run.",
+            )
+            return _run_custom_tool_local_direct(tool, command, decision)
         probe = detect_container_runtime()
         if probe.available:
             workspace = _custom_tool_workspace(tool, network=action in {"run_network", "run_install"})

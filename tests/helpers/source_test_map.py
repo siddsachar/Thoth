@@ -144,6 +144,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
         "remote_access_server",
         (
             "src/row_bot/access/**",
+            "src/row_bot/runtime_paths.py",
             "src/row_bot/ui/access_context.py",
             "src/row_bot/ui/remote_access_settings.py",
             "src/row_bot/ui/settings.py",
@@ -158,6 +159,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "deploy/**",
             "dockerignore",
             "scripts/smoke_remote_access.py",
+            "scripts/smoke_docker_server.py",
         ),
         (
             "tests/subsystem/access",
@@ -466,6 +468,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "src/row_bot/updater.py",
             "scripts/coverage_summary.py",
             "scripts/smoke_app.py",
+            "scripts/smoke_docker_server.py",
             "scripts/verify_runtime_dependencies.py",
             "scripts/export_locked_requirements.py",
             "scripts/app_payload_manifest.py",

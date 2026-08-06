@@ -93,6 +93,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'operations/index',
         'operations/remote-access',
+        'operations/docker',
         'privacy-safety/index',
         'troubleshooting/index',
       ],

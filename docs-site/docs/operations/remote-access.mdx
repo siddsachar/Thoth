@@ -41,12 +41,14 @@ The route selector refreshes from current state when the invitation is created. 
 | --- | --- |
 | Invitation | A secret link that expires after 10 minutes and can be consumed once. Opening or previewing it does not connect the device; the recipient must press **Connect**. |
 | Session | A separate HttpOnly browser credential created after acceptance. Raw session secrets are never placed in the URL. |
-| Trusted device | A session lasting up to 30 days. |
+| Trusted device | A session lasting up to 30 days. An active owner UI checks at startup and every 12 hours, renewing the session to 30 days when it enters the final seven days. |
 | Temporary access | A session lasting up to 12 hours. |
 | Desktop layout | The full owner product in its wide-screen presentation. |
 | Compact layout | The same owner authority in a phone-safe presentation, including complete mobile Settings. Rich Developer and Designer editors show a desktop-layout notice. |
 
 Row-Bot stores only hashed invitation and session secrets in the versioned access database. Sessions survive normal restarts and can be revoked individually. Revoking a device revokes its sessions.
+
+An inactive trusted browser can still expire after 30 days; recover by creating a new one-time invitation from a trusted local terminal, SSH session, or container exec. Temporary 12-hour sessions and migrated legacy sessions retain their fixed expiry and do not renew.
 
 Row-Bot has no guest or multi-user sharing boundary. Device names, user agents, routes, and layout choices are session metadata, not entitlements. Existing action approval gates continue to govern sensitive tools and operations.
 
@@ -146,7 +148,7 @@ The supplied Docker image contains the complete supported server feature set: al
 
 Compose publishes `127.0.0.1:8080` by default and persists private state and explicit model/runtime downloads under `/data`. Every browser must claim an invitation, including a browser on the Docker host. Docker bridge and gateway addresses never grant owner identity.
 
-Follow the complete [Docker deployment guide](https://github.com/siddsachar/row-bot/blob/main/deploy/docker/README.md) for:
+Follow [Docker And VPS Operations](/docs/operations/docker) for the pull-first public runbook, and use the repository's [Docker operator notes](https://github.com/siddsachar/row-bot/blob/main/deploy/docker/README.md) when building from source. The public guide covers:
 
 - invitation bootstrap with `docker compose exec`;
 - intentional LAN or HTTPS publication;
@@ -154,6 +156,7 @@ Follow the complete [Docker deployment guide](https://github.com/siddsachar/row-
 - health and readiness checks;
 - read-only secret files;
 - backups, upgrades, restore, and rollback;
+- trusted-session renewal and inactive-session recovery;
 - browser, MCP runtime, local-model cache, and headless feature boundaries.
 
 Never mount the host Docker socket merely to satisfy a tool or MCP server.

@@ -325,7 +325,7 @@ The app payload includes `pyproject.toml`, `uv.lock`, and generated `requirement
 - **Ollama is optional**: Row-Bot works with API-key provider models (OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, Atlas Cloud, Requesty, and Ollama Cloud), ChatGPT / Codex subscription models after in-app ChatGPT sign-in, xAI Grok OAuth after in-app Grok sign-in, and Claude Subscription models after Row-Bot-owned Claude OAuth or setup-token import. Installed local Ollama chat models appear in Settings -> Models even when their family is newer than Row-Bot's curated capability lists; Vision stays conservative and requires known Vision metadata/families.
 - **Agent orchestration**: the packaged app includes Agent Profiles, Goal Mode, child-agent delegation, profile/tool allowlists, profile-first workflow agents, Agent-run workflow promotion, checkpointed work-round budgets, repeat-stall protection, and application-wide nesting, concurrency, and timeout settings. These records live in Row-Bot's local data directory alongside workflow state.
 - **Computer Use beta**: Windows and macOS packages include Row-Bot's provider-neutral native-app tool, target-window safety policy, private Cua client, and pinned runtime manifest, but not the third-party executable. Computer Use is off by default, interactive-desktop only, and requires a separate telemetry acknowledgement and verified Cua Driver install. Linux, server, schedule, channel, workflow, and child-agent callers cannot acquire it.
-- **Local embeddings**: packaged local embedding paths are cache-only during normal startup. Missing or corrupted models stay repairable through explicit download actions, while memory and graph search fall back quickly instead of triggering a surprise model download.
+- **Local embeddings**: first-run setup clearly discloses and selects the recommended private knowledge model download by default (about 700 MB), with an opt-out. Normal startup and recall remain cache-only; missing or corrupted models stay repairable through explicit Settings actions, while memory and graph search fall back quickly instead of triggering a surprise recall-time download.
 - **Remote Access and server mode**: recursive `src/row_bot` packaging includes
   the versioned access store, migration bridge for the existing `mobile.db`,
   request/origin/proxy policy, single-owner session enforcement, invitation
@@ -353,8 +353,9 @@ The app payload includes `pyproject.toml`, `uv.lock`, and generated `requirement
   invitations, sessions, or provider credentials and publishes only on host
   loopback by default. The normal image includes all canonical server extras,
   matching headless Chromium, native media libraries, `uv`/`uvx`, and pinned
-  Node.js tooling; voice and embedding models remain explicit persistent
-  downloads. Browser-local voice uses the remote browser's microphone and
+  Node.js tooling; the recommended embedding model is a disclosed,
+  checked-by-default first-run download, while voice and other model assets
+  remain explicit persistent downloads. Browser-local voice uses the remote browser's microphone and
   speaker and requires HTTPS away from localhost. Review
   [`../deploy/docker/README.md`](../deploy/docker/README.md) before building or
   exposing a server image.

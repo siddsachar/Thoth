@@ -1321,6 +1321,8 @@ async def on_shutdown():
 
 @ui.page("/")
 async def index():
+    from row_bot.access.request_context import AuthenticationKind
+    from row_bot.access.service import SESSION_REFRESH_POLL_INTERVAL
     import row_bot.ui.state as _st
     from row_bot.ui.access_context import access_context_from_client
 
@@ -1330,6 +1332,51 @@ async def index():
     _mobile_client = bool(
         _access_context and _access_context.presentation.value == "compact"
     )
+
+    if (
+        _access_context is not None
+        and _access_context.authentication_kind is AuthenticationKind.SESSION
+    ):
+        _refresh_interval_ms = int(
+            SESSION_REFRESH_POLL_INTERVAL.total_seconds() * 1000
+        )
+        ui.add_head_html(f"""
+        <script>
+        (() => {{
+          if (window.__rowBotSessionRefreshInstalled) return;
+          window.__rowBotSessionRefreshInstalled = true;
+          let stopped = false;
+          let interval = null;
+          const stop = () => {{
+            stopped = true;
+            if (interval !== null) window.clearInterval(interval);
+          }};
+          const refresh = async () => {{
+            if (stopped) return;
+            try {{
+              const response = await fetch('/api/access/session/refresh', {{
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+              }});
+              if (response.status === 401 || response.status === 403) stop();
+            }} catch (_) {{
+              // A network failure waits for the next bounded interval.
+            }}
+          }};
+          const start = () => {{
+            refresh();
+            interval = window.setInterval(refresh, {_refresh_interval_ms});
+          }};
+          window.addEventListener('beforeunload', stop, {{once: true}});
+          if (document.readyState === 'loading') {{
+            document.addEventListener('DOMContentLoaded', start, {{once: true}});
+          }} else {{
+            start();
+          }}
+        }})();
+        </script>
+        """)
 
     # ── Global panel card style ──────────────────────────────────────────
     ui.add_head_html("""

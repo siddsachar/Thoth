@@ -91,11 +91,18 @@ def test_developer_runtime_requires_approval_for_install(tmp_path, monkeypatch):
 
 def test_developer_shell_command_records_file_side_effects(tmp_path, monkeypatch):
     runtime = _fresh_modules(tmp_path, monkeypatch)
-    from row_bot.developer import change_ledger
+    from row_bot.developer import change_ledger, storage
+    from row_bot.developer.state import DeveloperWorkspace
 
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=str(repo), check=True, capture_output=True, text=True)
+    workspace = DeveloperWorkspace(id="ws-1", name="repo", path=str(repo))
+    monkeypatch.setattr(
+        storage,
+        "get_workspace",
+        lambda workspace_id: workspace if workspace_id == workspace.id else None,
+    )
     command = "python -c \"from pathlib import Path; Path('created.txt').write_text('hello\\n', encoding='utf-8'); print('httpx. marker')\""
 
     blocked = runtime.run_workspace_shell_command(

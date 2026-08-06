@@ -40,9 +40,13 @@ Open Home -> Developer. Choose an existing folder, connect a repository already 
 
 ## Sandbox Modes
 
-Local mode lets Row-Bot operate in the selected workspace with your configured file and command permissions. Docker sandbox mode, when available, isolates command execution in a container and requires an import step before changes affect the real workspace. Docker is safer for risky commands but requires Docker setup and can differ from your local environment.
+Local mode lets Row-Bot operate in the selected workspace with your configured file and command permissions. Docker Sandbox mode, when available on a host installation, isolates command execution in a container and requires an import step before changes affect the real workspace. It requires a supported host Docker runtime and can differ from your local environment.
 
-For most users, start with local mode on a disposable branch. Use Docker when you want stronger isolation or are testing uncertain commands.
+Inside the official Row-Bot application container, Developer Docker Sandbox is unavailable and a requested Docker workspace fails closed; Row-Bot never probes a nested daemon or silently runs that workspace locally. Local mode remains an explicit choice and can see only workspace paths deliberately mounted into the application container.
+
+An approved risky Custom Tool is a third case: it deliberately executes in Local mode inside the application container against the selected visible Custom Tool path. That behavior is shown in the approval dialog and is not a nested Docker sandbox or fallback from a requested Docker workspace. See [Docker And VPS Operations](/docs/operations/docker#developer-and-headless-boundaries) for the complete container boundary.
+
+For a host installation, start with Local mode on a disposable branch. Use Docker Sandbox when you want stronger isolation and the supported host runtime is available.
 
 ## Troubleshooting
 

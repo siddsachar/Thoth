@@ -103,6 +103,12 @@ user guide with reviewed screenshots and machine-readable references.
 
 ### Local Embeddings & Memory Recall Reliability
 
+- **Working first-run default** - clearly discloses and selects the recommended
+  private knowledge model download during first-run setup (about 700 MB), while
+  preserving an opt-out and keeping ordinary recall cache-only.
+- **Bounded model payload** - excludes unused GGUF, ONNX, and OpenVINO exports
+  from local embedding downloads so the default setup fetches the runtime files
+  Row-Bot uses instead of the full multi-format model repository.
 - **Strict cache-only runtime** - resolves local embedding models from the
   existing Hugging Face cache and sets local-only loading so normal recall,
   indexing, status checks, and startup cannot trigger a surprise model
@@ -214,10 +220,11 @@ user guide with reviewed screenshots and machine-readable references.
 - macOS users must grant Accessibility and Screen Recording access to the
   relevant Row-Bot/Cua application entries. Permission changes may require the
   app entry to be removed, re-added, and rechecked.
-- Local embedding models are no longer downloaded implicitly during recall or
-  startup. If the configured model is not already cached, use the explicit
-  Settings download action; recall continues with lexical/graph fallback in the
-  meantime.
+- Local embedding models are never downloaded implicitly during recall or
+  ordinary startup. First-run setup clearly discloses and selects the
+  recommended private knowledge model download by default, with an opt-out. If
+  it is skipped or later damaged, use the explicit Settings action; recall
+  continues with lexical/graph fallback in the meantime.
 - Agent runtime limit changes apply only to new runs. A low work-round or child
   active-time limit can stop long tasks before they finish, while queued child
   time does not count toward the active-time limit.
