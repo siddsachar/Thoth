@@ -53,13 +53,20 @@ Row-Bot uses semantic versioning:
    `installer/install-linux.sh`, and the installer payload notes in
    `installer/README.md`. The current source-layout and payload contract is
    summarized in [`docs/SOURCE_LAYOUT.md`](SOURCE_LAYOUT.md).
+   For server/deployment changes, also review `deploy/docker/Dockerfile`,
+   `deploy/docker/compose.yaml`, the reverse-proxy and systemd examples under
+   `deploy/`, `.dockerignore`, and `.github/workflows/container.yml`.
    For Computer Use releases, also confirm the pinned Cua manifest is packaged
    while the third-party executable remains an explicit post-install download.
 7. Smoke-test first-run behavior against a clean data directory before building
    artifacts, especially setup wizard imports, provider config defaults, and
-   Custom/Self-hosted endpoint setup. Confirm Computer Use remains off by
-   default and does not download or invoke Cua before its disclosure and an
-   explicit Install or Repair action.
+   Custom/Self-hosted endpoint setup. Exercise automatic Agent delegation and a
+   durable document upload through completion, cancellation, and restart
+   recovery. Start `row-bot serve` with an isolated data directory and confirm
+   loopback is still gated until an explicit owner invitation is redeemed; do
+   not copy one-time invitation URLs into logs or artifacts. Confirm Computer
+   Use remains off by default and does not download or invoke Cua before its
+   disclosure and an explicit Install or Repair action.
 8. Run focused startup and packaging hardening tests:
 
    ```bash
@@ -101,7 +108,7 @@ Row-Bot uses semantic versioning:
 6. Run notarization workflows for macOS when needed and upload the stapled DMG.
 7. Download the Linux `Row-Bot-X.Y.Z-Linux-x86_64.tar.gz` artifact, extract it on
    a clean Linux VM, run `./install.sh`, and confirm `~/.local/bin/row-bot` opens
-   the browser UI and `~/.local/bin/row-bot --server --no-open --port 8092`
+   the browser UI and `~/.local/bin/row-bot serve --port 8092`
    answers `/api/launcher-ping`.
 8. Smoke-test the final Windows, macOS, and Linux artifacts. For Windows, include
    repair/upgrade over an existing install and confirm the bundled `python\`
@@ -118,9 +125,15 @@ Row-Bot uses semantic versioning:
    logs. On Linux, confirm Computer Use reports unsupported without attempting
    a driver download.
 9. Publish the GitHub Release.
-10. Confirm `.github/workflows/update-manifest.yml` patches SHA256 hashes into
-   the release body.
-11. Test the packaged updater from the previous stable version on each platform.
+10. Confirm `.github/workflows/container.yml` builds and smokes native
+    `linux/amd64` and `linux/arm64` images, publishes the versioned multi-arch
+    manifest to `ghcr.io/siddsachar/row-bot:X.Y.Z`, and updates `latest` for a
+    stable release. Inspect the workflow summary for the release, architecture,
+    and manifest digests; pull and smoke both platforms from a logged-out GHCR
+    client to confirm the package is public.
+11. Confirm `.github/workflows/update-manifest.yml` patches SHA256 hashes into
+    the release body.
+12. Test the packaged updater from the previous stable version on each platform.
 
 ## v4 Rebrand Upgrade Note
 
@@ -176,7 +189,7 @@ tail -200 ~/.row-bot/row_bot_app.log
 tail -200 ~/.row-bot/row_bot_app.log.prev
 uname -a
 cat /etc/os-release
-~/.local/bin/row-bot --server --no-open --port 8092 --no-ollama
+~/.local/bin/row-bot serve --port 8092 --no-ollama
 ```
 
 The launcher prints the selected port, child-process exit code when available,
@@ -203,7 +216,13 @@ Minimum smoke checks:
 - Fresh tarball install and desktop launcher
 - Default installed command: `~/.local/bin/row-bot`
 - One-line installer after the GitHub Release is published
-- `~/.local/bin/row-bot --server --no-open --port 8092` plus `/api/launcher-ping`
+- `~/.local/bin/row-bot serve --port 8092` plus `/healthz`, `/readyz`, and
+  `/api/launcher-ping`
+- Owner invitation redemption, authenticated refresh, revocation, and a second
+  browser being rejected while the first owner session is active
+- Docker Compose startup with persistent `/data`, loopback-only publishing,
+  container health, restart persistence, and a logged-out pull of the published
+  versioned GHCR image on both supported architectures
 - First-run setup with Providers and Custom/Self-hosted paths
 - Ollama local model when `ollama` is installed and in `PATH`
 - Browser tool after Playwright browser/dependency install

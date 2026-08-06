@@ -11,17 +11,29 @@ HTML = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
 CSS = (ROOT / "docs" / "site.css").read_text(encoding="utf-8")
 JS = (ROOT / "docs" / "site.js").read_text(encoding="utf-8")
 
-WINDOWS_URL = (
+LANDING_WINDOWS_URL = (
     "https://github.com/siddsachar/row-bot/releases/download/v4.5.0/"
     "Row-Bot-4.5.0-Windows-x64.exe"
 )
-MAC_URL = (
+LANDING_MAC_URL = (
     "https://github.com/siddsachar/row-bot/releases/download/v4.5.0/"
     "Row-Bot-4.5.0-macOS-arm64.dmg"
 )
-LINUX_COMMAND = (
+LANDING_LINUX_COMMAND = (
     "curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/"
     "installer/install-linux.sh | bash -s -- 4.5.0"
+)
+SITE_WINDOWS_URL = (
+    "https://github.com/siddsachar/row-bot/releases/download/v4.6.0/"
+    "Row-Bot-4.6.0-Windows-x64.exe"
+)
+SITE_MAC_URL = (
+    "https://github.com/siddsachar/row-bot/releases/download/v4.6.0/"
+    "Row-Bot-4.6.0-macOS-arm64.dmg"
+)
+SITE_LINUX_COMMAND = (
+    "curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/"
+    "installer/install-linux.sh | bash -s -- 4.6.0"
 )
 MARKETING_PAGES = ("index.html", "features.html", "architecture.html", "contact.html", "404.html")
 
@@ -109,12 +121,14 @@ def test_landing_page_fallbacks_and_links_are_complete() -> None:
     assert all(not link["href"].endswith((".exe", ".dmg")) for link in os_primary)
 
     hrefs = [link.get("href") for link in parser.links]
-    assert WINDOWS_URL in hrefs
-    assert MAC_URL in hrefs
+    assert LANDING_WINDOWS_URL in hrefs
+    assert LANDING_MAC_URL in hrefs
     assert "docs/getting-started/installation" in hrefs
     linux_code = next(code for code in parser.codes if "data-linux-command" in code)
-    assert linux_code["text"] == LINUX_COMMAND
-    assert LINUX_COMMAND in JS
+    assert linux_code["text"] == LANDING_LINUX_COMMAND
+    assert SITE_WINDOWS_URL in JS
+    assert SITE_MAC_URL in JS
+    assert SITE_LINUX_COMMAND in JS
 
 
 def test_mobile_handoff_and_product_media_contracts() -> None:

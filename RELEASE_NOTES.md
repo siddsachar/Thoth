@@ -2,6 +2,280 @@
 
 ---
 
+## v4.6.0 - Agent Orchestration, Remote Access & Docker Operations
+
+This release builds on v4.5.0 with a durable-agent, document-processing,
+multi-device, and server-operations pass. It turns delegated agents into one
+recoverable parent-led orchestration, replaces synchronous document loading
+with a bounded resumable queue and sharded index, gives one owner authenticated
+access from desktop and remote browsers, ships an official hardened Docker/VPS
+path, and aligns the chat, mobile, website, documentation, and release
+validation surfaces around those capabilities.
+
+### Automatic Agent Orchestration
+
+- **One authoritative parent turn** - keeps the original agent responsible for
+  planning, delegated work, follow-up waves, and the final response instead of
+  turning child completions into disconnected summaries.
+- **Required and background work** - distinguishes child results the parent
+  must join from optional detached tasks that remain durable without blocking
+  the foreground answer.
+- **Dependencies and work waves** - supports ordered child dependencies,
+  several rounds of delegation in one parent turn, duplicate-objective checks,
+  and the existing per-parent and application-wide capacity limits.
+- **Live child joins** - routes child completions, transient retries, approval
+  requests, user steering, and stop events through an ordered durable inbox so
+  the parent can react without polling or starting a replacement conversation.
+- **Checkpoint-safe suspension** - records parent checkpoint identity, pending
+  events, approvals, output metadata, and execution budget before a long-running
+  parent releases its foreground stream.
+- **Exactly-once completion** - uses durable leases and finalization claims to
+  prevent duplicate parent runners, acknowledgements, synthesis, channel sends,
+  or final chat answers when callbacks race.
+- **Recovery and explicit resume** - repairs interrupted work after restart,
+  restores already-recorded child terminal events, and revalidates the selected
+  agents, model, workspaces, and Designer project before resuming.
+- **Controlled retries and stops** - retries one classified transient child
+  failure without breaking dependency barriers and supports individual or
+  group stop while allowing the parent to close naturally.
+- **Bounded context and execution** - orders and caps result packets, preserves
+  worktree references, reuses the parent budget across event turns, and retains
+  repeated-action termination and exactly-once budget finalization.
+
+### Chat, Goals, Channels & Agent Activity
+
+- **Compact inline Agent cards** - replaces bulky child-run output with compact
+  live cards that show queued, running, approval, retry, stopped, failed, and
+  completed states inside the conversation.
+- **Parent Agent groups** - presents related child work as one durable group,
+  streams lifecycle rows as children change, and keeps later delegation waves
+  attached to the same parent generation.
+- **Shared activity truth** - drives desktop, sidebar, mobile, Agent drawer,
+  Buddy, and voice indicators from the same durable orchestration query rather
+  than independent timers or optimistic UI state.
+- **Transcript-safe restoration** - persists Agent metadata and ordering through
+  checkpoints, reloads visible cards without duplicate completion rows, and
+  places late child updates before future queued user turns.
+- **Approval continuity** - surfaces child approvals in the parent transcript,
+  deduplicates repeated approval notices, and resumes the original checkpoint
+  after a decision.
+- **Goal and workflow continuation** - lets Goal Mode continue after a completed
+  orchestration and updates delegated Workflow steps to use the same durable
+  parent/child lifecycle.
+- **Channel-safe delivery** - carries orchestration acknowledgement, activity,
+  approval, completion, and retry semantics through supported channel runtimes
+  without sending preview drafts or duplicate final messages.
+- **Cross-studio hardening** - protects concurrent Designer projects,
+  Developer workspaces, filesystem confirmation, queued messages, tool traces,
+  and stop handling while child agents are active.
+
+### Durable Bounded Document Ingestion
+
+- **Persistent batch queue** - replaces synchronous all-in-memory ingestion with
+  SQLite-backed batches and jobs that survive restart and expose clear queued,
+  indexing, searchable, extracting, completed, failed, cancelled, and duplicate
+  states.
+- **Bounded safe uploads** - streams files to staging while hashing, caps each
+  file at 256 MiB, preserves a 2 GiB disk reserve, contains filenames, isolates
+  interrupted cleanup, and allows same-name files when their contents differ.
+- **Content deduplication** - skips duplicate bytes across existing documents or
+  the same selected batch while retaining stable document IDs and source
+  records.
+- **Fair single-flight work** - uses a durable FIFO queue, leases, heartbeats,
+  and one supervisor, and makes every document in a batch searchable before
+  starting the slower extraction phase.
+- **Pause, cancel, retry, and repair** - persists queue controls, resumes safe
+  extraction checkpoints, restarts incomplete indexing, fails missing sources
+  explicitly, and retires orphaned staging or work data.
+- **Sharded atomic vectors** - builds embeddings in batches of at most 32 chunks,
+  rolls index segments at 2,000 chunks, and publishes a new document manifest
+  atomically so failed replacements leave the old searchable corpus intact.
+- **Deterministic mixed search** - merges compatible new shards and legacy
+  vectors into stable top-k results, excludes stale embedding configurations,
+  and supports ID-specific removal, cache release, and bounded rebuilds.
+- **Resumable knowledge extraction** - persists rolling map windows and
+  hierarchical reductions in groups of at most eight, checks cancellation
+  between provider calls, isolates failures by document, and commits document,
+  graph, and Wiki Vault results idempotently.
+- **Visible queue operations** - adds batch and job progress, pause/resume,
+  cancel, retry, clear-finished, indexed-document management, status-bar
+  activity, and queue/index health diagnostics to the Documents surface.
+
+### Single-Owner Multi-Device Access
+
+- **One owner, multiple presentations** - treats authenticated desktop, remote
+  desktop, and compact/mobile sessions as the same Row-Bot owner; compact mode
+  changes layout, not permissions.
+- **Authenticated server mode** - adds `row-bot serve` for long-running headless
+  operation and keeps server-mode loopback behind authentication instead of
+  inheriting the desktop application's implicit local-owner trust.
+- **Access management CLI** - adds `row-bot access invite`, listing, revocation,
+  and redacted doctor commands without importing the UI runtime or printing a
+  stored invitation secret more than once.
+- **One-time invitations** - creates origin-bound, expiring invitation links,
+  stores only hashes, permits exactly one concurrent claim, and returns terminal
+  recovery pages for expired, cancelled, locked, or already-used links.
+- **Durable revocable sessions** - adds instance-isolated HttpOnly cookies,
+  authoritative server expiry, active renewal, logout, per-session revocation,
+  whole-device revocation, pruning, and bounded secret-free audit records.
+- **HTTP and WebSocket gate** - applies the same authenticated-owner and exact
+  origin rules to normal requests and live connections, validates hosts and
+  trusted proxies, and keeps webhook and launcher-control secrets separate.
+- **Neutral public boundary** - exposes only minimal health/connect responses to
+  unauthenticated callers and prevents invitation, cookie, credential, instance,
+  and forwarded-origin details from leaking through errors or logs.
+- **Remote Access settings** - adds route status, invitation creation, LAN bind
+  controls, current-browser logout, connected devices, active sessions, and
+  immediate revocation from both full and compact layouts.
+- **Managed private HTTPS** - adds explicit Tailscale detection, reviewed plan
+  and apply steps, owned-route conflict/rollback handling, restart-aware policy
+  refresh, and precise cleanup of only Row-Bot-managed Serve routes.
+- **Browser-local voice** - records in the authenticated browser, transcribes
+  locally, and returns session-scoped local speech without starting the host
+  microphone service or retaining browser media.
+- **Transactional migration and recovery** - preserves legacy mobile owner
+  sessions and the existing access database path, and includes the database
+  family in backup, restore, and launcher recovery flows.
+
+### Docker, VPS & Secret Persistence
+
+- **Official server image** - adds a locked, multi-stage, non-root image with
+  browser support, OCI version/revision labels, a persistent `/data` boundary,
+  and a server health probe for amd64 and arm64.
+- **Hardened Compose baseline** - publishes to loopback by default, runs with a
+  read-only root filesystem, drops capabilities, enables
+  `no-new-privileges`, bounds logs, uses tmpfs for ephemeral paths, and provides
+  persistent data and secrets volumes.
+- **Automatic credential persistence** - initializes an encryption key once in
+  the isolated secrets volume and stores provider credentials as encrypted
+  records so container replacement does not require re-entering account keys or
+  fall back to plaintext.
+- **Deployment variants** - adds release-image, source-build, VPS host-network,
+  read-only secret-directory, host Caddy, and systemd examples with explicit
+  public origins, trusted proxies, and multiple-instance isolation.
+- **Complete operator runbook** - documents first invitation, health checks,
+  private knowledge model setup, backup/restore, upgrade/rollback, remote voice,
+  Tailscale, session recovery, deliberate removal, and credential preservation.
+- **Container-aware Developer safety** - refuses nested Docker Sandbox execution
+  inside the official container and never silently falls back from a requested
+  missing sandbox to local host execution.
+- **Owned-resource smoke tests** - adds a deterministic server smoke runner that
+  uses a random loopback port, never pulls or builds, redacts secrets, and cleans
+  only the exact labeled container and volume it created.
+- **Release-only container publication** - verifies native amd64 and arm64
+  images on relevant changes, checks release tag/commit identity, smokes images
+  before registry login or push, then assembles GHCR multi-architecture version
+  manifests and publishes `latest` only for final releases.
+- **Reproducible docs publication** - pins the docs build environment,
+  regenerates LLM exports before Docusaurus, and normalizes generated artifact
+  line endings.
+
+### Mobile, Website & Data Integrity
+
+- **Private startup default restored** - resolves an unspecified bind host to
+  direct loopback again while continuing to honor intentional LAN, proxy, and
+  server configuration.
+- **Safer pairing recovery** - records access-gate rejections and replaces a
+  failed or spent pairing form with explicit recovery guidance so it cannot be
+  submitted again.
+- **Cleaner mobile conversations** - removes internal child-agent threads from
+  Recent chats while preserving orchestration activity on the owning parent.
+- **Narrow-screen composer fix** - contains the action row, truncates the model
+  control, preserves the send button, and respects left, right, and bottom safe
+  areas.
+- **Evergreen marketing surface** - refreshes the public landing experience with
+  progressive enhancement, device-aware desktop install choices, explicit
+  mobile/server handoff, complete non-JavaScript fallbacks, and responsive
+  navigation.
+- **Canonical site navigation** - unifies landing, Features, Architecture,
+  Contact, 404, and documentation navigation, metadata, footers, download
+  destinations, sitemap entries, and shared assets while removing duplicate
+  Docusaurus shadow pages.
+- **Wiki Vault ID preservation** - quotes entity IDs in frontmatter and always
+  parses `id` as text, preventing numeric-looking IDs from being coerced while
+  remaining compatible with legacy unquoted files.
+
+### Tests & Release Validation
+
+- **Orchestration contracts** - covers schema repair, parent/child waves,
+  dependencies, capacity, joins, ordered events, approvals, steering, retries,
+  stopping, checkpoint identity, exactly-once delivery, and restart recovery.
+- **Cross-surface regressions** - verifies Agent cards, transcripts, activity,
+  Goals, Workflows, channels, Buddy, voice, Developer, Designer, mobile, and
+  filesystem confirmation against the durable runtime.
+- **Document durability tests** - covers upload bounds, hashing, deduplication,
+  queue transitions, leases, cancellation, restart recovery, sharded publication,
+  deterministic retrieval, resumable extraction, and once-only finalization.
+- **Access security tests** - covers invitation races, cookie isolation, session
+  renewal/revocation, HTTP/WebSocket parity, trusted proxy rules, single-owner
+  authority, migrations, backups, Tailscale ownership, and redaction.
+- **Container release contracts** - validates Dockerfile/Compose hardening,
+  secret persistence, Developer container boundaries, smoke ownership, native
+  architecture builds, release identity, and manifest publication order.
+- **Documentation contracts** - verifies the Docker and remote-access runbooks,
+  canonical marketing routes, mobile handoff, internal links, generated
+  references, LLM exports, sitemap ownership, and Pages synchronization.
+
+### Breaking Changes And Caveats
+
+- Every authenticated remote browser is the full Row-Bot owner. Invitation
+  links and active browser sessions therefore carry the same authority as the
+  local desktop and should be created, shared, and revoked accordingly.
+- `row-bot serve` does not grant implicit owner access merely because a request
+  arrives from loopback. Create an invitation with `row-bot access invite` and
+  authenticate the browser; direct desktop mode retains its local-owner path.
+- Direct LAN mode uses unencrypted HTTP. Prefer Tailscale Serve or a correctly
+  configured HTTPS reverse proxy outside a trusted private network, and set the
+  exact public origin, allowed hosts, and trusted proxy CIDRs.
+- Browser microphone capture requires a secure context. Remote voice therefore
+  needs HTTPS except for browser-recognized local origins, and local voice model
+  downloads remain explicit.
+- Docker upgrades must preserve both the data volume and the secrets volume.
+  Losing or changing the secrets-volume encryption key makes encrypted account
+  credentials unreadable; backing up only `/data` is not a complete credential
+  backup.
+- Docker Sandbox mode is intentionally unavailable from inside the official
+  Row-Bot container. Use an explicitly reviewed local mounted-workspace mode or
+  run Developer Studio from the host when isolated Docker execution is needed.
+- Document uploads are limited to 256 MiB each and require at least 2 GiB of
+  staging free space. Cloud embedding or extraction providers receive document
+  chunks only when the user has selected those providers.
+- The GHCR image and multi-architecture version manifest become available when
+  the GitHub release is published. `latest` is updated only for a non-prerelease
+  release; release-pinned Compose deployments should use `4.6.0`.
+- Published docs under `docs/assets`, `docs/docs`, `docs/img`, `docs/pagefind`,
+  and `docs/search` remain generated artifacts. Update their source and run the
+  documented synchronization flow instead of editing them directly.
+- Windows signing, macOS notarization, clean-machine installer and container
+  smoke tests, previous-version updater checks, and real provider/channel/MCP,
+  remote-access, Tailscale, voice, and Computer Use validation remain manual
+  release gates after CI artifacts are built.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/row_bot/agent_orchestrator.py`, `agent_runner.py`, `agent_runs.py` | Adds durable parent-led orchestration, ordered events, dependencies, retry, recovery, exactly-once finalization, and worktree-aware results. |
+| `src/row_bot/tools/agent_tool.py`, `goals.py`, `tasks.py`, `threads.py` | Connects delegated tools, Goal/Workflow continuation, parent suspension, steering, and transcript-safe orchestration state. |
+| `src/row_bot/ui/agent_drawer.py`, `streaming.py`, `transcript.py`, `sidebar.py` | Adds compact Agent groups/cards, live lifecycle rows, shared activity state, and durable transcript restoration. |
+| `src/row_bot/document_jobs.py`, `document_uploads.py`, `document_index.py` | Adds bounded staging, durable queue control/recovery, atomic sharded vectors, deterministic retrieval, and health repair. |
+| `src/row_bot/document_extraction.py`, `documents.py`, `ui/settings.py`, `ui/status_bar.py` | Adds resumable extraction, idempotent knowledge finalization, document queue operations, progress, and indexed-document management. |
+| `src/row_bot/access/*`, `mobile/*`, `ui/access_context.py` | Adds the single-owner access model, invitations, sessions, cookies, middleware, route policy, diagnostics, migration, and compatibility boundary. |
+| `src/row_bot/ui/remote_access_settings.py`, `access/tailscale.py`, `tunnel.py` | Adds owner-managed routes, devices/sessions, LAN controls, Tailscale Serve planning/apply/cleanup, and managed-tunnel gating. |
+| `src/row_bot/voice/browser_client.py`, `voice/browser_local.py` | Adds secure browser capture, local transcription, and session-scoped browser speech output. |
+| `src/row_bot/secret_store.py`, `providers/auth_store.py`, `channels/auth_store.py` | Adds encrypted persistent server credentials, read-only secret files, safe status, and conflict-aware provider/channel resolution. |
+| `deploy/docker/*`, `deploy/reverse-proxy/*`, `deploy/systemd/*` | Adds the official image, hardened Compose variants, persistent secrets, Caddy, VPS, systemd, backup, upgrade, and operations examples. |
+| `.github/workflows/container.yml`, `scripts/smoke_docker_server.py` | Adds native multi-architecture verification, release-only GHCR publication, manifest policy, and owned-resource container smoke coverage. |
+| `src/row_bot/developer/*` | Makes sandbox execution container-aware and fails closed rather than silently substituting local execution. |
+| `src/row_bot/ui/mobile.py`, `ui/mobile_chat.py`, `app_port.py`, `launcher.py` | Restores loopback defaults, filters child threads, fixes the compact composer, and supports authenticated headless launch. |
+| `src/row_bot/wiki_vault.py` | Preserves numeric-looking entity IDs as text across export, search, and import. |
+| `docs-site/docs/operations/*`, `deploy/docker/README.md`, `installer/README.md` | Documents remote access, Docker/VPS operation, credentials, backup/restore, upgrade, recovery, and container limitations. |
+| `docs/site.css`, `docs/site.js`, `docs/features.html`, `docs/architecture.html`, `docs/contact.html` | Aligns the evergreen marketing and documentation navigation, mobile handoff, shared styling, metadata, and canonical routes. |
+| `tests/subsystem/agents/*`, `tests/subsystem/knowledge_graph/*`, `tests/subsystem/access/*` | Adds deterministic orchestration, document-ingestion, and authenticated-access subsystem coverage. |
+| `tests/integration/access/*`, `tests/contracts/installers/*`, `tests/docs/*` | Adds cross-route access security, Docker/release workflow, remote access, and public documentation contracts. |
+
+---
+
 ## v4.5.0 - Secure Computer Use, Agent Budgets & Public Documentation
 
 This release builds on v4.4.0 with a native-computer-control, agent-safety,

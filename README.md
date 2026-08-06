@@ -19,17 +19,19 @@ context, **Orchestrate** tools and model providers, and **Work** inside the
 files, repos, workflows, and channels you choose.
 
 It combines chat, durable memory, tool use, Agent Profiles, Goal Mode,
-child-agent delegation, profile-first workflows, Developer Studio, Designer
-Studio, Smart Skills, Skills Hub, Custom Tools, Plugin System v2, messaging
-channels, secure compact mobile owner access, opt-in native Computer Use, realtime
-voice, and provider-aware model routing. Durable app data stays local by
-default.
+automatic parent-led agent orchestration, profile-first workflows, Developer
+Studio, Designer Studio, Smart Skills, Skills Hub, Custom Tools, Plugin System
+v2, messaging channels, authenticated multi-device owner access, opt-in native
+Computer Use, realtime voice, and provider-aware model routing. Durable app data
+stays local by default.
 
 For larger tasks, Row-Bot can keep a visible goal, run the thread through a
-focused Agent Profile, and delegate scoped child agents for research, review,
-implementation, or follow-up work while preserving tool limits, approvals, and
-local run history. Checkpoint-safe work budgets and application-wide delegation
-limits keep long or repetitive agent runs bounded and visible.
+focused Agent Profile, and orchestrate scoped child agents for research, review,
+implementation, or follow-up work. The original parent remains responsible for
+joining required results and answering, while durable checkpoints preserve
+approvals, steering, retries, stops, and recovery. Checkpoint-safe work budgets
+and application-wide delegation limits keep long or repetitive runs bounded and
+visible.
 
 Choose the model path that fits the task: local models through
 [Ollama](https://ollama.com/); provider keys for OpenAI, Anthropic, Google AI,
@@ -46,9 +48,11 @@ models can sit side by side.
 Row-Bot itself has no account system, no Row-Bot-hosted inference server, and
 no first-party telemetry pipeline. Provider calls go to the provider or
 endpoint you choose, and provider keys, OAuth tokens, and subscription tokens
-are stored in the OS credential store when available. The optional Computer Use
-beta depends on Cua Driver, whose separately disclosed upstream telemetry must
-be accepted before Row-Bot installs or invokes it.
+are stored in the OS credential store when available. Official Docker
+deployments use a separate persistent encryption-key volume and encrypted
+credential records instead. The optional Computer Use beta depends on Cua
+Driver, whose separately disclosed upstream telemetry must be accepted before
+Row-Bot installs or invokes it.
 
 Download the latest installer from [GitHub Releases](https://github.com/siddsachar/row-bot/releases). Windows and macOS use one-click installers. Linux has a one-line user installer.
 
@@ -67,16 +71,16 @@ Download the latest installer from [GitHub Releases](https://github.com/siddsach
 
 | Area | Details |
 |------|---------|
-| Agent orchestration | LangGraph ReAct agent, Goal Mode, Agent Profiles, Profile Library, child-agent delegation, durable child-agent runs and parent-thread approvals, checkpoint-safe work budgets, repeated-action protection, configurable nesting/concurrency/active-time limits, profile/tool allowlists, agent status and wait tools, promoted Agent-run workflows, generation-scoped cancellation, streaming activity, thinking bubbles, smart context trimming, and per-thread, per-workflow, per-profile, and per-Developer model overrides. |
+| Agent orchestration | LangGraph ReAct agent, Goal Mode, Agent Profiles, Profile Library, automatic parent-led child-agent orchestration, required and detached work, dependency ordering, multi-wave live joins, ordered steering and approvals, transient retry, explicit restart recovery, compact Agent groups and cards, exactly-once completion, checkpoint-safe work budgets, repeated-action protection, configurable nesting/concurrency/active-time limits, profile/tool allowlists, promoted Agent-run workflows, generation-scoped cancellation, smart context trimming, and per-thread, per-workflow, per-profile, and per-Developer model overrides. |
 | Models and providers | Provider-qualified model selection, readiness routing, chat-only fallback for non-tool models, chat/agent/vision/image/video capability labels, custom endpoint profiles and probes, automatic live catalog discovery with last-known-good preservation, xAI Grok OAuth, ChatGPT / Codex and Claude Subscription providers, OpenCode providers, provider-scoped tool-schema compatibility, prompt-cache diagnostics, and background model cache. |
-| Memory and knowledge | Personal knowledge graph, 10 entity types, 67 typed relations, bounded semantic/lexical/graph recall, a disclosed checked-by-default local embedding setup download, cache-only normal recall, explicit repair, fast lexical/graph fallback, audit and review states, recall traces, graph visualization, Obsidian-compatible wiki export, document extraction with source provenance, Dream Cycle refinement, duplicate merging, stale-confidence decay, relationship inference, self-knowledge, insights, and conversation search. |
+| Memory and knowledge | Personal knowledge graph, 10 entity types, 67 typed relations, bounded semantic/lexical/graph recall, a disclosed checked-by-default local embedding setup download, cache-only normal recall, explicit repair, fast lexical/graph fallback, durable bounded document batches, streamed upload hashing and deduplication, atomic sharded vectors, resumable extraction, queue controls and health repair, audit and review states, recall traces, graph visualization, Obsidian-compatible wiki export with source provenance, Dream Cycle refinement, duplicate merging, stale-confidence decay, relationship inference, self-knowledge, insights, and conversation search. |
 | Tools | 30+ core tool modules for web search, DuckDuckGo, Wikipedia, arXiv, YouTube transcripts, URL reading, documents, wiki vault, Gmail, Google Calendar, filesystem, shell, visible browser automation, opt-in native Computer Use, workflows, Goal Mode, child-agent delegation, tracker, channels, X, image generation/editing, video generation, MCP, Developer Studio, Designer Studio, Custom Tool Builder, status, calculator, Wolfram Alpha, weather, vision, memory, system info, and charts. File tools read PDF, CSV, Excel, JSON, JSONL, TSV, and image files, with schema, stats, previews, and PDF export where supported. |
-| Developer Studio | Local Git workspace linking and cloning, code threads, per-thread and child-agent worktrees, repo inspector, file tree, diffs, todos, tests, branch, commit, push and PR prep, approval modes, and optional Docker Sandbox with a shadow workspace and explicit import back into the real repo. |
+| Developer Studio | Local Git workspace linking and cloning, code threads, per-thread and child-agent worktrees, repo inspector, file tree, diffs, todos, tests, branch, commit, push and PR prep, approval modes, and optional Docker Sandbox with a shadow workspace and explicit import back into the real repo. Docker Sandbox intentionally fails closed inside the official Row-Bot server container instead of nesting or falling back silently. |
 | Designer Studio | Decks, documents, landing pages, app mockups, and storyboards with a sandboxed interactive runtime, templates, brand controls, critique and repair, AI image and video generation, chart insertion, Mermaid and Plotly rendering, shareable HTML, and export to PDF, HTML, PNG, and PPTX. |
 | Workflows | Scheduled runs, webhook triggers, task-completion triggers, step pipelines, conditions, approvals, subtasks, notification-only runs, concurrency groups, delivery defaults, profile-first workflow agents, promoted Agent-run workflows, per-workflow model/tool/skill/profile overrides, safety modes, run status, run history, upcoming runs, and a Workflow Console. |
 | Controlled self-evolution | Structured self-reflection, bounded change proposals, reviewable execution boundaries, persistence, Dream Cycle and memory integration, and Command Center/status visibility for improvement work that stays explicit and auditable. |
 | Channels and voice | Telegram, WhatsApp, Discord, Slack, SMS, and plugin-owned channels with platform-aware live streaming, typing and edit fallbacks, interactive approvals, durable child-agent and Goal Mode notices, media intake, voice transcription, document extraction, health checks, auto-generated send/photo/document tools, and optional tunnel support. SMS remains final-text-only. Realtime voice adds provider-backed voice sessions, action handling, speech/cue policy, and local faster-whisper STT plus Kokoro TTS options. |
-| Platform and app | Native desktop app plus secure browser-first compact owner access for chat, Activity, workflows, Knowledge, and complete phone-safe Settings; opt-in Computer Use setup, live takeover, and permission recovery on Windows and macOS; QR pairing over local network, Tailscale, ngrok, or a custom route; installable PWA support; tray integration on Windows and macOS; native macOS tray host; local browser-first Linux launch; optional Linux native window/tray mode; Home status surfaces; recovery tools; verified auto-updates; and a searchable public user guide. |
+| Platform and app | Native desktop app plus authenticated single-owner desktop and compact browser access; one-time invitations, durable revocable sessions, route and device management, Tailscale Serve, browser-local voice, and strict HTTP/WebSocket origin gates; authenticated headless `serve` mode; official hardened Docker/VPS deployment and multi-architecture GHCR images; opt-in Computer Use setup, live takeover, and permission recovery on Windows and macOS; installable PWA support; tray integration on Windows and macOS; local browser-first Linux launch; Home status surfaces; recovery tools; verified auto-updates; and a searchable public user guide. |
 | Extensibility | Smart Skills, pinned skills, slash commands, Skills Hub browsing/import/search, Plugin System v2 for native tools, MCP-backed tools, bundled skills, and channels, sandboxed Plugin Center and marketplace, bundled skills and tool guides, Agent Profiles, child-agent tools, Goal Mode tools, external MCP clients over stdio, Streamable HTTP, and SSE, Custom Tools from repos or folders, hardened Custom Tool Builder setup, Claude Code Delegation through an approval-gated CLI worker, migration from selected Hermes/OpenClaw data, setup center, identity settings, and stability diagnostics. |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full subsystem reference.
@@ -112,7 +116,7 @@ curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/i
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.5.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.6.0
 ```
 
 The installer downloads the release tarball, verifies its SHA256 from the GitHub release manifest, installs under `~/.local/share/row-bot`, creates `~/.local/bin/row-bot`, and stores user data in `~/.row-bot`. The default Linux build opens in your system browser. Native window and tray support are available when the required GTK, Qt, and AppIndicator libraries are installed.
@@ -129,6 +133,32 @@ row-bot
 If `~/.local/bin` is not on `PATH`, run `~/.local/bin/row-bot` or add it to your shell profile. On Linux, provider secrets use Secret Service or KWallet when available. WSL and headless systems can run without a keyring, but new secrets are session-only until secure storage is configured. For persistence in headless Linux, run Row-Bot inside a D-Bus session with a Secret Service backend such as `gnome-keyring-daemon`, or explicitly configure another secure Python keyring backend such as an encrypted file keyring.
 
 For browser automation, Chromium may need distro packages that the tarball cannot install. If Playwright reports missing dependencies, run the command it prints, or use `python -m playwright install --with-deps chromium` from a source checkout.
+
+### Docker / Headless Server
+
+The official image is a complete single-owner server deployment for amd64 and
+arm64. From the repository root, pin the release and start the hardened
+loopback-only Compose profile:
+
+```bash
+export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.6.0
+docker compose -f deploy/docker/compose.yaml up --detach
+docker compose -f deploy/docker/compose.yaml ps
+```
+
+After the service is healthy, create the first one-time owner invitation from a
+trusted terminal:
+
+```bash
+docker compose -f deploy/docker/compose.yaml exec row-bot \
+  row-bot access invite --layout desktop --origin http://127.0.0.1:8080
+```
+
+Compose persists app data and a separately mounted encryption key in two named
+volumes. Back up both together. The container does not grant owner access from a
+Docker bridge address, and every browser must authenticate. Read
+[Docker And VPS Operations](https://row-bot.ai/docs/operations/docker) before
+adding LAN, Tailscale, SSH, reverse-proxy, or public VPS reachability.
 
 ### Upgrading from Thoth 3.x
 
@@ -154,8 +184,9 @@ On first launch, Row-Bot opens a setup wizard. Pick one of three paths:
 
 For routine chats, use Row-Bot normally. For longer work, create a Goal so
 progress and blockers stay visible, choose an Agent Profile for the role you
-want, and delegate child agents when a subtask can run separately under tighter
-tool and approval boundaries.
+want, and let the parent orchestrate child agents when subtasks can run
+separately under tighter tool and approval boundaries. Required children join
+the same live parent turn; detached children can continue without blocking it.
 
 To use the same running Row-Bot from another computer, phone, or tablet, open
 `Settings -> System -> Remote Access` on an authorized owner device. Create a
@@ -298,7 +329,9 @@ Docker users should follow the public
 The repository's [`deploy/docker/README.md`](deploy/docker/README.md) retains
 source-build and operator detail. Both preserve the loopback-only Compose
 default, explicit invitation bootstrap, and separate persistent data and
-encryption-key volumes.
+encryption-key volumes. The normal Compose path creates its encryption key once
+without additional credential-store setup and stores owner-entered credentials
+as encrypted records under `/data/secure-secrets`.
 `deploy/reverse-proxy/Caddyfile.example` and
 `deploy/systemd/row-bot.service.example` are reviewed starting points for
 operator-managed VPS deployments.
@@ -320,8 +353,10 @@ Realtime voice remains a separate provider feature.
 Back up the complete active `ROW_BOT_DATA_DIR` while Row-Bot is stopped, and
 protect that backup as private user data. It contains conversations,
 configuration, instance identity, invitations, devices, and sessions. OS
-keyring credentials may need a separate recovery plan. Test restore and
-rollback with an isolated instance before relying on a backup.
+keyring credentials may need a separate recovery plan. Docker deployments must
+back up the data and encryption-key volumes together; either one alone is
+insufficient to recover saved provider credentials. Test restore and rollback
+with an isolated instance before relying on a backup.
 
 ## Models, Keys, and Integrations
 
@@ -368,7 +403,7 @@ cached, and fallback catalog outcomes.
 | ngrok | `NGROK_AUTHTOKEN` | Tunnels for inbound webhooks. |
 | Gmail and Google Calendar | Google Cloud OAuth `credentials.json` | Email search/read/draft/send and request-scoped calendar search/create/bulk-create/update/move/delete with safe concurrent token refresh. |
 
-Configure providers in Settings, Channels, and Accounts. Keys and in-app ChatGPT / Codex, Claude Subscription, and xAI Grok OAuth tokens are stored in Windows Credential Manager, macOS Keychain, or Linux Secret Service/KWallet when available. If secure storage is unavailable, newly entered secrets are usable for the current Row-Bot process only and must be re-entered after restart unless a secure keyring backend is configured. The official server container can instead use an explicit read-only `ROW_BOT_SECRET_STORE_KEY` file to encrypt owner-entered secrets under its persistent `/data` volume; see [Docker And VPS Operations](https://row-bot.ai/docs/operations/docker#read-only-secret-files). `~/.row-bot/api_keys.json` and `~/.row-bot/providers.json` keep metadata only, such as saved state, provider status, Quick Choices, compatibility profiles, runtime and vision probe results, OAuth client-id diagnostics, model-count status, and masked fingerprints.
+Configure providers in Settings, Channels, and Accounts. Keys and in-app ChatGPT / Codex, Claude Subscription, and xAI Grok OAuth tokens are stored in Windows Credential Manager, macOS Keychain, or Linux Secret Service/KWallet when available. If secure storage is unavailable, newly entered secrets are usable for the current Row-Bot process only and must be re-entered after restart unless a secure keyring backend is configured. The official Compose path automatically creates a persistent `ROW_BOT_SECRET_STORE_KEY` in its isolated secrets volume and uses it to encrypt owner-entered credentials under `/data/secure-secrets`; advanced operators can replace that volume with an explicit read-only secret file. Back up the key and data together; see [Docker And VPS Operations](https://row-bot.ai/docs/operations/docker#account-credential-persistence-is-automatic). `~/.row-bot/api_keys.json` and `~/.row-bot/providers.json` keep metadata only, such as saved state, provider status, Quick Choices, compatibility profiles, runtime and vision probe results, OAuth client-id diagnostics, model-count status, and masked fingerprints.
 
 Atlas Cloud uses an OpenAI-compatible API, but Row-Bot treats it as a
 first-class provider with its own setup, auth, catalog refresh, provider
@@ -458,11 +493,13 @@ Safety controls are built into the tool layer:
 ## Architecture
 
 Row-Bot is organized around reasoning, orchestration, and work: Agent Profiles,
-Goal Mode, checkpoint-safe agent budgets, explicit prompt context/cache
-sections, memory, profile-first workflows, the mobile access gate and compact owner
-shell, separate browser and native Computer Use engines, shared channel
-streaming, Designer Studio, Developer Studio worktrees, provider runtime and
-cancellation, Plugin System v2/MCP boundaries, and safety controls.
+Goal Mode, a durable parent/child orchestrator, checkpoint-safe agent budgets,
+explicit prompt context/cache sections, a durable document queue and sharded
+retrieval index, memory, profile-first workflows, the single-owner access gate
+and full/compact browser shells, authenticated server mode, separate browser and
+native Computer Use engines, shared channel streaming, Designer Studio,
+Developer Studio worktrees, provider runtime and cancellation, Plugin System
+v2/MCP boundaries, and safety controls.
 
 Explore the visual architecture gallery: [docs/architecture.html](docs/architecture.html)
 
@@ -504,6 +541,7 @@ Review the Docusaurus docs source and local preview instructions:
 | Provider/custom models only | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.12+ for source installs; 4 GB RAM; about 1 GB disk; internet for provider inference. | No GPU required. Use this path if you do not want local model downloads. |
 | Computer Use beta | Windows 10/11 x86-64 or ARM64, or macOS 12+ on Intel/Apple Silicon; interactive local UI; internet for the explicit Cua Driver install or repair; Accessibility and Screen Recording permission on macOS. | Optional and off by default. Browser automation remains preferred for websites; Linux and unattended/background use are not supported. |
 | Developer Sandbox | Docker Desktop or a compatible Docker/Podman runtime. | Optional. Developer Studio also works with local execution in the selected repo. |
+| Docker / headless server | Docker Engine with Compose v2 on an amd64 or arm64 Linux host; enough persistent storage for `/data`, the encryption-key volume, documents, models, and backups. | Pin `ghcr.io/siddsachar/row-bot:4.6.0`, keep the default loopback publication, and use Tailscale or an operator-managed HTTPS proxy for remote reachability. |
 | Public docs site | Node.js 20+ and npm. | Optional. Used only for local Docusaurus docs preview and generated-docs validation. |
 
 Your default Brain model is set by the setup wizard. If you choose the local path, Row-Bot uses one of the models already exposed by your local runtime; 14B-class models are recommended for stronger agent/tool behavior, while smaller 8B-class models are better for 8 GB machines. Hosted and custom endpoint setups can skip local model downloads entirely.
@@ -602,12 +640,13 @@ under `~/.row-bot` or the platform-specific Row-Bot app data paths used by the
 installer. Current Row-Bot startup reads Row-Bot data only and no longer scans,
 copies, repairs, or rewrites old `.thoth` data.
 
-Mobile pairing records, hashed device credentials, revocation state, and
-display-safe access events are stored locally in `mobile.db`. Mobile access
-has no Row-Bot cloud relay: your phone connects directly to the
-running desktop host through the route you choose. A public tunnel exposes the
-pairing gate to that URL, so keep tunnel links and pairing QR codes private and
-revoke devices you no longer trust.
+Invitations, devices, hashed session credentials, revocation state, and
+display-safe access events are stored locally in `mobile.db`. Remote access has
+no Row-Bot cloud relay: each browser connects directly to the running Row-Bot
+host through the route you choose. Every authenticated browser is the full
+owner, so keep invitation links and public origins private and revoke devices or
+sessions you no longer trust. In Docker, saved provider credentials are
+encrypted locally with the key from the separate secrets volume.
 
 Computer Use is also opt-in. Row-Bot downloads the reviewed Cua Driver 0.7.1
 asset only after a separate Install action, verifies its SHA-256, and keeps the
@@ -623,6 +662,8 @@ Provider and custom models are opt-in. When selected, the current conversation, 
 Developer Studio only touches repos you link, clone, or explicitly allocate as
 worktrees. Local execution runs in that repo or worktree. Docker Sandbox runs
 in a shadow copy and requires explicit import before changing the real repo.
+Inside the official server container, nested Docker Sandbox mode is unavailable
+and fails closed rather than substituting local execution.
 Skills Hub imports, plugins, Custom Tools, Agent Profiles, child-agent
 promotion, and promoted Agent workflows are opt-in, testable or reviewable,
 removable where applicable, and only affect normal chat or workflows after you
@@ -633,6 +674,8 @@ Row-Bot does not require a Row-Bot account, and there is no Row-Bot-hosted middl
 ## Project Docs
 
 - [Complete public user guide](https://row-bot.ai/docs/)
+- [Remote Access and server mode](https://row-bot.ai/docs/operations/remote-access)
+- [Docker and VPS operations](https://row-bot.ai/docs/operations/docker)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Visual architecture gallery](docs/architecture.html)
 - [Public docs site source](docs-site/README.md)

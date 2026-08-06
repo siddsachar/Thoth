@@ -175,7 +175,7 @@ def test_operator_guide_separates_container_verification_from_publication() -> N
         "manifest digest",
     ):
         assert phrase in source
-    assert "ghcr.io/siddsachar/row-bot:4.5.0" not in source
+    assert "ghcr.io/siddsachar/row-bot:4.6.0" not in source
 
 
 def test_public_guide_separates_host_tailscale_and_session_renewal() -> None:

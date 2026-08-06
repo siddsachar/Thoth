@@ -657,7 +657,7 @@ def main() -> int:
 
 Row-Bot is a local-first desktop AI assistant for people who want models, memory, tools, workflows, design, code help, integrations, and voice in one controllable app. This guide explains how to install Row-Bot, choose a model path, use the main interface, configure settings, and understand what happens when Row-Bot uses external services.
 
-These pages describe Row-Bot 4.5.0, the current stable release represented by this source tree.
+These pages describe Row-Bot 4.6.0, the current stable release represented by this source tree.
 
 <Screenshot id="app-shell-overview" alt="Row-Bot main interface with sidebar, Home tabs, activity center, and terminal." caption="Row-Bot's main interface brings conversations, Home tabs, settings, Buddy, activity, approvals, workflows, and terminal output into one local workspace." />
 
