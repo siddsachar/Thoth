@@ -27,6 +27,20 @@ def test_mobile_thread_list_creates_threads_before_composing() -> None:
     assert "create_thread(name, thread_id=tid" in src
 
 
+def test_mobile_thread_list_excludes_child_agent_threads_before_limit() -> None:
+    from row_bot.ui.mobile_chat import _mobile_conversation_threads
+
+    rows = [
+        ("parent-new", "Parent new", "", "2026-08-06T10:00:00", "", "", "chat"),
+        ("child", "Child agent", "", "2026-08-06T09:59:00", "", "", "agent_child"),
+        ("parent-old", "Parent old", "", "2026-08-06T09:58:00", "", "", ""),
+    ]
+
+    visible = _mobile_conversation_threads(rows, limit=2)
+
+    assert [row[0] for row in visible] == ["parent-new", "parent-old"]
+
+
 def test_mobile_active_thread_composer_uses_shared_chat_controls() -> None:
     src = Path("src/row_bot/ui/mobile_chat.py").read_text(encoding="utf-8")
 
@@ -87,6 +101,17 @@ def test_mobile_composer_places_skills_in_bottom_action_row_before_stop() -> Non
         < composer.index('p.stop_btn = ui.button(icon="stop"')
         < composer.index('ui.button(icon="send"')
     )
+
+
+def test_mobile_composer_reserves_send_button_inside_narrow_viewports() -> None:
+    chat_src = Path("src/row_bot/ui/mobile_chat.py").read_text(encoding="utf-8")
+    mobile_src = Path("src/row_bot/ui/mobile.py").read_text(encoding="utf-8")
+
+    assert "row-bot-mobile-send-button" in chat_src
+    assert ".row-bot-mobile-action-row > .row-bot-mobile-model-pill" in mobile_src
+    assert "flex: 1 1 0;" in mobile_src
+    assert ".row-bot-mobile-send-button" in mobile_src
+    assert "max(10px, env(safe-area-inset-right))" in mobile_src
 
 
 def test_mobile_chat_mode_defaults_to_thread_list_without_active_thread() -> None:
