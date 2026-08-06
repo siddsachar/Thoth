@@ -176,8 +176,11 @@ body:has(.row-bot-mobile-root) main {
     overflow: hidden;
 }
 .row-bot-mobile-composer {
+    box-sizing: border-box;
     flex: 0 0 auto;
-    padding: 6px 10px max(8px, env(safe-area-inset-bottom));
+    min-width: 0;
+    max-width: 100%;
+    padding: 6px max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
     border-top: 1px solid rgba(255,255,255,0.08);
     background: #10191c;
 }
@@ -200,6 +203,9 @@ body:has(.row-bot-mobile-root) main {
     white-space: nowrap;
 }
 .row-bot-mobile-action-row {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
     min-width: 0;
     overflow: hidden;
 }
@@ -237,6 +243,14 @@ body:has(.row-bot-mobile-root) main {
     white-space: nowrap;
 }
 .row-bot-mobile-action-row > .q-btn {
+    flex: 0 0 auto;
+}
+.row-bot-mobile-action-row > .row-bot-mobile-model-pill {
+    flex: 1 1 0;
+    width: 0;
+    overflow: hidden;
+}
+.row-bot-mobile-send-button {
     flex: 0 0 auto;
 }
 .row-bot-mobile-policy-chip {

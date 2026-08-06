@@ -75,6 +75,15 @@ def format_mobile_timestamp(value: Any) -> str:
     return parsed.strftime("%Y-%m-%d")
 
 
+def _mobile_conversation_threads(rows: list[tuple], *, limit: int = 20) -> list[tuple]:
+    """Return top-level conversations for the compact thread list."""
+    return [
+        row
+        for row in rows
+        if len(row) <= 6 or str(row[6] or "") != "agent_child"
+    ][:limit]
+
+
 def open_thread_on_mobile(
     thread_id: str,
     *,
@@ -520,7 +529,9 @@ def _build_mobile_thread_composer(
                 icon="keyboard_voice",
                 on_click=_start_browser_voice,
             ).props("flat dense round").tooltip("Talk using this browser")
-            ui.button(icon="send", on_click=_submit).props("unelevated round color=primary").tooltip("Send")
+            ui.button(icon="send", on_click=_submit).props(
+                "unelevated round color=primary"
+            ).classes("row-bot-mobile-send-button").tooltip("Send")
 
 
 def build_mobile_thread_list(
@@ -556,7 +567,10 @@ def build_mobile_thread_list(
 
             ui.label("Recent chats").classes("text-subtitle2 q-mt-sm")
             try:
-                threads = _list_threads(include_details=True)[:20]
+                threads = _mobile_conversation_threads(
+                    _list_threads(include_details=True),
+                    limit=20,
+                )
             except Exception:
                 logger.warning("Could not list mobile chat threads", exc_info=True)
                 threads = []
