@@ -512,11 +512,13 @@ def test_release_workflows_reference_linux_artifact():
     assert "libportaudio2" in release
     assert "binutils" in release
     linux_smoke = release[release.index("Smoke Linux package"):]
+    linux_smoke = linux_smoke[:linux_smoke.index("Upload Linux package")]
     assert "--no-root-check" not in linux_smoke
+    assert linux_smoke.count("--public-probes") == 2
     assert "HOME=\"$RUNNER_TEMP/row-bot-linux-home\"" in linux_smoke
     assert "bash \"$PACKAGE_ROOT/install.sh\"" in linux_smoke
     assert '"$HOME/.local/bin/row-bot"\n' in linux_smoke
-    assert "\"$HOME/.local/bin/row-bot\" serve --port 8091 --no-ollama" in linux_smoke
+    assert "\"$HOME/.local/bin/row-bot\" --no-ollama serve --port 8091" in linux_smoke
     assert "Row-Bot-*-Linux-*.tar.gz" in manifest
     assert "Row-Bot-*-Windows-*.exe" in manifest
     assert "RowBotSetup_*.exe" not in manifest
