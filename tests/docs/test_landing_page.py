@@ -95,6 +95,7 @@ def test_landing_page_is_evergreen_and_current() -> None:
     ]
     assert "Row-Bot 4.6.0 available" in HTML
     assert "Row-Bot &middot; v4.6.0 &middot; Apache 2.0" in HTML
+    assert 'src="img/screenshots/real-ui/home-knowledge.png?v=4.6.0"' in HTML
 
 
 def test_landing_page_fallbacks_and_links_are_complete() -> None:
@@ -246,7 +247,7 @@ def test_marketing_pages_share_analytics_and_download_conversion_contract() -> N
     for name in MARKETING_PAGES:
         content = (ROOT / "docs" / name).read_text(encoding="utf-8")
         assert 'src="site.js?v=4.6.0"' in content, name
-        assert 'href="site.css?v=4.6.0"' in content, name
+        assert 'href="site.css?v=4.6.0-r1"' in content, name
         assert "googletagmanager.com/gtag/js" not in content, name
 
     parser = _parse()
@@ -282,9 +283,10 @@ def test_all_marketing_internal_links_and_images_resolve() -> None:
 
         for image in parser.images:
             source = image.get("src", "")
-            if urlsplit(source).scheme:
+            source_parts = urlsplit(source)
+            if source_parts.scheme:
                 continue
-            assert (ROOT / "docs" / unquote(source)).is_file(), f"{name}: {source}"
+            assert (ROOT / "docs" / unquote(source_parts.path)).is_file(), f"{name}: {source}"
             assert image.get("width") and image.get("height"), f"{name}: {source}"
 
 
@@ -323,6 +325,7 @@ def test_architecture_contact_and_not_found_progressive_contracts() -> None:
     assert architecture.count("data-lightbox role=\"dialog\"") == 10
     assert architecture.count("data-lightbox-close") == 10
     assert architecture.count('loading="lazy" decoding="async"') == 20
+    assert ".architecture-page .diagram-card img { display: block; width: 100%; height: auto;" in CSS
     assert "event.key === 'Escape'" in JS
     assert "lightboxBackground.forEach" in JS
     assert "github.com/siddsachar/row-bot/blob/main/docs/ARCHITECTURE.md" in architecture
