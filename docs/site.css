@@ -845,7 +845,7 @@ html[data-device='mobile'] .nav-menu .nav-download:hover { background: rgba(255,
 .architecture-page .diagram-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .architecture-page .diagram-card { display: block; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: inherit; text-decoration: none; transition: transform 180ms ease, border-color 180ms ease; }
 .architecture-page .diagram-card:hover { border-color: var(--steel); transform: translateY(-4px); }
-.architecture-page .diagram-card img { display: block; width: 100%; aspect-ratio: 1.16 / 1; object-fit: contain; background: #090d12; }
+.architecture-page .diagram-card img { display: block; width: 100%; height: auto; background: #090d12; }
 .architecture-page .diagram-caption { padding: 1.15rem 1.25rem 1.35rem; }
 .architecture-page .diagram-caption span { display: block; margin-bottom: 0.35rem; color: var(--steel-bright); font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; }
 .architecture-page .diagram-caption h3 { margin: 0 0 0.35rem; font-size: 1.03rem; }
