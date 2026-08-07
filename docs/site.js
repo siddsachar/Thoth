@@ -5,6 +5,9 @@
     const MAC_URL = 'https://github.com/siddsachar/row-bot/releases/download/v4.6.0/Row-Bot-4.6.0-macOS-arm64.dmg';
     const LINUX_COMMAND = 'curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.6.0';
     const DESKTOP_LINK = 'https://row-bot.ai/';
+    const GA_MEASUREMENT_ID = 'G-0YYKPX5M5E';
+    const GOOGLE_ADS_ID = 'AW-847204616';
+    const GOOGLE_ADS_CONVERSION_ID = 'AW-847204616/Lci7CNmwyOwBEIii_ZMD';
     const CTA_PLACEMENTS = new Set([
         'navigation',
         'hero',
@@ -13,6 +16,40 @@
         'mobile_handoff',
         'product_demo'
     ]);
+
+    function initializeAnalytics() {
+        window.ROW_BOT_GA_MEASUREMENT_ID = window.ROW_BOT_GA_MEASUREMENT_ID
+            || window.THOTH_GA_MEASUREMENT_ID
+            || GA_MEASUREMENT_ID;
+        window.ROW_BOT_GOOGLE_ADS_ID = window.ROW_BOT_GOOGLE_ADS_ID
+            || window.THOTH_GOOGLE_ADS_ID
+            || GOOGLE_ADS_ID;
+        window.ROW_BOT_GOOGLE_ADS_CONVERSION_ID = window.ROW_BOT_GOOGLE_ADS_CONVERSION_ID
+            || window.THOTH_GOOGLE_ADS_CONVERSION_ID
+            || GOOGLE_ADS_CONVERSION_ID;
+
+        if (!document.head || typeof document.createElement !== 'function') return;
+        const tagId = window.ROW_BOT_GA_MEASUREMENT_ID || window.ROW_BOT_GOOGLE_ADS_ID;
+        if (!tagId) return;
+
+        if (!document.querySelector('script[data-row-bot-google-tag]')) {
+            const tagScript = document.createElement('script');
+            tagScript.async = true;
+            tagScript.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(tagId)}`;
+            tagScript.dataset.rowBotGoogleTag = '';
+            document.head.appendChild(tagScript);
+        }
+
+        window.dataLayer = window.dataLayer || [];
+        window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
+        if (window.__ROW_BOT_ANALYTICS_INITIALIZED__) return;
+        window.__ROW_BOT_ANALYTICS_INITIALIZED__ = true;
+        window.gtag('js', new Date());
+        window.gtag('config', window.ROW_BOT_GA_MEASUREMENT_ID);
+        window.gtag('config', window.ROW_BOT_GOOGLE_ADS_ID);
+    }
+
+    initializeAnalytics();
 
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
