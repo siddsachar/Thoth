@@ -40,19 +40,34 @@ def test_smoke_app_main_parses_command_and_returns_status(monkeypatch, capsys) -
     monkeypatch.setattr(
         sys,
         "argv",
-        ["smoke_app.py", "--port", "8124", "--timeout", "3", "--cwd", ".", "--no-root-check", "--", "python", "app.py"],
+        [
+            "smoke_app.py",
+            "--port",
+            "8124",
+            "--timeout",
+            "3",
+            "--cwd",
+            ".",
+            "--no-root-check",
+            "--public-probes",
+            "--",
+            "python",
+            "app.py",
+        ],
     )
 
     assert smoke_app.main() == 0
     assert captured["port"] == 8124
     assert captured["timeout"] == 3
     assert captured["check_root"] is False
+    assert captured["public_probes"] is True
     assert captured["command"] == ["python", "app.py"]
     assert "[PASS] fake smoke" in capsys.readouterr().out
 
 
-def test_smoke_app_uses_ephemeral_launcher_secret_for_guarded_probes(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("public_probes", [False, True])
+def test_smoke_app_selects_authenticated_or_public_probe_contract(
+    monkeypatch, tmp_path, public_probes
 ) -> None:
     import scripts.smoke_app as smoke_app
 
@@ -100,6 +115,10 @@ def test_smoke_app_uses_ephemeral_launcher_secret_for_guarded_probes(
             return FakeResponse(b'{"app":"row-bot"}')
         if url.endswith("/api/startup-state"):
             return FakeResponse(json.dumps({"ready": True}).encode())
+        if url.endswith("/healthz"):
+            return FakeResponse(json.dumps({"ok": True, "status": "alive"}).encode())
+        if url.endswith("/readyz"):
+            return FakeResponse(json.dumps({"ok": True, "status": "ready"}).encode())
         return FakeResponse(b"")
 
     monkeypatch.setattr(smoke_app, "_port_open", lambda *_args, **_kwargs: False)
@@ -112,6 +131,7 @@ def test_smoke_app_uses_ephemeral_launcher_secret_for_guarded_probes(
         port=8125,
         timeout=1,
         wait_startup_ready=True,
+        public_probes=public_probes,
         data_dir=tmp_path / "data",
     )
 
@@ -121,15 +141,25 @@ def test_smoke_app_uses_ephemeral_launcher_secret_for_guarded_probes(
     assert isinstance(secret, str)
     assert len(secret) >= 32
     requests = captured["requests"]
-    guarded = [
+    probes = [
         request
         for request in requests
         if hasattr(request, "full_url")
-        and request.full_url.endswith(("/api/launcher-ping", "/api/startup-state"))
+        and request.full_url.endswith(
+            ("/api/launcher-ping", "/api/startup-state", "/healthz", "/readyz")
+        )
     ]
-    assert len(guarded) == 2
-    assert all(
-        request.get_header("Authorization") == f"Bearer {secret}" for request in guarded
-    )
+    assert len(probes) == 2
+    if public_probes:
+        assert [request.full_url.rsplit("/", 1)[-1] for request in probes] == [
+            "healthz",
+            "readyz",
+        ]
+        assert all(request.get_header("Authorization") is None for request in probes)
+    else:
+        assert all(
+            request.get_header("Authorization") == f"Bearer {secret}"
+            for request in probes
+        )
     assert result.ok is True
     assert secret not in repr(result.messages)

@@ -210,13 +210,15 @@ jobs:
           python scripts/smoke_app.py \
             --port 8080 \
             --timeout 180 \
+            --public-probes \
             --cwd "$XDG_DATA_HOME/row-bot/current/app" \
             -- "$HOME/.local/bin/row-bot"
           python scripts/smoke_app.py \
             --port 8091 \
             --timeout 120 \
+            --public-probes \
             --cwd "$XDG_DATA_HOME/row-bot/current/app" \
-            -- "$HOME/.local/bin/row-bot" serve --port 8091 --no-ollama
+            -- "$HOME/.local/bin/row-bot" --no-ollama serve --port 8091
 
       - name: Upload Linux package
         uses: actions/upload-artifact@v7

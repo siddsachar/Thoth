@@ -1,6 +1,7 @@
 """Reusable Row-Bot app launch smoke test.
 
-Starts the app, waits for /api/launcher-ping, optionally checks /, and then
+Starts the app, waits for an authenticated launcher ping (or a public health
+probe for commands that spawn a child server), optionally checks /, and then
 terminates the process. The script is intentionally stdlib-only so CI and
 packaged release smoke can run it before any extra test dependencies are added.
 """
@@ -65,6 +66,7 @@ def run_app_smoke(
     timeout: float = 90.0,
     check_root: bool = True,
     wait_startup_ready: bool = False,
+    public_probes: bool = False,
     data_dir: Path | str | None = None,
 ) -> SmokeResult:
     """Run a live app smoke test and return structured status messages."""
@@ -114,6 +116,10 @@ def run_app_smoke(
 
             launched_at = time.monotonic()
             deadline = time.monotonic() + timeout
+            probe_path = "/healthz" if public_probes else "/api/launcher-ping"
+            probe_headers = (
+                {} if public_probes else {"Authorization": f"Bearer {launcher_secret}"}
+            )
             while time.monotonic() < deadline:
                 if proc.poll() is not None:
                     result.add("FAIL", f"app exited during startup with code {proc.returncode}")
@@ -124,20 +130,29 @@ def run_app_smoke(
                     _add_tail(result, "launcher app log", Path(env["ROW_BOT_DATA_DIR"]) / "row_bot_app.log")
                     return result
                 try:
-                    ping_request = urllib.request.Request(
-                        f"http://127.0.0.1:{port}/api/launcher-ping",
-                        headers={"Authorization": f"Bearer {launcher_secret}"},
+                    probe_request = urllib.request.Request(
+                        f"http://127.0.0.1:{port}{probe_path}",
+                        headers=probe_headers,
                     )
-                    with urllib.request.urlopen(ping_request, timeout=2) as response:
+                    with urllib.request.urlopen(probe_request, timeout=2) as response:
                         body = response.read(512).decode("utf-8", errors="replace")
-                    if response.status == 200 and '"app":"row-bot"' in body.replace(" ", "").lower():
+                    payload = json.loads(body)
+                    expected_payload = (
+                        payload.get("ok") is True and payload.get("status") == "alive"
+                        if public_probes
+                        else payload.get("app") == "row-bot"
+                    )
+                    if response.status == 200 and expected_payload:
                         elapsed = time.monotonic() - launched_at
-                        result.add("PASS", f"/api/launcher-ping responded on port {port} after {elapsed:.1f}s")
+                        result.add(
+                            "PASS",
+                            f"{probe_path} responded on port {port} after {elapsed:.1f}s",
+                        )
                         break
                 except Exception:
                     time.sleep(1)
             else:
-                result.add("FAIL", f"/api/launcher-ping did not respond within {timeout:.0f}s")
+                result.add("FAIL", f"{probe_path} did not respond within {timeout:.0f}s")
                 stdout_file.flush()
                 stderr_file.flush()
                 _add_tail(result, "stdout", stdout_path)
@@ -146,6 +161,12 @@ def run_app_smoke(
                 return result
 
             if wait_startup_ready:
+                readiness_path = "/readyz" if public_probes else "/api/startup-state"
+                readiness_headers = (
+                    {}
+                    if public_probes
+                    else {"Authorization": f"Bearer {launcher_secret}"}
+                )
                 while time.monotonic() < deadline:
                     if proc.poll() is not None:
                         result.add("FAIL", f"app exited before startup_ready with code {proc.returncode}")
@@ -157,20 +178,31 @@ def run_app_smoke(
                         return result
                     try:
                         startup_request = urllib.request.Request(
-                            f"http://127.0.0.1:{port}/api/startup-state",
-                            headers={"Authorization": f"Bearer {launcher_secret}"},
+                            f"http://127.0.0.1:{port}{readiness_path}",
+                            headers=readiness_headers,
                         )
                         with urllib.request.urlopen(startup_request, timeout=2) as response:
                             body = response.read(2048).decode("utf-8", errors="replace")
                         state = json.loads(body)
-                        if response.status == 200 and state.get("ready") is True:
+                        ready = (
+                            state.get("ok") is True and state.get("status") == "ready"
+                            if public_probes
+                            else state.get("ready") is True
+                        )
+                        if response.status == 200 and ready:
                             elapsed = time.monotonic() - launched_at
-                            result.add("PASS", f"/api/startup-state ready on port {port} after {elapsed:.1f}s")
+                            result.add(
+                                "PASS",
+                                f"{readiness_path} ready on port {port} after {elapsed:.1f}s",
+                            )
                             break
                     except Exception:
                         time.sleep(1)
                 else:
-                    result.add("FAIL", f"/api/startup-state did not become ready within {timeout:.0f}s")
+                    result.add(
+                        "FAIL",
+                        f"{readiness_path} did not become ready within {timeout:.0f}s",
+                    )
                     stdout_file.flush()
                     stderr_file.flush()
                     _add_tail(result, "stdout", stdout_path)
@@ -203,13 +235,18 @@ def run_app_smoke(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Launch Row-Bot and verify /api/launcher-ping")
+    parser = argparse.ArgumentParser(description="Launch Row-Bot and verify its health")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("--cwd", default=".")
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--no-root-check", action="store_true")
     parser.add_argument("--wait-startup-ready", action="store_true")
+    parser.add_argument(
+        "--public-probes",
+        action="store_true",
+        help="Use /healthz and /readyz when the command owns the app secret",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER, help="Optional command after --")
     args = parser.parse_args()
 
@@ -223,6 +260,7 @@ def main() -> int:
         timeout=args.timeout,
         check_root=not args.no_root_check,
         wait_startup_ready=args.wait_startup_ready,
+        public_probes=args.public_probes,
         data_dir=args.data_dir,
     )
     for status, message in result.messages:
