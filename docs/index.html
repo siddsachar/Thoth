@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script>document.documentElement.classList.add('js');</script>
     <title>Row-Bot &mdash; Local-First AI Workbench</title>
-    <meta name="description" content="Row-Bot is a local-first AI workbench for Windows, macOS, and Linux. Coordinate agents, use local or hosted models, work across tools, and keep durable data on your machine.">
+    <meta name="description" content="Row-Bot is a local-first AI workbench for Windows, macOS, Linux, and authenticated remote browsers. Coordinate agents, process documents durably, and keep your machine or server as the system of record.">
     <link rel="canonical" href="https://row-bot.ai/">
     <meta name="theme-color" content="#080b0f">
 
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://row-bot.ai/">
     <meta property="og:title" content="Row-Bot &mdash; Local-First AI Workbench">
-    <meta property="og:description" content="Reason. Orchestrate. Work. Coordinate agents, tools, workflows, memory, and models while your durable data stays on your machine.">
+    <meta property="og:description" content="Reason. Orchestrate. Work. Coordinate agents, durable documents, tools, workflows, and models from one local-first system of record.">
     <meta property="og:image" content="https://row-bot.ai/row_bot_preview.png">
     <meta property="og:image:type" content="image/png">
     <meta property="og:image:width" content="1536">
@@ -20,14 +20,14 @@
 
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Row-Bot &mdash; Local-First AI Workbench">
-    <meta name="twitter:description" content="A local-first desktop AI workbench for reasoning, orchestration, and durable work across the tools you choose.">
+    <meta name="twitter:description" content="A local-first AI workbench for parent-led agent orchestration, durable documents, authenticated remote access, and reviewable work.">
     <meta name="twitter:image" content="https://row-bot.ai/row_bot_preview.png">
 
     <link rel="icon" href="favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="site.css">
+    <link rel="stylesheet" href="site.css?v=4.6.0">
 
     <script type="application/ld+json">
     {
@@ -35,38 +35,18 @@
         "@type": "SoftwareApplication",
         "name": "Row-Bot",
         "alternateName": "Thoth",
-        "description": "A local-first AI workbench for Windows, macOS, and Linux with agents, goals, tools, workflows, memory, mobile access, messaging channels, Developer Studio, Designer Studio, plugins, skills, MCP, and provider-aware model routing.",
+        "description": "A local-first AI workbench for Windows, macOS, Linux, and authenticated remote browsers with automatic agent orchestration, durable document ingestion, goals, tools, workflows, memory, channels, Developer Studio, Designer Studio, plugins, skills, MCP, Docker deployment, and provider-aware model routing.",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows 10/11, macOS, Linux",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
         "license": "https://www.apache.org/licenses/LICENSE-2.0",
         "url": "https://row-bot.ai/",
-        "downloadUrl": "https://github.com/siddsachar/row-bot/releases/tag/v4.5.0",
-        "softwareVersion": "4.5.0",
+        "downloadUrl": "https://github.com/siddsachar/row-bot/releases/tag/v4.6.0",
+        "softwareVersion": "4.6.0",
         "author": { "@type": "Person", "name": "siddsachar", "url": "https://github.com/siddsachar" }
     }
     </script>
 
-    <script>
-        window.THOTH_GA_MEASUREMENT_ID = 'G-0YYKPX5M5E';
-        window.THOTH_GOOGLE_ADS_ID = 'AW-847204616';
-        window.THOTH_GOOGLE_ADS_CONVERSION_ID = 'AW-847204616/Lci7CNmwyOwBEIii_ZMD';
-        window.ROW_BOT_GA_MEASUREMENT_ID = window.ROW_BOT_GA_MEASUREMENT_ID || window.THOTH_GA_MEASUREMENT_ID;
-        window.ROW_BOT_GOOGLE_ADS_ID = window.ROW_BOT_GOOGLE_ADS_ID || window.THOTH_GOOGLE_ADS_ID;
-        window.ROW_BOT_GOOGLE_ADS_CONVERSION_ID = window.ROW_BOT_GOOGLE_ADS_CONVERSION_ID || window.THOTH_GOOGLE_ADS_CONVERSION_ID;
-        const rowBotGoogleTagId = window.ROW_BOT_GA_MEASUREMENT_ID || window.ROW_BOT_GOOGLE_ADS_ID;
-        if (rowBotGoogleTagId) {
-            const gaScript = document.createElement('script');
-            gaScript.async = true;
-            gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + rowBotGoogleTagId;
-            document.head.appendChild(gaScript);
-            window.dataLayer = window.dataLayer || [];
-            window.gtag = function(){ dataLayer.push(arguments); };
-            gtag('js', new Date());
-            if (window.ROW_BOT_GA_MEASUREMENT_ID) gtag('config', window.ROW_BOT_GA_MEASUREMENT_ID);
-            if (window.ROW_BOT_GOOGLE_ADS_ID) gtag('config', window.ROW_BOT_GOOGLE_ADS_ID);
-        }
-    </script>
 </head>
 <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -94,18 +74,18 @@
     <main id="main">
         <section class="hero shell" id="top">
             <div class="hero-content">
-                <a class="release-pill" href="https://github.com/siddsachar/row-bot/releases/tag/v4.5.0" target="_blank" rel="noopener noreferrer">Row-Bot 4.5.0 available</a>
+                <a class="release-pill" href="https://github.com/siddsachar/row-bot/releases/tag/v4.6.0" target="_blank" rel="noopener noreferrer">Row-Bot 4.6.0 available</a>
                 <p class="eyebrow">Local-first AI workbench</p>
                 <h1>Reason.<br>Orchestrate.<br><em>Work.</em></h1>
-                <p class="hero-copy">Row-Bot is a desktop AI workspace that can reason, coordinate agents, and act across the tools you choose. Conversations, goals, projects, and durable knowledge remain on your machine, with local or hosted models connected explicitly.</p>
+                <p class="hero-copy">Row-Bot is a local-first AI workspace that can reason, coordinate agents, process documents, and act across the tools you choose. Conversations, goals, projects, and durable knowledge remain on your machine or server, with every model and remote route connected explicitly.</p>
                 <div class="hero-actions">
                     <a class="button button--primary" href="#demos" data-os-primary data-placement="hero">See Row-Bot in action</a>
                     <a class="hero-demo-link" href="#install" data-hero-secondary>Desktop installation options <span aria-hidden="true">&rarr;</span></a>
                 </div>
                 <div class="platform-links" aria-label="Platform downloads">
                     <span data-platform-note>Desktop downloads:</span>
-                    <a href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-Windows-x64.exe" data-platform-choice="windows" data-desktop-download="windows" data-placement="platform_selector">Windows <small>.exe</small></a>
-                    <a href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-macOS-arm64.dmg" data-platform-choice="macos" data-desktop-download="macos" data-placement="platform_selector">macOS <small>.dmg</small></a>
+                    <a href="https://github.com/siddsachar/row-bot/releases/download/v4.6.0/Row-Bot-4.6.0-Windows-x64.exe" data-platform-choice="windows" data-desktop-download="windows" data-placement="platform_selector">Windows <small>.exe</small></a>
+                    <a href="https://github.com/siddsachar/row-bot/releases/download/v4.6.0/Row-Bot-4.6.0-macOS-arm64.dmg" data-platform-choice="macos" data-desktop-download="macos" data-placement="platform_selector">macOS <small>.dmg</small></a>
                     <a href="#install" data-platform-choice="linux" data-linux-install data-placement="platform_selector">Linux <small>curl</small></a>
                 </div>
                 <p class="trust-line">Free &middot; open source &middot; no Row-Bot account</p>
@@ -130,22 +110,22 @@
             <div class="shell reveal">
                 <div class="section-head">
                     <div>
-                        <p class="kicker">One durable workspace</p>
-                        <h2>From intent to evidence.</h2>
+                        <p class="kicker">One durable control plane</p>
+                        <h2>From intent to coordinated evidence.</h2>
                     </div>
-                    <p>Direct a thread with a durable role and objective, review consequential actions, and keep the result with the local context that produced it.</p>
+                    <p>Give the parent agent an objective, let it coordinate required and background work, review consequential actions, and keep every result with the context that produced it.</p>
                 </div>
                 <div class="proof-shell">
                     <div class="proof-topbar">
                         <div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div>
-                        <span>ROW-BOT &middot; LOCAL WORKSPACE</span>
-                        <span>LOCAL-FIRST</span>
+                        <span>ROW-BOT &middot; PARENT-LED ORCHESTRATION</span>
+                        <span>DURABLE &middot; LOCAL-FIRST</span>
                     </div>
-                    <img class="proof-image" src="row_bot_workspace_4_4_v2.png" width="3784" height="2044" loading="lazy" decoding="async" alt="Row-Bot desktop workspace showing conversations, agent profiles, workflows, approvals, channels, and local activity records">
+                    <img class="proof-image" src="img/screenshots/real-ui/goal-and-agents.png" width="3840" height="2160" loading="lazy" decoding="async" alt="Row-Bot conversation showing one parent goal with coordinated agent work and shared activity state">
                     <div class="proof-steps">
-                        <div class="proof-step"><span>01</span><strong>Direct the work</strong><p>Set the role, objective, tools, and working boundaries.</p></div>
-                        <div class="proof-step"><span>02</span><strong>Review the action</strong><p>Approve consequential shell, browser, MCP, and delivery steps.</p></div>
-                        <div class="proof-step"><span>03</span><strong>Keep the record</strong><p>Retain threads, runs, knowledge, and project state locally.</p></div>
+                        <div class="proof-step"><span>01</span><strong>Set the objective</strong><p>Choose the role, tools, model, and working boundaries.</p></div>
+                        <div class="proof-step"><span>02</span><strong>Follow coordinated work</strong><p>See dependencies, live agent states, approvals, retries, and stops.</p></div>
+                        <div class="proof-step"><span>03</span><strong>Keep the record</strong><p>Recover threads, runs, documents, knowledge, and project state locally.</p></div>
                     </div>
                 </div>
             </div>
@@ -164,12 +144,12 @@
                     <article class="pillar">
                         <div class="pillar-num">01 / THINK</div>
                         <h3>Models and memory</h3>
-                        <div class="pillar-copy"><p>Choose local models or explicit hosted and private endpoints. Build auditable knowledge with documents, graph memory, cache-only local embeddings, and graceful lexical and graph recall when semantic search is unavailable.</p><a class="text-link" href="features.html#models">Explore models and knowledge &rarr;</a></div>
+                        <div class="pillar-copy"><p>Choose local models or explicit hosted and private endpoints. Add documents through a bounded, resumable queue, then build auditable knowledge with sharded search, graph memory, and graceful lexical and graph recall.</p><a class="text-link" href="features.html#models">Explore models and knowledge &rarr;</a></div>
                     </article>
                     <article class="pillar">
                         <div class="pillar-num">02 / COORDINATE</div>
                         <h3>Profiles, goals, and agents</h3>
-                        <div class="pillar-copy"><p>Give work durable roles and objectives, delegate within visible capacity limits, and bound long runs with checkpoint-safe budgets, repeated-action protection, and graceful completion.</p><a class="text-link" href="features.html#agents">Explore orchestration &rarr;</a></div>
+                        <div class="pillar-copy"><p>Give the parent agent a durable role and objective. It can coordinate dependencies and multiple work waves, join required results, keep background work durable, and recover from checkpoints without duplicating the final answer.</p><a class="text-link" href="features.html#agents">Explore orchestration &rarr;</a></div>
                     </article>
                     <article class="pillar">
                         <div class="pillar-num">03 / ACT</div>
@@ -222,15 +202,15 @@
                 <div class="statement">
                     <p class="kicker">Local-first architecture</p>
                     <h2>Your machine is the system of record.</h2>
-                    <p>Conversations, profiles, goals, knowledge, project context, workflow history, and paired-device records live locally. Hosted providers and networked tools receive the context required only for requests you explicitly choose.</p>
+                    <p>Conversations, profiles, goals, documents, project context, workflow history, and authenticated access records live with the Row-Bot host. Hosted providers and networked tools receive only the context required for requests you explicitly choose.</p>
                     <a class="button button--secondary" href="architecture.html">Explore the architecture</a>
                 </div>
                 <div class="privacy-facts" aria-label="Privacy and control facts">
                     <div class="privacy-fact">No Row-Bot account or first-party telemetry pipeline</div>
-                    <div class="privacy-fact">Local models and tools can work offline</div>
+                    <div class="privacy-fact">Authenticated desktop and remote browsers share one owner authority</div>
                     <div class="privacy-fact">Provider-qualified model routes remain explicit</div>
                     <div class="privacy-fact">Approval gates protect consequential actions</div>
-                    <div class="privacy-fact">Secrets use the operating-system credential store when available</div>
+                    <div class="privacy-fact">Server credentials persist as encrypted records with isolated keys</div>
                 </div>
             </div>
             <div class="shell comparison-block">
@@ -243,9 +223,9 @@
                                 <tr><td>Durable system of record</td><td>Provider-hosted account and conversation state</td><td>Local conversations, goals, profiles, knowledge, workflows, and project records</td></tr>
                                 <tr><td>Model choice</td><td>Models selected by the service</td><td>Local runtimes, hosted APIs, subscriptions, routers, and private compatible endpoints</td></tr>
                                 <tr><td>Tools and actions</td><td>Service-defined integrations and sandboxes</td><td>Built-in tools, MCP, channels, Computer Use, and explicit approval boundaries</td></tr>
-                                <tr><td>Background work</td><td>Usually tied to the provider session</td><td>Durable workflows, schedules, delegated agents, run history, budgets, and delivery policy</td></tr>
+                                <tr><td>Background work</td><td>Usually tied to the provider session</td><td>Parent-led agent waves, dependencies, durable workflows, schedules, run history, budgets, and delivery policy</td></tr>
                                 <tr><td>Offline operation</td><td>Requires the hosted service</td><td>Local models and local tools can continue without a hosted provider</td></tr>
-                                <tr><td>Control and portability</td><td>Subject to service limits, retention, and product changes</td><td>Apache 2.0 application with local data and explicit external routes</td></tr>
+                                <tr><td>Control and portability</td><td>Subject to service limits, retention, and product changes</td><td>Apache 2.0 application with local data, revocable owner sessions, and explicit external routes</td></tr>
                             </tbody>
                         </table>
                         <p class="comparison-note">Hosted providers still receive the context required for requests you send to them. Capabilities vary by service; this compares the operating model rather than every provider feature.</p>
@@ -263,9 +243,9 @@
                 <div class="faq-list reveal">
                     <details><summary>Is Row-Bot free?</summary><p>Yes. Row-Bot is Apache 2.0 licensed and does not require a Row-Bot subscription. Local models can be free to run on your hardware; hosted providers and external services may have their own charges.</p></details>
                     <details><summary>Can it run entirely locally?</summary><p>Yes, when you select a local runtime and local tools. Hosted models, cloud embeddings, web tools, online channels, and remote access require network connections and remain opt-in.</p></details>
-                    <details><summary>Which desktop platforms and model providers are supported?</summary><p>Row-Bot supports Windows 10/11, macOS, and Linux. Model paths include Ollama, major hosted APIs, subscription providers, routing services, and private OpenAI-compatible endpoints; see the maintained <a href="features.html#models">provider inventory</a> for details.</p></details>
+                    <details><summary>Which platforms and model providers are supported?</summary><p>Row-Bot supports Windows 10/11, macOS, Linux, authenticated remote browsers, and official Docker/VPS server deployments. Model paths include Ollama, major hosted APIs, subscription providers, routing services, and private OpenAI-compatible endpoints; see the maintained <a href="features.html#models">provider inventory</a> for details.</p></details>
                     <details><summary>What reaches a hosted provider?</summary><p>The selected provider receives the current model-visible conversation and tool context needed for that request. Durable conversations, knowledge, profiles, goals, and project records stay on your machine unless you deliberately send specific data through a provider or networked tool.</p></details>
-                    <details><summary>What is Mobile Companion?</summary><p>Mobile Companion is a phone-native web interface served by Row-Bot running on your computer. It connects through a route you choose and is not a standalone iOS or Android download; the host computer must remain running and reachable.</p></details>
+                    <details><summary>Can I use Row-Bot from another device?</summary><p>Yes. An authenticated browser can open the full desktop layout or the compact phone layout from a route you choose. Every invited browser has the same owner authority, sessions are revocable, and the Row-Bot host must remain running and reachable. It is not a standalone iOS or Android download.</p></details>
                 </div>
             </div>
         </section>
@@ -275,22 +255,23 @@
                 <div class="install-copy reveal">
                     <p class="kicker">Download and install</p>
                     <h2>Your AI workspace. On your machine.</h2>
-                    <p>Install Row-Bot, choose a local or hosted model path, and continue through the resumable Setup Center. Mobile Companion connects back to this running computer; it is not a separate cloud service.</p>
+                    <p>Install Row-Bot, choose a local or hosted model path, and continue through the resumable Setup Center. For headless operation, the official Docker image and <code>row-bot serve</code> keep the same local-first data and authenticated-owner model.</p>
                     <div class="install-meta-links">
-                        <a class="text-link" href="https://github.com/siddsachar/row-bot/releases/tag/v4.5.0" target="_blank" rel="noopener noreferrer">4.5.0 release notes &rarr;</a>
-                        <a class="text-link" href="docs/getting-started/installation" data-install-docs data-placement="final_install">Installation guide &rarr;</a>
+                        <a class="text-link" href="https://github.com/siddsachar/row-bot/releases/tag/v4.6.0" target="_blank" rel="noopener noreferrer">4.6.0 release notes &rarr;</a>
+                        <a class="text-link" href="docs/getting-started/installation/" data-install-docs data-placement="final_install">Installation guide &rarr;</a>
+                        <a class="text-link" href="docs/operations/docker/">Docker and VPS guide &rarr;</a>
                     </div>
                 </div>
                 <div class="platform-stack reveal">
-                    <a class="platform-card" href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-Windows-x64.exe" data-desktop-download="windows" data-placement="final_install">
+                    <a class="platform-card" href="https://github.com/siddsachar/row-bot/releases/download/v4.6.0/Row-Bot-4.6.0-Windows-x64.exe" data-desktop-download="windows" data-placement="final_install">
                         <span class="platform-card__icon">WIN</span><span><strong>Windows</strong>Windows 10/11 &middot; x64 installer</span><small>.exe &darr;</small>
                     </a>
-                    <a class="platform-card" href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-macOS-arm64.dmg" data-desktop-download="macos" data-placement="final_install">
+                    <a class="platform-card" href="https://github.com/siddsachar/row-bot/releases/download/v4.6.0/Row-Bot-4.6.0-macOS-arm64.dmg" data-desktop-download="macos" data-placement="final_install">
                         <span class="platform-card__icon">MAC</span><span><strong>macOS</strong>Apple silicon &middot; DMG</span><small>.dmg &darr;</small>
                     </a>
                     <div class="linux-box">
                         <div class="linux-box__head"><span><strong>Linux</strong> &middot; verified XDG user install</span><button class="copy-button" type="button" data-copy-linux data-placement="final_install">Copy command</button></div>
-                        <code class="linux-command" data-linux-command>curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.5.0</code>
+                        <code class="linux-command" data-linux-command>curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.6.0</code>
                         <span class="copy-status" data-linux-status role="status" aria-live="polite"></span>
                     </div>
                 </div>
@@ -303,15 +284,15 @@
                 <div class="handoff-actions">
                     <button class="button button--primary" type="button" data-share-desktop hidden>Share desktop link</button>
                     <button class="button button--secondary" type="button" data-copy-desktop>Copy row-bot.ai</button>
-                    <a class="hero-demo-link" href="docs/getting-started/installation" data-install-docs data-placement="mobile_handoff">Read installation guide <span aria-hidden="true">&rarr;</span></a>
+                    <a class="hero-demo-link" href="docs/getting-started/installation/" data-install-docs data-placement="mobile_handoff">Read installation guide <span aria-hidden="true">&rarr;</span></a>
                 </div>
                 <p class="handoff-status" data-handoff-status role="status" aria-live="polite"></p>
                 <details class="mobile-direct-disclosure">
                     <summary>Direct desktop downloads</summary>
                     <div class="mobile-direct-links">
-                        <a href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-Windows-x64.exe" data-desktop-download="windows" data-placement="mobile_handoff">Windows x64 installer</a>
-                        <a href="https://github.com/siddsachar/row-bot/releases/download/v4.5.0/Row-Bot-4.5.0-macOS-arm64.dmg" data-desktop-download="macos" data-placement="mobile_handoff">macOS Apple-silicon DMG</a>
-                        <a href="docs/getting-started/installation" data-install-docs data-placement="mobile_handoff">Linux installation command</a>
+                        <a href="https://github.com/siddsachar/row-bot/releases/download/v4.6.0/Row-Bot-4.6.0-Windows-x64.exe" data-desktop-download="windows" data-placement="mobile_handoff">Windows x64 installer</a>
+                        <a href="https://github.com/siddsachar/row-bot/releases/download/v4.6.0/Row-Bot-4.6.0-macOS-arm64.dmg" data-desktop-download="macos" data-placement="mobile_handoff">macOS Apple-silicon DMG</a>
+                        <a href="docs/getting-started/installation/" data-install-docs data-placement="mobile_handoff">Linux installation command</a>
                     </div>
                 </details>
             </div>
@@ -320,7 +301,7 @@
 
     <footer class="site-footer">
         <div class="shell footer-grid">
-            <span>Row-Bot &middot; v4.5.0 &middot; Apache 2.0</span>
+            <span>Row-Bot &middot; v4.6.0 &middot; Apache 2.0</span>
             <div class="footer-links">
                 <a href="index.html" aria-current="page">Home</a>
                 <a href="features.html">Features</a>
@@ -335,6 +316,6 @@
         </div>
     </footer>
 
-    <script src="site.js" defer></script>
+    <script src="site.js?v=4.6.0" defer></script>
 </body>
 </html>

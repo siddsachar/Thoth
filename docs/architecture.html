@@ -5,26 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script>document.documentElement.classList.add('js');</script>
     <title>Row-Bot &mdash; Architecture</title>
-    <meta name="description" content="Explore Row-Bot's local-first architecture diagrams for the core agent, context assembly, knowledge graph, workflows, channels, Designer Studio, Developer Studio, skills, safety, and self-evolution systems.">
+    <meta name="description" content="Explore Row-Bot's local-first architecture: parent-led agent orchestration, durable documents, authenticated owner access, explicit model and tool routes, workflows, studios, extensions, and safety boundaries.">
     <link rel="canonical" href="https://row-bot.ai/architecture.html">
     <meta name="theme-color" content="#080b0f">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://row-bot.ai/architecture.html">
     <meta property="og:title" content="Row-Bot Architecture">
-    <meta property="og:description" content="Visual architecture diagrams for Row-Bot's local-first personal AI workbench.">
+    <meta property="og:description" content="Visual subsystem maps and 4.6 architectural principles for Row-Bot's local-first AI workbench.">
     <meta property="og:image" content="https://row-bot.ai/Core_Agent_Arch.png">
     <meta property="og:image:width" content="1024">
     <meta property="og:image:height" content="1024">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Row-Bot Architecture">
-    <meta name="twitter:description" content="Visual architecture diagrams for Row-Bot's local-first personal AI workbench.">
+    <meta name="twitter:description" content="Visual subsystem maps and 4.6 architectural principles for Row-Bot's local-first AI workbench.">
     <meta name="twitter:image" content="https://row-bot.ai/Core_Agent_Arch.png">
     <link rel="icon" href="favicon.ico">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="site.css">
-    <script src="site.js" defer></script>
+    <link rel="stylesheet" href="site.css?v=4.6.0">
+    <script src="site.js?v=4.6.0" defer></script>
 </head>
 <body class="architecture-page">
     <div class="site-progress" aria-hidden="true"></div>
@@ -53,10 +53,10 @@
         <header class="page-hero page-hero--visual architecture-page-hero">
             <div class="shell page-hero__grid">
                 <div class="page-hero__content">
-                    <a class="release-pill" href="https://github.com/siddsachar/row-bot/releases/tag/v4.6.0" target="_blank" rel="noopener noreferrer">Architecture current with Row-Bot 4.6.0</a>
+                    <a class="release-pill" href="https://github.com/siddsachar/row-bot/releases/tag/v4.6.0" target="_blank" rel="noopener noreferrer">Row-Bot 4.6.0 architecture overview</a>
                     <p class="eyebrow">Architecture</p>
                     <h1>How Row-Bot stays <em>local-first.</em></h1>
-                    <p class="page-hero__copy">These diagrams map the main systems behind Row-Bot: the checkpointed agent orchestrator, context assembly, memory graph, workflows, channels, native Computer Use, Developer and Designer Studios, safety boundaries, and self-management loops. Durable state stays local; external services and optional runtimes remain explicit and opt-in.</p>
+                    <p class="page-hero__copy">These high-level subsystem maps sit inside Row-Bot's 4.6 control plane: one checkpointed parent coordinates agent work, documents enter a bounded durable pipeline, and authenticated browsers share one owner authority. Durable state stays with the host; models, tools, network routes, and optional runtimes remain explicit.</p>
                     <div class="hero-actions">
                         <a href="#diagrams" class="button button--primary">Explore diagrams</a>
                         <a href="https://github.com/siddsachar/row-bot/blob/main/docs/ARCHITECTURE.md" class="button button--secondary" target="_blank" rel="noopener noreferrer">Read technical reference</a>
@@ -74,20 +74,20 @@
             <div class="container">
                 <div class="overview-grid">
                     <div class="overview-item">
-                        <span>Local state</span>
-                        <p>Conversations, memory, media, tasks, wiki vaults, and project assets live on the user's machine.</p>
+                        <span>Durable local state</span>
+                        <p>Conversations, orchestration checkpoints, documents, memory, tasks, access records, and project assets live with the Row-Bot host.</p>
                     </div>
                     <div class="overview-item">
-                        <span>Opt-in models</span>
-                        <p>Local runtimes and self-hosted endpoints stay distinct from hosted provider APIs, Ollama Cloud, and ChatGPT / Codex.</p>
+                        <span>Parent-led work</span>
+                        <p>One authoritative parent joins required results, tracks dependencies and later waves, and finalizes once across retries, approvals, and restarts.</p>
                     </div>
                     <div class="overview-item">
-                        <span>Trust boundaries</span>
-                        <p>Tool results, web pages, channel attachments, and remote MCP servers are treated as untrusted context.</p>
+                        <span>One owner authority</span>
+                        <p>Local desktop, remote desktop, and compact sessions expose the same owner capability behind invitations, revocable sessions, exact origins, and host checks.</p>
                     </div>
                     <div class="overview-item">
-                        <span>User control</span>
-                        <p>Destructive tools, settings changes, workflow actions, native Computer Use, and external delivery paths pass through guardrails.</p>
+                        <span>Explicit external routes</span>
+                        <p>Hosted models, tools, channels, MCP, Computer Use, Tailscale, and reverse proxies remain separately configured, reviewable, and approval-aware.</p>
                     </div>
                 </div>
             </div>
@@ -97,12 +97,12 @@
             <div class="container">
                 <div class="section-head">
                     <h2>Subsystem maps</h2>
-                    <p>Open any diagram for a larger view. The gallery starts with the full core-agent map, then moves through the specialized subsystems that make Row-Bot useful day to day.</p>
+                    <p>Open any high-level diagram for a larger view. The gallery starts with the core-agent map, then moves through specialized subsystems; the technical reference documents the current 4.6 runtime and security contracts in detail.</p>
                 </div>
                 <div class="diagram-grid">
                     <a class="diagram-card" href="#core-agent" data-lightbox-open>
                         <img src="Core_Agent_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot core agent architecture diagram">
-                        <div class="diagram-caption"><span>01</span><h3>Core Agent</h3><p>Interfaces, model routing, checkpointed work budgets, context, memory, tool calls, workflows, storage, and control planes.</p></div>
+                        <div class="diagram-caption"><span>01</span><h3>Core Agent</h3><p>Interfaces, parent-led orchestration, provider routing, checkpointed budgets, context, memory, tool calls, workflows, storage, and control planes.</p></div>
                     </a>
                     <a class="diagram-card" href="#context" data-lightbox-open>
                         <img src="Context_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot context architecture diagram">
@@ -110,7 +110,7 @@
                     </a>
                     <a class="diagram-card" href="#knowledge-graph" data-lightbox-open>
                         <img src="Knowledge_Graph_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot knowledge graph architecture diagram">
-                        <div class="diagram-caption"><span>03</span><h3>Knowledge Graph</h3><p>Capture, extraction, graph storage, semantic retrieval, wiki export, and Dream Cycle refinement.</p></div>
+                        <div class="diagram-caption"><span>03</span><h3>Knowledge Graph</h3><p>Durable document queues, resumable extraction, atomic sharded retrieval, graph storage, wiki export, and Dream Cycle refinement.</p></div>
                     </a>
                     <a class="diagram-card" href="#workflows" data-lightbox-open>
                         <img src="Workflows_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot background workflow architecture diagram">
@@ -134,7 +134,7 @@
                     </a>
                     <a class="diagram-card" href="#safety" data-lightbox-open>
                         <img src="Safety_Privacy_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot safety privacy and control architecture diagram">
-                        <div class="diagram-caption"><span>09</span><h3>Safety, Privacy &amp; Control</h3><p>Local-first boundaries, approvals, prompt-injection defense, native target-window control, tool permissions, credentials, and updates.</p></div>
+                        <div class="diagram-caption"><span>09</span><h3>Safety, Privacy &amp; Control</h3><p>Local-first boundaries, owner authentication, approvals, prompt-injection defense, target-window control, encrypted credentials, routes, and updates.</p></div>
                     </a>
                     <a class="diagram-card" href="#self-evolution" data-lightbox-open>
                         <img src="Self_Evolution_Arch.png" width="1024" height="1024" loading="lazy" decoding="async" alt="Row-Bot self-evolution architecture diagram">

@@ -11,18 +11,6 @@ HTML = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
 CSS = (ROOT / "docs" / "site.css").read_text(encoding="utf-8")
 JS = (ROOT / "docs" / "site.js").read_text(encoding="utf-8")
 
-LANDING_WINDOWS_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.5.0/"
-    "Row-Bot-4.5.0-Windows-x64.exe"
-)
-LANDING_MAC_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.5.0/"
-    "Row-Bot-4.5.0-macOS-arm64.dmg"
-)
-LANDING_LINUX_COMMAND = (
-    "curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/"
-    "installer/install-linux.sh | bash -s -- 4.5.0"
-)
 SITE_WINDOWS_URL = (
     "https://github.com/siddsachar/row-bot/releases/download/v4.6.0/"
     "Row-Bot-4.6.0-Windows-x64.exe"
@@ -91,8 +79,8 @@ def test_landing_page_is_evergreen_and_current() -> None:
     )
     assert json_ld_match
     metadata = json.loads(json_ld_match.group(1))
-    assert metadata["softwareVersion"] == "4.5.0"
-    assert metadata["downloadUrl"].endswith("/releases/tag/v4.5.0")
+    assert metadata["softwareVersion"] == "4.6.0"
+    assert metadata["downloadUrl"].endswith("/releases/tag/v4.6.0")
 
     parser = _parse()
     assert all(image.get("width") and image.get("height") for image in parser.images)
@@ -105,8 +93,8 @@ def test_landing_page_is_evergreen_and_current() -> None:
         "faq",
         "install",
     ]
-    assert "Row-Bot 4.5.0 available" in HTML
-    assert "Row-Bot &middot; v4.5.0 &middot; Apache 2.0" in HTML
+    assert "Row-Bot 4.6.0 available" in HTML
+    assert "Row-Bot &middot; v4.6.0 &middot; Apache 2.0" in HTML
 
 
 def test_landing_page_fallbacks_and_links_are_complete() -> None:
@@ -121,11 +109,11 @@ def test_landing_page_fallbacks_and_links_are_complete() -> None:
     assert all(not link["href"].endswith((".exe", ".dmg")) for link in os_primary)
 
     hrefs = [link.get("href") for link in parser.links]
-    assert LANDING_WINDOWS_URL in hrefs
-    assert LANDING_MAC_URL in hrefs
-    assert "docs/getting-started/installation" in hrefs
+    assert SITE_WINDOWS_URL in hrefs
+    assert SITE_MAC_URL in hrefs
+    assert "docs/getting-started/installation/" in hrefs
     linux_code = next(code for code in parser.codes if "data-linux-command" in code)
-    assert linux_code["text"] == LANDING_LINUX_COMMAND
+    assert linux_code["text"] == SITE_LINUX_COMMAND
     assert SITE_WINDOWS_URL in JS
     assert SITE_MAC_URL in JS
     assert SITE_LINUX_COMMAND in JS
@@ -245,6 +233,30 @@ def test_marketing_navigation_and_footers_share_one_contract() -> None:
         assert _block_links(content, "footer-links") == footer_links, name
         assert 'href="index.html#new"' not in content
         assert "What’s new" not in content
+
+
+def test_marketing_pages_share_analytics_and_download_conversion_contract() -> None:
+    assert "const GA_MEASUREMENT_ID = 'G-0YYKPX5M5E'" in JS
+    assert "const GOOGLE_ADS_ID = 'AW-847204616'" in JS
+    assert "const GOOGLE_ADS_CONVERSION_ID = 'AW-847204616/Lci7CNmwyOwBEIii_ZMD'" in JS
+    assert "initializeAnalytics();" in JS
+    assert "data-row-bot-google-tag" in JS
+    assert "trackAdsConversion" in JS
+
+    for name in MARKETING_PAGES:
+        content = (ROOT / "docs" / name).read_text(encoding="utf-8")
+        assert 'src="site.js?v=4.6.0"' in content, name
+        assert 'href="site.css?v=4.6.0"' in content, name
+        assert "googletagmanager.com/gtag/js" not in content, name
+
+    parser = _parse()
+    download_links = [link for link in parser.links if "data-desktop-download" in link]
+    assert download_links
+    for link in download_links:
+        platform = link["data-desktop-download"]
+        expected = SITE_WINDOWS_URL if platform == "windows" else SITE_MAC_URL
+        assert link["href"] == expected
+        assert link.get("data-placement") in {"platform_selector", "final_install", "mobile_handoff"}
 
 
 def test_all_marketing_internal_links_and_images_resolve() -> None:

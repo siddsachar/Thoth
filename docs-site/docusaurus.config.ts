@@ -71,7 +71,7 @@ const config: Config = {
       {
         name: 'description',
         content:
-          'Public documentation for Row-Bot, a local-first desktop AI assistant with models, memory, tools, workflows, Designer Studio, Developer Studio, Skills Hub, plugins, MCP, channels, and voice.',
+          'Public documentation for Row-Bot, a local-first AI workbench with parent-led agents, durable documents, authenticated remote access, Docker operations, models, tools, workflows, studios, extensions, channels, and voice.',
       },
     ],
     navbar: {
