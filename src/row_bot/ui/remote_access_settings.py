@@ -94,6 +94,25 @@ class RemoteAccessActions:
             access_route="settings",
         )
 
+    def create_custom_invitation(
+        self,
+        *,
+        layout: str,
+        origin: str,
+        lifetime: str,
+    ) -> CreatedInvitation:
+        self._require_admin()
+        if layout not in {"desktop", "compact"}:
+            raise ValueError("layout must be desktop or compact")
+        normalized_lifetime = SessionLifetime(lifetime)
+        return self.service.create_invitation(
+            intended_origin=origin,
+            session_lifetime=normalized_lifetime,
+            next_path="/?mobile=1" if layout == "compact" else "/",
+            created_by="settings_owner",
+            access_route="settings_custom",
+        )
+
     def refresh_route_inventory(self) -> AccessRouteInventory:
         provider = self.route_inventory_provider
         if provider is None:
@@ -512,6 +531,58 @@ def _invitation_dialog(
             icon="link",
             on_click=create,
         ).props("unelevated no-caps color=primary")
+
+        with ui.expansion(
+            "Use another configured address",
+            icon="travel_explore",
+            value=False,
+        ).classes("w-full"):
+            custom_origin = ui.input(
+                label="Browser-facing origin",
+                placeholder="https://row-bot.example.com",
+            ).props("dense outlined").classes("w-full")
+            ui.label(
+                "This only creates an invitation for an address you have already "
+                "configured. It does not configure or verify Cloudflare, DNS, TLS, "
+                "proxy trust, firewall rules, or Row-Bot's listen address."
+            ).classes("text-grey-6 text-xs")
+
+            def create_custom() -> None:
+                result.clear()
+                origin = str(custom_origin.value or "")
+                if not origin.strip():
+                    ui.notify(
+                        "Enter a browser-facing origin before creating an invitation.",
+                        type="warning",
+                    )
+                    return
+                try:
+                    created = actions.create_custom_invitation(
+                        layout=str(layout.value),
+                        origin=origin,
+                        lifetime=str(lifetime.value),
+                    )
+                except PermissionError:
+                    ui.notify("Owner access is required.", type="negative")
+                    return
+                except ValueError:
+                    ui.notify(
+                        "Enter an exact HTTP or HTTPS origin, such as "
+                        "https://row-bot.example.com.",
+                        type="warning",
+                    )
+                    return
+                _render_created_invitation(
+                    result,
+                    created,
+                    layout=str(layout.value),
+                )
+
+            ui.button(
+                "Create for configured address",
+                icon="link",
+                on_click=create_custom,
+            ).props("unelevated no-caps color=primary")
 
     refresh_routes(inventory)
     return dialog, content, refresh_routes

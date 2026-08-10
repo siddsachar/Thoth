@@ -27,11 +27,13 @@ Open **Settings → System → Remote Access** from any authenticated owner sess
 1. Choose how the other device will reach this Row-Bot instance.
 2. Check or enable that route.
 3. Select **Invite a device**.
-4. Choose the initial desktop or compact layout, session lifetime, and one of the currently reachable connection routes.
+4. Choose the initial desktop or compact layout, session lifetime, and one of the currently reachable connection routes. For an address you have already configured, expand **Use another configured address** and enter its exact browser-facing HTTP or HTTPS origin instead.
 5. Create the invitation and open or scan it on the other device.
 6. Review the confirmation page on that device, then press **Connect**.
 
 The route selector refreshes from current state when the invitation is created. Row-Bot refuses a stale or no-longer-reachable selection instead of issuing a misleading link.
+
+The advanced address option only creates an origin-bound invitation. It does not configure or verify Cloudflare, DNS, TLS, proxy trust, firewall rules, or Row-Bot's listen address. Operator-managed Cloudflare and other reverse-proxy routes still require the existing public URL, allowed host, and exact trusted proxy configuration.
 
 <Screenshot id="remote-access-invitation" alt="Row-Bot device invitation dialog." caption="Desktop and compact choices affect layout only. Every connected browser receives full owner access; the invitation still binds its lifetime and browser-facing origin." />
 
