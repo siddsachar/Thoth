@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import os
 import re
 from contextlib import nullcontext
 from typing import Any, Iterator, Sequence
@@ -16,6 +18,31 @@ from row_bot.cancellation import current_cancellation_scope
 
 logger = logging.getLogger(__name__)
 
+OPENAI_COMPATIBLE_READ_TIMEOUT_ENV = "ROW_BOT_OPENAI_COMPATIBLE_READ_TIMEOUT"
+DEFAULT_OPENAI_COMPATIBLE_READ_TIMEOUT = 900.0
+OPENAI_COMPATIBLE_CONNECT_TIMEOUT = 10.0
+OPENAI_COMPATIBLE_WRITE_TIMEOUT = 120.0
+OPENAI_COMPATIBLE_POOL_TIMEOUT = 10.0
+OPENAI_COMPATIBLE_STREAM_ATTEMPTS = 2
+
+
+def _default_read_timeout() -> float:
+    raw = str(os.environ.get(OPENAI_COMPATIBLE_READ_TIMEOUT_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_OPENAI_COMPATIBLE_READ_TIMEOUT
+    try:
+        timeout = float(raw)
+    except ValueError:
+        timeout = 0.0
+    if math.isfinite(timeout) and timeout > 0:
+        return timeout
+    logger.warning(
+        "Ignoring invalid %s; using %.0f seconds",
+        OPENAI_COMPATIBLE_READ_TIMEOUT_ENV,
+        DEFAULT_OPENAI_COMPATIBLE_READ_TIMEOUT,
+    )
+    return DEFAULT_OPENAI_COMPATIBLE_READ_TIMEOUT
+
 
 class ChatOpenAICompatible(BaseChatModel):
     """OpenAI-compatible chat transport with endpoint-specific normalization."""
@@ -24,7 +51,7 @@ class ChatOpenAICompatible(BaseChatModel):
     api_key: str = "not-needed"
     base_url: str
     endpoint: dict[str, Any] = Field(default_factory=dict)
-    timeout: float = 120.0
+    timeout: float = Field(default_factory=_default_read_timeout)
     http_client: Any | None = None
 
     @property
@@ -350,12 +377,13 @@ class ChatOpenAICompatible(BaseChatModel):
     def _post(self, body: dict[str, Any]) -> Any:
         client = self.http_client or _new_http_client(self.timeout)
         owns_client = self.http_client is None
+        request_timeout = _httpx_timeout(self.timeout)
         try:
             response = client.post(
                 _chat_url(self.base_url),
                 json=body,
                 headers=self._headers(),
-                timeout=self.timeout,
+                timeout=request_timeout,
             )
             _raise_for_status(response, self.endpoint)
             return response
@@ -364,8 +392,37 @@ class ChatOpenAICompatible(BaseChatModel):
                 client.close()
 
     def _iter_stream_events(self, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        import httpx
+
+        scope = current_cancellation_scope()
+        for attempt in range(1, OPENAI_COMPATIBLE_STREAM_ATTEMPTS + 1):
+            if scope is not None and scope.is_cancelled():
+                return
+            produced = 0
+            try:
+                for payload in self._iter_stream_events_once(body):
+                    produced += 1
+                    yield payload
+                return
+            except (httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
+                if scope is not None and scope.is_cancelled():
+                    return
+                if produced or attempt >= OPENAI_COMPATIBLE_STREAM_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "custom_openai_stream: transport failed before first event; retrying "
+                    "provider=%s model=%s attempt=%d/%d error=%s",
+                    self.endpoint.get("provider_id") or "custom",
+                    self.model_name,
+                    attempt + 1,
+                    OPENAI_COMPATIBLE_STREAM_ATTEMPTS,
+                    type(exc).__name__,
+                )
+
+    def _iter_stream_events_once(self, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
         client = self.http_client or _new_http_client(self.timeout)
         owns_client = self.http_client is None
+        request_timeout = _httpx_timeout(self.timeout)
         scope = current_cancellation_scope()
         unregister_callbacks: list[Any] = []
         raw_lines = 0
@@ -378,12 +435,12 @@ class ChatOpenAICompatible(BaseChatModel):
                 _chat_url(self.base_url),
                 json=body,
                 headers=self._headers(),
-                timeout=self.timeout,
+                timeout=request_timeout,
             ) if hasattr(client, "stream") else nullcontext(client.post(
                 _chat_url(self.base_url),
                 json=body,
                 headers=self._headers(),
-                timeout=self.timeout,
+                timeout=request_timeout,
             ))
             with context as response:
                 _raise_for_status(response, self.endpoint)
@@ -1087,7 +1144,18 @@ def _text_tool_call_from_match(match: re.Match[str], index: int) -> dict[str, An
 def _new_http_client(timeout: float) -> Any:
     import httpx
 
-    return httpx.Client(timeout=timeout)
+    return httpx.Client(timeout=_httpx_timeout(timeout))
+
+
+def _httpx_timeout(read_timeout: float) -> Any:
+    import httpx
+
+    return httpx.Timeout(
+        connect=OPENAI_COMPATIBLE_CONNECT_TIMEOUT,
+        read=float(read_timeout),
+        write=OPENAI_COMPATIBLE_WRITE_TIMEOUT,
+        pool=OPENAI_COMPATIBLE_POOL_TIMEOUT,
+    )
 
 
 def _chat_url(base_url: str) -> str:

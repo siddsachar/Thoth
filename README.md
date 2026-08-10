@@ -405,6 +405,10 @@ cached, and fallback catalog outcomes.
 
 Configure providers in Settings, Channels, and Accounts. Keys and in-app ChatGPT / Codex, Claude Subscription, and xAI Grok OAuth tokens are stored in Windows Credential Manager, macOS Keychain, or Linux Secret Service/KWallet when available. If secure storage is unavailable, newly entered secrets are usable for the current Row-Bot process only and must be re-entered after restart unless a secure keyring backend is configured. The official Compose path automatically creates a persistent `ROW_BOT_SECRET_STORE_KEY` in its isolated secrets volume and uses it to encrypt owner-entered credentials under `/data/secure-secrets`; advanced operators can replace that volume with an explicit read-only secret file. Back up the key and data together; see [Docker And VPS Operations](https://row-bot.ai/docs/operations/docker#account-credential-persistence-is-automatic). `~/.row-bot/api_keys.json` and `~/.row-bot/providers.json` keep metadata only, such as saved state, provider status, Quick Choices, compatibility profiles, runtime and vision probe results, OAuth client-id diagnostics, model-count status, and masked fingerprints.
 
+OpenAI-compatible chat requests use a 900-second read-inactivity timeout. Set
+`ROW_BOT_OPENAI_COMPATIBLE_READ_TIMEOUT` to a positive number of seconds to
+override it for all OpenAI-compatible endpoints.
+
 Atlas Cloud uses an OpenAI-compatible API, but Row-Bot treats it as a
 first-class provider with its own setup, auth, catalog refresh, provider
 identity, capability labels, streaming behavior, and chat/agent/vision surface

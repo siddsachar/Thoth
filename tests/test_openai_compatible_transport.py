@@ -1,6 +1,7 @@
 import json
 import threading
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -49,6 +50,39 @@ class _StreamResponse:
 class _StreamingClient(_Client):
     def stream(self, method, url, **kwargs):
         self.calls.append((url, kwargs))
+        return _StreamResponse()
+
+
+class _FailingStreamResponse:
+    status_code = 200
+    text = ""
+
+    def __init__(self, exc: Exception, *lines: bytes):
+        self.exc = exc
+        self.lines = lines
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def iter_lines(self):
+        yield from self.lines
+        raise self.exc
+
+
+class _RetryingStreamingClient(_Client):
+    def __init__(self, exc: Exception, *first_lines: bytes, always_fail: bool = False):
+        super().__init__()
+        self.exc = exc
+        self.first_lines = first_lines
+        self.always_fail = always_fail
+
+    def stream(self, method, url, **kwargs):
+        self.calls.append((url, kwargs))
+        if len(self.calls) == 1 or self.always_fail:
+            return _FailingStreamResponse(self.exc, *self.first_lines)
         return _StreamResponse()
 
 
@@ -377,6 +411,40 @@ class _ReasoningResponse(_Response):
                 },
             }],
         })
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (None, 900.0),
+        ("720", 720.0),
+        ("not-a-timeout", 900.0),
+    ],
+)
+def test_openai_compatible_transport_uses_granular_configurable_read_timeout(
+    monkeypatch,
+    configured,
+    expected,
+):
+    if configured is None:
+        monkeypatch.delenv("ROW_BOT_OPENAI_COMPATIBLE_READ_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("ROW_BOT_OPENAI_COMPATIBLE_READ_TIMEOUT", configured)
+    client = _Client()
+    model = ChatOpenAICompatible(
+        model_name="qwen",
+        base_url="http://127.0.0.1:8000/v1",
+        http_client=client,
+    )
+
+    model.invoke([HumanMessage(content="hi")])
+
+    timeout = client.calls[0][1]["timeout"]
+    assert model.timeout == expected
+    assert timeout.connect == 10.0
+    assert timeout.read == expected
+    assert timeout.write == 120.0
+    assert timeout.pool == 10.0
 
 
 def test_openai_compatible_transport_moves_system_messages_first():
@@ -710,6 +778,63 @@ def test_openai_compatible_transport_streams_reasoning_chunks():
 
     assert chunks[0].additional_kwargs["reasoning_content"] == "thinking"
     assert chunks[1].content == "answer"
+
+
+@pytest.mark.parametrize(
+    "transport_error",
+    [
+        httpx.ReadTimeout("read timed out"),
+        httpx.RemoteProtocolError("peer closed the stream"),
+    ],
+)
+def test_openai_compatible_stream_retries_transport_failure_before_first_event(transport_error):
+    client = _RetryingStreamingClient(transport_error)
+    model = ChatOpenAICompatible(
+        model_name="qwen",
+        base_url="http://127.0.0.1:1234/v1",
+        endpoint={"provider_id": "custom_openai_lm-studio"},
+        http_client=client,
+    )
+
+    events = list(model._iter_stream_events({"stream": True, "messages": []}))
+
+    assert len(client.calls) == 2
+    assert [event["choices"][0]["delta"] for event in events] == [
+        {"reasoning_content": "thinking"},
+        {"content": "answer"},
+    ]
+
+
+def test_openai_compatible_stream_does_not_retry_after_first_event():
+    first_event = b'data: {"choices":[{"delta":{"content":"partial"}}]}'
+    client = _RetryingStreamingClient(httpx.ReadTimeout("read timed out"), first_event)
+    model = ChatOpenAICompatible(
+        model_name="qwen",
+        base_url="http://127.0.0.1:1234/v1",
+        endpoint={"provider_id": "custom_openai_lm-studio"},
+        http_client=client,
+    )
+    events = model._iter_stream_events({"stream": True, "messages": []})
+
+    assert next(events)["choices"][0]["delta"] == {"content": "partial"}
+    with pytest.raises(httpx.ReadTimeout):
+        next(events)
+    assert len(client.calls) == 1
+
+
+def test_openai_compatible_stream_retry_is_bounded_to_two_attempts():
+    client = _RetryingStreamingClient(httpx.ReadTimeout("read timed out"), always_fail=True)
+    model = ChatOpenAICompatible(
+        model_name="qwen",
+        base_url="http://127.0.0.1:1234/v1",
+        endpoint={"provider_id": "custom_openai_lm-studio"},
+        http_client=client,
+    )
+
+    with pytest.raises(httpx.ReadTimeout):
+        list(model._iter_stream_events({"stream": True, "messages": []}))
+
+    assert len(client.calls) == 2
 
 
 def test_atlascloud_streams_visible_content_after_tool_result_with_tools_bound():
