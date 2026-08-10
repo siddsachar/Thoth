@@ -880,6 +880,12 @@ def _delete_thread(thread_id: str):
         delete_thread_draft(thread_id)
     except Exception:
         pass
+    try:
+        from row_bot.skills_activation import delete_thread_activation_state
+
+        delete_thread_activation_state(thread_id)
+    except Exception:
+        logger.debug("Failed to clean up skill activation state for thread %s", thread_id, exc_info=True)
 
 
 def delete_threads(thread_ids: list[str]) -> tuple[int, list[tuple[str, str]]]:

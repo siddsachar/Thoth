@@ -645,6 +645,7 @@ def build_mobile_thread_detail(
             rebuild_main=rebuild_main,
         ),
     )
+    p.refresh_skill_chips = composer_extras.refresh_from_store
     with ui.column().classes("row-bot-mobile-chat-detail w-full no-wrap").props(
         "data-docs-id=mobile-chat-detail"
     ):

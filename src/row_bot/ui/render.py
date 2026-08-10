@@ -18,6 +18,7 @@ import sys
 import uuid as _uuid
 from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 from nicegui import ui
 from nicegui.element import Element
@@ -1399,6 +1400,24 @@ def render_agent_tool_result(
     )
 
 
+def render_skill_load_stub(payload: dict[str, Any]) -> None:
+    """Render one compact, text-safe durable skill activation row."""
+
+    display_name = str(payload.get("display_name") or "Skill")
+    skill_id = str(payload.get("skill_id") or "")
+    source = str(payload.get("source") or "")
+    evicted = str(payload.get("evicted_skill_id") or "")
+    details = f"Skill: {skill_id}"
+    if source:
+        details += f" · Source: {source}"
+    if evicted:
+        details += f" · Replaced: {evicted}"
+    with ui.row().classes("items-center gap-1 text-grey-6 q-py-xs") as row:
+        ui.icon("auto_fix_high", size="14px")
+        ui.label(f"Using {display_name}").classes("text-xs")
+    row.tooltip(details)
+
+
 def render_message_content(
     msg: dict,
     thread_id: str | None = None,
@@ -1411,6 +1430,8 @@ def render_message_content(
         display_tool_content,
         group_tool_results,
         is_agent_tool_result,
+        is_skill_load_noop_result,
+        parse_skill_load_result,
         tool_result_failed,
         tool_group_status,
     )
@@ -1503,11 +1524,22 @@ def render_message_content(
     if tool_results:
         agent_tool_results: list[dict] = []
         generic_tool_results: list[dict] = []
+        skill_load_payloads: list[dict] = []
+        seen_skill_ids: set[str] = set()
         for tr in tool_results:
-            if isinstance(tr, dict) and is_agent_tool_result(tr):
+            skill_payload = parse_skill_load_result(tr) if isinstance(tr, dict) else None
+            if skill_payload:
+                if skill_payload["skill_id"] not in seen_skill_ids:
+                    seen_skill_ids.add(skill_payload["skill_id"])
+                    skill_load_payloads.append(skill_payload)
+            elif isinstance(tr, dict) and is_skill_load_noop_result(tr):
+                continue
+            elif isinstance(tr, dict) and is_agent_tool_result(tr):
                 agent_tool_results.append(tr)
             elif isinstance(tr, dict):
                 generic_tool_results.append(tr)
+        for skill_payload in skill_load_payloads:
+            render_skill_load_stub(skill_payload)
         if agent_tool_results:
             render_agent_tool_results(
                 agent_tool_results,

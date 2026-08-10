@@ -1040,9 +1040,33 @@ def _build_conversation_html(thread_name: str, messages: list[dict],
         # Tool results (collapsed details)
         tool_results = msg.get("tool_results")
         if tool_results:
-            from row_bot.ui.tool_trace import display_tool_content, group_tool_results
+            from row_bot.ui.tool_trace import (
+                display_tool_content,
+                group_tool_results,
+                is_skill_load_noop_result,
+                parse_skill_load_result,
+            )
 
-            for group in group_tool_results(tool_results):
+            generic_results = []
+            seen_skill_ids: set[str] = set()
+            for result in tool_results:
+                payload = parse_skill_load_result(result) if isinstance(result, dict) else None
+                if payload:
+                    if payload["skill_id"] in seen_skill_ids:
+                        continue
+                    seen_skill_ids.add(payload["skill_id"])
+                    safe_name = (
+                        payload["display_name"].replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                    )
+                    parts.append(f'<div class="skill-use">Using {safe_name}</div>')
+                elif isinstance(result, dict) and is_skill_load_noop_result(result):
+                    continue
+                else:
+                    generic_results.append(result)
+
+            for group in group_tool_results(generic_results):
                 parts.append(
                     f'<details class="tool-block"><summary>✅ {group.label}</summary>'
                 )

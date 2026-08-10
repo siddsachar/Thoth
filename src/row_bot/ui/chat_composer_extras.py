@@ -260,14 +260,9 @@ class ComposerExtrasController:
 
     def _refresh_available_skills(self) -> None:
         try:
-            import row_bot.skills as skills_mod
+            from row_bot.skill_discovery import collect_enabled_skill_records
 
-            if not skills_mod.skills_loaded():
-                skills_mod.load_skills()
-            self.available_skills = [
-                skill for skill in skills_mod.get_enabled_manual_skills_snapshot()
-                if not skills_mod.is_tool_guide(skill)
-            ]
+            self.available_skills = collect_enabled_skill_records()
         except Exception:
             logger.debug("Could not load composer skill choices", exc_info=True)
             self.available_skills = []
@@ -294,7 +289,12 @@ class ComposerExtrasController:
 
     def _load_active_skill_names(self) -> list[str]:
         if self.config.skill_mode in {"developer", "thread_override"}:
-            names = self._thread_override() or []
+            from row_bot.skills_activation import get_auto_loaded_skill_ids
+
+            names = [
+                *(self._thread_override() or []),
+                *get_auto_loaded_skill_ids(self._thread_id()),
+            ]
             return self._ordered_skill_names(self._filter_enabled_skill_names(names))
         try:
             from row_bot.skills_activation import get_activation_snapshot
@@ -305,7 +305,12 @@ class ComposerExtrasController:
                 enabled_tool_names=self._enabled_tool_names(),
                 explicit_override=self._thread_override(),
             )
-            return self._ordered_skill_names(snap.active)
+            from row_bot.skills_activation import get_auto_loaded_skill_ids
+
+            return self._ordered_skill_names([
+                *snap.active,
+                *get_auto_loaded_skill_ids(self._thread_id()),
+            ])
         except Exception:
             logger.debug("Could not read active composer skills", exc_info=True)
             return []
@@ -357,6 +362,13 @@ class ComposerExtrasController:
                 logger.debug("Composer skill change callback failed", exc_info=True)
         self._render_skill_chips(self.draft_state.get("text", ""))
 
+    def refresh_from_store(self) -> None:
+        """Refresh skill choices and active chips after a model-side skill load."""
+
+        self._refresh_available_skills()
+        self.active_skill_names = self._load_active_skill_names()
+        self._render_skill_chips(self.draft_state.get("text", ""))
+
     def use_skill(self, name: str, *, source: str = "ui") -> None:
         if self.config.skill_mode in {"developer", "thread_override"}:
             current = self._thread_override() or []
@@ -364,10 +376,19 @@ class ComposerExtrasController:
             self._save_thread_override(names)
             self.active_skill_names = self._filter_enabled_skill_names(names)
         else:
-            from row_bot.skills_activation import pin_skill, record_accept
+            if name.startswith("plugin:"):
+                from row_bot.skills_activation import load_auto_skill
 
-            pin_skill(self._thread_id(), name)
-            record_accept(self._thread_id(), name, source=source)
+                load_auto_skill(
+                    self._thread_id(),
+                    name,
+                    available_ids={skill.name for skill in self.available_skills},
+                )
+            else:
+                from row_bot.skills_activation import pin_skill, record_accept
+
+                pin_skill(self._thread_id(), name)
+                record_accept(self._thread_id(), name, source=source)
             self.active_skill_names = self._ordered_skill_names([*self.active_skill_names, name])
         if source.startswith("ui"):
             self._suppress_skill_suggestions_for_current_draft()
@@ -375,13 +396,29 @@ class ComposerExtrasController:
 
     def remove_skill(self, name: str) -> None:
         if self.config.skill_mode in {"developer", "thread_override"}:
-            current = [item for item in (self._thread_override() or []) if item != name]
-            self._save_thread_override(current)
-            self.active_skill_names = self._filter_enabled_skill_names(current)
-        else:
-            from row_bot.skills_activation import disable_skill
+            from row_bot.skills_activation import (
+                get_auto_loaded_skill_ids,
+                remove_auto_loaded_skill,
+            )
 
-            disable_skill(self._thread_id(), name)
+            if name in set(get_auto_loaded_skill_ids(self._thread_id())):
+                remove_auto_loaded_skill(self._thread_id(), name)
+            else:
+                current = [item for item in (self._thread_override() or []) if item != name]
+                self._save_thread_override(current)
+            self.active_skill_names = self._load_active_skill_names()
+        else:
+            from row_bot.skills_activation import (
+                get_auto_loaded_skill_ids,
+                remove_auto_loaded_skill,
+            )
+
+            if name in set(get_auto_loaded_skill_ids(self._thread_id())):
+                remove_auto_loaded_skill(self._thread_id(), name)
+            else:
+                from row_bot.skills_activation import disable_skill
+
+                disable_skill(self._thread_id(), name)
             self.active_skill_names = [item for item in self.active_skill_names if item != name]
         self._after_skills_changed()
 
@@ -428,9 +465,20 @@ class ComposerExtrasController:
             return []
 
     def _list_skill_choices(self, query: str = "", limit: int | None = None):
-        from row_bot.skills_activation import list_skill_choices
+        from types import SimpleNamespace
+        from row_bot.capability_search import search_capabilities
 
-        return list_skill_choices(self._thread_id(), query=query, limit=limit)
+        records = list(self.available_skills)
+        if query.strip():
+            documents = [record.search_document() for record in records]
+            matched_ids = {
+                document.canonical_id
+                for document in search_capabilities(documents, query, limit=limit or 5)
+            }
+            records = [record for record in records if record.canonical_id in matched_ids]
+        if limit is not None:
+            records = records[:limit]
+        return [SimpleNamespace(name=record.canonical_id) for record in records]
 
     def _open_skill_picker(self) -> None:
         self._refresh_available_skills()
@@ -508,7 +556,9 @@ class ComposerExtrasController:
                         ui.label("Active here").classes("text-xs text-grey-5 text-uppercase")
                         for skill in active_skills:
                             with ui.row().classes("w-full items-center no-wrap q-pa-xs rounded-borders"):
-                                ui.label(f"{skill.icon} {skill.display_name}").classes("text-sm text-weight-medium")
+                                with ui.column().classes("gap-0"):
+                                    ui.label(f"{skill.icon} {skill.display_name}").classes("text-sm text-weight-medium")
+                                    ui.label(self._skill_source_label(skill)).classes("text-xs text-grey-6")
                                 ui.space()
                                 ui.button(
                                     "Remove",
@@ -539,6 +589,7 @@ class ComposerExtrasController:
                             with ui.row().classes("w-full items-center no-wrap q-pa-xs rounded-borders"):
                                 with ui.column().classes("gap-0"):
                                     ui.label(f"{skill.icon} {skill.display_name}").classes("text-sm text-weight-medium")
+                                    ui.label(self._skill_source_label(skill)).classes("text-xs text-grey-6")
                                     if skill.description:
                                         ui.label(skill.description).classes("text-xs text-grey-6")
                                 ui.space()
@@ -560,6 +611,9 @@ class ComposerExtrasController:
         self._open_skill_picker()
 
     def _get_skill(self, name: str):
+        for skill in self.available_skills:
+            if getattr(skill, "name", "") == name:
+                return skill
         try:
             import row_bot.skills as skills_mod
 
@@ -567,6 +621,16 @@ class ComposerExtrasController:
         except Exception:
             logger.debug("Could not get skill %s", name, exc_info=True)
             return None
+
+    @staticmethod
+    def _skill_source_label(skill) -> str:
+        plugin_name = str(getattr(skill, "plugin_name", "") or "").strip()
+        if plugin_name:
+            return f"Plugin: {plugin_name}"
+        source = str(getattr(skill, "source", "") or "").strip()
+        if source.startswith("plugin:"):
+            return f"Plugin: {source.removeprefix('plugin:')}"
+        return "Manual"
 
     def _render_skill_chips(self, draft_text: str = "") -> None:
         if self.skill_chips_row is None:
@@ -772,6 +836,9 @@ class ComposerExtrasController:
 
     def _reset_skills_from_palette(self) -> None:
         if self.config.skill_mode in {"developer", "thread_override"}:
+            from row_bot.skills_activation import clear_auto_loaded_skills
+
+            clear_auto_loaded_skills(self._thread_id())
             try:
                 from row_bot.skills import get_default_active_skill_names
 

@@ -131,6 +131,7 @@ def test_settings_shell_preserves_all_registered_tabs():
         "Models",
         "Documents",
         "Search",
+        "Tools",
         "Skills",
         "System",
         "Accounts",
@@ -145,6 +146,30 @@ def test_settings_shell_preserves_all_registered_tabs():
         "Preferences",
     ):
         assert f'"{tab_name}"' in open_src
+
+
+def test_tools_tab_exposes_progressive_loading_and_preserves_search_alias(monkeypatch):
+    tools_src = _function_source("_build_tools_tab")
+    open_src = _function_source("open_settings")
+
+    assert '"Capability loading"' in tools_src
+    assert '"Auto-select external tools (recommended)"' in tools_src
+    assert '"Load all external tools"' in tools_src
+    assert "Core tools stay available" in tools_src
+    assert "Compatibility mode. Sends every enabled external tool schema" in tools_src
+    assert tools_src.index('"Capability loading"') < tools_src.index('"Retrieval Compression"')
+    assert tools_src.index('"Retrieval Compression"') < tools_src.index('"Search & Knowledge Tools"')
+    assert '"Search": "Tools"' in open_src
+    assert 'ui.tab("Tools", icon="search")' in open_src
+    assert "data-docs-id=settings-tab-search" in open_src
+    assert '("Tools", "search", _build_tools_tab)' in open_src
+
+    from row_bot.tools import registry
+
+    monkeypatch.setattr(registry, "_global_config", {"external_tool_loading_mode": "invalid"})
+    assert registry.get_external_tool_loading_mode() == "auto"
+    registry._global_config["external_tool_loading_mode"] = "eager"
+    assert registry.get_external_tool_loading_mode() == "eager"
 
 
 def test_voice_tab_owns_voice_models_not_credentials():

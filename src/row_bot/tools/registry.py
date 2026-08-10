@@ -255,6 +255,13 @@ def set_global_config(key: str, value) -> None:
     _invalidate_agent_cache()
 
 
+def get_external_tool_loading_mode() -> str:
+    """Return the normalized external-tool binding mode."""
+
+    value = str(get_global_config("external_tool_loading_mode", "auto") or "auto").strip().lower()
+    return value if value in {"auto", "eager"} else "auto"
+
+
 def get_langchain_tools() -> list:
     """Return LangChain-compatible tool wrappers for all enabled tools.
     Uses ``as_langchain_tools()`` (plural) so tools contributing multiple

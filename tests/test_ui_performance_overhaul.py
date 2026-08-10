@@ -270,7 +270,7 @@ def test_blank_thread_shell_defers_heavy_chat_work() -> None:
     assert "await run.io_bound(_resolve_model_surface)" in chat_src
     assert "await run.io_bound(_skills_mod.load_skills)" in chat_src
     assert "_skills_mod.load_skills()" not in chat_src
-    assert "get_enabled_manual_skills_snapshot" in chat_src
+    assert "collect_enabled_skill_records(load_manual=False)" in chat_src
     assert "chat_upload_js_installed" in chat_src
     assert "window._rowBotUploadHooksInstalled" in chat_src
 

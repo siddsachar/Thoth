@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -101,6 +102,68 @@ def test_thread_agent_profile_is_injected_into_agent_mode_prompt(tmp_path, monke
     assert "AGENT PROFILE: Review" in prompt
     assert "Findings first" in prompt
     assert "capability=read_only" in prompt
+
+
+def test_ordinary_profile_skill_selection_is_a_hard_canonical_boundary(tmp_path, monkeypatch):
+    _threads, _profiles, agent, _streaming, _picker, _library = _fresh_runtime_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    import row_bot.skill_discovery as discovery
+    import row_bot.skills_activation as activation
+
+    records = [
+        discovery.SkillRecord(
+            canonical_id="manual_other",
+            alias=None,
+            display_name="Manual Other",
+            icon="*",
+            description="Other",
+            tags=(),
+            activation={},
+            instructions="MANUAL_OTHER_BODY",
+            source="manual",
+            root=Path(tmp_path),
+        ),
+        discovery.SkillRecord(
+            canonical_id="plugin:demo:selected",
+            alias="selected",
+            display_name="Plugin Selected",
+            icon="*",
+            description="Selected",
+            tags=(),
+            activation={},
+            instructions="PLUGIN_SELECTED_BODY",
+            source="plugin:demo",
+            root=Path(tmp_path),
+            plugin_name="Demo Plugin",
+        ),
+    ]
+    monkeypatch.setattr(discovery, "collect_enabled_skill_records", lambda: records)
+    activation.load_auto_skill(
+        "profile-thread",
+        "manual_other",
+        available_ids={record.canonical_id for record in records},
+    )
+    agent._set_active_runtime_context(
+        thread_id="profile-thread",
+        runtime_surface="agent",
+        agent_profile_snapshot={
+            "id": "profile:plugin",
+            "enabled": True,
+            "skill_policy_json": {"skills_override": ["plugin:demo:selected"]},
+        },
+    )
+
+    authorized, active_ids, discoverable, _fingerprint = agent._build_runtime_skill_snapshot()
+    prompt = discovery.render_active_skills_prompt(agent._resolve_active_skill_records(authorized))
+
+    assert [record.canonical_id for record in authorized] == ["plugin:demo:selected"]
+    assert active_ids == ("plugin:demo:selected",)
+    assert discoverable is False
+    assert "PLUGIN_SELECTED_BODY" in prompt
+    assert "plugin: Demo Plugin" in prompt
+    assert "MANUAL_OTHER_BODY" not in prompt
 
 
 def test_thread_agent_profile_is_injected_into_chat_only_prompt(tmp_path, monkeypatch):

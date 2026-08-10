@@ -157,7 +157,10 @@ def test_profile_library_lives_in_left_sidebar():
     assert "_create_profile_chat_thread" in library
     assert "skills_override" in library
     assert "Pinned skills for this profile" in library
-    assert "Smart skill suggestions still work normally" in library
+    assert "Selected skills start active when this profile is used" in library
+    assert "Tool access remains the hard runtime boundary" in library
+    assert "collect_enabled_skill_records" in library
+    assert "Unavailable" in library
     assert "File editing workspace" in library
     assert "Use Worktree" in library
     assert "Child Agent" in task_dialog

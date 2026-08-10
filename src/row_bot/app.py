@@ -523,6 +523,9 @@ async def _auto_start_channel_background(channel, _st) -> None:
         ok = bool(await channel.start())
         if ok:
             _safe_console_print(f"[startup] ✅ {display_name} auto-started")
+            from row_bot.channels.registry import clear_agent_cache_if_loaded
+
+            clear_agent_cache_if_loaded()
             try:
                 from row_bot.channels.thread_notifications import reconcile_pending_channel_notifications
 
