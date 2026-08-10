@@ -148,6 +148,7 @@ def test_custom_openai_endpoint_uses_configured_base_url(tmp_path, monkeypatch):
     from row_bot.providers.custom import custom_provider_id, save_custom_endpoint
 
     monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    monkeypatch.setenv("ROW_BOT_OPENAI_COMPATIBLE_READ_TIMEOUT", "720")
 
     save_custom_endpoint({
         "id": "local-vllm",
@@ -163,6 +164,7 @@ def test_custom_openai_endpoint_uses_configured_base_url(tmp_path, monkeypatch):
     assert model.base_url == "http://127.0.0.1:8000/v1"
     assert model.api_key == "not-needed"
     assert model.endpoint["provider_id"] == custom_provider_id("local-vllm")
+    assert model.timeout == 720.0
 
 
 def test_custom_endpoint_model_syncs_into_model_facade(tmp_path, monkeypatch):
