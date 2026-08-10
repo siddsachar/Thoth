@@ -278,9 +278,39 @@ def test_row_bot_status_tools_distinguishes_global_and_effective_profile_scope(t
     assert "Active profile: UI Check" in tools
     assert "selected tools are runtime-bound" in tools
     assert "other global tools are not bound" in tools
-    assert "Effective tools:" in tools
+    assert "Profile-selected tool groups:" in tools
+    assert "skill_search and skill_load" not in tools
     for tool_id in ("browser", "filesystem", "row_bot_status", "system_info", "vision"):
         assert f"({tool_id})" in tools
+
+
+@pytest.mark.parametrize("runtime_surface", ["agent_child", "agent_child_resume"])
+def test_row_bot_status_tools_explains_separate_bounded_child_skill_bridges(
+    tmp_path,
+    monkeypatch,
+    runtime_surface,
+):
+    threads, _profiles, _agent_runs, _goals, agent, status_tool = _fresh_status_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    thread_id = threads.create_thread("Restricted child status")
+    threads._set_thread_agent_profile(thread_id, "web_ui_checker")
+    agent._set_active_runtime_context(
+        thread_id=thread_id,
+        enabled_tool_names=[],
+        tool_allowlist=["browser", "row_bot_status"],
+        agent_profile_id="ui_check",
+        runtime_surface=runtime_surface,
+    )
+
+    tools = status_tool._row_bot_status("tools")
+
+    assert "Profile-selected tool groups:" in tools
+    assert "skill_search and skill_load" in tools
+    assert "separate from the tool-group allowlist" in tools
+    assert "cannot add tools" in tools
+    assert "profile, approval, or workspace boundaries" in tools
 
 
 def test_row_bot_status_tools_keeps_global_catalog_without_profile_allowlist(tmp_path, monkeypatch):

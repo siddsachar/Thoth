@@ -66,6 +66,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
         "orchestration_transcript_surfaces",
         (
             "src/row_bot/app.py",
+            "src/row_bot/ui/helpers.py",
             "src/row_bot/ui/transcript.py",
             "src/row_bot/ui/sidebar.py",
         ),

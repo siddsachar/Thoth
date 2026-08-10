@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -268,12 +269,7 @@ def build_skill_discovery_tools(
     records_by_id = {record.canonical_id: record for record in frozen_records}
     searchable_by_id = {record.canonical_id: record for record in searchable_records}
     manifest = render_capability_manifest(searchable_records, context_tokens=context_tokens)
-    try:
-        from row_bot.skills_activation import get_auto_loaded_skill_ids
-
-        implicit_at_build = set(get_auto_loaded_skill_ids(thread_id))
-    except Exception:
-        implicit_at_build = set()
+    fallback_thread_id = str(thread_id or "").strip()[:512]
 
     def _search(query: str, limit: int = 3) -> str:
         query_text = str(query or "").strip()
@@ -300,7 +296,18 @@ def build_skill_discovery_tools(
             ],
         })
 
-    def _load(name: str, relative_path: str | None = None) -> str:
+    def _load(
+        name: str,
+        relative_path: str | None = None,
+        config: RunnableConfig = None,
+    ) -> str:
+        configurable = config.get("configurable") if isinstance(config, Mapping) else None
+        runtime_thread_id = (
+            str(configurable.get("thread_id") or "").strip()[:512]
+            if isinstance(configurable, Mapping)
+            else ""
+        )
+        activation_thread_id = runtime_thread_id or fallback_thread_id
         record, error = resolve_skill_record_name(frozen_records, name)
         if record is None:
             return _json_result({
@@ -317,14 +324,20 @@ def build_skill_discovery_tools(
                     "skill_id": record.canonical_id,
                     "error": {"code": "invalid_reference", "message": str(exc)},
                 })
-        if record.canonical_id in active and record.canonical_id not in implicit_at_build:
+        try:
+            from row_bot.skills_activation import get_auto_loaded_skill_ids
+
+            implicit_for_task = set(get_auto_loaded_skill_ids(activation_thread_id))
+        except Exception:
+            implicit_for_task = set()
+        if record.canonical_id in active and record.canonical_id not in implicit_for_task:
             newly_active, evicted = False, None
         else:
             from row_bot.skills_activation import load_auto_skill
 
             try:
                 newly_active, evicted = load_auto_skill(
-                    thread_id,
+                    activation_thread_id,
                     record.canonical_id,
                     available_ids=records_by_id,
                 )

@@ -9,6 +9,7 @@ import pathlib
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from row_bot.api_keys import get_key
@@ -21,6 +22,10 @@ logger = logging.getLogger(__name__)
 _provider_lock = threading.Lock()
 _provider = None
 _provider_key: tuple[Any, ...] | None = None
+_LOCAL_EMBEDDING_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="row-bot-local-embedding",
+)
 
 RECALL_EMBEDDING_WAIT_SECONDS = 30.0
 
@@ -69,6 +74,25 @@ class _DimensionAdapter(Embeddings):
         if not self.dimension:
             return vector
         return list(vector)[: self.dimension]
+
+
+class _SerializedLocalEmbeddings(Embeddings):
+    """Run local model inference on one stable process-lifetime caller thread."""
+
+    def __init__(self, inner: Any):
+        self.inner = inner
+
+    def embed_query(self, text: str) -> list[float]:
+        return _LOCAL_EMBEDDING_EXECUTOR.submit(
+            self.inner.embed_query,
+            text,
+        ).result()
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return _LOCAL_EMBEDDING_EXECUTOR.submit(
+            self.inner.embed_documents,
+            texts,
+        ).result()
 
 
 def _embedding_key(cfg: dict[str, Any]) -> tuple[Any, ...]:
@@ -447,6 +471,7 @@ def _build_local_provider(cfg: dict[str, Any]) -> Any:
         _sys.stderr = old_stderr
         _os.environ.pop("TQDM_DISABLE", None)
     logger.info("Local embedding model loaded: %s", model_def["model"])
+    provider = _SerializedLocalEmbeddings(provider)
     if dimension == int(model_def["dimension"]):
         return provider
     return _DimensionAdapter(provider, dimension)

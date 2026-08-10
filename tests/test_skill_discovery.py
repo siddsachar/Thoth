@@ -137,6 +137,63 @@ def test_skill_load_acknowledges_once_and_enforces_five_item_lru(tmp_path, monke
     ]
 
 
+def test_cached_skill_load_uses_runtime_task_and_keeps_lru_state_isolated(tmp_path, monkeypatch) -> None:
+    from row_bot import skills_activation
+
+    monkeypatch.setattr(skills_activation, "STATE_PATH", tmp_path / "activation.json")
+    monkeypatch.setattr(skills_activation, "DATA_DIR", tmp_path)
+    records = [_record(f"skill_{index}") for index in range(6)]
+    _search, load = build_skill_discovery_tools(
+        records,
+        thread_id="parent-a",
+        context_tokens=32_768,
+    )
+
+    parent_a = {"configurable": {"thread_id": "parent-a"}}
+    parent_b = {"configurable": {"thread_id": "parent-b"}}
+    first_a = _payload(load.invoke({"name": "skill_0"}, config=parent_a))
+    first_b = _payload(load.invoke({"name": "skill_0"}, config=parent_b))
+    for index in range(1, 6):
+        latest_a = _payload(load.invoke({"name": f"skill_{index}"}, config=parent_a))
+
+    assert first_a["newly_active"] is True
+    assert first_b["newly_active"] is True
+    assert latest_a["evicted_skill_id"] == "skill_0"
+    assert skills_activation.get_auto_loaded_skill_ids("parent-a") == [
+        "skill_1", "skill_2", "skill_3", "skill_4", "skill_5",
+    ]
+    assert skills_activation.get_auto_loaded_skill_ids("parent-b") == ["skill_0"]
+
+
+def test_cached_skill_load_isolates_child_like_sibling_tasks_and_hides_runtime_config(tmp_path, monkeypatch) -> None:
+    from row_bot import skills_activation
+
+    monkeypatch.setattr(skills_activation, "STATE_PATH", tmp_path / "activation.json")
+    monkeypatch.setattr(skills_activation, "DATA_DIR", tmp_path)
+    records = [_record("alpha"), _record("beta")]
+    _search, load = build_skill_discovery_tools(
+        records,
+        thread_id="parent-build-task",
+        context_tokens=32_768,
+        child_boundaries=True,
+    )
+
+    child_a = {"configurable": {"thread_id": "parent:agent_child:one"}}
+    child_b = {"configurable": {"thread_id": "parent:agent_child:two"}}
+    first_a = _payload(load.invoke({"name": "alpha"}, config=child_a))
+    first_b = _payload(load.invoke({"name": "beta"}, config=child_b))
+
+    assert first_a["newly_active"] is True
+    assert first_b["newly_active"] is True
+    assert skills_activation.get_auto_loaded_skill_ids("parent:agent_child:one") == ["alpha"]
+    assert skills_activation.get_auto_loaded_skill_ids("parent:agent_child:two") == ["beta"]
+    assert skills_activation.get_auto_loaded_skill_ids("parent-build-task") == []
+    properties = load.get_input_schema().model_json_schema()["properties"]
+    assert set(properties) == {"name", "relative_path"}
+    assert "config" not in properties
+    assert "thread_id" not in properties
+
+
 def test_eager_active_skill_reload_does_not_consume_implicit_limit(tmp_path, monkeypatch) -> None:
     from row_bot import skills_activation
 

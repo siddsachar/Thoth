@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -226,6 +227,161 @@ def test_skill_load_results_partition_in_order_dedupe_and_suppress_noops(monkeyp
         })
     try:
         assert [payload["skill_id"] for payload in rendered] == ["alpha", "beta"]
+    finally:
+        container.delete()
+
+
+def _run_live_skill_result(monkeypatch, result, *, render_error: bool = False):
+    from nicegui import ui
+    from row_bot.ui import streaming
+
+    errors: list[str] = []
+    rendered: list[dict] = []
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        streaming,
+        "_required_orchestration_from_tool_result",
+        lambda *_args, **_kwargs: ("", False),
+    )
+    monkeypatch.setattr(
+        streaming,
+        "_register_delegated_agent_tool_result",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        streaming,
+        "_tool_result_changes_model_setting",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        streaming,
+        "_detach_if_ui_client_deleted",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        streaming,
+        "_agent_tool_result_already_live",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(streaming, "render_agent_tool_result", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        streaming,
+        "_handle_ui_runtime_error",
+        lambda _gen, _state, _exc, context: errors.append(context),
+    )
+
+    def _render(payload):
+        rendered.append(payload)
+        if render_error:
+            raise RuntimeError("special renderer failed")
+
+    monkeypatch.setattr(streaming, "render_skill_load_stub", _render)
+
+    container = ui.column()
+    gen = SimpleNamespace(
+        detached=False,
+        tool_col=container,
+        pending_tools={},
+        live_skill_ids=set(),
+        tool_results=[],
+        thread_id="thread-skill-live",
+    )
+    state = SimpleNamespace(
+        active_developer_workspace_id="",
+        thread_id="thread-skill-live",
+        vision_service=None,
+    )
+    p = SimpleNamespace(refresh_skill_chips=lambda: refreshed.append(True))
+    with container:
+        streaming._add_live_tool_pending(gen, "Skill Load")
+    group = gen.pending_tools["Skill Load"]
+    expansion = group["expansion"]
+
+    asyncio.run(streaming._handle_tool_done(
+        gen,
+        state,
+        p,
+        {
+            "name": "Skill Load",
+            "raw_name": "skill_load",
+            "content": result["content"],
+        },
+        SimpleNamespace(),
+    ))
+    return container, gen, group, expansion, rendered, refreshed, errors
+
+
+def test_live_skill_load_settles_group_hides_generic_row_and_refreshes_once(monkeypatch):
+    container, gen, group, expansion, rendered, refreshed, errors = _run_live_skill_result(
+        monkeypatch,
+        _skill_result(skill_id="alpha", name="Alpha"),
+    )
+    try:
+        assert group["pending"] == []
+        assert group["done"] == 1
+        assert gen.pending_tools == {}
+        assert expansion.visible is False
+        assert [payload["skill_id"] for payload in rendered] == ["alpha"]
+        assert gen.live_skill_ids == {"alpha"}
+        assert refreshed == [True]
+        assert errors == []
+    finally:
+        container.delete()
+
+
+def test_live_skill_load_noop_settles_and_hides_without_duplicate_stub(monkeypatch):
+    container, gen, group, expansion, rendered, refreshed, errors = _run_live_skill_result(
+        monkeypatch,
+        _skill_result(skill_id="alpha", name="Alpha", newly_active=False),
+    )
+    try:
+        assert group["pending"] == []
+        assert group["done"] == 1
+        assert gen.pending_tools == {}
+        assert expansion.visible is False
+        assert rendered == []
+        assert gen.live_skill_ids == set()
+        assert refreshed == []
+        assert errors == []
+    finally:
+        container.delete()
+
+
+def test_malformed_or_failed_skill_load_remains_an_ordinary_tool_result(monkeypatch):
+    for content in (
+        "not json",
+        json.dumps({"ok": False, "error": {"code": "unknown_skill"}}),
+    ):
+        container, gen, group, expansion, rendered, refreshed, errors = _run_live_skill_result(
+            monkeypatch,
+            {"content": content},
+        )
+        try:
+            assert group["pending"] == []
+            assert group["done"] == 1
+            assert gen.pending_tools == {"Skill Load": group}
+            assert expansion.visible is True
+            assert rendered == []
+            assert refreshed == []
+            assert errors == []
+        finally:
+            container.delete()
+
+
+def test_live_skill_special_render_failure_does_not_strand_or_duplicate_group(monkeypatch):
+    container, gen, group, expansion, rendered, refreshed, errors = _run_live_skill_result(
+        monkeypatch,
+        _skill_result(skill_id="alpha", name="Alpha"),
+        render_error=True,
+    )
+    try:
+        assert group["pending"] == []
+        assert group["done"] == 1
+        assert gen.pending_tools == {}
+        assert expansion.visible is False
+        assert len(rendered) == 1
+        assert refreshed == []
+        assert errors == ["skill activation rendering"]
     finally:
         container.delete()
 

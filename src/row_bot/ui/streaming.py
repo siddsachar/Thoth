@@ -4300,19 +4300,34 @@ async def _handle_tool_done(
     _skill_payload = parse_skill_load_result(_skill_result)
     _skill_noop = is_skill_load_noop_result(_skill_result)
     if _skill_payload or _skill_noop:
-        _grouped_live_result = True
         if not gen.detached and gen.tool_col:
             try:
-                _queue = gen.pending_tools.get(tool_name)
-                matched_exp = _queue.pop(0) if _queue else None
-                if _queue is not None and not _queue:
-                    gen.pending_tools.pop(tool_name, None)
-                if matched_exp:
-                    matched_exp.set_visibility(False)
-                if _skill_payload and _skill_payload["skill_id"] not in gen.live_skill_ids:
-                    gen.live_skill_ids.add(_skill_payload["skill_id"])
+                _skill_group_name = canonical_tool_name(tool_name)
+                _skill_group = gen.pending_tools.get(_skill_group_name)
+                _skill_expansion = (
+                    _skill_group.get("expansion")
+                    if isinstance(_skill_group, dict)
+                    else None
+                )
+                _grouped_live_result = _finish_live_tool_result(
+                    gen,
+                    tool_name,
+                    tool_content,
+                )
+                if _grouped_live_result and isinstance(_skill_group, dict):
+                    if not (_skill_group.get("pending") or []):
+                        if gen.pending_tools.get(_skill_group_name) is _skill_group:
+                            gen.pending_tools.pop(_skill_group_name, None)
+                        if _skill_expansion:
+                            _skill_expansion.set_visibility(False)
+                if (
+                    _grouped_live_result
+                    and _skill_payload
+                    and _skill_payload["skill_id"] not in gen.live_skill_ids
+                ):
                     with gen.tool_col:
                         render_skill_load_stub(_skill_payload)
+                    gen.live_skill_ids.add(_skill_payload["skill_id"])
                     refresh_skill_chips = getattr(p, "refresh_skill_chips", None)
                     if callable(refresh_skill_chips):
                         refresh_skill_chips()
