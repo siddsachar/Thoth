@@ -13,6 +13,7 @@ import os
 import pathlib
 import re
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
@@ -30,6 +31,8 @@ TERM_MAP_LIMIT = 240
 SPECIFICITY_CAP = 2.8
 SUGGESTION_MIN_SCORE = 6.0
 CHOICE_MIN_SCORE = 3.0
+MAX_AUTO_LOADED_SKILLS = 5
+_state_lock = threading.RLock()
 ADDITIONAL_SUGGESTION_MIN_RATIO = 0.85
 _STOPWORDS = {
     "about", "actually", "after", "all", "and", "are", "around", "but",
@@ -163,6 +166,7 @@ def _thread_state(store: dict, thread_id: str) -> dict:
     state.setdefault("pinned", [])
     state.setdefault("disabled", [])
     state.setdefault("dismissed", [])
+    state.setdefault("auto_loaded", [])
     state.setdefault("smart_off", False)
     return state
 
@@ -540,6 +544,25 @@ def apply_channel_skill_command(
             )
         return SkillCommandResult("text", "No active skill is set for this chat.")
 
+    if command.action == "disable" and command.name:
+        try:
+            from row_bot.skill_discovery import collect_enabled_skill_records, resolve_skill_record_name
+
+            record, _error = resolve_skill_record_name(
+                collect_enabled_skill_records(),
+                command.name,
+            )
+            if record and record.canonical_id.startswith("plugin:"):
+                if remove_auto_loaded_skill(thread_id, record.canonical_id):
+                    return SkillCommandResult(
+                        "disabled",
+                        f"Skill disabled for this chat: {record.display_name}",
+                        selected_skill=record.canonical_id,
+                        query=command.name,
+                    )
+        except Exception:
+            logger.debug("Implicit plugin skill removal skipped", exc_info=True)
+
     _resolved_name, _resolved_error = resolve_skill_name(command.name)
     if _resolved_error and _resolved_error.startswith("Skill is off in the Skills library:"):
         return SkillCommandResult("error", _resolved_error, query=command.name)
@@ -684,6 +707,7 @@ def disable_skill(thread_id: str, skill_name: str) -> None:
     state = _thread_state(store, thread_id)
     state["disabled"] = _ordered_unique([*state.get("disabled", []), skill_name])
     state["pinned"] = [n for n in state.get("pinned", []) if n != skill_name]
+    state["auto_loaded"] = [n for n in state.get("auto_loaded", []) if n != skill_name]
     _save_store(store)
 
 
@@ -699,6 +723,83 @@ def set_smart_off(thread_id: str, value: bool) -> None:
     store = _load_store()
     _thread_state(store, thread_id)["smart_off"] = bool(value)
     _save_store(store)
+
+
+def is_smart_off(thread_id: str) -> bool:
+    store = _load_store()
+    return bool(_thread_state(store, thread_id).get("smart_off"))
+
+
+def get_auto_loaded_skill_ids(thread_id: str) -> list[str]:
+    """Return this task's implicit skills in oldest-to-newest order."""
+
+    with _state_lock:
+        store = _load_store()
+        return list(_thread_state(store, thread_id).get("auto_loaded", []))
+
+
+def load_auto_skill(
+    thread_id: str,
+    skill_id: str,
+    *,
+    available_ids: Iterable[str] | None = None,
+    limit: int = MAX_AUTO_LOADED_SKILLS,
+) -> tuple[bool, str | None]:
+    """Load or touch one implicit skill and evict the oldest beyond the limit."""
+
+    canonical_id = str(skill_id or "").strip()
+    if not canonical_id:
+        raise ValueError("skill id is required")
+    with _state_lock:
+        store = _load_store()
+        state = _thread_state(store, thread_id)
+        current = _ordered_unique(state.get("auto_loaded", []))
+        if available_ids is not None:
+            available = {str(name) for name in available_ids}
+            current = [name for name in current if name in available]
+            if canonical_id not in available:
+                raise ValueError("skill is no longer available")
+        newly_active = canonical_id not in current
+        current = [name for name in current if name != canonical_id]
+        current.append(canonical_id)
+        evicted = None
+        bounded_limit = max(1, int(limit or MAX_AUTO_LOADED_SKILLS))
+        while len(current) > bounded_limit:
+            evicted = current.pop(0)
+        state["auto_loaded"] = current
+        _save_store(store)
+        return newly_active, evicted
+
+
+def remove_auto_loaded_skill(thread_id: str, skill_id: str) -> bool:
+    with _state_lock:
+        store = _load_store()
+        state = _thread_state(store, thread_id)
+        before = list(state.get("auto_loaded", []))
+        state["auto_loaded"] = [name for name in before if name != skill_id]
+        changed = before != state["auto_loaded"]
+        if changed:
+            _save_store(store)
+        return changed
+
+
+def clear_auto_loaded_skills(thread_id: str) -> None:
+    with _state_lock:
+        store = _load_store()
+        state = _thread_state(store, thread_id)
+        if state.get("auto_loaded"):
+            state["auto_loaded"] = []
+            _save_store(store)
+
+
+def delete_thread_activation_state(thread_id: str) -> None:
+    """Remove durable skill activation data when its owning thread is deleted."""
+
+    with _state_lock:
+        store = _load_store()
+        removed = store.setdefault("threads", {}).pop(str(thread_id or "default"), None)
+        if removed is not None:
+            _save_store(store)
 
 
 def seed_thread_default_skills(
@@ -718,7 +819,7 @@ def seed_thread_default_skills(
     state = _thread_state(store, thread_id)
     has_state = any(
         state.get(key)
-        for key in ("pinned", "disabled", "dismissed")
+        for key in ("pinned", "disabled", "dismissed", "auto_loaded")
     ) or bool(state.get("smart_off"))
     if has_state and not replace:
         return resolve_active_skill_names(thread_id)
@@ -753,6 +854,7 @@ def resolve_active_skill_names(
     active = _ordered_unique([
         *(explicit_override or []),
         *state.get("pinned", []),
+        *state.get("auto_loaded", []),
     ])
     return [name for name in active if name in manual_names and name not in disabled]
 

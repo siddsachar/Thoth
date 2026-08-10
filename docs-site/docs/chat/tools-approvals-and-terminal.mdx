@@ -7,6 +7,12 @@ description: "Understand Row-Bot tools, approval prompts, tool results, and term
 
 Tools are actions Row-Bot can take beyond writing text. They can search documents, read files, use a browser, run Developer commands, create designs, inspect knowledge, call MCP servers, use plugins, or send through channels.
 
+## Progressive Discovery
+
+With the recommended Auto capability-loading mode, core tools remain available under the active profile while Row-Bot searches enabled MCP, plugin, Custom Tool, and channel tools only when a request needs them. This keeps large external schema catalogs out of unrelated prompts.
+
+Discovery does not widen permissions. The selected provider, Agent Profile, workspace policy, approval mode, and execution budget still apply. Live and reopened traces group results under the real integration name. See [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills) for the complete flow and the eager compatibility option.
+
 ## How Tool Use Appears
 
 When Row-Bot uses a tool, the transcript can show a tool trace or result block. Read it as an activity receipt: what Row-Bot tried, what came back, and whether more action is needed.

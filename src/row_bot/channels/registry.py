@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,23 @@ _channels: dict[str, "Channel"] = {}
 _channel_sources: dict[str, ChannelSource] = {}
 
 
+def clear_agent_cache_if_loaded() -> None:
+    """Invalidate agent graphs without importing the agent runtime at startup."""
+
+    seen_modules: set[int] = set()
+    for module_name in ("row_bot.agent", "agent"):
+        agent_mod = sys.modules.get(module_name)
+        if agent_mod is None or id(agent_mod) in seen_modules:
+            continue
+        seen_modules.add(id(agent_mod))
+        clear_cache = getattr(agent_mod, "clear_agent_cache", None)
+        if callable(clear_cache):
+            try:
+                clear_cache()
+            except Exception:
+                log.debug("Agent cache invalidation failed", exc_info=True)
+
+
 def register(channel: "Channel", *, source: ChannelSource | None = None) -> None:
     """Register a channel adapter instance."""
 
@@ -36,6 +54,7 @@ def register(channel: "Channel", *, source: ChannelSource | None = None) -> None
     _channels[channel.name] = channel
     _channel_sources[channel.name] = source
     log.debug("Registered channel: %s from %s", channel.name, source)
+    clear_agent_cache_if_loaded()
 
 
 def get(name: str) -> "Channel | None":
@@ -77,8 +96,11 @@ def configured_channels() -> list["Channel"]:
 def unregister(name: str) -> None:
     """Remove a channel registration."""
 
+    existed = name in _channels or name in _channel_sources
     _channels.pop(name, None)
     _channel_sources.pop(name, None)
+    if existed:
+        clear_agent_cache_if_loaded()
 
 
 def unregister_plugin_channels(plugin_id: str) -> None:

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -418,6 +420,151 @@ def test_builtin_profile_skills_flow_to_child_agent(tmp_path, monkeypatch):
     assert captured["config"]["configurable"]["tool_allowlist"] == run["tools_override"]
     event_types = {event["type"] for event in agent_runs.get_agent_events(run["id"])}
     assert {"run.created", "run.started", "turn.completed", "run.completed"} <= event_types
+
+
+def test_child_skill_snapshot_starts_profile_skills_and_loads_others_task_locally(
+    tmp_path,
+    monkeypatch,
+):
+    _runner, _runs, _profiles, _context, _threads = _fresh_agent_runner_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    import row_bot.agent as agent
+    import row_bot.skill_discovery as discovery
+    import row_bot.skills_activation as activation
+
+    records = (
+        discovery.SkillRecord(
+            canonical_id="selected_manual",
+            alias=None,
+            display_name="Selected Manual",
+            icon="*",
+            description="Selected",
+            tags=(),
+            activation={},
+            instructions="selected instructions",
+            source="manual",
+            root=Path(tmp_path),
+        ),
+        discovery.SkillRecord(
+            canonical_id="plugin:demo:deferred",
+            alias="deferred",
+            display_name="Deferred Plugin",
+            icon="*",
+            description="Deferred",
+            tags=("review",),
+            activation={},
+            instructions="deferred instructions",
+            source="plugin:demo",
+            root=Path(tmp_path),
+            plugin_name="Demo",
+        ),
+    )
+    monkeypatch.setattr(discovery, "collect_enabled_skill_records", lambda: list(records))
+    profile = {
+        "id": "profile:child",
+        "enabled": True,
+        "skill_policy_json": {"skills_override": ["selected_manual"]},
+    }
+    activation.load_auto_skill(
+        "parent-thread",
+        "plugin:demo:deferred",
+        available_ids={record.canonical_id for record in records},
+    )
+    agent._set_active_runtime_context(
+        thread_id="child-thread",
+        runtime_surface="agent_child",
+        agent_profile_snapshot=profile,
+    )
+
+    authorized, active_ids, discoverable, _fingerprint = agent._build_runtime_skill_snapshot()
+    search, load = discovery.build_skill_discovery_tools(
+        authorized,
+        thread_id="child-thread",
+        context_tokens=32_768,
+        active_skill_ids=active_ids,
+        child_boundaries=True,
+    )
+
+    assert [record.canonical_id for record in authorized] == [
+        "selected_manual",
+        "plugin:demo:deferred",
+    ]
+    assert active_ids == ("selected_manual",)
+    assert discoverable is True
+    search_payload = json.loads(search.invoke({"query": "deferred"}))
+    assert search_payload["results"][0]["skill_id"] == "plugin:demo:deferred"
+    assert "cannot grant tools" in search.description
+    load_payload = json.loads(load.invoke({"name": "deferred"}))
+    assert load_payload["newly_active"] is True
+    assert activation.get_auto_loaded_skill_ids("child-thread") == ["plugin:demo:deferred"]
+    assert activation.get_auto_loaded_skill_ids("sibling-thread") == []
+    assert activation.get_auto_loaded_skill_ids("parent-thread") == ["plugin:demo:deferred"]
+
+
+def test_concurrent_child_contexts_keep_profile_provider_and_cache_metadata_isolated():
+    import row_bot.agent as agent
+
+    first_key = frozenset({"child:first"})
+    second_key = frozenset({"child:second"})
+    agent.clear_agent_cache()
+    agent._agent_cache_metadata.update({
+        first_key: {
+            "tool_parents": ("filesystem",),
+            "bound_schema_tokens": 111,
+            "skill_records": ("first-skill",),
+        },
+        second_key: {
+            "tool_parents": ("mcp",),
+            "bound_schema_tokens": 222,
+            "skill_records": ("second-skill",),
+        },
+    })
+    barrier = threading.Barrier(2)
+    results: dict[str, dict] = {}
+    errors: list[BaseException] = []
+
+    def worker(label: str, cache_key: frozenset[str]) -> None:
+        try:
+            agent._set_active_runtime_context(
+                thread_id=f"thread-{label}",
+                runtime_surface="agent_child",
+                model_override=f"model:{label}",
+                agent_profile_id=f"profile:{label}",
+                agent_profile_snapshot={"id": f"profile:{label}"},
+            )
+            agent._activate_agent_cache_metadata(cache_key)
+            barrier.wait(timeout=5)
+            results[label] = {
+                "runtime": agent.get_active_runtime_context(),
+                "parents": agent._current_effective_tool_parent_names_var.get(),
+                "schema_tokens": agent._current_bound_tool_schema_tokens_var.get(),
+                "skills": agent._current_authorized_skill_records_var.get(),
+            }
+        except BaseException as exc:  # surface thread failures in the main assertion
+            errors.append(exc)
+
+    first = threading.Thread(target=worker, args=("first", first_key))
+    second = threading.Thread(target=worker, args=("second", second_key))
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert not errors
+    assert not first.is_alive() and not second.is_alive()
+    assert results["first"]["runtime"]["agent_profile_id"] == "profile:first"
+    assert results["first"]["runtime"]["model_override"] == "model:first"
+    assert results["first"]["parents"] == ("filesystem",)
+    assert results["first"]["schema_tokens"] == 111
+    assert results["first"]["skills"] == ("first-skill",)
+    assert results["second"]["runtime"]["agent_profile_id"] == "profile:second"
+    assert results["second"]["runtime"]["model_override"] == "model:second"
+    assert results["second"]["parents"] == ("mcp",)
+    assert results["second"]["schema_tokens"] == 222
+    assert results["second"]["skills"] == ("second-skill",)
+    agent.clear_agent_cache()
 
 
 def test_profile_tool_and_skill_policy_filters_child_context(tmp_path, monkeypatch):

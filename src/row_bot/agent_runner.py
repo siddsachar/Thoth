@@ -757,6 +757,11 @@ def _pause_agent_for_approval(
         "tool_allowlist": list(configurable.get("tool_allowlist") or []),
         "interrupts": interrupts,
         "approval_payload": approval_payload,
+        "external_discovery_active": any(
+            bool(item.get("external_discovery_active"))
+            for item in interrupts
+            if isinstance(item, dict)
+        ),
     }
     resume_token, approval_id = create_approval_request(
         run_id=run_id,
@@ -1054,6 +1059,12 @@ def resume_agent_run(
             error="Missing Agent resume state",
             status_message="Missing Agent resume state",
         )
+    config = dict(config)
+    configurable = dict(config.get("configurable") or {})
+    configurable["external_discovery_active"] = bool(
+        resume_state.get("external_discovery_active")
+    )
+    config["configurable"] = configurable
     interrupt_ids: list[str] = []
     seen_interrupt_ids: set[str] = set()
     for intr in resume_state.get("interrupts", []):

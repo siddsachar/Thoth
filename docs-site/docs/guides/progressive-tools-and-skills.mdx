@@ -1,0 +1,59 @@
+---
+title: "Progressive Tools And Skills"
+description: "Understand how Row-Bot discovers external tools and task-specific skills without loading every capability into every prompt."
+---
+
+# Progressive Tools And Skills
+
+Row-Bot can keep a large extension library enabled without sending every external tool schema and every skill instruction to the model on each turn. By default, it progressively discovers the capabilities that match the current request.
+
+## How Tool Discovery Works
+
+Core Row-Bot tools that are permitted by the active Agent Profile remain available normally. Enabled external tools from MCP servers, plugins, Custom Tools, and channels are kept in a searchable catalog.
+
+In **Auto-select external tools** mode, Row-Bot:
+
+1. Searches the enabled external-tool catalog when the request needs an integration.
+2. Selects the matching tool without changing its underlying identity or provider contract.
+3. Applies the same profile filtering, workspace policy, execution budget, prompt-injection handling, and approval rules as a directly bound tool.
+4. Shows the real integration name in live and reopened tool traces rather than a generic invocation wrapper.
+
+Discovery does not enable disabled integrations, add credentials, or bypass an approval. If two capabilities conflict with a core tool name, Row-Bot keeps the core boundary intact.
+
+## How Skill Discovery Works
+
+Skills are instruction packages, not executable permissions. Enabled skills can be searched when a request clearly matches their purpose. Row-Bot may then load the relevant skill for that task and show a **Using _skill_** receipt plus an active skill chip.
+
+Automatically loaded skills are scoped to the current task. Reopening the task restores its active skills, while a different parent task or child Agent keeps independent activation state. Up to five automatically selected skills are retained per task; pinned skills are managed separately. Loading an already active skill is a no-op and should not create a duplicate receipt.
+
+## Parent And Child Boundaries
+
+Each child Agent receives its own profile, tool allow-list, approval mode, workspace policy, execution budget, and skill activation state. A child can use the skill discovery bridges when its runtime permits them, but loading a skill cannot grant a tool that its profile denies. Child skill choices also do not leak into the parent or a sibling child.
+
+Use **Row-Bot Status** inside a child run when you need to distinguish globally configured tools from the tool groups actually bound to that child.
+
+## Auto And Compatibility Modes
+
+Open **Settings → Tools → Capability loading**:
+
+- **Auto-select external tools (recommended)** keeps the prompt compact and discovers enabled external integrations as needed.
+- **Load all external tools** is the eager compatibility mode. It sends every enabled external tool schema that survives the same provider and policy filters, which can use substantially more model context.
+
+Changing this setting does not alter tool enablement, credentials, approvals, or saved Agent Profiles.
+
+## What You See In Chat
+
+- Skill discovery can show `skill_search`, followed by one **Using _skill_** receipt after a successful load.
+- External discovery can show a search step followed by a result grouped under the real integration name.
+- Reopened transcripts preserve the real external-tool label.
+- Direct tools in eager mode keep their existing labels and approval behavior.
+
+## Troubleshooting
+
+- If no matching tool is found, confirm the integration is installed, enabled, healthy, and allowed by the active profile.
+- If a skill is not selected, confirm it is enabled and make the requested task specific enough to match its purpose.
+- If a child can see a tool in global status but cannot call it, inspect the child's profile-selected tool groups. Global availability is not the same as runtime access.
+- If a provider rejects a tool schema, try a compatible tool-capable model; discovery does not weaken provider schema validation.
+- Use eager mode temporarily when diagnosing an older provider or integration that expects direct external-tool binding.
+
+See [Tools Settings](/docs/settings/tools), [Skills Settings](/docs/settings/skills), [Skills Hub](/docs/skills/), and [Extensions And Trust Boundaries](/docs/concepts/extensions-and-trust) for related controls and safety boundaries.

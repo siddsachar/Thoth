@@ -23,6 +23,23 @@ class SourceTestRule:
 
 SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
     SourceTestRule(
+        "progressive_capability_discovery",
+        (
+            "src/row_bot/capability_search.py",
+            "src/row_bot/tools/discovery.py",
+            "src/row_bot/skill_discovery.py",
+            "src/row_bot/skills_activation.py",
+        ),
+        (
+            "tests/test_capability_search.py",
+            "tests/subsystem/tools/test_progressive_tool_discovery.py",
+            "tests/test_skill_discovery.py",
+            "tests/test_skills_activation.py",
+            "tests/test_chat_tool_trace_ui.py",
+        ),
+        "Progressive tool and skill discovery needs deterministic ranking, closed-snapshot invocation, activation, and durable trace coverage.",
+    ),
+    SourceTestRule(
         "prompt_context",
         (
             "src/row_bot/agent.py",
@@ -49,6 +66,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
         "orchestration_transcript_surfaces",
         (
             "src/row_bot/app.py",
+            "src/row_bot/ui/helpers.py",
             "src/row_bot/ui/transcript.py",
             "src/row_bot/ui/sidebar.py",
         ),

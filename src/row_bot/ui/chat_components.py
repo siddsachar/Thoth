@@ -594,6 +594,8 @@ def build_chat_input_bar(
     on_model_switch
         Called after the thread model override changes.
     """
+    if composer_extras is not None:
+        p.refresh_skill_chips = composer_extras.refresh_from_store
     ensure_composer_control_css()
 
     from row_bot.ui.live_control import build_live_control_dock

@@ -4,6 +4,7 @@ import threading
 import time
 import tomllib
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -233,6 +234,129 @@ def test_dimension_adapter_trims_query_and_document_vectors():
     assert adapter.embed_documents(["a", "b"]) == [[1.0, 2.0], [1.0, 2.0]]
 
 
+def test_local_embedding_adapter_serializes_queries_and_document_batches_on_one_worker():
+    from langchain_core.embeddings import Embeddings
+
+    from row_bot.embedding_providers import _SerializedLocalEmbeddings
+
+    class FakeProvider(Embeddings):
+        def __init__(self):
+            self.calls = []
+            self.thread_ids = set()
+            self.thread_names = set()
+            self.lock = threading.Lock()
+
+        def _record(self, kind, value):
+            with self.lock:
+                self.calls.append((kind, value))
+                self.thread_ids.add(threading.get_ident())
+                self.thread_names.add(threading.current_thread().name)
+
+        def embed_query(self, text):
+            self._record("query", text)
+            return [float(len(text))]
+
+        def embed_documents(self, texts):
+            self._record("documents", tuple(texts))
+            return [[float(len(text))] for text in texts]
+
+    inner = FakeProvider()
+    adapter = _SerializedLocalEmbeddings(inner)
+    with ThreadPoolExecutor(max_workers=6) as callers:
+        futures = [
+            callers.submit(adapter.embed_query, f"query-{index}")
+            for index in range(6)
+        ]
+        futures.extend(
+            callers.submit(adapter.embed_documents, [f"doc-{index}-a", f"doc-{index}-b"])
+            for index in range(4)
+        )
+        outputs = [future.result(timeout=2.0) for future in futures]
+
+    assert outputs[:6] == [[7.0]] * 6
+    assert outputs[6:] == [[[7.0], [7.0]]] * 4
+    assert len(inner.thread_ids) == 1
+    assert len(inner.thread_names) == 1
+    assert next(iter(inner.thread_names)).startswith("row-bot-local-embedding")
+    document_calls = [value for kind, value in inner.calls if kind == "documents"]
+    assert sorted(document_calls) == sorted([
+        (f"doc-{index}-a", f"doc-{index}-b")
+        for index in range(4)
+    ])
+
+
+def test_local_embedding_adapter_propagates_inner_exceptions():
+    from langchain_core.embeddings import Embeddings
+
+    from row_bot.embedding_providers import _SerializedLocalEmbeddings
+
+    class FailingProvider(Embeddings):
+        def embed_query(self, text):
+            raise ValueError(f"bad query: {text}")
+
+        def embed_documents(self, texts):
+            raise RuntimeError(f"bad documents: {len(texts)}")
+
+    adapter = _SerializedLocalEmbeddings(FailingProvider())
+
+    with pytest.raises(ValueError, match="bad query: query"):
+        adapter.embed_query("query")
+    with pytest.raises(RuntimeError, match="bad documents: 2"):
+        adapter.embed_documents(["a", "b"])
+
+
+def test_cloud_embedding_provider_is_not_locally_serialized(monkeypatch):
+    import langchain_openai
+    import row_bot.embedding_providers as embedding_providers
+
+    class FakeCloudProvider:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(langchain_openai, "OpenAIEmbeddings", FakeCloudProvider)
+    monkeypatch.setattr(embedding_providers, "get_key", lambda _name: "test-key")
+
+    provider = embedding_providers._build_cloud_provider({
+        "provider": "cloud",
+        "local_model": "mxbai-large-v1",
+        "cloud_model": "openai:text-embedding-3-small",
+        "dimension": 512,
+    })
+
+    assert isinstance(provider, FakeCloudProvider)
+    assert not isinstance(provider, embedding_providers._SerializedLocalEmbeddings)
+
+
+def test_embedding_resource_release_keeps_stable_local_execution_lane(monkeypatch):
+    from langchain_core.embeddings import Embeddings
+    import row_bot.embedding_providers as embedding_providers
+
+    worker_ids = []
+
+    class FakeProvider(Embeddings):
+        def embed_query(self, text):
+            worker_ids.append(threading.get_ident())
+            return [1.0]
+
+        def embed_documents(self, texts):
+            worker_ids.append(threading.get_ident())
+            return [[1.0] for _ in texts]
+
+    adapter = embedding_providers._SerializedLocalEmbeddings(FakeProvider())
+    executor = embedding_providers._LOCAL_EMBEDDING_EXECUTOR
+    assert adapter.embed_query("before") == [1.0]
+    embedding_providers._provider = adapter
+    embedding_providers._provider_key = ("local",)
+
+    embedding_providers.release_embedding_resources("test stable lane", collect=False)
+
+    assert embedding_providers._provider is None
+    assert embedding_providers._provider_key is None
+    assert embedding_providers._LOCAL_EMBEDDING_EXECUTOR is executor
+    assert adapter.embed_documents(["after"]) == [[1.0]]
+    assert len(set(worker_ids)) == 1
+
+
 def test_local_embedding_provider_is_strictly_cache_only(monkeypatch, tmp_path):
     import langchain_huggingface
     import row_bot.embedding_providers as embedding_providers
@@ -259,7 +383,7 @@ def test_local_embedding_provider_is_strictly_cache_only(monkeypatch, tmp_path):
         lambda _model_key: tmp_path,
     )
 
-    embedding_providers._build_local_provider(
+    provider = embedding_providers._build_local_provider(
         {
             "provider": "local",
             "local_model": "mxbai-large-v1",
@@ -273,6 +397,8 @@ def test_local_embedding_provider_is_strictly_cache_only(monkeypatch, tmp_path):
     assert captured["model_kwargs"]["device"] == "cpu"
     assert captured["encode_kwargs"]["batch_size"] == 16
     assert captured["model_name"] == str(tmp_path)
+    assert isinstance(provider, embedding_providers._SerializedLocalEmbeddings)
+    assert isinstance(provider.inner, FakeHuggingFaceEmbeddings)
 
 
 def test_concurrent_recall_callers_share_one_normal_load(monkeypatch):

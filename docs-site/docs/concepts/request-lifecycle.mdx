@@ -8,9 +8,9 @@ description: "Follow a Row-Bot request through context assembly, a selected mode
 A Row-Bot request is a controlled loop, not a single message sent blindly to every connected service.
 
 1. **A thread provides continuity.** Your message joins the selected conversation. The thread supplies recent history and any thread-specific model or profile choice.
-2. **Row-Bot assembles useful context.** Depending on your settings and request, this can include profile instructions, enabled Skills, attachments, and relevant local memory or document results. It does not mean the whole local data directory is attached.
+2. **Row-Bot assembles useful context.** Depending on your settings and request, this can include profile instructions, pinned or task-selected Skills, attachments, and relevant local memory or document results. Enabled skills that are not yet selected stay in a compact searchable catalog. It does not mean the whole local data directory is attached.
 3. **The selected model route receives the model prompt.** A local model keeps that inference on the configured local runtime. A hosted, API, subscription, or remote custom endpoint sends the assembled prompt to that provider under its terms.
-4. **The model may answer or ask for a tool.** Row-Bot checks that the tool exists, is enabled for the active profile or workflow, and is permitted by policy.
+4. **The model may answer or ask for a tool.** Core tools are bound under the active profile. In Auto mode, Row-Bot can search enabled external MCP, plugin, Custom Tool, and channel capabilities when needed. It then checks that the selected tool is enabled, provider-compatible, and permitted by policy.
 5. **Consequential actions stop at an approval boundary.** The approval describes the proposed action and target. Rejecting it prevents that action; approving it does not give unrelated future actions permission.
 6. **Tool results return to the active run.** A local file tool, browser, channel, account, plugin, or MCP server has its own execution and data boundary. The model can use the result to continue the loop.
 7. **The result is recorded locally.** The thread keeps the conversation and run evidence. Optional extraction, memory, and document features decide what becomes reusable knowledge later.
@@ -30,3 +30,4 @@ Local-first describes where Row-Bot and its durable data live. It does not make 
 - Choose routes and defaults in [Models And Providers](/docs/configuration/models-and-providers), [Provider Settings](/docs/settings/providers), and [Model Settings](/docs/settings/models).
 - Control tools and approvals in [Tools, Approvals, And Terminal](/docs/chat/tools-approvals-and-terminal) and [Privacy And Safety](/docs/privacy-safety/).
 - Control reusable context in [Knowledge Settings](/docs/settings/knowledge), [Documents Settings](/docs/settings/documents), and [Skills Settings](/docs/settings/skills).
+- Configure automatic or eager external capability loading in [Tools Settings](/docs/settings/tools) and read [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills).

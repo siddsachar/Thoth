@@ -818,12 +818,25 @@ def _discover_plugin_skills(plugin_dir: pathlib.Path) -> list[dict]:
                 instructions = content
 
             skill_name = frontmatter.get("name", skill_dir.stem if skill_dir.is_dir() else "unnamed")
+            raw_tags = frontmatter.get("tags", [])
+            if isinstance(raw_tags, str):
+                raw_tags = [item.strip() for item in raw_tags.split(",") if item.strip()]
+            if not isinstance(raw_tags, list):
+                raw_tags = []
+            activation = frontmatter.get("activation", {})
+            if not isinstance(activation, dict):
+                activation = {}
             skills.append({
                 "name": skill_name,
                 "display_name": frontmatter.get("display_name", skill_name),
                 "icon": frontmatter.get("icon", "🔌"),
                 "description": frontmatter.get("description", ""),
                 "instructions": instructions,
+                "tags": [str(item) for item in raw_tags if str(item or "").strip()],
+                "activation": activation,
+                "version": str(frontmatter.get("version", "1.0")),
+                "author": str(frontmatter.get("author", "")),
+                "root": skill_md.parent,
             })
         except Exception as exc:
             logger.warning("Failed to parse skill %s: %s", skill_md, exc)

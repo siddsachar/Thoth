@@ -471,7 +471,7 @@ def validate() -> list[str]:
         "System",
         "Tracker",
         "Documents",
-        "Search",
+        "Tools",
         "Skills",
         "Accounts",
         "Channels",

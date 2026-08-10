@@ -189,27 +189,40 @@ def _tool_items(current_allow: Sequence[str] | None = None) -> list[dict[str, An
     return items
 
 
-def _skill_items() -> list[dict[str, Any]]:
+def _skill_items(current_skills: list[str] | None = None) -> list[dict[str, Any]]:
     try:
         from row_bot import skills as skills_mod
+        from row_bot.skill_discovery import collect_enabled_skill_records
 
-        if not skills_mod.skills_loaded():
-            skills_mod.load_skills()
-        all_skills = [
-            skill
-            for skill in skills_mod.get_enabled_manual_skills()
-            if not skills_mod.is_tool_guide(skill)
-        ]
+        records = collect_enabled_skill_records()
         items = [
             {
-                "name": str(skill.name),
-                "label": str(getattr(skill, "display_name", "") or skill.name),
-                "description": str(getattr(skill, "description", "") or ""),
-                "icon": str(getattr(skill, "icon", "") or "auto_fix_high"),
-                "pinned": bool(skills_mod.is_pinned(skill.name)),
+                "name": record.canonical_id,
+                "label": record.display_name,
+                "description": record.description,
+                "icon": record.icon or "auto_fix_high",
+                "source": record.plugin_name or record.source,
+                "pinned": (
+                    not record.canonical_id.startswith("plugin:")
+                    and bool(skills_mod.is_pinned(record.canonical_id))
+                ),
+                "available": True,
             }
-            for skill in all_skills
+            for record in records
         ]
+        seen = {item["name"] for item in items}
+        for skill_id in _selected_list(current_skills):
+            if skill_id in seen:
+                continue
+            items.append({
+                "name": skill_id,
+                "label": skill_id,
+                "description": "Previously selected, but this skill is not currently available.",
+                "icon": "warning_amber",
+                "source": "Unavailable",
+                "pinned": False,
+                "available": False,
+            })
     except Exception:
         logger.debug("Could not load skills for Agent Profile editor", exc_info=True)
         items = []
@@ -335,8 +348,8 @@ def open_profile_editor_dialog(
     tool_items = _tool_items(current_allow)
     tool_names = [item["name"] for item in tool_items if item.get("selectable", True)]
     initial_tool_selection = set(current_allow or tool_names)
-    skill_items = _skill_items()
     current_skills = _selected_list(skill_policy.get("skills_override"))
+    skill_items = _skill_items(current_skills)
     initial_skill_selection = (
         set(current_skills)
         if is_edit
@@ -479,7 +492,7 @@ def open_profile_editor_dialog(
         with ui.column().classes("w-full gap-2 q-mt-md"):
             ui.label("Pinned skills for this profile").classes("text-xs font-bold text-grey-5")
             ui.label(
-                "These enabled skills are pinned when the profile is used. Smart skill suggestions still work normally."
+                "Selected skills start active when this profile is used. Tool access remains the hard runtime boundary."
             ).classes("text-xs text-grey-6")
             with ui.column().classes("w-full gap-1 q-pa-sm rounded-borders").style(
                 "border: 1px solid rgba(255,255,255,0.16); max-height: 240px; overflow-y: auto;"
@@ -493,13 +506,16 @@ def open_profile_editor_dialog(
                                 prefix = f"{item['icon']} " if item.get("icon") else ""
                                 ui.label(f"{prefix}{item['label']}").classes("text-sm text-weight-medium")
                                 meta = item["name"]
+                                source = str(item.get("source") or "").strip()
+                                if source:
+                                    meta += f" - {source}"
                                 if item.get("pinned"):
                                     meta += " - pinned globally"
                                 if item.get("description"):
                                     meta += f" - {item['description']}"
                                 ui.label(meta).classes("text-xs text-grey-6").style("white-space: normal;")
                 else:
-                    ui.label("No enabled manual skills are available.").classes("text-sm text-grey-6")
+                    ui.label("No enabled skills are available.").classes("text-sm text-grey-6")
 
         with ui.expansion("Advanced", icon="tune", value=False).classes("w-full q-mt-sm"):
             routing_hint = ui.textarea(

@@ -43,6 +43,133 @@ def test_langchain_messages_to_ui_messages_preserves_visible_shapes():
     ]
 
 
+def test_checkpoint_tool_invoke_results_recover_distinct_underlying_names_for_ui_and_export():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from row_bot.ui.helpers import _build_conversation_html, langchain_messages_to_ui_messages
+    from row_bot.ui.tool_trace import group_tool_results
+
+    targets = [
+        "hacker_news_top_stories",
+        "mcp_context7_resolve_library_id",
+        "custom_tool_read_catalog",
+        "channel_read_history",
+    ]
+    messages = [HumanMessage(content="Read these sources")]
+    messages.append(AIMessage(content="", tool_calls=[
+        {
+            "id": f"call-{index}",
+            "name": "tool_invoke",
+            "args": {
+                "name": target,
+                "arguments": {"token": f"secret-{index}", "nested": {"private": True}},
+            },
+            "type": "tool_call",
+        }
+        for index, target in enumerate(targets)
+    ]))
+    messages.extend(
+        ToolMessage(content=f"result-{index}", name="tool_invoke", tool_call_id=f"call-{index}")
+        for index in range(len(targets))
+    )
+    messages.append(AIMessage(content="Done."))
+
+    ui_messages = langchain_messages_to_ui_messages(messages)
+    results = ui_messages[-1]["tool_results"]
+    html = _build_conversation_html("Recovered tools", ui_messages)
+
+    assert [result["name"] for result in results] == targets
+    assert [group.name for group in group_tool_results(results)] == targets
+    for target in targets:
+        assert target in html
+    assert "secret-" not in str(ui_messages)
+    assert "private" not in str(ui_messages)
+
+
+def test_checkpoint_tool_invoke_identity_falls_back_safely_and_is_consumed_once():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from row_bot.ui.helpers import langchain_messages_to_ui_messages
+
+    messages = [
+        HumanMessage(content="first"),
+        AIMessage(content="", tool_calls=[{
+            "id": "shared-call",
+            "name": "tool_invoke",
+            "args": {"name": "  first_target\n  lookup  ", "arguments": {"secret": "hidden"}},
+            "type": "tool_call",
+        }]),
+        ToolMessage(content="first result", name="tool_invoke", tool_call_id="shared-call"),
+        AIMessage(content="", tool_calls=[{
+            "id": "shared-call",
+            "name": "tool_invoke",
+            "args": {"name": "second_target", "arguments": {}},
+            "type": "tool_call",
+        }]),
+        ToolMessage(content="second result", name="tool_invoke", tool_call_id="shared-call"),
+        AIMessage(content="done"),
+        HumanMessage(content="new boundary"),
+        AIMessage(content="", tool_calls=[{
+            "id": "stale-call",
+            "name": "tool_invoke",
+            "args": {"name": "must_not_cross_turns", "arguments": {}},
+            "type": "tool_call",
+        }]),
+        HumanMessage(content="clear it"),
+        ToolMessage(content="stale result", name="tool_invoke", tool_call_id="stale-call"),
+        ToolMessage(content="missing id", name="tool_invoke", tool_call_id=""),
+        AIMessage(content="after boundary"),
+    ]
+
+    ui_messages = langchain_messages_to_ui_messages(messages)
+    first_results = ui_messages[1]["tool_results"]
+    final_results = ui_messages[-1]["tool_results"]
+
+    assert [result["name"] for result in first_results] == [
+        "first_target lookup",
+        "second_target",
+    ]
+    assert [result["name"] for result in final_results] == ["tool_invoke", "tool_invoke"]
+    assert "hidden" not in str(ui_messages)
+    assert "must_not_cross_turns" not in str(ui_messages)
+
+
+def test_checkpoint_tool_identity_rejects_malformed_metadata_and_preserves_direct_tools():
+    from langchain_core.messages import AIMessage, ToolMessage
+    from row_bot.ui.helpers import langchain_messages_to_ui_messages
+
+    malformed_ai = SimpleNamespace(
+        type="ai",
+        content="",
+        additional_kwargs={},
+        tool_calls=[
+            {"id": "bad-name", "name": "tool_invoke", "args": {"name": {"nested": "value"}}},
+            {"id": "", "name": "tool_invoke", "args": {"name": "missing_call_id"}},
+        ],
+    )
+    ui_messages = langchain_messages_to_ui_messages([
+        malformed_ai,
+        ToolMessage(content="bad name", name="tool_invoke", tool_call_id="bad-name"),
+        ToolMessage(content="bad id", name="tool_invoke", tool_call_id=""),
+        AIMessage(content="", tool_calls=[{
+            "id": "direct-call",
+            "name": "workspace_read_file",
+            "args": {"path": "notes.txt"},
+            "type": "tool_call",
+        }]),
+        ToolMessage(
+            content="direct result",
+            name="workspace_read_file",
+            tool_call_id="direct-call",
+        ),
+        AIMessage(content="done"),
+    ])
+
+    assert [result["name"] for result in ui_messages[-1]["tool_results"]] == [
+        "tool_invoke",
+        "tool_invoke",
+        "workspace_read_file",
+    ]
+
+
 def test_langchain_messages_to_ui_messages_does_not_surface_reasoning_only_planning_after_vision_tool():
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
     from row_bot.ui.helpers import langchain_messages_to_ui_messages

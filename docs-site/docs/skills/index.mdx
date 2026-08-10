@@ -7,7 +7,7 @@ import Screenshot from '@site/src/components/Screenshot';
 
 # Skills Hub
 
-Skills are instruction packs that teach Row-Bot how to approach a category of work. Skills Hub is where you browse installed skills, inspect details, enable or disable them, pin useful ones, and create or edit local skills.
+Skills are instruction packs that teach Row-Bot how to approach a category of work. Skills Hub is where you browse installed skills, inspect details, enable or disable them, pin useful ones, and create or edit local skills. Enabled skills can also be discovered and loaded progressively when a task clearly matches their purpose.
 
 <Screenshot id="settings-skills" alt="Row-Bot Skills settings and Skills Hub entry points." caption="Skills settings expose installed skills, browse/search entry points, enablement, and pinning controls." />
 
@@ -34,6 +34,18 @@ Skills are instruction packs that teach Row-Bot how to approach a category of wo
 ## What Skills Change
 
 Skills shape Row-Bot's behavior; they do not automatically grant credentials or bypass approvals. A skill can make Row-Bot more consistent for a task, but tools still need to be enabled and approved where appropriate.
+
+## Automatic Selection
+
+When progressive discovery is available, Row-Bot can search enabled skills and load a relevant one for the current task. A successful automatic load appears once as **Using _skill_** and adds an active skill chip.
+
+- Automatically selected skills are stored per parent task or child Agent, not per shared Agent Profile.
+- Reopening a task restores its selected skills.
+- Parent tasks and sibling children do not share automatic activation state.
+- Up to five automatically selected skills are retained per task; pinned skills remain separate.
+- Loading an already active skill does not add a duplicate receipt.
+
+Automatic selection changes instructions only. It cannot add a denied tool, alter credentials, bypass approvals, expand a workspace, or change an Agent Profile. Read [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills) for the complete tool and skill flow.
 
 ## Troubleshooting
 

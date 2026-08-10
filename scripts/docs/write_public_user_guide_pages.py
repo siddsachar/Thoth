@@ -200,30 +200,29 @@ SETTINGS = {
             "If a document contains private material, remove it from the document library before sharing screenshots or logs.",
         ],
     },
-    "search": {
-        "title": "Settings: Search",
-        "desc": "Configure web research, local retrieval, browser automation, and search tools.",
-        "shot": "settings-search",
-        "caption": "The Search tab groups retrieval and research tools so users can decide what Row-Bot may look up.",
-        "overview": "Search controls what information Row-Bot can retrieve beyond the current conversation. Some search is local, such as document and memory retrieval; other search can contact external services or automate a browser.",
+    "tools": {
+        "title": "Settings: Tools",
+        "desc": "Configure progressive external-tool loading, retrieval compression, and search and knowledge tools.",
+        "shot": "settings-tools",
+        "caption": "The Tools tab includes progressive capability loading, retrieval compression, and search and knowledge tool controls.",
+        "overview": "Tools settings control how Row-Bot exposes enabled external capabilities to the model and configure its search and retrieval helpers.",
         "controls": [
-            "Web search provider choices decide whether Row-Bot can search the internet and which backend it uses.",
-            "Browser automation controls decide whether Row-Bot can open pages, inspect them, and interact with them when asked.",
-            "Knowledge and document search toggles decide whether local memory and document records can be considered during a response.",
-            "Result limits and ranking controls keep search focused when a query could return too much context.",
-            "Provider health indicators show whether the selected search path is available.",
+            "Auto-select external tools lets Row-Bot search enabled MCP, plugin, Custom Tool, and channel capabilities only when needed.",
+            "Load all external tools is the eager compatibility mode and can consume more model context.",
+            "Retrieval Compression controls how search results are filtered before reaching the model.",
+            "Search and Knowledge Tools enable or disable configured research and reference tools.",
         ],
         "workflow": [
-            "Leave web search off if you want local-only work.",
-            "Enable document and memory search when you want Row-Bot to use your local knowledge.",
-            "Enable browser automation only when you want Row-Bot to read or operate pages for you.",
-            "Review approval prompts before actions that submit forms, change state, or use account data.",
+            "Keep Auto-select external tools enabled for normal use.",
+            "Enable only the search and integration tools you intend Row-Bot to use.",
+            "Use eager mode temporarily when testing compatibility with an older model or integration.",
+            "Review approvals before actions that write, send, or change external state.",
         ],
-        "saved": "Search settings are global defaults. Individual prompts still matter: Row-Bot should only use external research when the request calls for it and the tools are enabled.",
+        "saved": "The capability-loading choice and tool settings are local global preferences. Per-task skill activation is stored separately and does not change this tool policy.",
         "troubleshoot": [
-            "If Row-Bot cannot browse, check browser automation readiness and approvals.",
-            "If web results are stale or absent, check the selected search provider.",
-            "If local retrieval feels noisy, reduce result limits or disable memory search for the task.",
+            "If an external tool is not found, check its integration configuration and the active Agent Profile.",
+            "If a provider rejects tool schemas, choose a compatible tool-capable model or temporarily test eager mode.",
+            "If retrieval is noisy, change compression mode or disable unnecessary search tools.",
         ],
     },
     "skills": {
@@ -231,13 +230,14 @@ SETTINGS = {
         "desc": "Enable, disable, pin, browse, and review Smart Skills.",
         "shot": "settings-skills",
         "caption": "The Skills tab shows installed skills, pinning controls, browsing entry points, and per-skill state.",
-        "overview": "Skills are instruction packs that teach Row-Bot how to handle a type of work. They do not run by themselves; they shape how Row-Bot plans, uses tools, and explains a task.",
+        "overview": "Skills are instruction packs that teach Row-Bot how to handle a type of work. They do not run by themselves; enabled skills may be searched and loaded automatically for a matching task.",
         "controls": [
             "Enable and disable controls decide whether Row-Bot may use a skill.",
             "Pinning keeps useful skills easy to find and can make them more likely to be suggested.",
             "Browse Skills opens Skills Hub for installed, bundled, local, and marketplace-style sources.",
             "Skill details show purpose, source, status, and whether the skill is safe to activate.",
             "Search and filters help find skills by task, source, or installed state.",
+            "Automatically loaded skills appear as an active chip in the task that selected them.",
         ],
         "workflow": [
             "Browse or search for a skill that matches the work.",
@@ -245,7 +245,7 @@ SETTINGS = {
             "Enable the skill, then start a chat or workflow that names the task.",
             "Disable skills you no longer want Row-Bot to consider.",
         ],
-        "saved": "Skill enablement and pins are local Row-Bot preferences. Some skills may also be selected at the thread level when a task needs them.",
+        "saved": "Skill enablement and pins are local Row-Bot preferences. Automatic selections are isolated per parent task or child Agent, restored when that task reopens, and bounded to five automatically selected skills per task.",
         "troubleshoot": [
             "If Row-Bot ignores a skill, check that it is enabled and relevant to the prompt.",
             "If a skill came from outside the app, review its instructions before enabling it.",
@@ -1433,7 +1433,7 @@ Authenticated owner sessions receive this complete Settings experience in both d
 - **Providers** connects local, hosted, subscription, and custom model providers.
 - **Models** chooses defaults and pinned Quick Choices.
 - **Documents** manages uploads, extraction, embeddings, and vector rebuilds.
-- **Search** controls web research, local retrieval, and browser automation.
+- **Tools** controls progressive external capability loading, retrieval compression, and search and knowledge tools.
 - **Skills** manages Smart Skills and Skills Hub access.
 - **System** configures local access, workspace boundaries, window behavior, tunnels, logs, and diagnostics.
 - **Accounts** connects account-level integrations.
@@ -1451,7 +1451,7 @@ Authenticated owner sessions receive this complete Settings experience in both d
 
 1. Providers
 2. Models
-3. Documents and Search
+3. Documents and Tools
 4. Skills
 5. System access
 6. Integrations: Accounts, Channels, MCP, Plugins
@@ -1981,7 +1981,7 @@ Pairing grants access to your local Row-Bot instance. Do not share an invitation
 
 <Screenshot id="mobile-settings" alt="Android-sized Row-Bot Providers settings." caption="Mobile settings use the same provider categories and credential boundaries as desktop." />
 
-Mobile Settings includes Providers, Models, Knowledge, Buddy, Voice, System and Remote Access, Tracker, Documents, Search, Skills, Accounts, Channels, Utilities, MCP, Plugins, and Preferences. Rich Developer Studio and Designer Studio editors remain desktop-layout-oriented and show an explanatory notice in compact presentation.
+Mobile Settings includes Providers, Models, Knowledge, Buddy, Voice, System and Remote Access, Tracker, Documents, Tools, Skills, Accounts, Channels, Utilities, MCP, Plugins, and Preferences. Rich Developer Studio and Designer Studio editors remain desktop-layout-oriented and show an explanatory notice in compact presentation.
 
 ## Native-Only Checks
 

@@ -121,7 +121,7 @@ def harden_routes() -> None:
         "/docs/settings/providers": {"file": "docs-site/docs/settings/providers.mdx", "owner": "settings"},
         "/docs/settings/models": {"file": "docs-site/docs/settings/models.mdx", "owner": "settings"},
         "/docs/settings/documents": {"file": "docs-site/docs/settings/documents.mdx", "owner": "settings"},
-        "/docs/settings/search": {"file": "docs-site/docs/settings/search.mdx", "owner": "settings"},
+        "/docs/settings/tools": {"file": "docs-site/docs/settings/tools.mdx", "owner": "settings"},
         "/docs/settings/skills": {"file": "docs-site/docs/settings/skills.mdx", "owner": "settings"},
         "/docs/settings/system": {"file": "docs-site/docs/settings/system.mdx", "owner": "settings"},
         "/docs/settings/accounts": {"file": "docs-site/docs/settings/accounts.mdx", "owner": "settings"},

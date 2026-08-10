@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -62,6 +63,27 @@ def test_registry_tracks_channel_sources_and_unregisters_plugin_channels() -> No
 
     assert registry.get("matrix") is None
     assert registry.get("fake") is core
+
+
+def test_register_and_unregister_invalidate_only_an_already_loaded_agent(monkeypatch) -> None:
+    from row_bot.channels import registry
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        registry,
+        "sys",
+        SimpleNamespace(modules={"row_bot.agent": SimpleNamespace(clear_agent_cache=lambda: calls.append("clear"))}),
+    )
+
+    registry.register(FakeChannel(name="cached"))
+    registry.unregister("cached")
+    registry.unregister("missing")
+
+    assert calls == ["clear", "clear"]
+
+    monkeypatch.setattr(registry, "sys", SimpleNamespace(modules={}))
+    registry.register(FakeChannel(name="no-agent"))
+    assert calls == ["clear", "clear"]
 
 
 def test_generated_channel_send_tools_are_destructive_names() -> None:

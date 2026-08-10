@@ -8,7 +8,7 @@ tabs:
   Documents:
     builder: _build_documents_tab
     source: src/row_bot/ui/settings.py
-  Search:
+  Tools:
     builder: _build_tools_tab
     source: src/row_bot/ui/settings.py
   Skills:

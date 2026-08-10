@@ -76,6 +76,7 @@ def test_agent_interrupt_creates_approval_and_resume_routes_to_agent_runner(
                     "label": "Run shell command",
                     "approval_reason": "Check the project state.",
                     "args": {"command": "git status"},
+                    "external_discovery_active": True,
                 }
             ],
         }
@@ -83,6 +84,7 @@ def test_agent_interrupt_creates_approval_and_resume_routes_to_agent_runner(
     def fake_resume(enabled_tool_names, config, approved, *, interrupt_ids=None, stop_event):
         assert approved is True
         assert interrupt_ids == ["interrupt-1"]
+        assert config["configurable"]["external_discovery_active"] is True
         return "approved child result"
 
     monkeypatch.setattr(agent_runner, "_invoke_agent", fake_interrupt)
@@ -150,6 +152,7 @@ def test_agent_interrupt_creates_approval_and_resume_routes_to_agent_runner(
     assert final["summary"] == "approved child result"
     stored = agent_runs.get_agent_run(run["id"])
     assert stored["resume_state_json"]["approval_id"] == approval["id"]
+    assert stored["resume_state_json"]["external_discovery_active"] is True
     events = {event["type"] for event in agent_runs.get_agent_events(run["id"])}
     assert {"approval.requested", "approval.resolved", "run.completed"} <= events
 

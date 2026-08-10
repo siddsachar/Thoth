@@ -580,10 +580,25 @@ def langchain_messages_to_ui_messages(messages: list) -> list[dict]:
     msgs: list[dict] = []
     pending_tool_results: list[dict] = []
     pending_charts: list[str] = []
+    pending_tool_invoke_names: dict[str, str] = {}
     for m in messages:
         m_type = getattr(m, "type", "")
+        if m_type == "human":
+            pending_tool_invoke_names.clear()
         if m_type == "tool":
             tool_name = getattr(m, "name", "") or "tool"
+            if tool_name == "tool_invoke":
+                tool_call_id = getattr(m, "tool_call_id", "")
+                normalized_call_id = (
+                    tool_call_id.strip()
+                    if isinstance(tool_call_id, str)
+                    else ""
+                )
+                if normalized_call_id:
+                    tool_name = pending_tool_invoke_names.pop(
+                        normalized_call_id,
+                        tool_name,
+                    )
             content_value = getattr(m, "content", "")
             tool_content = content_value if isinstance(content_value, str) else str(content_value)
             if tool_content and tool_content.startswith("__CHART__:"):
@@ -632,7 +647,21 @@ def langchain_messages_to_ui_messages(messages: list) -> list[dict]:
             if isinstance(ui_metadata, dict) and ui_metadata.get("hidden"):
                 pending_tool_results.clear()
                 pending_charts.clear()
+                pending_tool_invoke_names.clear()
                 continue
+            for tool_call in getattr(m, "tool_calls", []) or []:
+                if not isinstance(tool_call, dict) or tool_call.get("name") != "tool_invoke":
+                    continue
+                call_id = tool_call.get("id")
+                args = tool_call.get("args")
+                underlying_name = args.get("name") if isinstance(args, dict) else None
+                if not isinstance(call_id, str) or not call_id.strip():
+                    continue
+                if not isinstance(underlying_name, str):
+                    continue
+                normalized_name = _re.sub(r"\s+", " ", underlying_name).strip()[:180]
+                if normalized_name:
+                    pending_tool_invoke_names[call_id.strip()] = normalized_name
             ai_content = getattr(m, "content", "") or ""
             if isinstance(ai_content, list):
                 text_parts = []
@@ -1040,9 +1069,33 @@ def _build_conversation_html(thread_name: str, messages: list[dict],
         # Tool results (collapsed details)
         tool_results = msg.get("tool_results")
         if tool_results:
-            from row_bot.ui.tool_trace import display_tool_content, group_tool_results
+            from row_bot.ui.tool_trace import (
+                display_tool_content,
+                group_tool_results,
+                is_skill_load_noop_result,
+                parse_skill_load_result,
+            )
 
-            for group in group_tool_results(tool_results):
+            generic_results = []
+            seen_skill_ids: set[str] = set()
+            for result in tool_results:
+                payload = parse_skill_load_result(result) if isinstance(result, dict) else None
+                if payload:
+                    if payload["skill_id"] in seen_skill_ids:
+                        continue
+                    seen_skill_ids.add(payload["skill_id"])
+                    safe_name = (
+                        payload["display_name"].replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                    )
+                    parts.append(f'<div class="skill-use">Using {safe_name}</div>')
+                elif isinstance(result, dict) and is_skill_load_noop_result(result):
+                    continue
+                else:
+                    generic_results.append(result)
+
+            for group in group_tool_results(generic_results):
                 parts.append(
                     f'<details class="tool-block"><summary>✅ {group.label}</summary>'
                 )

@@ -576,6 +576,11 @@ def _query_tools() -> str:
         profile_scope = _active_thread_profile_scope()
         profile = profile_scope.get("profile") if isinstance(profile_scope, dict) else None
         allow_tools = profile_scope.get("allow_tools") if isinstance(profile_scope, dict) else []
+        runtime_surface = (
+            str(profile_scope.get("runtime_surface") or "").strip()
+            if isinstance(profile_scope, dict)
+            else ""
+        )
         if isinstance(profile, dict) and allow_tools:
             active_label = profile.get("display_name") or profile.get("slug") or "active profile"
             state = "enabled" if profile.get("enabled", True) else "disabled"
@@ -587,12 +592,18 @@ def _query_tools() -> str:
                     "- Runtime enforcement: selected tools are runtime-bound for this thread; "
                     "other global tools are not bound while this profile is active."
                 ),
-                f"- Effective tools: {_format_selected_tool_ids(allow_tools)}",
+                f"- Profile-selected tool groups: {_format_selected_tool_ids(allow_tools)}",
             ])
             runtime_allowlist = profile_scope.get("runtime_allowlist") or []
             if runtime_allowlist and list(runtime_allowlist) != list(allow_tools):
                 lines.append(
                     f"- Runtime allow-list: {_format_selected_tool_ids(runtime_allowlist)}"
+                )
+            if runtime_surface.startswith("agent_child"):
+                lines.append(
+                    "- skill_search and skill_load, when present, are separate from the tool-group "
+                    "allowlist; loaded skills can guide the child but cannot add tools or relax its "
+                    "profile, approval, or workspace boundaries."
                 )
             lines.append("")
             lines.append("Global tools:")
@@ -607,9 +618,14 @@ def _query_tools() -> str:
                     "- Runtime enforcement: no profile allow-list is active; "
                     "this profile inherits all globally enabled tools."
                 ),
-                "",
-                "Global tools:",
             ])
+            if runtime_surface.startswith("agent_child"):
+                lines.append(
+                    "- skill_search and skill_load, when present, are separate from the tool-group "
+                    "allowlist; loaded skills can guide the child but cannot add tools or relax its "
+                    "profile, approval, or workspace boundaries."
+                )
+            lines.extend(["", "Global tools:"])
         for t in enabled:
             lines.append(f"- ✅ {t.display_name}")
         for t in contextual:
@@ -984,6 +1000,7 @@ def _format_selected_tool_ids(tool_ids: object, *, limit: int = 12) -> str:
 def _active_thread_profile_scope() -> dict:
     context = _active_runtime_context()
     thread_id = str(context.get("thread_id") or "").strip()
+    runtime_surface = str(context.get("runtime_surface") or "").strip()
     runtime_profile_ref = str(context.get("agent_profile_id") or "").strip()
     runtime_allowlist = _clean_tool_ids(context.get("tool_allowlist") or [])
     thread_profile_ref = ""
@@ -1012,6 +1029,7 @@ def _active_thread_profile_scope() -> dict:
         allow_tools = list(runtime_allowlist)
     return {
         "thread_id": thread_id,
+        "runtime_surface": runtime_surface,
         "profile_ref": profile_ref,
         "profile": profile,
         "allow_tools": allow_tools,

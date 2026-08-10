@@ -344,7 +344,8 @@ def test_studio_composers_wire_shared_slash_and_skill_extras():
     assert "set_thread_skills_override" in extras_src
     assert 'skill_mode="developer"' in extras_src
     assert 'skill_mode="thread_override"' in extras_src
-    assert "skills_override is not None" in agent_src
+    assert "_resolve_active_skill_records" in agent_src
+    assert "elif override is not None" in agent_src
 
 
 def test_activation_metadata_drives_suggestions_without_prompt_bloat(tmp_path):
@@ -726,3 +727,76 @@ def test_channel_dispatch_applies_skill_to_thread(tmp_path):
     response = commands.dispatch("sms", "/skill research_brief", thread_id="sms_1")
     assert response and "research_brief" in response
     assert activation.resolve_active_skill_names("sms_1") == ["research_brief"]
+
+
+def test_smart_off_retains_implicit_skill_but_disables_future_discovery(tmp_path, monkeypatch):
+    _skills, activation = _reload_skill_modules(tmp_path)
+    import row_bot.agent as agent
+    import row_bot.skill_discovery as discovery
+
+    record = discovery.SkillRecord(
+        canonical_id="implicit",
+        alias=None,
+        display_name="Implicit",
+        icon="*",
+        description="Implicit skill",
+        tags=(),
+        activation={},
+        instructions="IMPLICIT_BODY",
+        source="manual",
+        root=tmp_path,
+    )
+    monkeypatch.setattr(discovery, "collect_enabled_skill_records", lambda: [record])
+    activation.load_auto_skill("smart-off", "implicit", available_ids={"implicit"})
+    activation.set_smart_off("smart-off", True)
+    agent._set_active_runtime_context(thread_id="smart-off", runtime_surface="agent")
+
+    authorized, active_ids, discoverable, _fingerprint = agent._build_runtime_skill_snapshot()
+
+    assert [item.canonical_id for item in authorized] == ["implicit"]
+    assert active_ids == ("implicit",)
+    assert discoverable is False
+
+
+def test_noskill_removes_task_local_plugin_skill(tmp_path, monkeypatch):
+    _skills, activation = _reload_skill_modules(tmp_path)
+    import row_bot.skill_discovery as discovery
+
+    record = discovery.SkillRecord(
+        canonical_id="plugin:demo:review",
+        alias="review",
+        display_name="Plugin Review",
+        icon="*",
+        description="Review skill",
+        tags=(),
+        activation={},
+        instructions="review",
+        source="plugin:demo",
+        root=tmp_path,
+        plugin_name="Demo",
+    )
+    monkeypatch.setattr(discovery, "collect_enabled_skill_records", lambda: [record])
+    activation.load_auto_skill(
+        "plugin-thread",
+        record.canonical_id,
+        available_ids={record.canonical_id},
+    )
+
+    result = activation.apply_channel_skill_command("plugin-thread", "/noskill review")
+
+    assert result.kind == "disabled"
+    assert result.selected_skill == "plugin:demo:review"
+    assert activation.get_auto_loaded_skill_ids("plugin-thread") == []
+
+
+def test_deleting_thread_removes_implicit_activation_state(tmp_path, monkeypatch):
+    _skills, activation = _reload_skill_modules(tmp_path)
+    import row_bot.threads as threads
+
+    threads = importlib.reload(threads)
+    thread_id = threads.create_thread("Delete skill state", seed_default_skills=False)
+    activation.load_auto_skill(thread_id, "implicit", available_ids={"implicit"})
+
+    threads._delete_thread(thread_id)
+
+    assert activation.get_auto_loaded_skill_ids(thread_id) == []

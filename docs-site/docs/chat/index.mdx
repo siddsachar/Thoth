@@ -22,7 +22,7 @@ Chat is the main place to ask Row-Bot for help. A chat thread can stay simple, o
 - **Model picker** chooses the model for this thread. See [Model Picker](/docs/chat/model-picker).
 - **Approval mode** controls how sensitive actions are reviewed for this thread.
 - **Attachments and context controls** add files or local context to the current request.
-- **Skills and slash commands** help start structured tasks when available.
+- **Skills and slash commands** help start structured tasks when available. Enabled skills can also be selected progressively for the current task.
 - **Voice buttons** use Dictate or Talk when voice is configured.
 - **Tool traces** show what tools Row-Bot used and what came back.
 - **Approval prompts** pause gated actions until you approve or reject them. When a child agent needs approval, the prompt appears in the parent thread too.
@@ -57,4 +57,5 @@ Local model runs can stay on your machine. Hosted models, web search, browser ac
 - If Row-Bot cannot answer with the current model, choose a more capable model in the picker.
 - If attachments are ignored, confirm the files finished uploading and are relevant to the prompt.
 - If a tool is unavailable, check Settings, the current Agent Profile, and approval mode.
+- If an external tool is enabled but not selected automatically, use a more specific request or review [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills).
 - If a run is stuck, press Stop, then retry with a narrower prompt.

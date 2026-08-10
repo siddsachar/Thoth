@@ -139,6 +139,7 @@ class GenerationState:
     pending_tools: dict = field(default_factory=dict)
     live_agent_run_ids: set[str] = field(default_factory=set)
     live_async_agent_run_ids: set[str] = field(default_factory=set)
+    live_skill_ids: set[str] = field(default_factory=set)
     baseline_child_agent_run_ids: set[str] = field(default_factory=set)
     chart_data: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
@@ -235,6 +236,7 @@ class P:
     model_banner_container: Any = None
     model_controls_container: Any = None
     refresh_model_controls: Any = None
+    refresh_skill_chips: Any = None
     parent_agent_strip_container: Any = None
     refresh_parent_agent_strip: Any = None
     parent_agent_dialog_open: bool = False
@@ -275,3 +277,4 @@ class P:
         self.chat_shell_generation = 0
         self.chat_upload_js_installed = False
         self.parent_agent_dialog_open = False
+        self.refresh_skill_chips = None

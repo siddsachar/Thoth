@@ -438,7 +438,7 @@ After connecting Claude Subscription, Settings -> Providers can run a Claude Sub
 
 ## Tools and Safety
 
-Row-Bot's tools can be enabled or disabled from Settings. Many tools expose multiple operations, Agent Profiles and Goal Mode add orchestration-specific tools, Developer Studio adds code-specific tools, Skills Hub can add manual skills, Custom Tools can be promoted after review, and running channels add send/photo/document tools automatically.
+Row-Bot's tools can be enabled or disabled from Settings. In the recommended Auto mode, core tools stay directly available under the active profile while enabled external MCP, plugin, Custom Tool, and channel tools are searched and selected only when a request needs them. Eager compatibility mode can still bind every enabled external schema. Many tools expose multiple operations, Agent Profiles and Goal Mode add orchestration-specific tools, Developer Studio adds code-specific tools, Skills Hub can add manual or automatically selected skills, Custom Tools can be promoted after review, and running channels add send/photo/document tools automatically.
 
 | Group | Included tools |
 |-------|----------------|
@@ -475,7 +475,7 @@ Safety controls are built into the tool layer:
 - Agent Profile saves, child-agent promotion, and Agent-run workflow promotion stay reviewable and approval-gated.
 - Controlled self-evolution produces bounded, reviewable proposals and does not
   silently modify repos or app code.
-- Smart Skills, slash commands, and Skills Hub imports stay user-controlled; installed skills can be enabled, disabled, reviewed, and removed.
+- Smart Skills, slash commands, and Skills Hub imports stay user-controlled; installed skills can be enabled, disabled, reviewed, and removed. Enabled skills can be discovered progressively and loaded per parent task or child Agent, but skill instructions cannot add tools or relax profile, approval, execution-budget, or workspace boundaries.
 - Plugin System v2 supports only native tools, plugin-packaged MCP servers,
   bundled skills, and channels. Plugins install disabled by default, cannot add
   arbitrary app UI or provider runtimes, and are enabled only after permission,
