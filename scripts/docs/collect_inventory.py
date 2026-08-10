@@ -384,7 +384,9 @@ def collect_settings_controls() -> list[dict[str, Any]]:
 
     dynamic_controls = {
         "Models": ["Default chat model", "Quick Choices", "Refresh model catalog"],
-        "Search": [
+        "Tools": [
+            "Auto-select external tools (recommended)",
+            "Load all external tools",
             "Web search",
             "DuckDuckGo",
             "Wolfram Alpha",

@@ -43,11 +43,44 @@ def test_public_docs_inventory_has_core_sections() -> None:
     assert any(page["path"] == "index.mdx" for page in inventory["docs_pages"])
     assert {item["tab"] for item in inventory["settings_controls"]} == {
         "Accounts", "Buddy", "Channels", "Documents", "Knowledge", "MCP",
-        "Models", "Plugins", "Preferences", "Providers", "Search", "Skills",
+        "Models", "Plugins", "Preferences", "Providers", "Skills", "Tools",
         "System", "Tracker", "Utilities", "Voice",
     }
     assert inventory["cli_options"]
     assert inventory["environment"]
+
+
+def test_progressive_tools_and_skills_are_documented_at_public_entry_points() -> None:
+    guide = (ROOT / "docs-site" / "docs" / "guides" / "progressive-tools-and-skills.mdx").read_text(
+        encoding="utf-8"
+    )
+    tools = (ROOT / "docs-site" / "docs" / "settings" / "tools.mdx").read_text(
+        encoding="utf-8"
+    )
+    skills = (ROOT / "docs-site" / "docs" / "skills" / "index.mdx").read_text(
+        encoding="utf-8"
+    )
+    docs_index = (ROOT / "docs-site" / "docs" / "index.mdx").read_text(encoding="utf-8")
+    marketing = (ROOT / "docs" / "features.html").read_text(encoding="utf-8")
+    generated_controls = (
+        ROOT / "docs-site" / "docs" / "reference" / "generated" / "settings-controls.mdx"
+    ).read_text(encoding="utf-8")
+
+    for phrase in (
+        "Auto-select external tools",
+        "Load all external tools",
+        "MCP servers, plugins, Custom Tools, and channels",
+        "Up to five automatically selected skills",
+        "cannot grant a tool that its profile denies",
+        "real integration name",
+    ):
+        assert phrase in guide
+    assert "progressive capability loading" in tools
+    assert "parent task or child Agent" in skills
+    assert "/docs/guides/progressive-tools-and-skills" in docs_index
+    assert "Progressive external tools" in marketing
+    assert "Auto-select external tools (recommended)" in generated_controls
+    assert "Load all external tools" in generated_controls
 
 
 def test_all_published_html_internal_links_resolve() -> None:
@@ -390,7 +423,7 @@ def test_real_home_and_settings_tabs_have_routes() -> None:
         "Providers",
         "Models",
         "Documents",
-        "Search",
+        "Tools",
         "Skills",
         "System",
         "Accounts",

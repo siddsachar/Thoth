@@ -21,6 +21,8 @@ Row-Bot can learn a procedure, gain a tool, load code, connect a server, or auth
 
 A Skill or profile can tell the model when to use a capability, but it does not create credentials or bypass Row-Bot's tool and approval policy. Conversely, installing a plugin or MCP server can add real executable capability even when no Skill mentions it. Review both the guidance layer and the execution layer.
 
+Progressive discovery preserves this separation. Loading a skill adds instructions to one task; it cannot make a profile-denied tool callable. Searching an enabled external-tool catalog does not enable a tool, change its provider schema, or bypass its approval classification.
+
 ## Local Does Not Always Mean Harmless
 
 A local plugin, command, or MCP process can still read files, start programs, or use locally stored credentials. A remote server or account can send data outside the app even if its configuration is stored locally. Use narrow workspaces, least-privilege accounts, disabled-by-default imports, and fictional test data.
@@ -31,6 +33,7 @@ Third-party dependency telemetry is not Row-Bot telemetry. Review dependency beh
 
 - Compare extension types and browse screenshots in [Extend Row-Bot](/docs/extending/).
 - Browse and review Skills in [Skills Hub](/docs/skills/) and [Skills Settings](/docs/settings/skills).
+- Understand automatic capability selection in [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills) and configure it in [Tools Settings](/docs/settings/tools).
 - Install and control packaged code in [Plugins](/docs/integrations/plugins) and [Plugin Settings](/docs/settings/plugins).
 - Browse, add, test, and enable servers in [MCP](/docs/integrations/mcp) and [MCP Settings](/docs/settings/mcp).
 - Configure external messaging in [Channels](/docs/integrations/channels) and service authorisation in [Accounts And Authorisation](/docs/integrations/accounts).

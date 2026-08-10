@@ -20,6 +20,8 @@ Public documentation index for Row-Bot.
   Route: /docs/chat/model-picker. Choose, pin, and troubleshoot Row-Bot models across local, hosted, subscription, and custom providers.
 - [Tools, Approvals, And Terminal](/docs/chat/tools-approvals-and-terminal)
   Route: /docs/chat/tools-approvals-and-terminal. Understand Row-Bot tools, approval prompts, tool results, and terminal output.
+- [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills)
+  Route: /docs/guides/progressive-tools-and-skills. Understand how Row-Bot discovers external tools and task-specific skills without loading every capability into every prompt.
 - [Profiles, Goals, And Agents](/docs/profiles-goals-agents/)
   Route: /docs/profiles-goals-agents/. Choose reusable Agent Profiles, run bounded goals, and review delegated parent and child agents.
 - [Workflows](/docs/guides/workflows)
@@ -70,8 +72,8 @@ Public documentation index for Row-Bot.
   Route: /docs/settings/tracker. Configure recurring activity, habit, symptom, and health tracking surfaces.
 - [Settings: Documents](/docs/settings/documents)
   Route: /docs/settings/documents. Manage document ingestion, extraction, and vector indexing.
-- [Settings: Search](/docs/settings/search)
-  Route: /docs/settings/search. Configure web research, local retrieval, browser automation, and search tools.
+- [Settings: Tools](/docs/settings/tools)
+  Route: /docs/settings/tools. Configure progressive external-tool loading, retrieval compression, and search and knowledge tools.
 - [Settings: Skills](/docs/settings/skills)
   Route: /docs/settings/skills. Enable, disable, pin, browse, and review Smart Skills.
 - [Settings: Accounts](/docs/settings/accounts)

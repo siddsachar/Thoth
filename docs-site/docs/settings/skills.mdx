@@ -7,7 +7,7 @@ import Screenshot from '@site/src/components/Screenshot';
 
 # Settings: Skills
 
-Skills are instruction packs that teach Row-Bot how to handle a type of work. They do not run by themselves; they shape how Row-Bot plans, uses tools, and explains a task.
+Skills are instruction packs that teach Row-Bot how to handle a type of work. They do not run by themselves; they shape how Row-Bot plans, uses tools, and explains a task. Enabled skills may be searched and loaded automatically for a matching task.
 
 <Screenshot id="settings-skills" alt="Settings: Skills in Row-Bot." caption="The Skills tab shows installed skills, pinning controls, browsing entry points, and per-skill state." />
 
@@ -22,6 +22,7 @@ Open **Settings**, then choose **Skills** from the left tab list.
 - Browse Skills opens Skills Hub for installed, bundled, local, and marketplace-style sources.
 - Skill details show purpose, source, status, and whether the skill is safe to activate.
 - Search and filters help find skills by task, source, or installed state.
+- Automatically loaded skills appear as an active chip in the task that selected them.
 
 ## Common Workflow
 
@@ -32,11 +33,13 @@ Open **Settings**, then choose **Skills** from the left tab list.
 
 ## What Is Saved
 
-Skill enablement and pins are local Row-Bot preferences. Some skills may also be selected at the thread level when a task needs them.
+Skill enablement and pins are local Row-Bot preferences. Automatic selections are stored independently for each parent task or child Agent and are restored when that task reopens. Row-Bot retains up to five automatically selected skills per task; pinned skills are separate.
 
 ## Privacy And Safety
 
 Review credential, account, channel, provider, or tool settings before enabling features that can contact outside services. Local-only features stay on your machine until you ask Row-Bot to use a provider, account, channel, MCP server, plugin, or tool that sends data elsewhere.
+
+A loaded skill cannot grant tools, credentials, approvals, or broader workspace access. The active Agent Profile and runtime policy still decide which tools are actually bound.
 
 ## Control-Level Reference
 
@@ -47,3 +50,6 @@ The [generated Settings Controls reference](/docs/reference/generated/settings-c
 - If Row-Bot ignores a skill, check that it is enabled and relevant to the prompt.
 - If a skill came from outside the app, review its instructions before enabling it.
 - If skills make responses too specialized, unpin or disable the extras.
+- If a skill appears in one task but not another, that is expected for automatic per-task activation.
+
+See [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills) for automatic selection, child isolation, and tool boundaries.

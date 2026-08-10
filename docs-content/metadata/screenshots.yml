@@ -311,16 +311,16 @@ screenshots:
     output: settings-documents.png
     alt: Documents settings with fictional local document extraction, indexing, and search controls.
     docs_pages: [/docs/getting-started/first-launch, /docs/operations/docker, /docs/settings/documents]
-  settings-search:
+  settings-tools:
     <<: *desktop
-    title: Search settings
-    route: /?settings_tab=Search
+    title: Tools settings
+    route: /?settings_tab=Tools
     capture_selector: '[data-docs-id="settings-dialog"]'
     wait_for: '[data-docs-id="settings-dialog"]'
-    expected_text: [Search, DuckDuckGo]
+    expected_text: [Tools, Capability loading, Auto-select external tools, DuckDuckGo]
     output: settings-search.png
-    alt: Search settings for web research, browser automation, and retrieval tools with network activity disabled.
-    docs_pages: [/docs/settings/search]
+    alt: Tools settings with automatic external capability loading, retrieval compression, and search tools with network activity disabled.
+    docs_pages: [/docs/settings/tools]
   settings-skills:
     <<: *desktop
     title: Skills settings
