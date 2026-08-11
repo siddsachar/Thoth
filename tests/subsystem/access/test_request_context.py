@@ -273,6 +273,17 @@ def test_unexpected_host_is_rejected_before_authorization() -> None:
         resolver.resolve(_scope(host="attacker.example"))
 
 
+def test_exact_non_private_interface_host_is_allowed_without_trusting_aliases() -> None:
+    resolver = RequestContextResolver(_config(hosts=("8.8.8.8",)))
+
+    context = resolver.resolve(_scope(client="192.0.2.10", host="8.8.8.8:8080"))
+
+    assert context.host == "8.8.8.8:8080"
+    assert context.origin == "http://8.8.8.8:8080"
+    with pytest.raises(RequestContextError, match="unexpected_host"):
+        resolver.resolve(_scope(client="192.0.2.10", host="unconfigured.example:8080"))
+
+
 def test_same_origin_and_presentation_are_independent_of_authentication() -> None:
     resolver = RequestContextResolver(_config())
     owner = resolver.resolve(

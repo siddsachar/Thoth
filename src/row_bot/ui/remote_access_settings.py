@@ -407,18 +407,21 @@ def _invitation_dialog(
     actions: RemoteAccessActions,
     inventory: AccessRouteInventory,
 ) -> tuple[Any, Any, Callable[[], None]]:
-    with ui.dialog() as dialog, ui.card().classes(
-        "w-[720px] max-w-full q-pa-md"
-    ).props('data-docs-id="remote-access-invitation"'):
+    with (
+        ui.dialog() as dialog,
+        ui.card()
+        .classes("w-[720px] max-w-full q-pa-md")
+        .props('data-docs-id="remote-access-invitation"'),
+    ):
         content = ui.column().classes("w-full gap-3")
 
     with content:
         with ui.row().classes("items-start justify-between w-full no-wrap"):
             with ui.column().classes("gap-0"):
                 ui.label("Invite a device").classes("text-h6")
-                ui.label(
-                    "Choose the layout for this device."
-                ).classes("text-grey-6 text-sm")
+                ui.label("Choose the layout for this device.").classes(
+                    "text-grey-6 text-sm"
+                )
                 ui.label(
                     "Every connected device has full owner access to this Row-Bot."
                 ).classes("text-grey-6 text-sm")
@@ -474,10 +477,24 @@ def _invitation_dialog(
         ).classes("text-grey-6 text-xs")
         result = ui.column().classes("w-full gap-2")
 
+        active_inventory = inventory
+
+        def refresh_route_help() -> None:
+            text, warning = _route_help_state(active_inventory, route_select.value)
+            route_help.text = text
+            route_help.classes(
+                replace=f"{'text-warning' if warning else 'text-grey-6'} text-xs"
+            )
+            route_help.update()
+
+        route_select.on("update:model-value", lambda _: refresh_route_help())
+
         def refresh_routes(
             next_inventory: AccessRouteInventory | None = None,
         ) -> None:
+            nonlocal active_inventory
             refreshed = next_inventory or actions.refresh_route_inventory()
+            active_inventory = refreshed
             previous_route_id = str(route_select.value or "")
             route_select.options = _route_select_options(refreshed)
             route_ids = {route.id for route in refreshed.invitation_routes}
@@ -486,17 +503,8 @@ def _invitation_dialog(
             else:
                 preferred = refreshed.preferred_invitation_route()
                 route_select.value = preferred.id if preferred else None
-            if refreshed.invitation_routes:
-                route_help.text = (
-                    "Choose a connection route." if route_select.value is None else ""
-                )
-            else:
-                route_help.text = (
-                    "No cross-device route is ready. Check Tailscale, enable "
-                    "Local network, or configure an HTTPS address."
-                )
             route_select.update()
-            route_help.update()
+            refresh_route_help()
 
         def create() -> None:
             result.clear()
@@ -537,10 +545,14 @@ def _invitation_dialog(
             icon="travel_explore",
             value=False,
         ).classes("w-full"):
-            custom_origin = ui.input(
-                label="Browser-facing origin",
-                placeholder="https://row-bot.example.com",
-            ).props("dense outlined").classes("w-full")
+            custom_origin = (
+                ui.input(
+                    label="Browser-facing origin",
+                    placeholder="https://row-bot.example.com",
+                )
+                .props("dense outlined")
+                .classes("w-full")
+            )
             ui.label(
                 "This only creates an invitation for an address you have already "
                 "configured. It does not configure or verify Cloudflare, DNS, TLS, "
@@ -591,6 +603,25 @@ def _invitation_dialog(
 def _route_select_options(inventory: AccessRouteInventory) -> dict[str, str]:
     """Return NiceGUI's value-to-label mapping for stable route IDs."""
     return {route.id: route.label for route in inventory.invitation_routes}
+
+
+def _route_help_state(
+    inventory: AccessRouteInventory,
+    route_id: object,
+) -> tuple[str, bool]:
+    """Return selector help text and whether it should use warning styling."""
+    if not inventory.invitation_routes:
+        return (
+            "No cross-device route is ready. Check Tailscale, enable Local network, "
+            "or configure an HTTPS address.",
+            False,
+        )
+    route = inventory.resolve_invitation_route(route_id)
+    if route is None:
+        return "Choose a connection route.", False
+    if route.warning:
+        return route.warning, True
+    return "", False
 
 
 def _render_created_invitation(
