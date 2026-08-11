@@ -407,16 +407,28 @@ def _query_overview() -> str:
 
 def _query_model(*, compact_pinned: bool = False) -> str:
     try:
-        from row_bot.models import (get_current_model, get_context_size, get_provider_emoji,
+        from row_bot.models import (get_current_model, get_context_policy, get_context_size, get_provider_emoji,
                             _active_model_override,
-                            get_user_context_size, get_cloud_context_size)
+                            get_local_context_mode)
         from row_bot.providers.readiness import evaluate_runtime_readiness
         from row_bot.providers.resolution import resolve_provider_config
         from row_bot.providers.selection import provider_display_label
         default_model = get_current_model()
         override = _active_model_override.get("")
         model = override if override else default_model
-        ctx = get_context_size(model)
+        try:
+            context_policy = get_context_policy(model)
+            ctx = context_policy.effective_limit_tokens
+        except Exception:
+            from types import SimpleNamespace
+
+            ctx = get_context_size(model)
+            context_policy = SimpleNamespace(
+                effective_limit_tokens=ctx,
+                usable_input_tokens=int(ctx * 0.85) if ctx else None,
+                capacity_source="compatibility",
+                requested_limit_tokens=ctx,
+            )
         resolved = resolve_provider_config(model, allow_legacy_local=True)
         local = resolved.execution_location == "local" or resolved.risk_label == "local_private"
         provider_label = resolved.provider_display_name or provider_display_label(resolved.provider_id)
@@ -447,7 +459,10 @@ def _query_model(*, compact_pinned: bool = False) -> str:
             f"- Runtime model: {resolved.runtime_model}",
             f"- Provider: {provider_label}",
             f"- Type: {type_label}",
-            f"- Effective context: {ctx:,} tokens",
+            f"- Effective context: {ctx:,} tokens" if ctx else "- Effective context: unavailable",
+            f"- Usable input: {context_policy.usable_input_tokens:,} tokens"
+            if context_policy.usable_input_tokens else "- Usable input: unavailable",
+            f"- Capacity source: {context_policy.capacity_source}",
             f"- Readiness: {readiness_label} ({runtime.selection_reason})",
         ]
         selected_runtime = str(active_runtime.get("selected_runtime_mode") or "").strip()
@@ -459,9 +474,16 @@ def _query_model(*, compact_pinned: bool = False) -> str:
             surface = f" on {runtime_surface}" if runtime_surface else ""
             lines.append(f"- Active turn runtime: {selected_label}{requested}{surface}")
         if local:
-            lines.append(f"- Local context cap: {get_user_context_size():,} tokens")
+            lines.append(
+                f"- Local context mode: {get_local_context_mode()} "
+                f"(requested {context_policy.requested_limit_tokens or 0:,} tokens)"
+            )
         else:
-            lines.append(f"- Provider context cap: {get_cloud_context_size():,} tokens")
+            override_text = (
+                f"{context_policy.requested_limit_tokens:,} tokens"
+                if context_policy.requested_limit_tokens else "Auto"
+            )
+            lines.append(f"- Provider context override: {override_text}")
         if override and override != default_model:
             lines.append(f"- ⚠️ Override active (global default: {default_model})")
         lines.extend(_pinned_choice_status_lines(
@@ -1626,9 +1648,15 @@ def _query_config() -> str:
     lines = ["**Configuration**"]
     try:
         # Context size caps
-        from row_bot.models import get_user_context_size, get_cloud_context_size
-        lines.append(f"- Local context cap: {get_user_context_size():,} tokens")
-        lines.append(f"- Provider context cap: {get_cloud_context_size():,} tokens")
+        from row_bot.models import get_cloud_context_override, get_local_context_mode, get_user_context_size
+        lines.append(
+            f"- Local context: {get_local_context_mode()} ({get_user_context_size():,} requested tokens)"
+        )
+        cloud_override = get_cloud_context_override()
+        lines.append(
+            f"- Provider context override: {cloud_override:,} tokens"
+            if cloud_override else "- Provider context override: Auto"
+        )
     except Exception:
         pass
     try:

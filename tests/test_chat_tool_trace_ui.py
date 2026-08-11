@@ -596,7 +596,6 @@ def test_tool_invoke_recovers_browser_identity_for_untrusted_output(monkeypatch)
     assert agent._effective_tool_message_name(messages, messages[-1]) == "mcp_demo_browser_snapshot"
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 32_768)
-    monkeypatch.setattr(agent, "trim_messages", lambda value, **_kwargs: list(value))
     agent._set_active_runtime_context(thread_id="trace-identity", enabled_tool_names=())
     result = agent._pre_model_trim({
         "execution_budget": new_execution_budget("trace-identity"),
@@ -874,6 +873,7 @@ def test_chat_tool_trace_source_contracts():
     assert "use-input" not in picker_section
     assert "options-dense" in picker_section
     assert "if val == _picker_val" in components_src
-    assert "get_model_max_context" in components_src
+    assert "get_context_policy" in picker_section
+    assert "get_model_max_context" not in picker_section
     assert Path("src/row_bot/ui/tool_trace.py").exists()
     assert 'Source: "..\\src\\row_bot\\*"' in installer_src

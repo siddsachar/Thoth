@@ -27,7 +27,13 @@ from typing import Any, Callable, Mapping
 from nicegui import run, ui
 
 from row_bot.cancellation import CancellationScope, use_cancellation_scope
-from row_bot.ui.state import AppState, GenerationState, P, _active_generations
+from row_bot.ui.state import (
+    AppState,
+    GenerationState,
+    P,
+    _active_generations,
+    cache_and_project_context_usage,
+)
 from row_bot.ui.constants import (
 
     SENTENCE_SPLIT,
@@ -210,7 +216,7 @@ async def _agent_ready_forced_surface(model_ref: str, surface: str) -> bool:
         if readiness.ready:
             return True
         model_id = model_id_from_choice_value(model_ref)
-        details = "; ".join(readiness.errors) or readiness.user_message()
+        details = readiness.user_message()
         ui.notify(
             f"{model_id} cannot run {surface}: this area requires an Agent-ready model. {details}",
             type="negative",
@@ -234,6 +240,34 @@ async def _agent_ready_forced_surface(model_ref: str, surface: str) -> bool:
 # cap in-memory base64 entries to this many; older entries get spilled
 # to disk and the list slot is replaced with the on-disk filename
 # (which ``persist_thread_media_state`` treats as already-persisted).
+async def _context_capacity_ready_for_send(model_ref: str) -> bool:
+    """Block unknown+Auto before optimistic transcript or transport work."""
+    try:
+        from row_bot.providers.readiness import evaluate_chat_readiness
+
+        readiness = await run.io_bound(
+            lambda: evaluate_chat_readiness(
+                model_ref,
+                refresh_provider_status=False,
+            )
+        )
+    except Exception as exc:
+        logger.debug("Context capacity preflight could not be evaluated: %s", exc)
+        return True
+    if not any(
+        "context window could not be determined" in str(error).lower()
+        for error in readiness.errors
+    ):
+        return True
+    ui.notify(
+        readiness.user_message(),
+        type="negative",
+        close_button=True,
+        timeout=12000,
+    )
+    return False
+
+
 _MAX_CAPTURED_B64_IN_MEMORY = 20
 
 
@@ -3320,10 +3354,70 @@ async def consume_generation(
                     _handle_ui_runtime_error(gen, state, exc, "first-content transition")
                     logger.error("Error rendering thinking collapse", exc_info=True)
 
-        if event_type in {"warning", "error", "tool_call", "tool_done", "summarizing", "interrupt", "done"}:
+        if (
+            event_type in {"warning", "error", "tool_call", "tool_done", "summarizing", "interrupt", "done"}
+            or event_type in {
+                "context_usage", "compaction_started", "compaction_succeeded",
+                "compaction_failed",
+            }
+        ):
             _flush_live_renders(f"{event_type} boundary", force=True)
 
-        if event_type == "warning":
+        if event_type in {
+            "context_usage",
+            "compaction_started",
+            "compaction_succeeded",
+            "compaction_failed",
+        }:
+            usage = dict(payload or {}) if isinstance(payload, dict) else {}
+            meter_status = {
+                "compaction_started": "compacting",
+                "compaction_succeeded": "ready",
+                "compaction_failed": "failed",
+            }.get(event_type, str(usage.get("status") or "ready"))
+            usage["status"] = meter_status
+            projected = cache_and_project_context_usage(
+                state,
+                gen.thread_id,
+                usage,
+                detached=gen.detached,
+            )
+            if projected and p.context_meter:
+                try:
+                    p.context_meter.update(
+                        usage,
+                        capacity_state=state.context_capacity_state,
+                    )
+                except Exception as exc:
+                    _handle_ui_runtime_error(gen, state, exc, "context meter event")
+            if event_type in {"compaction_succeeded", "compaction_failed"}:
+                event_id = int(usage.get("event_id") or 0)
+                if event_id and event_id not in gen.context_event_ids and not any(
+                    int(message.get("event_id") or 0) == event_id
+                    for message in state.messages
+                    if isinstance(message, dict)
+                ):
+                    gen.context_event_ids.add(event_id)
+                    context_message = {
+                        "role": "context_event",
+                        "event_id": event_id,
+                        "event_type": str(
+                            usage.get("event_type")
+                            or ("context_compacted" if event_type == "compaction_succeeded" else "context_compaction_failed")
+                        ),
+                        "content": str(usage.get("display_copy") or ""),
+                        "severity": "info" if event_type == "compaction_succeeded" else "warning",
+                        "icon": "compress" if event_type == "compaction_succeeded" else "warning",
+                        "timestamp": time.strftime("%H:%M"),
+                    }
+                    state.messages.append(context_message)
+                    if not gen.detached and cb.add_chat_message:
+                        try:
+                            cb.add_chat_message(context_message)
+                        except Exception as exc:
+                            _handle_ui_runtime_error(gen, state, exc, "context event row")
+
+        elif event_type == "warning":
             notice = dict(payload) if isinstance(payload, dict) else {
                 "title": "Memory recall fallback",
                 "message": str(payload or "Semantic memory recall is unavailable."),
@@ -3459,7 +3553,7 @@ async def consume_generation(
             await _handle_tool_done(gen, state, p, payload, cb)
 
         elif event_type == "summarizing":
-            _buddy(BuddyEventType.THINKING, "Summarizing")
+            _buddy(BuddyEventType.THINKING, "Compacting context")
             if not gen.detached and gen.wrapper:
                 try:
                     if gen.thinking_label:
@@ -3468,7 +3562,7 @@ async def consume_generation(
                     with gen.wrapper:
                         gen.thinking_label = ui.html(
                             '<span class="row-bot-typing" style="font-size:0.9rem; opacity:0.6;">'
-                            '\U0001f4dd Summarizing conversation history<span class="dots">'
+                            '\U0001f5dc Compacting context<span class="dots">'
                             '<span>.</span><span>.</span><span>.</span></span></span>',
                             sanitize=False,
                         )
@@ -4781,6 +4875,12 @@ async def send_message(
                     return
 
     # ── Snapshot & clear attached files immediately ──────────────────
+    from row_bot.models import get_current_model
+
+    selected_model = state.thread_model_override or get_current_model()
+    if not await _context_capacity_ready_for_send(selected_model):
+        return
+
     _files_snapshot: list[dict] = [] if internal_goal_continuation else list(p.pending_files)
     file_names: list[str] = [f["name"] for f in _files_snapshot]
     if _files_snapshot:

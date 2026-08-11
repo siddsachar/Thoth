@@ -1100,7 +1100,6 @@ def test_minimax_pre_model_trim_uses_anthropic_message_consolidation(tmp_path, m
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: "MiniMax-M2.7")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "minimax")
@@ -1137,14 +1136,7 @@ def test_custom_openai_pre_model_trim_compacts_32k_agent_payload(tmp_path, monke
     import row_bot.agent as agent
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    trim_budgets: list[int] = []
-
-    def _fake_trim(messages, **kwargs):
-        trim_budgets.append(kwargs["max_tokens"])
-        return list(messages)
-
     monkeypatch.setattr(agent, "get_context_size", lambda: 32_768)
-    monkeypatch.setattr(agent, "trim_messages", _fake_trim)
     monkeypatch.setattr(agent, "get_current_model", lambda: "model:custom_openai_lab:local")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "custom_openai_lab")
@@ -1172,8 +1164,6 @@ def test_custom_openai_pre_model_trim_compacts_32k_agent_payload(tmp_path, monke
         agent._current_enabled_tool_names_var.reset(tool_token)
         agent.set_active_model_override("")
 
-    assert trim_budgets
-    assert max(trim_budgets) < int(32_768 * 0.85)
     system_text = "\n".join(str(msg.content) for msg in result if msg.type == "system")
     assert "SELF_SENTINEL" not in system_text
     assert "SKILL_SENTINEL" not in system_text
@@ -1187,7 +1177,6 @@ def test_custom_openai_pre_model_trim_consolidates_64k_system_envelope(tmp_path,
     from langchain_core.messages import HumanMessage, SystemMessage
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 65_536)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: "model:custom_openai_lab:local")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "custom_openai_lab")
@@ -1220,7 +1209,6 @@ def test_pre_model_trim_drops_reasoning_only_assistant_turn(tmp_path, monkeypatc
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: "model:openrouter:qwen/qwen3.7-max")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "openrouter")
@@ -1253,7 +1241,6 @@ def test_pre_model_trim_preserves_empty_assistant_tool_call_turn(tmp_path, monke
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: "model:openrouter:qwen/qwen3.7-max")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "openrouter")
@@ -1679,7 +1666,6 @@ def test_openai_pre_model_trim_keeps_standard_skill_injections(tmp_path, monkeyp
     from langchain_core.messages import HumanMessage, SystemMessage
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 32_768)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: "gpt-4o")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "openai")

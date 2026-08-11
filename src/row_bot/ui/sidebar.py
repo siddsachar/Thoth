@@ -406,7 +406,6 @@ def build_sidebar(
     from row_bot.threads import _list_threads, _save_thread_meta, _delete_thread, _get_thread_project_id, _get_thread_approval_mode
     from row_bot.tasks import get_running_tasks, stop_task
     from row_bot.memory_extraction import set_active_thread
-    from row_bot.agent import clear_summary_cache
     from row_bot.ui.thread_actions import apply_thread_pin, show_rename_thread_dialog
 
     ui.add_head_html(f"<style>{_SIDEBAR_AVATAR_CSS}</style>")
@@ -914,7 +913,6 @@ def build_sidebar(
                         _del_gen.stop_event.set()
                     stop_task(t)
                     _delete_thread(t)
-                    clear_summary_cache(t)
                     from row_bot.tools.shell_tool import get_session_manager, clear_shell_history
                     get_session_manager().kill_session(t)
                     clear_shell_history(t)
@@ -1042,10 +1040,6 @@ def build_sidebar(
                             pass
                         try:
                             stop_task(t)
-                        except Exception:
-                            pass
-                        try:
-                            clear_summary_cache(t)
                         except Exception:
                             pass
                         try:

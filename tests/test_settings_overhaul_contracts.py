@@ -123,6 +123,18 @@ def test_models_tab_uses_collected_current_model_snapshot():
     assert "state.current_model = current" in render_src
 
 
+def test_models_advanced_context_explains_auto_and_unknown_capacity() -> None:
+    render_src = _function_source("_render_models_tab_content")
+
+    assert "Auto uses the provider/model limit when known." in render_src
+    assert "you must set an Advanced override before sending." in render_src
+    assert '"Auto (recommended)"' in render_src
+    assert 'label="Cloud Context"' in render_src
+    assert "context_policy_presentation" in render_src
+    assert 'presentation.get("settings_note")' in render_src
+    assert 'presentation.get("warning")' in render_src
+
+
 def test_settings_shell_preserves_all_registered_tabs():
     open_src = _function_source("open_settings")
 

@@ -57,7 +57,6 @@ def test_prompt_cache_markers_are_provider_gated(
     )
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 65_536)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: model_ref)
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: provider_id)

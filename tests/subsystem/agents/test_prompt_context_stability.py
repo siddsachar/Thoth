@@ -61,7 +61,6 @@ def test_plugin_skill_prompt_is_not_injected_wholesale(tmp_path, monkeypatch):
         return ""
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: "model:openai:gpt-4o")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "openai")
@@ -130,7 +129,6 @@ def test_tool_guides_follow_effective_authorization_not_global_parent_names(tmp_
         )
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: "model:openai:gpt-4o")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "openai")
@@ -164,7 +162,6 @@ def test_deferred_skill_prompt_failure_is_closed_without_dropping_core_guides(tm
     agent = _fresh_agent(tmp_path, monkeypatch)
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: "model:openai:gpt-4o")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "openai")
@@ -215,7 +212,6 @@ def test_anthropic_cache_markers_stay_on_stable_system_context_only(tmp_path, mo
     )
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "get_current_model", lambda: "model:anthropic:claude-sonnet-4-5")
     monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
     monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "anthropic")
@@ -272,7 +268,6 @@ def test_chat_only_prompt_uses_stable_chat_contract_without_agent_runtime_contex
     agent = _fresh_agent(tmp_path, monkeypatch)
 
     monkeypatch.setattr("row_bot.threads.get_latest_checkpoint_messages", lambda thread_id: [])
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "_agent_runtime_system_context", lambda: "RUNTIME_DYNAMIC_SENTINEL")
     monkeypatch.setattr("row_bot.self_knowledge.build_static_self_knowledge_block", lambda: "SELF_STATIC_SENTINEL")
     monkeypatch.setattr("row_bot.self_knowledge.build_dynamic_self_knowledge_block", lambda: "DYNAMIC_STATE_SENTINEL")

@@ -76,6 +76,58 @@ def test_mobile_active_thread_removes_space_heavy_policy_chrome() -> None:
     assert "_mobile_generation_active(state)" in src
 
 
+def test_mobile_chat_controls_expose_context_setup_without_a_meter() -> None:
+    src = Path("src/row_bot/ui/mobile_chat.py").read_text(encoding="utf-8")
+
+    assert "create_context_meter" not in src
+    assert "context_policy_presentation" in src
+    assert "notify_context_policy_once" in src
+    assert 'open_settings("Models")' in src
+    assert "clear_context_usage_projection" in src
+
+
+def test_mobile_policy_summary_distinguishes_unknown_auto_and_override(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import row_bot.models as models
+    from row_bot.ui.mobile_chat import _model_policy_summary
+
+    state = SimpleNamespace(
+        thread_model_override="model:openai:opaque",
+        current_model="model:openai:default",
+    )
+    policy = SimpleNamespace(
+        model_ref="model:openai:opaque",
+        provider_id="openai",
+        runtime_model="opaque",
+        policy_kind="provider",
+        native_limit_tokens=None,
+        requested_limit_tokens=None,
+        effective_limit_tokens=None,
+        capacity_source="unknown",
+    )
+    monkeypatch.setattr(models, "get_context_policy", lambda model_ref: policy)
+    monkeypatch.setattr(models, "is_cloud_model", lambda model_ref: True)
+
+    assert _model_policy_summary(state) == (
+        "warning",
+        "Context setup required",
+        "Context setup required · native limit unknown · no override set",
+        True,
+    )
+
+    policy.requested_limit_tokens = 262_144
+    policy.effective_limit_tokens = 262_144
+    policy.capacity_source = "advanced_override"
+
+    assert _model_policy_summary(state) == (
+        "info",
+        "Context override",
+        "Native limit unknown · using 262K override",
+        False,
+    )
+
+
 def test_mobile_composer_keeps_stop_button_visible_and_disabled_when_idle() -> None:
     src = Path("src/row_bot/ui/mobile_chat.py").read_text(encoding="utf-8")
     composer = src.split("def _build_mobile_thread_composer(", 1)[1].split("def build_mobile_thread_list(", 1)[0]

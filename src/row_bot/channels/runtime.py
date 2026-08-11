@@ -81,12 +81,17 @@ def format_goal_started_ack(goal_start: ChannelGoalStart) -> str:
     )
 
 
-def _extract_agent_result(result: Any) -> tuple[str, Any | None]:
+def _extract_agent_result(result: Any) -> tuple[str, Any | None, list[dict[str, Any]]]:
     if isinstance(result, tuple):
         answer = str(result[0] or "") if result else ""
         interrupt_data = result[1] if len(result) > 1 else None
-        return answer, interrupt_data
-    return str(result or ""), None
+        notices = [
+            dict(item)
+            for item in (result[2] if len(result) > 2 and isinstance(result[2], list) else [])
+            if isinstance(item, dict) and int(item.get("event_id") or 0)
+        ]
+        return answer, interrupt_data, notices
+    return str(result or ""), None, []
 
 
 def _model_override_from_config(config: dict | None) -> str:
@@ -386,7 +391,7 @@ def run_channel_goal_sync(
     while prompt and turns < max(1, int(max_continuations or 20)):
         turns += 1
         result = run_turn(prompt, config)
-        answer, interrupt_data = _extract_agent_result(result)
+        answer, interrupt_data, context_notices = _extract_agent_result(result)
         if channel_turn_is_suspended(answer):
             return ChannelGoalRunResult(
                 turns=turns,
@@ -395,6 +400,14 @@ def run_channel_goal_sync(
             )
         if answer:
             send_text(answer)
+        if context_notices:
+            from row_bot.channels.streaming import deliver_context_notices_sync
+
+            deliver_context_notices_sync(
+                context_notices,
+                channel=channel_name,
+                send_text=send_text,
+            )
         if channel_turn_waiting_on_parent(config):
             return ChannelGoalRunResult(
                 turns=turns,
@@ -493,7 +506,7 @@ async def run_channel_goal_async(
     while prompt and turns < max(1, int(max_continuations or 20)):
         turns += 1
         result = await _maybe_await(run_turn(prompt, config))
-        answer, interrupt_data = _extract_agent_result(result)
+        answer, interrupt_data, context_notices = _extract_agent_result(result)
         if channel_turn_is_suspended(answer):
             return ChannelGoalRunResult(
                 turns=turns,
@@ -502,6 +515,14 @@ async def run_channel_goal_async(
             )
         if answer:
             await _maybe_await(send_text(answer))
+        if context_notices:
+            from row_bot.channels.streaming import deliver_context_notices_async
+
+            await deliver_context_notices_async(
+                context_notices,
+                channel=channel_name,
+                send_text=send_text,
+            )
         if channel_turn_waiting_on_parent(config):
             return ChannelGoalRunResult(
                 turns=turns,

@@ -370,6 +370,8 @@ def open_settings(
         get_provider_emoji,
         get_context_policy,
         set_context_size,
+        set_context_size_auto,
+        get_local_context_mode,
         star_cloud_model,
         unstar_cloud_model,
         CONTEXT_SIZE_OPTIONS,
@@ -378,10 +380,13 @@ def open_settings(
         CLOUD_CONTEXT_SIZE_LABELS,
         _coerce_context_size,
         get_cloud_context_size,
+        get_cloud_context_override,
         set_cloud_context_size,
+        clear_cloud_context_override,
         is_cloud_available,
         _cloud_model_cache,
     )
+    _load_context_policy = get_context_policy
     from row_bot.providers.model_catalog_cache import (
         cache_age_label,
         is_model_catalog_refresh_running,
@@ -428,7 +433,14 @@ def open_settings(
     # ── Lazy helpers (deferred to avoid slow import on panel open) ──
     def clear_agent_cache():
         from row_bot.agent import clear_agent_cache as _cac
+        from row_bot.threads import clear_all_context_usage
+        from row_bot.ui.state import clear_all_context_usage_state
+
         _cac()
+        clear_all_context_usage_state(state)
+        clear_all_context_usage()
+        if p.context_meter:
+            p.context_meter.update(None)
 
     def clear_provider_runtime_cache():
         clear_agent_cache()
@@ -1626,6 +1638,7 @@ def open_settings(
                     )
 
     def _render_models_tab_content(preloaded: dict | None = None) -> None:
+        from row_bot.ui.chat_components import context_policy_presentation
         from row_bot.providers.selection import (
             list_model_choice_options,
             list_quick_choices,
@@ -1802,35 +1815,34 @@ def open_settings(
             return header_actions, controls
 
         def _on_cloud_ctx_change(e):
+            if str(e.value or "").lower() == "auto":
+                clear_cloud_context_override()
+                clear_agent_cache()
+                _policy_ref[0] = _load_context_policy(state.current_model)
+                _update_ctx_note()
+                _render_brain_readiness_badge(state.current_model)
+                return
             value = _coerce_context_size(e.value, get_cloud_context_size(), allowed=CLOUD_CONTEXT_SIZE_OPTIONS)
             set_cloud_context_size(value)
             clear_agent_cache()
-            if _policy_ref[0] is not None:
-                from dataclasses import replace
-
-                native_max = _policy_ref[0].native_max
-                _policy_ref[0] = replace(
-                    _policy_ref[0],
-                    user_cap=value,
-                    effective_context=min(value, native_max) if native_max else value,
-                )
+            _policy_ref[0] = _load_context_policy(state.current_model)
             _update_ctx_note()
             _render_brain_readiness_badge(state.current_model)
 
         def _on_ctx_change(e):
+            if str(e.value or "").lower() == "auto":
+                set_context_size_auto()
+                state.context_size = 32_768
+                clear_agent_cache()
+                _policy_ref[0] = _load_context_policy(state.current_model)
+                _update_ctx_note()
+                _render_brain_readiness_badge(state.current_model)
+                return
             value = _coerce_context_size(e.value, state.context_size, allowed=CONTEXT_SIZE_OPTIONS)
             set_context_size(value)
             state.context_size = value
             clear_agent_cache()
-            if _policy_ref[0] is not None:
-                from dataclasses import replace
-
-                native_max = _policy_ref[0].native_max
-                _policy_ref[0] = replace(
-                    _policy_ref[0],
-                    user_cap=value,
-                    effective_context=min(value, native_max) if native_max else value,
-                )
+            _policy_ref[0] = _load_context_policy(state.current_model)
             _update_ctx_note()
             policy = _policy_ref[0]
             if policy is not None and policy.native_max is not None and value > policy.native_max:
@@ -1953,24 +1965,6 @@ def open_settings(
                     options=model_opts,
                     value=brain_select_state["value"],
                 ).classes("col-grow").props('use-input input-debounce=300 dense outlined')
-                cloud_ctx_select = ui.select(
-                    label="Provider context",
-                    options=cloud_ctx_opts,
-                    value=get_cloud_context_size(),
-                    on_change=_on_cloud_ctx_change,
-                ).classes("min-w-[180px]").props("dense outlined").tooltip(
-                    "Caps how much conversation history is sent to the provider model; higher values may increase cost and rate-limit pressure."
-                )
-                cloud_ctx_select.visible = _is_cloud_ctx
-                ctx_select = ui.select(
-                    label="Local context",
-                    options=ctx_opts,
-                    value=state.context_size,
-                    on_change=_on_ctx_change,
-                ).classes("min-w-[180px]").props("dense outlined").tooltip(
-                    "Controls how many tokens the local model can process; higher values use more VRAM."
-                )
-                ctx_select.visible = not _is_cloud_ctx
                 brain_refresh_btn = ui.button(icon="refresh", on_click=lambda: _reopen("Models")).props("flat dense round size=sm color=primary").tooltip(f"Refresh after managing Ollama models outside {APP_DISPLAY_NAME}")
                 brain_empty = ui.label("No pinned Brain choices yet. Pin Chat models in the catalog below.").classes("text-grey-6 text-xs q-pb-sm")
                 brain_empty.visible = not _has_pinned_picker_choice(chat_options)
@@ -1978,6 +1972,31 @@ def open_settings(
                 brain_missing.visible = bool(brain_select_state.get("warning"))
             ctx_note = ui.label("").classes("text-xs text-grey-6 q-ml-lg")
             ctx_note.visible = False
+            with ui.expansion("Advanced context", icon="tune").classes("w-full"):
+                ui.label(
+                    "Auto uses the provider/model limit when known. If Row-Bot cannot determine it, "
+                    "you must set an Advanced override before sending."
+                ).classes("text-grey-6 text-xs q-mb-sm")
+                cloud_advanced_options = {"auto": "Auto (recommended)", **cloud_ctx_opts}
+                cloud_ctx_select = ui.select(
+                    label="Cloud Context",
+                    options=cloud_advanced_options,
+                    value=get_cloud_context_override() or "auto",
+                    on_change=_on_cloud_ctx_change,
+                ).classes("min-w-[220px]").props("dense outlined").tooltip(
+                    "Advanced cap for providers whose exact capacity is known."
+                )
+                cloud_ctx_select.visible = _is_cloud_ctx
+                local_advanced_options = {"auto": "Auto (requested 32K)", **ctx_opts}
+                ctx_select = ui.select(
+                    label="Local model context",
+                    options=local_advanced_options,
+                    value="auto" if get_local_context_mode() == "auto" else state.context_size,
+                    on_change=_on_ctx_change,
+                ).classes("min-w-[220px]").props("dense outlined").tooltip(
+                    "Auto requests 32K and is capped by the native or observed Ollama allocation."
+                )
+                ctx_select.visible = not _is_cloud_ctx
 
             vision_actions, vision_controls = _surface_row("visibility", "Vision", "Camera and screen capture analysis")
             with vision_actions:
@@ -2170,8 +2189,18 @@ def open_settings(
                 _render_brain_readiness_badge(prev)
                 return
             if runtime_readiness.selected_mode == "blocked":
+                context_blocked = any(
+                    "context window could not be determined" in str(error).lower()
+                    for result in (runtime_readiness.agent, runtime_readiness.chat)
+                    for error in result.errors
+                )
+                blocked_reason = (
+                    runtime_readiness.chat.user_message()
+                    if context_blocked
+                    else runtime_readiness.selection_reason
+                )
                 ui.notify(
-                    f"{runtime_model} is unavailable: {runtime_readiness.selection_reason}. Reverting to {prev}.",
+                    f"{runtime_model} is unavailable: {blocked_reason} Reverting to {prev}.",
                     type="negative", close_button=True, timeout=10000,
                 )
                 model_select.value = model_choice_value(prev)
@@ -2187,7 +2216,7 @@ def open_settings(
                     type="info", close_button=True, timeout=9000,
                 )
             try:
-                policy = await run.io_bound(lambda: get_context_policy(sel))
+                policy = await run.io_bound(lambda: _load_context_policy(sel))
             except Exception:
                 logger.debug("Could not refresh context policy for %s", sel, exc_info=True)
                 policy = None
@@ -2216,8 +2245,12 @@ def open_settings(
             cloud_ctx_select.visible = provider_policy
             ctx_select.visible = not provider_policy
             if provider_policy:
-                native_lbl = _fmt_ctx(policy.native_max) if policy.native_max else "?"
-                ctx_note.text = f"Native max {native_lbl} · effective {_fmt_ctx(policy.effective_context)}"
+                presentation = context_policy_presentation(policy)
+                ctx_note.text = str(presentation.get("settings_note") or "")
+                ctx_note.classes(
+                    remove="text-grey-6 text-warning",
+                    add="text-warning" if presentation.get("warning") else "text-grey-6",
+                )
                 ctx_note.visible = True
             elif policy.native_max is not None and policy.user_cap > policy.native_max:
                 max_label = CONTEXT_SIZE_LABELS.get(policy.native_max, f"{policy.native_max:,}")
