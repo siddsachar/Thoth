@@ -313,6 +313,35 @@ mermaid.initialize({
         white-space: pre-wrap;
         word-break: break-all;
     }
+    /* Tool traces are secondary transcript metadata. Keep their collapsed
+       controls close to the compact progressive-skill marker without
+       muting the result content revealed inside each expansion. */
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item {
+        min-height: 30px;
+        padding: 2px 4px;
+        color: #9e9e9e;
+    }
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item .q-item__label,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item .q-item__label {
+        font-size: 0.75rem;
+        font-weight: 400;
+        line-height: 1.1rem;
+    }
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item .q-icon,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item .q-icon {
+        color: #9e9e9e;
+        font-size: 15px;
+    }
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item .q-item__section--avatar,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item .q-item__section--avatar {
+        min-width: 24px;
+        padding-right: 4px;
+    }
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item .q-item__section--side,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item .q-item__section--side {
+        padding-left: 4px;
+    }
     .row-bot-agent-run-list {
         align-items: center;
         flex-wrap: wrap;

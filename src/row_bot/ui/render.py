@@ -1427,6 +1427,8 @@ def render_message_content(
 ) -> None:
     """Render a single message's content inside the current parent element."""
     from row_bot.ui.tool_trace import (
+        TOOL_TRACE_EXPANSION_CLASSES,
+        TOOL_TRACE_ITEM_EXPANSION_CLASSES,
         display_tool_content,
         group_tool_results,
         is_agent_tool_result,
@@ -1550,9 +1552,9 @@ def render_message_content(
         for group in group_tool_results(generic_tool_results):
             group_status, group_icon = tool_group_status(group.results)
             with ui.expansion(
-                f"{'⚠️' if group_icon == 'warning' else '✅'} {group_status} {group.label}",
+                f"{group_status} {group.label}",
                 icon=group_icon,
-            ).classes("w-full").props("data-docs-id=tool-trace"):
+            ).classes(TOOL_TRACE_EXPANSION_CLASSES).props("data-docs-id=tool-trace"):
                 for idx, tr in enumerate(group.results, start=1):
                     item_failed = tool_result_failed(tr)
                     title = (
@@ -1565,7 +1567,7 @@ def render_message_content(
                     with ui.expansion(
                         title,
                         icon="error" if item_failed else "subdirectory_arrow_right",
-                    ).classes("w-full"):
+                    ).classes(TOOL_TRACE_ITEM_EXPANSION_CLASSES):
                         content = tr.get("content", "")
                         if isinstance(content, str) and content.startswith("__CHART__:"):
                             _me = content.find("\n\n", 10)

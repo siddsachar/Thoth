@@ -23,6 +23,9 @@ AGENT_TOOL_NAMES = {
     "agent_retry",
 }
 
+TOOL_TRACE_EXPANSION_CLASSES = "row-bot-tool-trace w-full"
+TOOL_TRACE_ITEM_EXPANSION_CLASSES = "row-bot-tool-trace-item w-full"
+
 
 @dataclass
 class ToolResultGroup:
