@@ -56,7 +56,9 @@ from row_bot.developer.inspector_snapshot import (
     request_snapshot_refresh,
 )
 from row_bot.developer.sandbox import decide_action
+from row_bot.developer.sandbox_runtime import OFFICIAL_CONTAINER_SANDBOX_UNAVAILABLE
 from row_bot.developer.state import DeveloperWorkspace
+from row_bot.runtime_paths import is_containerized_runtime
 from row_bot.ui.chat_components import (
     build_chat_input_bar,
     build_chat_messages,
@@ -80,6 +82,19 @@ _APPROVAL_MODE_HELP: dict[str, str] = {
 
 _developer_workspace_css_added = False
 _DEVELOPER_THREAD_PINNED_AT_INDEX = 11
+
+
+def _custom_tool_execution_notice() -> str:
+    if is_containerized_runtime():
+        return (
+            "After this one-time approval, Row-Bot deliberately runs this command "
+            "in Local mode inside the Row-Bot application container against the "
+            "selected Custom Tool path."
+        )
+    return (
+        "Docker Sandbox will be used when available; otherwise this runs locally "
+        "after this one-time approval."
+    )
 
 
 def _developer_thread_row_pinned_at(row: tuple) -> str:
@@ -825,7 +840,7 @@ def _render_custom_tool_card(state: AppState, tool, refresh: Callable) -> None:
             with ui.column().classes("w-full gap-1 q-mt-sm"):
                 ui.badge(str(meta.get("label") or "Review"), color="orange").props("outline")
                 ui.label(f"Source: {tool.installed_path}").classes("text-xs text-grey-6")
-                ui.label("Docker Sandbox will be used when available; otherwise this runs locally after this one-time approval.").classes("text-xs text-grey-6")
+                ui.label(_custom_tool_execution_notice()).classes("text-xs text-grey-6")
                 ui.code(command).classes("w-full text-xs").style("max-width: 100%; max-height: 160px; overflow: auto; white-space: pre-wrap;")
 
             def _finish(approved: bool) -> None:
@@ -1181,7 +1196,7 @@ def _show_custom_tool_wizard(state: AppState, refresh: Callable) -> None:
                 ui.label(str(meta.get("reason") or "This command needs approval before testing.")).classes("text-sm text-grey-5")
                 with ui.column().classes("w-full gap-1 q-mt-sm"):
                     ui.badge(str(meta.get("label") or "Review"), color="orange").props("outline")
-                    ui.label("Row-Bot will prefer Docker Sandbox. If Docker cannot start, this one approved test may fall back to local execution.").classes("text-xs text-grey-6")
+                    ui.label(_custom_tool_execution_notice()).classes("text-xs text-grey-6")
                     ui.code(command).classes("w-full text-xs").style("max-width: 100%; max-height: 160px; overflow: auto; white-space: pre-wrap;")
 
                 def _finish(approved: bool) -> None:
@@ -1631,6 +1646,9 @@ def build_developer_workspace(
                 execution_mode=value,
             )
         except Exception as exc:
+            execution_select = workspace_header.get("execution_mode_select")
+            if execution_select is not None:
+                execution_select.set_value(workspace.execution_mode)
             ui.notify(str(exc), type="negative", close_button=True)
             return
         workspace.execution_mode = updated.execution_mode
@@ -1946,7 +1964,7 @@ def build_developer_workspace(
                         ).classes(
                             "row-bot-dev-run-slot"
                         ):
-                            ui.select(
+                            execution_mode_select = ui.select(
                                 {
                                     "local": "Local",
                                     "docker": "Docker Sandbox",
@@ -1959,6 +1977,7 @@ def build_developer_workspace(
                             ).props("dense borderless options-dense hide-bottom-space").classes(
                                 "text-xs row-bot-composer-select"
                             ).style("width: 100%; min-width: 0;").tooltip("Choose where Developer commands run")
+                            workspace_header["execution_mode_select"] = execution_mode_select
                         workspace_header["branch"] = ui.row().classes("items-center no-wrap")
                         details_btn = ui.button(icon="more_horiz").props("flat dense round").tooltip("Workspace actions")
                         with details_btn:
@@ -2446,6 +2465,7 @@ def _build_developer_inspector_static(
         sandbox_probe = next_snapshot.sandbox_probe
         sandbox_status = next_snapshot.sandbox_status
         sandbox_pending = next_snapshot.sandbox_pending_changes
+        containerized_runtime = is_containerized_runtime()
 
         def _summary() -> None:
             chips = ui.row().classes("items-center gap-1 no-wrap").style("min-width: 0; overflow: hidden;")
@@ -2760,7 +2780,12 @@ def _build_developer_inspector_static(
             if workspace_now.execution_mode == "local":
                 ui.label("Commands run in the selected repo folder, with the thread approval mode guarding changes.").classes("text-xs text-grey-6")
             else:
-                ui.label("Commands run in a Docker shadow copy. The real repo changes only after importing an approved sandbox patch.").classes("text-xs text-grey-6")
+                if containerized_runtime:
+                    ui.label(OFFICIAL_CONTAINER_SANDBOX_UNAVAILABLE).classes(
+                        "text-xs text-orange-4"
+                    )
+                else:
+                    ui.label("Commands run in a Docker shadow copy. The real repo changes only after importing an approved sandbox patch.").classes("text-xs text-grey-6")
                 image_input = ui.input(
                     "Sandbox image",
                     value=workspace_now.sandbox_image,
@@ -2812,16 +2837,21 @@ def _build_developer_inspector_static(
                 else:
                     ui.label("No pending sandbox patches.").classes("text-xs text-grey-6")
                 with ui.row().classes("w-full gap-2 flex-wrap"):
-                    ui.button(
+                    rebuild_button = ui.button(
                         "Rebuild sandbox",
                         icon="refresh",
                         on_click=lambda: safe_ui_task(_rebuild, context="developer rebuild sandbox"),
                     ).props("dense outline no-caps size=sm")
-                    ui.button(
+                    cleanup_button = ui.button(
                         "Clean sandbox copy",
                         icon="cleaning_services",
                         on_click=lambda: safe_ui_task(_cleanup, context="developer cleanup sandbox"),
                     ).props("dense outline no-caps size=sm")
+                    if containerized_runtime:
+                        rebuild_button.disable()
+                        cleanup_button.disable()
+                        rebuild_button.tooltip(OFFICIAL_CONTAINER_SANDBOX_UNAVAILABLE)
+                        cleanup_button.tooltip(OFFICIAL_CONTAINER_SANDBOX_UNAVAILABLE)
 
         _render_if_changed(
             "sandbox",

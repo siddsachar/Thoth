@@ -20,6 +20,7 @@ def _fresh_modules(tmp_path: Path, monkeypatch):
         "row_bot.agent_profiles",
         "row_bot.agent_runs",
         "row_bot.agent_runner",
+        "row_bot.agent_orchestrator",
         "row_bot.developer.worktrees",
         "row_bot.agent",
     ):
@@ -135,7 +136,9 @@ def test_delegate_agent_step_waits_and_records_child_run(tmp_path, monkeypatch) 
     assert child["status"] == "completed"
     assert child["summary"] == "child result"
     assert child["parent_thread_id"] == thread_id
-    assert calls[-1]["config"]["configurable"]["runtime_surface"] == "agent_child"
+    assert calls[0]["config"]["configurable"]["runtime_surface"] == "agent_child"
+    assert calls[-1]["config"]["configurable"]["runtime_surface"] == "workflow"
+    assert calls[-1]["config"]["configurable"]["thread_event_context"] is True
 
 
 def test_delegate_agent_wait_pauses_and_resumes_after_child_approval(
@@ -154,10 +157,15 @@ def test_delegate_agent_wait_pauses_and_resumes_after_child_approval(
 
     fake_agent.TaskStoppedError = TaskStoppedError
     fake_agent.RECURSION_LIMIT_TASK = 12
-    fake_agent.invoke_agent = lambda *args, **kwargs: {
-        "type": "interrupt",
-        "interrupts": [{"tool": "shell", "description": "Needs approval"}],
-    }
+    def invoke_agent(_prompt, _tools, config, **_kwargs):
+        if config["configurable"]["runtime_surface"] == "agent_child":
+            return {
+                "type": "interrupt",
+                "interrupts": [{"tool": "shell", "description": "Needs approval"}],
+            }
+        return "Parent finalized the approved child result."
+
+    fake_agent.invoke_agent = invoke_agent
     fake_agent.resume_invoke_agent = lambda *args, **kwargs: "resumed"
     fake_agent.repair_orphaned_tool_calls = lambda *args, **kwargs: None
     fake_agent._approval_mode_var = contextvars.ContextVar("approval_mode", default="approve")
@@ -219,10 +227,15 @@ def test_delegate_agent_wait_denial_stops_parent_workflow(tmp_path, monkeypatch)
 
     fake_agent.TaskStoppedError = TaskStoppedError
     fake_agent.RECURSION_LIMIT_TASK = 12
-    fake_agent.invoke_agent = lambda *args, **kwargs: {
-        "type": "interrupt",
-        "interrupts": [{"tool": "shell", "description": "Needs approval"}],
-    }
+    def invoke_agent(_prompt, _tools, config, **_kwargs):
+        if config["configurable"]["runtime_surface"] == "agent_child":
+            return {
+                "type": "interrupt",
+                "interrupts": [{"tool": "shell", "description": "Needs approval"}],
+            }
+        return "Parent finalized after the child was stopped."
+
+    fake_agent.invoke_agent = invoke_agent
     fake_agent.resume_invoke_agent = lambda *args, **kwargs: "should not run"
     fake_agent.repair_orphaned_tool_calls = lambda *args, **kwargs: None
     fake_agent._approval_mode_var = contextvars.ContextVar("approval_mode", default="approve")

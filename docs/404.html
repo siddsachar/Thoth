@@ -12,24 +12,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="site.css">
-    <script src="site.js" defer></script>
-    <script>
-        window.ROW_BOT_GA_MEASUREMENT_ID = 'G-0YYKPX5M5E';
-        window.ROW_BOT_GOOGLE_ADS_ID = 'AW-847204616';
-        const rowBotGoogleTagId = window.ROW_BOT_GA_MEASUREMENT_ID || window.ROW_BOT_GOOGLE_ADS_ID;
-        if (rowBotGoogleTagId) {
-            const gaScript = document.createElement('script');
-            gaScript.async = true;
-            gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + rowBotGoogleTagId;
-            document.head.appendChild(gaScript);
-            window.dataLayer = window.dataLayer || [];
-            window.gtag = function(){ dataLayer.push(arguments); };
-            gtag('js', new Date());
-            if (window.ROW_BOT_GA_MEASUREMENT_ID) gtag('config', window.ROW_BOT_GA_MEASUREMENT_ID);
-            if (window.ROW_BOT_GOOGLE_ADS_ID) gtag('config', window.ROW_BOT_GOOGLE_ADS_ID);
-        }
-    </script>
+    <link rel="stylesheet" href="site.css?v=4.6.0-r1">
+    <script src="site.js?v=4.6.0" defer></script>
 </head>
 <body class="not-found-page">
     <a class="skip-link" href="#main">Skip to content</a>
@@ -69,7 +53,7 @@
 
     <footer class="site-footer">
         <div class="shell footer-grid">
-            <span>Row-Bot &middot; v4.5.0 &middot; Apache 2.0</span>
+            <span>Row-Bot &middot; v4.6.0 &middot; Apache 2.0</span>
             <div class="footer-links">
                 <a href="index.html">Home</a>
                 <a href="features.html">Features</a>

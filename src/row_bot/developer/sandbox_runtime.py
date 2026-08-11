@@ -17,6 +17,7 @@ from datetime import datetime
 from row_bot.developer.executables import resolve_docker, resolve_podman
 from row_bot.developer.state import DeveloperWorkspace
 from row_bot.developer.storage import DEVELOPER_DIR
+from row_bot.runtime_paths import is_containerized_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,11 @@ _COPY_SKIP_DIRS = {
     "venv",
 }
 _SNAPSHOT_SKIP_DIRS = _COPY_SKIP_DIRS | {".git", ".hg", ".svn"}
+OFFICIAL_CONTAINER_SANDBOX_UNAVAILABLE = (
+    "Developer Docker Sandbox is not available inside the Row-Bot application "
+    "container. Run Row-Bot on the host to use Docker Sandbox, or use Local mode "
+    "with an explicitly mounted workspace."
+)
 
 
 @dataclass(frozen=True)
@@ -146,6 +152,11 @@ class SandboxPendingChange:
 
 
 def detect_container_runtime() -> SandboxProbe:
+    if is_containerized_runtime():
+        return SandboxProbe(
+            available=False,
+            message=OFFICIAL_CONTAINER_SANDBOX_UNAVAILABLE,
+        )
     for name, resolver in (("docker", resolve_docker), ("podman", resolve_podman)):
         binary = resolver()
         if not binary:

@@ -81,6 +81,10 @@ def test_shell_command_uses_platform_shell_args_and_records_changed_files(monkey
     snapshots = iter([{}, {"created.txt": "new"}])
     recorded = []
 
+    monkeypatch.setattr(
+        "row_bot.developer.storage.get_workspace",
+        lambda _workspace_id: workspace,
+    )
     monkeypatch.setattr(runtime, "_snapshot_changed_files", lambda _root: next(snapshots))
     monkeypatch.setattr(runtime, "_head_text", lambda _root, _path: None)
     monkeypatch.setattr(change_ledger, "record_change_set", lambda **kwargs: recorded.append(kwargs))
@@ -110,6 +114,10 @@ def test_shell_command_timeout_returns_structured_result(monkeypatch, tmp_path) 
     from row_bot.developer import runtime
 
     workspace = fake_workspace(tmp_path)
+    monkeypatch.setattr(
+        "row_bot.developer.storage.get_workspace",
+        lambda _workspace_id: workspace,
+    )
     monkeypatch.setattr(runtime, "_snapshot_changed_files", lambda _root: {})
 
     def fake_run(argv, **_kwargs):

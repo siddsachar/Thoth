@@ -206,8 +206,12 @@ def test_channel_adapters_do_not_import_agent_at_module_import_time():
         assert "def _agent_mod" in src
 
 
-def test_auto_start_channels_are_scheduled_in_background():
+def test_auto_start_channels_are_scheduled_in_background(monkeypatch):
     app_module = importlib.import_module("row_bot.app")
+    from row_bot.channels import registry as channel_registry
+
+    invalidations: list[str] = []
+    monkeypatch.setattr(channel_registry, "clear_agent_cache_if_loaded", lambda: invalidations.append("clear"))
 
     class FakeState:
         startup_warnings: list[str] = []
@@ -231,6 +235,7 @@ def test_auto_start_channels_are_scheduled_in_background():
         assert channel.started is False
         await task
         assert channel.started is True
+        assert invalidations == ["clear"]
 
     asyncio.run(run_check())
 

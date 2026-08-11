@@ -56,7 +56,7 @@ def test_developer_agent_context_reports_git_state(tmp_path, monkeypatch):
     assert "Git dirty: yes" in context
 
 
-def test_developer_identity_questions_answer_from_context(tmp_path, monkeypatch):
+def test_developer_identity_questions_are_answered_naturally_from_context(tmp_path, monkeypatch):
     storage, agent_context = _fresh_modules(tmp_path, monkeypatch)
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -64,13 +64,18 @@ def test_developer_identity_questions_answer_from_context(tmp_path, monkeypatch)
     subprocess.run(["git", "-C", str(repo), "checkout", "-b", "feature/test"], check=True, capture_output=True, text=True)
     workspace = storage.add_or_update_local_workspace(str(repo))
 
-    answer = agent_context.maybe_answer_workspace_identity(
-        workspace.id,
-        "What repo am I in and what branch is active?",
-    )
+    context = agent_context.build_developer_agent_context(workspace.id)
 
-    assert answer is not None
-    assert "repo" in answer
-    assert f"Path: `{repo.resolve()}`" in answer
-    assert "Active branch: `feature/test`" in answer
-    assert agent_context.maybe_answer_workspace_identity(workspace.id, "Review the code") is None
+    assert f"Path: {repo.resolve()}" in context
+    assert "Git branch: feature/test" in context
+    assert "facts above are authoritative for identity questions" in context
+    assert not hasattr(agent_context, "maybe_answer_workspace_identity")
+
+
+def test_developer_streaming_never_intercepts_workspace_wording():
+    from pathlib import Path
+
+    source = Path("src/row_bot/ui/streaming.py").read_text(encoding="utf-8")
+
+    assert "maybe_answer_workspace_identity" not in source
+    assert "direct_answer" not in source

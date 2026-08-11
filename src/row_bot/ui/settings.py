@@ -3171,10 +3171,34 @@ def open_settings(
 
     def _build_tools_tab() -> None:
         _settings_header(
-            "Search",
-            "Configure retrieval compression and external research tools.",
+            "Tools",
+            "Configure capability loading, retrieval compression, and research tools.",
             "search",
         )
+        with _settings_section(
+            "Capability loading",
+            "Choose how enabled external capabilities are exposed to the model.",
+            icon="inventory_2",
+        ):
+            ui.radio(
+                options={
+                    "auto": "Auto-select external tools (recommended)",
+                    "eager": "Load all external tools",
+                },
+                value=tool_registry.get_external_tool_loading_mode(),
+                on_change=lambda e: tool_registry.set_global_config(
+                    "external_tool_loading_mode",
+                    e.value if e.value in {"auto", "eager"} else "auto",
+                ),
+            ).props("dense data-docs-id=settings-external-tool-loading-mode")
+            ui.label(
+                "Core tools stay available. Row-Bot searches enabled MCP, plugin, "
+                "Custom Tool, and channel tools when needed."
+            ).classes("text-grey-6 text-caption")
+            ui.label(
+                "Compatibility mode. Sends every enabled external tool schema to the "
+                "model and can use more context."
+            ).classes("text-grey-6 text-caption")
         with _settings_section(
             "Retrieval Compression",
             "Controls how search results are filtered before reaching the model.",
@@ -6150,6 +6174,7 @@ def open_settings(
             "Gmail": "Accounts",
             "Calendar": "Accounts",
             "Migration": "Preferences",
+            "Search": "Tools",
         }
         _mobile_tab_defs: list[tuple[str, str, Callable]] = [
             ("Providers", "cloud", lambda: build_mobile_providers_settings(on_change=lambda: _reopen("Providers"))),
@@ -6160,7 +6185,7 @@ def open_settings(
             ("System", "terminal", _build_system_access_tab),
             ("Tracker", "checklist", _build_tracker_tab),
             ("Documents", "description", _build_documents_tab),
-            ("Search", "search", _build_tools_tab),
+            ("Tools", "search", _build_tools_tab),
             ("Skills", "auto_fix_high", build_mobile_skills_settings),
             ("Accounts", "group", _build_accounts_tab),
             ("Channels", "forum", _build_channels_tab),
@@ -6281,10 +6306,11 @@ def open_settings(
                 "Gmail": "Accounts",
                 "Calendar": "Accounts",
                 "Migration": "Preferences",
+                "Search": "Tools",
             }
             _known_tab_names = {
                 "Providers", "Models", "Knowledge", "Buddy", "Voice",
-                "System", "Tracker", "Documents", "Search", "Skills",
+                "System", "Tracker", "Documents", "Tools", "Skills",
                 "Accounts", "Channels", "Utilities", "MCP", "Plugins",
                 "Preferences",
             }
@@ -6305,7 +6331,7 @@ def open_settings(
                         tab_fs = ui.tab("System", icon="terminal").props("data-docs-id=settings-tab-system")
                         tab_tracker = ui.tab("Tracker", icon="checklist").props("data-docs-id=settings-tab-tracker")
                         tab_docs = ui.tab("Documents", icon="description").props("data-docs-id=settings-tab-documents")
-                        tab_tools = ui.tab("Search", icon="search").props("data-docs-id=settings-tab-search")
+                        tab_tools = ui.tab("Tools", icon="search").props("data-docs-id=settings-tab-search")
                         tab_skills = ui.tab("Skills", icon="auto_fix_high").props("data-docs-id=settings-tab-skills")
                         tab_accounts = ui.tab("Accounts", icon="group").props("data-docs-id=settings-tab-accounts")
                         tab_channels = ui.tab("Channels", icon="forum").props("data-docs-id=settings-tab-channels")
@@ -6319,7 +6345,7 @@ def open_settings(
                             "Buddy": tab_buddy,
                             "Voice": tab_voice,
                             "System": tab_fs, "Tracker": tab_tracker,
-                            "Documents": tab_docs, "Search": tab_tools,
+                            "Documents": tab_docs, "Search": tab_tools, "Tools": tab_tools,
                             "Skills": tab_skills,
                             "Google": tab_accounts,
                             "Gmail": tab_accounts, "Calendar": tab_accounts,
@@ -6336,7 +6362,7 @@ def open_settings(
                     (tab_cloud, "Providers", _build_cloud_tab),
                     (tab_models, "Models", _build_models_tab),
                     (tab_docs, "Documents", _build_documents_tab),
-                    (tab_tools, "Search", _build_tools_tab),
+                    (tab_tools, "Tools", _build_tools_tab),
                     (tab_skills, "Skills", _build_skills_tab),
                     (tab_fs, "System", _build_system_access_tab),
                     (tab_accounts, "Accounts", _build_accounts_tab),

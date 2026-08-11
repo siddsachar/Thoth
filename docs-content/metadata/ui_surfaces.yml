@@ -314,13 +314,13 @@ surfaces:
     capture_type: automated
     status: ready
     source_files: [src/row_bot/ui/settings.py, src/row_bot/documents.py]
-  settings_search:
-    title: Search settings
-    app_route: /?settings_tab=Search
-    state: network disabled, options visible
+  settings_tools:
+    title: Tools settings
+    app_route: /?settings_tab=Tools
+    state: automatic capability loading, network disabled, options visible
     scenario: configured
-    docs_page: /docs/settings/search
-    screenshot_id: settings-search
+    docs_page: /docs/settings/tools
+    screenshot_id: settings-tools
     capture_type: automated
     status: ready
     source_files: [src/row_bot/ui/settings.py]

@@ -26,6 +26,7 @@ from row_bot.ui.render import (
     agent_result_use_prompt,
     render_agent_tool_results,
     render_image_with_save,
+    render_skill_load_stub,
 )
 from row_bot.ui.performance import log_ui_perf
 from row_bot.ui.streaming import request_generation_stop
@@ -523,6 +524,8 @@ def build_chat(
                             display_tool_content,
                             group_tool_results,
                             is_agent_tool_result,
+                            is_skill_load_noop_result,
+                            parse_skill_load_result,
                             tool_group_status,
                             tool_result_failed,
                         )
@@ -530,10 +533,28 @@ def build_chat(
                             _tr for _tr in _reattach_gen.tool_results
                             if isinstance(_tr, dict) and is_agent_tool_result(_tr)
                         ]
+                        _skill_payloads = []
+                        _seen_skill_ids: set[str] = set()
+                        for _tr in _reattach_gen.tool_results:
+                            _payload = parse_skill_load_result(_tr) if isinstance(_tr, dict) else None
+                            if _payload and _payload["skill_id"] not in _seen_skill_ids:
+                                _seen_skill_ids.add(_payload["skill_id"])
+                                _skill_payloads.append(_payload)
                         _generic_tool_results = [
                             _tr for _tr in _reattach_gen.tool_results
-                            if not (isinstance(_tr, dict) and is_agent_tool_result(_tr))
+                            if not (
+                                isinstance(_tr, dict)
+                                and (
+                                    is_agent_tool_result(_tr)
+                                    or parse_skill_load_result(_tr)
+                                    or is_skill_load_noop_result(_tr)
+                                )
+                            )
                         ]
+                        if _skill_payloads:
+                            with _reattach_gen.tool_col:
+                                for _payload in _skill_payloads:
+                                    render_skill_load_stub(_payload)
                         if _agent_tool_results:
                             with _reattach_gen.tool_col:
                                 render_agent_tool_results(
@@ -800,7 +821,7 @@ def build_chat(
                 var el = getElement({_sid});
                 if (!el || !el.$el) return;
                 var c = el.$el.querySelector('.q-scrollarea__container');
-                if (!c) return;
+                if (!c || !(c instanceof Node)) return;
                 el._tSS = true;
                 var uTs = 0;
                 c.addEventListener('wheel', function() {{ uTs = Date.now(); }}, {{passive:true}});
@@ -1041,6 +1062,9 @@ def build_chat(
                 pin_skill as _pin_chat_skill,
                 record_accept as _record_skill_accept,
                 reset_thread as _reset_chat_skills,
+                get_auto_loaded_skill_ids as _get_auto_loaded_skill_ids,
+                load_auto_skill as _load_auto_skill,
+                remove_auto_loaded_skill as _remove_auto_loaded_skill,
                 suggest_skills as _suggest_chat_skills,
             )
             from row_bot.slash_commands import (
@@ -1072,11 +1096,20 @@ def build_chat(
                 enabled_tool_names=_enabled_tool_names,
                 explicit_override=_thread_override,
             )
-            _available_skills = [
-                sk for sk in _skills_for_chips.get_enabled_manual_skills_snapshot()
-                if not _skills_for_chips.is_tool_guide(sk)
-            ]
-            _active_skill_names = {"names": list(_skill_snap.active)}
+            from row_bot.skill_discovery import collect_enabled_skill_records
+
+            _available_skills = collect_enabled_skill_records(load_manual=False)
+            _available_skill_ids = {record.name for record in _available_skills}
+            _active_skill_names = {"names": list(dict.fromkeys([
+                *(
+                    name for name in _skill_snap.active
+                    if name in _available_skill_ids
+                ),
+                *(
+                    name for name in _get_auto_loaded_skill_ids(state.thread_id)
+                    if name in _available_skill_ids
+                ),
+            ]))}
             _draft_state = {"text": "", "version": 0, "suggestions_suppressed_text": ""}
             _chip_refresh_task: dict[str, asyncio.Task | None] = {"task": None}
 
@@ -1091,6 +1124,21 @@ def build_chat(
 
             def _active_name_set() -> set[str]:
                 return set(_active_skill_names.get("names") or [])
+
+            def _get_skill_for_chips(name: str):
+                for record in _available_skills:
+                    if record.name == name:
+                        return record
+                return _skills_for_chips.get_skill(name)
+
+            def _skill_source_label(skill) -> str:
+                plugin_name = str(getattr(skill, "plugin_name", "") or "").strip()
+                if plugin_name:
+                    return f"Plugin: {plugin_name}"
+                source = str(getattr(skill, "source", "") or "").strip()
+                if source.startswith("plugin:"):
+                    return f"Plugin: {source.removeprefix('plugin:')}"
+                return "Manual"
 
             def _skill_draft_key(text: str) -> str:
                 return re.sub(r"\s+", " ", str(text or "").strip()).lower()
@@ -1110,8 +1158,15 @@ def build_chat(
                 _render_skill_chips(_draft_state.get("text", ""))
 
             def _use_skill(name: str, *, source: str = "ui") -> None:
-                _pin_chat_skill(state.thread_id, name)
-                _record_skill_accept(state.thread_id, name, source=source)
+                if name.startswith("plugin:"):
+                    _load_auto_skill(
+                        state.thread_id,
+                        name,
+                        available_ids=_available_skill_ids,
+                    )
+                else:
+                    _pin_chat_skill(state.thread_id, name)
+                    _record_skill_accept(state.thread_id, name, source=source)
                 _active_skill_names["names"] = _ordered_skill_names(
                     [*_active_skill_names.get("names", []), name]
                 )
@@ -1121,7 +1176,10 @@ def build_chat(
                 _refresh_skill_chips_now()
 
             def _remove_skill(name: str) -> None:
-                _disable_chat_skill(state.thread_id, name)
+                if name in set(_get_auto_loaded_skill_ids(state.thread_id)):
+                    _remove_auto_loaded_skill(state.thread_id, name)
+                else:
+                    _disable_chat_skill(state.thread_id, name)
                 _active_skill_names["names"] = [
                     active_name
                     for active_name in _active_skill_names.get("names", [])
@@ -1177,10 +1235,14 @@ def build_chat(
                             limit=None,
                         )
                         ranked_names = [choice.name for choice in ranked_choices]
+                        for record in _available_skills:
+                            search_text = f"{record.name} {record.display_name} {record.description}".lower()
+                            if record.name not in ranked_names and (not query or query.lower() in search_text):
+                                ranked_names.append(record.name)
                         ranked_name_set = set(ranked_names)
 
                         active_skills = [
-                            _skills_for_chips.get_skill(name)
+                            _get_skill_for_chips(name)
                             for name in _active_skill_names.get("names", [])
                         ]
                         active_skills = [
@@ -1208,7 +1270,9 @@ def build_chat(
                                 ui.label("Active in this chat").classes("text-xs text-grey-5 text-uppercase")
                                 for sk in active_skills:
                                     with ui.row().classes("w-full items-center no-wrap q-pa-xs rounded-borders"):
-                                        ui.label(f"{sk.icon} {sk.display_name}").classes("text-sm text-weight-medium")
+                                        with ui.column().classes("gap-0"):
+                                            ui.label(f"{sk.icon} {sk.display_name}").classes("text-sm text-weight-medium")
+                                            ui.label(_skill_source_label(sk)).classes("text-xs text-grey-6")
                                         ui.space()
                                         ui.button("Remove", icon="close", on_click=lambda _, n=sk.name: (_remove_skill(n), dlg.close())).props(
                                             "flat dense no-caps size=sm"
@@ -1233,6 +1297,7 @@ def build_chat(
                                     with ui.row().classes("w-full items-center no-wrap q-pa-xs rounded-borders"):
                                         with ui.column().classes("gap-0"):
                                             ui.label(f"{sk.icon} {sk.display_name}").classes("text-sm text-weight-medium")
+                                            ui.label(_skill_source_label(sk)).classes("text-xs text-grey-6")
                                             if sk.description:
                                                 ui.label(sk.description).classes("text-xs text-grey-6")
                                         ui.space()
@@ -1258,7 +1323,7 @@ def build_chat(
                         ).classes("text-xs").tooltip("Choose skills for this chat")
 
                         for _name in _active_skill_names.get("names", []):
-                            _skill = _skills_for_chips.get_skill(_name)
+                            _skill = _get_skill_for_chips(_name)
                             _label = f"{_skill.icon} {_skill.display_name}" if _skill else _name
                             ui.button(
                                 _label,
@@ -1289,6 +1354,23 @@ def build_chat(
                 except Exception:
                     logger.debug("Smart Skills draft chip refresh failed", exc_info=True)
 
+            def _refresh_skill_chips_from_store() -> None:
+                latest = _get_skill_activation_snapshot(
+                    state.thread_id,
+                    current_text="",
+                    enabled_tool_names=_enabled_tool_names,
+                    explicit_override=get_thread_skills_override(state.thread_id),
+                )
+                _active_skill_names["names"] = _ordered_skill_names([
+                    *(name for name in latest.active if name in _available_skill_ids),
+                    *(
+                        name for name in _get_auto_loaded_skill_ids(state.thread_id)
+                        if name in _available_skill_ids
+                    ),
+                ])
+                _render_skill_chips(_draft_state.get("text", ""))
+
+            p.refresh_skill_chips = _refresh_skill_chips_from_store
             _render_skill_chips("")
 
             def _debounced_skill_chip_refresh(version: int) -> None:

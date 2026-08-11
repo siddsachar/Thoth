@@ -376,12 +376,6 @@ def _run_agent_sync(user_text: str, config: dict,
             event_queue.put((event_type, payload))
 
     answer = _assemble_telegram_agent_answer("".join(full_answer), tool_reports, setting_audits)
-    if interrupt_data is None and orchestration_runtime.finalize_channel_orchestration(
-        config,
-        answer,
-        enabled,
-    ):
-        answer = orchestration_runtime.orchestration_suspended_final()
 
     if event_queue is not None:
         event_queue.put(None)  # sentinel

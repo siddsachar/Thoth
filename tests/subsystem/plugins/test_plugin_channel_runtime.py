@@ -114,6 +114,47 @@ def test_plugin_channel_message_dispatches_to_agent(monkeypatch: pytest.MonkeyPa
     assert configurable["runtime_channel"] == "teams"
 
 
+def test_plugin_channel_delivers_unified_parent_progress_without_adapter_synthesis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_common_runtime(monkeypatch)
+    import row_bot.agent as agent
+    from row_bot.channels import runtime as channel_runtime
+    from row_bot.plugins.channel_runtime import handle_plugin_channel_message
+
+    def fake_stream_agent(_user_input: str, _enabled: list[str], _config: dict):
+        yield ("token", "I delegated two checks and will continue when they return.")
+        yield ("done", "I delegated two checks and will continue when they return.")
+        yield (
+            "orchestration_waiting",
+            {"orchestration_id": "orchestration-1", "output_kind": "progress"},
+        )
+
+    monkeypatch.setattr(agent, "stream_agent", fake_stream_agent)
+    monkeypatch.setattr(
+        channel_runtime,
+        "finalize_channel_orchestration",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("plugin adapters must not synthesize or suppress v2 output")
+        ),
+    )
+    recorder = CallbackRecorder()
+
+    result = asyncio.run(
+        handle_plugin_channel_message(
+            plugin_id="teams-plugin",
+            message=_message("delegate these checks"),
+            callbacks=ChannelOutboundCallbacks(send_text=recorder.texts.append),
+            channel=None,
+            enabled_tool_names=["agents"],
+            stream=False,
+        )
+    )
+
+    assert result.answer == "I delegated two checks and will continue when they return."
+    assert recorder.texts == [result.answer]
+
+
 def test_plugin_channel_slash_command_does_not_run_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

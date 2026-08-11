@@ -148,6 +148,7 @@ def test_custom_openai_endpoint_uses_configured_base_url(tmp_path, monkeypatch):
     from row_bot.providers.custom import custom_provider_id, save_custom_endpoint
 
     monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    monkeypatch.setenv("ROW_BOT_OPENAI_COMPATIBLE_READ_TIMEOUT", "720")
 
     save_custom_endpoint({
         "id": "local-vllm",
@@ -163,6 +164,7 @@ def test_custom_openai_endpoint_uses_configured_base_url(tmp_path, monkeypatch):
     assert model.base_url == "http://127.0.0.1:8000/v1"
     assert model.api_key == "not-needed"
     assert model.endpoint["provider_id"] == custom_provider_id("local-vllm")
+    assert model.timeout == 720.0
 
 
 def test_custom_endpoint_model_syncs_into_model_facade(tmp_path, monkeypatch):
@@ -1653,9 +1655,14 @@ def test_agent_graph_installs_custom_tool_validation_repair(tmp_path, monkeypatc
     ))
     import row_bot.plugins.registry as plugin_registry
 
-    monkeypatch.setattr(plugin_registry, "get_langchain_tools", lambda: [])
-    monkeypatch.setattr(plugin_registry, "get_destructive_names", lambda: set())
+    monkeypatch.setattr(plugin_registry, "get_langchain_tools", lambda *args, **kwargs: [])
+    monkeypatch.setattr(plugin_registry, "get_destructive_names", lambda *args, **kwargs: set())
+    from row_bot.channels import registry as channel_registry
+
+    monkeypatch.setattr(channel_registry, "running_channels", lambda: [])
+    monkeypatch.setattr(agent, "_build_runtime_skill_snapshot", lambda: ((), (), False, "none"))
     monkeypatch.setattr(agent, "create_react_agent", lambda **kwargs: SimpleNamespace(**kwargs))
+    agent._current_external_discovery_active_var.set(False)
 
     graph = agent.get_agent_graph(["duckduckgo"])
 
@@ -1701,7 +1708,19 @@ def test_openai_pre_model_trim_keeps_standard_skill_injections(tmp_path, monkeyp
     system_text = "\n".join(str(msg.content) for msg in result if msg.type == "system")
     assert "SELF_SENTINEL" in system_text
     assert "SKILL_SENTINEL" in system_text
-    assert "PLUGIN_SENTINEL" in system_text
+    assert "PLUGIN_SENTINEL" not in system_text
+
+
+def test_custom_endpoint_history_reserves_actual_bound_schema_tokens(monkeypatch):
+    import row_bot.agent as agent
+
+    monkeypatch.setattr(agent, "_active_custom_openai_provider", lambda: True)
+    agent._current_bound_tool_schema_tokens_var.set(9_000)
+
+    assert agent._agent_history_budget_tokens(32_768) == 17_720
+
+    monkeypatch.setattr(agent, "_active_custom_openai_provider", lambda: False)
+    assert agent._agent_history_budget_tokens(32_768) == int(32_768 * 0.85)
 
 
 def test_minimax_provider_raises_when_api_key_missing(monkeypatch):

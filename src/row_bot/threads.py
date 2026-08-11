@@ -880,6 +880,12 @@ def _delete_thread(thread_id: str):
         delete_thread_draft(thread_id)
     except Exception:
         pass
+    try:
+        from row_bot.skills_activation import delete_thread_activation_state
+
+        delete_thread_activation_state(thread_id)
+    except Exception:
+        logger.debug("Failed to clean up skill activation state for thread %s", thread_id, exc_info=True)
 
 
 def delete_threads(thread_ids: list[str]) -> tuple[int, list[tuple[str, str]]]:
@@ -1273,6 +1279,44 @@ def get_latest_checkpoint_messages(thread_id: str) -> list:
         str(thread_id)[:8],
     )
     return []
+
+
+def get_latest_checkpoint_revision(thread_id: str) -> str:
+    """Return a stable identity for the latest parent-thread checkpoint."""
+
+    if not thread_id:
+        return ""
+    config = {"configurable": {"thread_id": str(thread_id), "checkpoint_ns": ""}}
+    try:
+        checkpoint_tuple = checkpointer.get_tuple(config)
+        if not checkpoint_tuple:
+            return ""
+        tuple_config = getattr(checkpoint_tuple, "config", None) or {}
+        configurable = (
+            tuple_config.get("configurable", {})
+            if isinstance(tuple_config, dict)
+            else {}
+        )
+        checkpoint_id = str(configurable.get("checkpoint_id") or "").strip()
+        if checkpoint_id:
+            return checkpoint_id
+        checkpoint = getattr(checkpoint_tuple, "checkpoint", None)
+        if isinstance(checkpoint, dict):
+            fallback_id = str(checkpoint.get("id") or "").strip()
+            if fallback_id:
+                return fallback_id
+            message_version = (checkpoint.get("channel_versions") or {}).get(
+                "messages"
+            )
+            if message_version is not None:
+                return str(message_version)
+    except Exception:
+        logger.debug(
+            "Failed to read checkpoint revision for thread %s",
+            thread_id,
+            exc_info=True,
+        )
+    return ""
 
 
 def append_checkpoint_messages(thread_id: str, messages: list) -> bool:

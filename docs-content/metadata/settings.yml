@@ -15,11 +15,11 @@ tabs:
     docs_route: /docs/settings/documents
     screenshot_id: settings-documents
     source: src/row_bot/ui/settings.py
-  Search:
-    description: Configure search providers, browser automation, and knowledge/search
-      tools.
-    docs_route: /docs/settings/search
-    screenshot_id: settings-search
+  Tools:
+    description: Configure progressive external-tool loading, retrieval compression,
+      and search and knowledge tools.
+    docs_route: /docs/settings/tools
+    screenshot_id: settings-tools
     source: src/row_bot/ui/settings.py
   Skills:
     description: Enable, disable, pin, browse, and review Smart Skills.

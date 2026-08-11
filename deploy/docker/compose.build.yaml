@@ -1,0 +1,8 @@
+services:
+  secret-store-init:
+    image: row-bot:source-build
+  row-bot:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: row-bot:source-build

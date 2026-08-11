@@ -43,11 +43,44 @@ def test_public_docs_inventory_has_core_sections() -> None:
     assert any(page["path"] == "index.mdx" for page in inventory["docs_pages"])
     assert {item["tab"] for item in inventory["settings_controls"]} == {
         "Accounts", "Buddy", "Channels", "Documents", "Knowledge", "MCP",
-        "Models", "Plugins", "Preferences", "Providers", "Search", "Skills",
+        "Models", "Plugins", "Preferences", "Providers", "Skills", "Tools",
         "System", "Tracker", "Utilities", "Voice",
     }
     assert inventory["cli_options"]
     assert inventory["environment"]
+
+
+def test_progressive_tools_and_skills_are_documented_at_public_entry_points() -> None:
+    guide = (ROOT / "docs-site" / "docs" / "guides" / "progressive-tools-and-skills.mdx").read_text(
+        encoding="utf-8"
+    )
+    tools = (ROOT / "docs-site" / "docs" / "settings" / "tools.mdx").read_text(
+        encoding="utf-8"
+    )
+    skills = (ROOT / "docs-site" / "docs" / "skills" / "index.mdx").read_text(
+        encoding="utf-8"
+    )
+    docs_index = (ROOT / "docs-site" / "docs" / "index.mdx").read_text(encoding="utf-8")
+    marketing = (ROOT / "docs" / "features.html").read_text(encoding="utf-8")
+    generated_controls = (
+        ROOT / "docs-site" / "docs" / "reference" / "generated" / "settings-controls.mdx"
+    ).read_text(encoding="utf-8")
+
+    for phrase in (
+        "Auto-select external tools",
+        "Load all external tools",
+        "MCP servers, plugins, Custom Tools, and channels",
+        "Up to five automatically selected skills",
+        "cannot grant a tool that its profile denies",
+        "real integration name",
+    ):
+        assert phrase in guide
+    assert "progressive capability loading" in tools
+    assert "parent task or child Agent" in skills
+    assert "/docs/guides/progressive-tools-and-skills" in docs_index
+    assert "Progressive external tools" in marketing
+    assert "Auto-select external tools (recommended)" in generated_controls
+    assert "Load all external tools" in generated_controls
 
 
 def test_all_published_html_internal_links_resolve() -> None:
@@ -214,6 +247,8 @@ def test_mobile_screenshots_render_at_native_width() -> None:
     styles = (ROOT / "docs-site" / "src" / "css" / "custom.css").read_text(encoding="utf-8")
 
     assert "id.startsWith('mobile-')" in component
+    assert "const SCREENSHOT_REVISION = '4.6.0';" in component
+    assert ".png?v=${SCREENSHOT_REVISION}" in component
     assert "rowBotScreenshotMobile" in component
     assert "width={isMobile ? 390 : undefined}" in component
     assert ".rowBotScreenshotMobile" in styles
@@ -282,6 +317,57 @@ def test_docs_ci_build_regenerates_llm_exports_before_building() -> None:
     assert scripts["build:ci"].startswith("npm run generate:llms && ")
 
 
+def test_docs_workflow_uses_the_canonical_build_container() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
+    )
+    build_job = workflow["jobs"]["build"]
+    image = build_job["env"]["DOCS_NODE_IMAGE"]
+    platform = build_job["env"]["DOCS_NODE_PLATFORM"]
+    steps = build_job["steps"]
+    build_step = next(
+        step
+        for step in steps
+        if step["name"] == "Build and verify published docs in canonical container"
+    )
+
+    assert image == "node:20.20.2-bookworm"
+    assert platform == "linux/amd64"
+    assert not any(
+        step.get("uses", "").startswith("actions/setup-node") for step in steps
+    )
+    assert "docker run --rm" in build_step["run"]
+    assert '"$DOCS_NODE_PLATFORM"' in build_step["run"]
+    assert '"$DOCS_NODE_IMAGE"' in build_step["run"]
+    assert "npm ci && npm run build:ci" in build_step["run"]
+    assert "sync_github_pages.py --check" in build_step["run"]
+    readme = (ROOT / "docs-site" / "README.md").read_text(encoding="utf-8")
+    assert image in readme
+    assert f"--platform {platform}" in readme
+
+
+def test_docs_build_inputs_have_canonical_line_endings() -> None:
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+
+    for pattern in (
+        "docs-content/**/*.md",
+        "docs-content/**/*.yml",
+        "docs-site/**/*.css",
+        "docs-site/**/*.js",
+        "docs-site/**/*.json",
+        "docs-site/**/*.md",
+        "docs-site/**/*.mdx",
+        "docs-site/**/*.ts",
+        "docs-site/**/*.tsx",
+        "docs/assets/**/*.js",
+        "docs/docs/**/*.html",
+        "docs/pagefind/**/*.js",
+        "docs/search/**/*.html",
+        "scripts/docs/**/*.py",
+    ):
+        assert f"{pattern} text eol=lf" in attributes
+
+
 def test_authoritative_surface_map_has_one_outcome_per_surface() -> None:
     data = yaml.safe_load(
         (ROOT / "docs-content" / "metadata" / "ui_surfaces.yml").read_text(encoding="utf-8")
@@ -337,7 +423,7 @@ def test_real_home_and_settings_tabs_have_routes() -> None:
         "Providers",
         "Models",
         "Documents",
-        "Search",
+        "Tools",
         "Skills",
         "System",
         "Accounts",

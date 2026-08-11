@@ -46,7 +46,7 @@ def _combined_text(messages) -> str:
     return "\n".join(_message_text(message) for message in messages)
 
 
-def test_plugin_skill_prompt_receives_active_profile_tool_allowlist(tmp_path, monkeypatch):
+def test_plugin_skill_prompt_is_not_injected_wholesale(tmp_path, monkeypatch):
     agent = _fresh_agent(tmp_path, monkeypatch)
 
     captured_allowlists: list[tuple[str, ...] | None] = []
@@ -109,10 +109,92 @@ def test_plugin_skill_prompt_receives_active_profile_tool_allowlist(tmp_path, mo
         ]
     })["llm_input_messages"]
 
-    assert captured_allowlists == [("filesystem",), ("rss_reader",), None]
+    assert captured_allowlists == []
     assert "RSS_PLUGIN_SKILL_SENTINEL" not in _combined_text(selected_without_plugin)
-    assert "RSS_PLUGIN_SKILL_SENTINEL" in _combined_text(selected_with_plugin)
-    assert "RSS_PLUGIN_SKILL_SENTINEL" in _combined_text(inherited)
+    assert "RSS_PLUGIN_SKILL_SENTINEL" not in _combined_text(selected_with_plugin)
+    assert "RSS_PLUGIN_SKILL_SENTINEL" not in _combined_text(inherited)
+
+
+def test_tool_guides_follow_effective_authorization_not_global_parent_names(tmp_path, monkeypatch):
+    agent = _fresh_agent(tmp_path, monkeypatch)
+
+    def fake_guides(_manual_names, *, active_tool_names=None) -> str:
+        active = set(active_tool_names or ())
+        return "\n".join(
+            sentinel
+            for parent, sentinel in (
+                ("filesystem", "FILESYSTEM_GUIDE_SENTINEL"),
+                ("mcp", "MCP_GUIDE_SENTINEL"),
+            )
+            if parent in active
+        )
+
+    monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
+    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
+    monkeypatch.setattr(agent, "get_current_model", lambda: "model:openai:gpt-4o")
+    monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
+    monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "openai")
+    monkeypatch.setattr(agent, "is_background_workflow", lambda: False)
+    monkeypatch.setattr("row_bot.self_knowledge.build_static_self_knowledge_block", lambda: "")
+    monkeypatch.setattr("row_bot.self_knowledge.build_dynamic_self_knowledge_block", lambda: "")
+    monkeypatch.setattr("row_bot.skills.get_skills_prompt", fake_guides)
+
+    def rendered_for(effective_parents: tuple[str, ...], budget_id: str):
+        agent._set_active_runtime_context(
+            thread_id=budget_id,
+            enabled_tool_names=("filesystem", "mcp"),
+        )
+        agent._current_effective_tool_parent_names_var.set(effective_parents)
+        agent._current_authorized_skill_records_var.set(())
+        return agent._pre_model_trim({
+            "execution_budget": agent.new_execution_budget(budget_id),
+            "messages": [SystemMessage(content="ROOT"), HumanMessage(content="Use tools.")],
+        })["llm_input_messages"]
+
+    filesystem_only = _combined_text(rendered_for(("filesystem",), "guide-filesystem"))
+    mcp_only = _combined_text(rendered_for(("mcp",), "guide-mcp"))
+
+    assert "FILESYSTEM_GUIDE_SENTINEL" in filesystem_only
+    assert "MCP_GUIDE_SENTINEL" not in filesystem_only
+    assert "MCP_GUIDE_SENTINEL" in mcp_only
+    assert "FILESYSTEM_GUIDE_SENTINEL" not in mcp_only
+
+
+def test_deferred_skill_prompt_failure_is_closed_without_dropping_core_guides(tmp_path, monkeypatch):
+    agent = _fresh_agent(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
+    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
+    monkeypatch.setattr(agent, "get_current_model", lambda: "model:openai:gpt-4o")
+    monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
+    monkeypatch.setattr(agent, "get_cloud_provider", lambda model: "openai")
+    monkeypatch.setattr(agent, "is_background_workflow", lambda: False)
+    monkeypatch.setattr("row_bot.self_knowledge.build_static_self_knowledge_block", lambda: "")
+    monkeypatch.setattr("row_bot.self_knowledge.build_dynamic_self_knowledge_block", lambda: "")
+    monkeypatch.setattr(
+        "row_bot.skills.get_skills_prompt",
+        lambda _manual_names, *, active_tool_names=None: "CORE_GUIDE_SENTINEL",
+    )
+    monkeypatch.setattr(
+        "row_bot.skill_discovery.render_active_skills_prompt",
+        lambda _records: (_ for _ in ()).throw(RuntimeError("render failed")),
+    )
+    monkeypatch.setattr(
+        "row_bot.plugins.registry.get_skills_prompt",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("broad fallback used")),
+    )
+    agent._set_active_runtime_context(thread_id="skill-fail-closed", enabled_tool_names=("filesystem",))
+    agent._current_effective_tool_parent_names_var.set(("filesystem",))
+    agent._current_authorized_skill_records_var.set(())
+
+    rendered = agent._pre_model_trim({
+        "execution_budget": agent.new_execution_budget("skill-fail-closed"),
+        "messages": [SystemMessage(content="ROOT"), HumanMessage(content="Use tools.")],
+    })["llm_input_messages"]
+    combined = _combined_text(rendered)
+
+    assert "CORE_GUIDE_SENTINEL" in combined
+    assert "## Skills" not in combined
 
 
 def test_anthropic_cache_markers_stay_on_stable_system_context_only(tmp_path, monkeypatch):

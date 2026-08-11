@@ -264,7 +264,6 @@ def test_plugin_rich_return_markers_are_rendered_in_streaming_and_reload_paths()
 def test_agent_collects_plugin_destructive_tool_names() -> None:
     agent = (REPO_ROOT / "src" / "row_bot" / "agent.py").read_text(encoding="utf-8")
 
-    assert "plugin_registry_mod.get_destructive_names()" in agent
     assert "plugin_registry_mod.get_destructive_names(allow_names=allow_set)" in agent
 
 

@@ -176,8 +176,11 @@ body:has(.row-bot-mobile-root) main {
     overflow: hidden;
 }
 .row-bot-mobile-composer {
+    box-sizing: border-box;
     flex: 0 0 auto;
-    padding: 6px 10px max(8px, env(safe-area-inset-bottom));
+    min-width: 0;
+    max-width: 100%;
+    padding: 6px max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
     border-top: 1px solid rgba(255,255,255,0.08);
     background: #10191c;
 }
@@ -200,6 +203,9 @@ body:has(.row-bot-mobile-root) main {
     white-space: nowrap;
 }
 .row-bot-mobile-action-row {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
     min-width: 0;
     overflow: hidden;
 }
@@ -237,6 +243,14 @@ body:has(.row-bot-mobile-root) main {
     white-space: nowrap;
 }
 .row-bot-mobile-action-row > .q-btn {
+    flex: 0 0 auto;
+}
+.row-bot-mobile-action-row > .row-bot-mobile-model-pill {
+    flex: 1 1 0;
+    width: 0;
+    overflow: hidden;
+}
+.row-bot-mobile-send-button {
     flex: 0 0 auto;
 }
 .row-bot-mobile-policy-chip {
@@ -643,6 +657,15 @@ def _build_chat_start(
     from row_bot.threads import _list_threads
 
     threads = _safe_call("threads", lambda: _list_threads(include_details=True), [])[:8]
+    try:
+        from row_bot.agent_orchestrator import get_thread_orchestration_activity
+
+        orchestration_activity = get_thread_orchestration_activity(
+            [str(row[0]) for row in threads]
+        )
+    except Exception:
+        logger.debug("Could not load mobile Agent activity", exc_info=True)
+        orchestration_activity = {}
     ui.label("Recent chats").classes("text-subtitle2 q-mt-sm")
     if not threads:
         ui.label("No chats yet.").classes("text-grey-6 text-sm")
@@ -650,8 +673,18 @@ def _build_chat_start(
         thread_id = str(row[0])
         name = str(row[1] or "Untitled")
         updated = str(row[3] or "")
+        agent_activity = orchestration_activity.get(thread_id) or {}
+        agent_is_blocking = bool(
+            agent_activity.get("blocking")
+            and str(agent_activity.get("state") or "") == "active"
+        )
         with ui.row().classes("row-bot-mobile-thread-row w-full items-center gap-2 no-wrap"):
-            ui.icon("chat_bubble_outline").classes("text-grey-6")
+            if agent_is_blocking:
+                ui.spinner("oval", size="xs", color="primary").props(
+                    'role="status" aria-label="Child Agents working"'
+                ).tooltip("Child Agents working")
+            else:
+                ui.icon("chat_bubble_outline").classes("text-grey-6")
             with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
                 ui.label(name).classes("text-sm ellipsis")
                 ui.label(updated).classes("text-grey-6 text-xs")

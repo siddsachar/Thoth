@@ -129,12 +129,13 @@ function fakeLink(dataset, href) {
     const attributes = {};
     return {
         dataset: {...dataset},
+        listeners: {},
         href,
         textContent: 'Static fallback',
         innerHTML: 'Static fallback',
         target: '',
         classList: { toggle() {} },
-        addEventListener() {},
+        addEventListener(name, handler) { this.listeners[name] = handler; },
         removeAttribute(name) {
             delete attributes[name];
             if (name === 'data-desktop-download') delete this.dataset.desktopDownload;
@@ -143,6 +144,85 @@ function fakeLink(dataset, href) {
         hasAttribute(name) { return Object.hasOwn(attributes, name); },
     };
 }
+
+function evaluateTrackedClick(selector, dataset, href) {
+    const link = fakeLink(dataset, href);
+    const events = [];
+    const documentElement = {dataset: {}, clientHeight: 900, scrollHeight: 900, scrollTop: 0};
+    const document = {
+        documentElement,
+        body: {},
+        head: null,
+        activeElement: null,
+        addEventListener() {},
+        querySelector() { return null; },
+        querySelectorAll(query) { return query === selector ? [link] : []; },
+    };
+    const runtimeWindow = {
+        navigator: defaultNavigator,
+        screen: {width: 1920, height: 1080},
+        document,
+        location: {href: 'https://row-bot.ai/', pathname: '/'},
+        gtag(...args) { events.push(args); },
+        matchMedia() { return {matches: false, addEventListener() {}}; },
+        addEventListener() {},
+        setTimeout() {},
+    };
+    vm.runInNewContext(siteScript, {
+        window: runtimeWindow,
+        document,
+        navigator: defaultNavigator,
+        URL,
+        console,
+    });
+    link.listeners.click({
+        button: 0,
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+        altKey: false,
+        preventDefault() {},
+    });
+    return {events: JSON.parse(JSON.stringify(events)), runtimeWindow};
+}
+
+const downloadTracking = evaluateTrackedClick(
+    '[data-desktop-download]',
+    {desktopDownload: 'windows', placement: 'final_install'},
+    'https://github.com/siddsachar/row-bot/releases/download/v4.6.0/Row-Bot-4.6.0-Windows-x64.exe',
+);
+assert.deepEqual(downloadTracking.events[0], [
+    'event',
+    'desktop_download_click',
+    {platform: 'windows', cta_placement: 'final_install'},
+]);
+assert.equal(downloadTracking.events[1][0], 'event');
+assert.equal(downloadTracking.events[1][1], 'conversion');
+assert.equal(downloadTracking.events[1][2].send_to, 'AW-847204616/Lci7CNmwyOwBEIii_ZMD');
+assert.equal(downloadTracking.runtimeWindow.ROW_BOT_GA_MEASUREMENT_ID, 'G-0YYKPX5M5E');
+assert.equal(downloadTracking.runtimeWindow.ROW_BOT_GOOGLE_ADS_ID, 'AW-847204616');
+
+const linuxTracking = evaluateTrackedClick(
+    '[data-linux-install]',
+    {placement: 'platform_selector'},
+    '#install',
+);
+assert.deepEqual(linuxTracking.events, [[
+    'event',
+    'linux_install_view',
+    {platform: 'linux', cta_placement: 'platform_selector'},
+]]);
+
+const docsTracking = evaluateTrackedClick(
+    '[data-install-docs]',
+    {placement: 'mobile_handoff'},
+    'docs/getting-started/installation/',
+);
+assert.deepEqual(docsTracking.events, [[
+    'event',
+    'installation_docs_open',
+    {cta_placement: 'mobile_handoff'},
+]]);
 
 function evaluateCtas({navigator: runtimeNavigator, screen, pathname, coarse = false}) {
     const links = [

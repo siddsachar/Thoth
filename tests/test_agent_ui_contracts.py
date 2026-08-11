@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path("src/row_bot")
@@ -8,6 +9,48 @@ ROOT = Path("src/row_bot")
 
 def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_shared_chat_surface_binds_checkpoint_reconciliation_state():
+    from row_bot.ui.chat_components import _bind_shared_transcript_state
+    from row_bot.ui.transcript import message_keys
+
+    surface = SimpleNamespace(
+        transcript_thread_id="stale-thread",
+        transcript_generation=4,
+        transcript_rendered_keys=["stale"],
+        transcript_window_start=10,
+        transcript_window_size=1,
+        transcript_total=99,
+    )
+    state = SimpleNamespace(thread_id="developer-thread")
+    messages = [
+        {"role": "user", "content": "Build the calculator"},
+        {"role": "assistant", "content": "Inspection is still active"},
+    ]
+
+    _bind_shared_transcript_state(surface, state, messages)
+
+    assert surface.transcript_thread_id == "developer-thread"
+    assert surface.transcript_generation == 5
+    assert surface.transcript_rendered_keys == message_keys(messages)
+    assert surface.transcript_window_start == 0
+    assert surface.transcript_window_size == 2
+    assert surface.transcript_total == 2
+
+
+def test_terminal_orchestration_never_offers_stop_for_stale_active_counts():
+    from row_bot.ui.agent_drawer import (
+        agent_retry_available,
+        orchestration_group_control,
+    )
+
+    assert orchestration_group_control("stopped", {"active": 1}) == ""
+    assert orchestration_group_control("completed_partial", {"active": 2}) == ""
+    assert orchestration_group_control("waiting_children", {"active": 1}) == "stop_all"
+    assert agent_retry_available("stopped", "waiting_children") is True
+    assert agent_retry_available("failed", "completed_partial") is False
+    assert agent_retry_available("stopped", "stopped") is False
 
 
 def test_activity_center_uses_current_agent_goal_runs_and_channel_monitor():
@@ -114,7 +157,10 @@ def test_profile_library_lives_in_left_sidebar():
     assert "_create_profile_chat_thread" in library
     assert "skills_override" in library
     assert "Pinned skills for this profile" in library
-    assert "Smart skill suggestions still work normally" in library
+    assert "Selected skills start active when this profile is used" in library
+    assert "Tool access remains the hard runtime boundary" in library
+    assert "collect_enabled_skill_records" in library
+    assert "Unavailable" in library
     assert "File editing workspace" in library
     assert "Use Worktree" in library
     assert "Child Agent" in task_dialog
@@ -175,6 +221,17 @@ def test_channel_monitor_component_preserves_channel_contract():
     assert "safe_timer(5.0" in src
     assert "telegram" in src
     assert "whatsapp" in src
+
+
+def test_transcript_uses_one_standalone_actionable_child_approval_card():
+    src = _read("ui/render.py")
+    agent_card = src.split("def _render_agent_run_card", 1)[1].split(
+        "def _agent_card_runs_from_tool_results",
+        1,
+    )[0]
+
+    assert "_render_approval_request_card" not in agent_card
+    assert 'if role == "assistant" and msg.get("approval_request_id")' in src
 
 
 def test_global_profile_picker_contract():
@@ -243,6 +300,13 @@ def test_agent_drawer_contract_and_surface_usage():
     app = Path("src/row_bot/app.py").read_text(encoding="utf-8")
 
     assert "build_parent_agent_drawer" in drawer
+    assert "Ã‚" not in drawer
+    assert "Â" not in drawer
+    assert "orchestration_status_label" in drawer
+    assert "orchestration_group_control" in drawer
+    assert "Cancel final answer" in drawer
+    assert '"min-height: 30px; flex-wrap: wrap;"' in drawer
+    assert "-webkit-line-clamp: 2" in drawer
     assert "open_agent_peek_dialog" in drawer
     assert "open_in_new" in drawer
     assert "_open_agent_thread" in drawer
@@ -263,6 +327,8 @@ def test_agent_drawer_contract_and_surface_usage():
     assert "difference" in drawer
     assert "Open worktree" in drawer
     assert "Compare" in drawer
+    assert "model_iterations_used" not in drawer
+    assert "delegation depth" not in drawer
     assert "open_agent_thread" in drawer
     assert "_get_thread_developer_workspace" in drawer
     assert "_get_thread_type" in drawer
@@ -283,8 +349,22 @@ def test_agent_drawer_contract_and_surface_usage():
     assert "agent_child_open" not in chat
 
     streaming = _read("ui/streaming.py")
+    render = _read("ui/render.py")
+    assert "model_iterations_used" not in render
+    assert "delegation depth" not in render
     assert "def _detach_if_thread_changed" in streaming
     assert '_detach_if_thread_changed(gen, state, "active thread changed")' in streaming
+
+
+def test_code_highlighting_only_processes_plain_unhighlighted_nodes():
+    head = _read("ui/head_html.py")
+    render = _read("ui/render.py").replace('\\"', '"')
+    streaming = _read("ui/streaming.py").replace('\\"', '"')
+
+    assert 'pre code:not([data-highlighted="yes"])' in head
+    assert "el.children.length" in head
+    assert 'pre code:not([data-highlighted="yes"])' in render
+    assert 'pre code:not([data-highlighted="yes"])' in streaming
 
 
 def test_shared_goal_ui_is_used_by_all_chat_surfaces():
@@ -381,6 +461,28 @@ def test_main_shell_reserves_fixed_drawers_and_activity_center_width():
     assert "__rowBotApplyDrawerOverlapGuard" in command_center
 
 
+def test_activity_center_uses_responsive_drawer_with_narrow_screen_toggle():
+    command_center = _read("ui/command_center.py")
+
+    assert "ui.right_drawer(value=False, fixed=True)" in command_center
+    assert "show-if-above breakpoint=900" in command_center
+    assert ".row-bot-activity-mobile-toggle.q-btn" in command_center
+    assert "@media (max-width: 900px)" in command_center
+    assert 'ui.button(icon="pending_actions", on_click=drawer.toggle)' in command_center
+    assert "aria-label='Toggle Activity Center'" in command_center
+
+
+def test_sidebar_uses_responsive_drawer_with_narrow_screen_toggle():
+    sidebar = _read("ui/sidebar.py")
+
+    assert "ui.left_drawer(value=False, fixed=True)" in sidebar
+    assert "show-if-above breakpoint=900" in sidebar
+    assert ".row-bot-navigation-mobile-toggle.q-btn" in sidebar
+    assert "@media (max-width: 900px)" in sidebar
+    assert 'ui.button(icon="menu", on_click=drawer.toggle)' in sidebar
+    assert "aria-label='Toggle navigation'" in sidebar
+
+
 def test_sidebar_hides_child_agent_threads_by_default():
     src = _read("ui/sidebar.py")
 
@@ -407,13 +509,64 @@ def test_sidebar_hides_child_agent_threads_by_default():
 
 def test_agent_card_uses_compact_peek_contract():
     src = _read("ui/render.py")
+    head = _read("ui/head_html.py")
+    agent_card = src.split("def _render_agent_run_card", 1)[1].split(
+        "def _current_agent_run_for_card",
+        1,
+    )[0]
+    status_colors = src.split("def _agent_status_color", 1)[1].split(
+        "def _short_text",
+        1,
+    )[0]
 
-    assert "open_agent_peek_dialog" in src
-    assert "Peek Agent activity" in src
+    assert "open_agent_peek_dialog" in agent_card
     assert "Open thread" in src
     assert "Open worktree" in src
     assert "Compare" in src
     assert "agent_lifecycle" in src
-    assert "-webkit-line-clamp: 2" in src
+    assert agent_card.count("ui.button(") == 1
+    assert "row-bot-agent-run-stud" in agent_card
+    assert 'ui.icon("hub", size="17px")' in agent_card
+    assert 'ui.label(name).classes("row-bot-agent-run-name' in agent_card
+    assert "row-bot-agent-run-status-dot" in agent_card
+    assert 'role="img" aria-label="Agent status: {status_label}"' in agent_card
+    assert "rid or row" in agent_card
+    assert "row-bot-agent-run-list w-full items-center flex-wrap gap-1" in src
+    assert ".row-bot-agent-run-stud.q-btn:hover" in head
+    assert ".row-bot-agent-run-stud.q-btn:focus-visible" in head
+    assert "text-overflow: ellipsis" in head
+    assert "transition: none !important" in head
+    for durable_status in (
+        "queued",
+        "running",
+        "waiting_approval",
+        "waiting_user",
+        "paused",
+        "interrupted",
+        "completed",
+        "completed_delivery_failed",
+        "failed",
+        "stopped",
+        "blocked",
+        "timed_out",
+        "cancelled",
+    ):
+        assert f'"{durable_status}"' in status_colors
+    assert 'run.get("status_message")' not in agent_card
+    assert 'run.get("summary")' not in agent_card
+    assert 'run.get("latest_parent_message")' not in agent_card
+    assert "ui.badge(" not in agent_card
+    assert "profile_label" not in agent_card
+    assert "turns_used" not in agent_card
+    assert "max_turns" not in agent_card
+    assert "workspace_details" not in agent_card
+    assert "_open_agent_worktree" not in agent_card
+    assert "_show_agent_worktree_compare" not in agent_card
+    assert "agent_result_use_available" not in agent_card
+    assert "stop_agent_run" not in agent_card
+    assert 'icon="open_in_new"' not in agent_card
+    assert 'icon="content_copy"' not in agent_card
+    assert 'icon="summarize"' not in agent_card
+    assert 'icon="stop"' not in agent_card
     assert "Raw Agent tool output" in src
     assert "Open the full child thread from the Agents drawer" not in src

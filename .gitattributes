@@ -1,8 +1,34 @@
 *.sh text eol=lf
+.github/workflows/docs.yml text eol=lf
+docs-content/**/*.md text eol=lf
+docs-content/**/*.yml text eol=lf
+docs-content/**/*.yaml text eol=lf
+docs-site/**/*.css text eol=lf
+docs-site/**/*.js text eol=lf
+docs-site/**/*.json text eol=lf
+docs-site/**/*.md text eol=lf
+docs-site/**/*.mdx text eol=lf
+docs-site/**/*.svg text eol=lf
+docs-site/**/*.ts text eol=lf
+docs-site/**/*.tsx text eol=lf
+docs-site/**/*.txt text eol=lf
+docs-site/**/*.yml text eol=lf
+docs-site/**/*.yaml text eol=lf
+scripts/docs/**/*.py text eol=lf
+tests/docs/**/*.py text eol=lf
 docs/assets/** linguist-generated=true
+docs/assets/**/*.css text eol=lf
+docs/assets/**/*.js text eol=lf
+docs/assets/**/*.txt text eol=lf
 docs/docs/** linguist-generated=true
+docs/docs/**/*.html text eol=lf
+docs/docs/**/*.txt text eol=lf
 docs/img/** linguist-generated=true
 docs/pagefind/** linguist-generated=true -whitespace
+docs/pagefind/**/*.css text eol=lf
+docs/pagefind/**/*.js text eol=lf
+docs/pagefind/**/*.json text eol=lf
 docs/search/** linguist-generated=true
-docs/llms*.txt linguist-generated=true
-docs/sitemap.xml linguist-generated=true
+docs/search/**/*.html text eol=lf
+docs/llms*.txt linguist-generated=true text eol=lf
+docs/sitemap.xml linguist-generated=true text eol=lf

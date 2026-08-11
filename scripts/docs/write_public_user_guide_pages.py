@@ -174,10 +174,11 @@ SETTINGS = {
         "desc": "Manage document ingestion, extraction, and vector indexing.",
         "shot": "settings-documents",
         "caption": "The Documents tab controls uploads, embedding models, indexed document state, and vector rebuild actions.",
-        "overview": "Documents let Row-Bot search files you add to its local document library. This is different from attaching a file to one chat: indexed documents become reusable context for future questions.",
+        "overview": "Documents let Row-Bot search files you add to its local document library. This is different from attaching a file to one chat: indexed documents become reusable context for future questions. Mixedbread Embed Large v1 is the recommended local embedding model; it is separate from the chat model and normal use loads it only from Row-Bot's private cache.",
         "controls": [
             "Upload documents adds files to Row-Bot-managed storage for indexing.",
             "Embedding provider and model controls choose how document chunks become searchable vectors.",
+            "Download model installs the selected local model, Retry local load retries a cached model, and Repair local model deliberately replaces a broken cache entry.",
             "Dimension override is for advanced embedding models that need a specific vector size.",
             "Batch size controls how much indexing work happens at once.",
             "Auto-unload local embedding resources releases local model memory after heavy document work.",
@@ -186,42 +187,42 @@ SETTINGS = {
             "Rebuild memory vectors refreshes memory search with the current embedding settings.",
         ],
         "workflow": [
-            "Choose an embedding provider before adding a large document library.",
+            "Keep the checked first-launch download, or choose Local runtime model and use Download model before adding a large document library.",
             "Upload a small test document and wait until it is indexed.",
             "Ask Chat a question that should require the document.",
             "Rebuild vectors only when you change embedding model settings or suspect stale search results.",
         ],
-        "saved": "Uploaded files, extracted text, and vectors are stored in the local Row-Bot data directory. The active chat only sees relevant results when document search is enabled.",
+        "saved": "Uploaded files, extracted text, vectors, and local embedding model caches are stored under the active Row-Bot data directory. In Docker, the named /data volume preserves the cache. The active chat only sees relevant results when document search is enabled. A cloud embedding provider is opt-in and sends indexed text to that provider; the recommended local model does not.",
         "troubleshoot": [
             "If search misses obvious content, rebuild vectors and check the embedding provider.",
+            "If the local model is missing, use Download model. Use Retry local load for a cached model or Repair local model for a damaged download.",
             "If local indexing is slow, lower batch size or enable auto-unload.",
             "If a document contains private material, remove it from the document library before sharing screenshots or logs.",
         ],
     },
-    "search": {
-        "title": "Settings: Search",
-        "desc": "Configure web research, local retrieval, browser automation, and search tools.",
-        "shot": "settings-search",
-        "caption": "The Search tab groups retrieval and research tools so users can decide what Row-Bot may look up.",
-        "overview": "Search controls what information Row-Bot can retrieve beyond the current conversation. Some search is local, such as document and memory retrieval; other search can contact external services or automate a browser.",
+    "tools": {
+        "title": "Settings: Tools",
+        "desc": "Configure progressive external-tool loading, retrieval compression, and search and knowledge tools.",
+        "shot": "settings-tools",
+        "caption": "The Tools tab includes progressive capability loading, retrieval compression, and search and knowledge tool controls.",
+        "overview": "Tools settings control how Row-Bot exposes enabled external capabilities to the model and configure its search and retrieval helpers.",
         "controls": [
-            "Web search provider choices decide whether Row-Bot can search the internet and which backend it uses.",
-            "Browser automation controls decide whether Row-Bot can open pages, inspect them, and interact with them when asked.",
-            "Knowledge and document search toggles decide whether local memory and document records can be considered during a response.",
-            "Result limits and ranking controls keep search focused when a query could return too much context.",
-            "Provider health indicators show whether the selected search path is available.",
+            "Auto-select external tools lets Row-Bot search enabled MCP, plugin, Custom Tool, and channel capabilities only when needed.",
+            "Load all external tools is the eager compatibility mode and can consume more model context.",
+            "Retrieval Compression controls how search results are filtered before reaching the model.",
+            "Search and Knowledge Tools enable or disable configured research and reference tools.",
         ],
         "workflow": [
-            "Leave web search off if you want local-only work.",
-            "Enable document and memory search when you want Row-Bot to use your local knowledge.",
-            "Enable browser automation only when you want Row-Bot to read or operate pages for you.",
-            "Review approval prompts before actions that submit forms, change state, or use account data.",
+            "Keep Auto-select external tools enabled for normal use.",
+            "Enable only the search and integration tools you intend Row-Bot to use.",
+            "Use eager mode temporarily when testing compatibility with an older model or integration.",
+            "Review approvals before actions that write, send, or change external state.",
         ],
-        "saved": "Search settings are global defaults. Individual prompts still matter: Row-Bot should only use external research when the request calls for it and the tools are enabled.",
+        "saved": "The capability-loading choice and tool settings are local global preferences. Per-task skill activation is stored separately and does not change this tool policy.",
         "troubleshoot": [
-            "If Row-Bot cannot browse, check browser automation readiness and approvals.",
-            "If web results are stale or absent, check the selected search provider.",
-            "If local retrieval feels noisy, reduce result limits or disable memory search for the task.",
+            "If an external tool is not found, check its integration configuration and the active Agent Profile.",
+            "If a provider rejects tool schemas, choose a compatible tool-capable model or temporarily test eager mode.",
+            "If retrieval is noisy, change compression mode or disable unnecessary search tools.",
         ],
     },
     "skills": {
@@ -229,13 +230,14 @@ SETTINGS = {
         "desc": "Enable, disable, pin, browse, and review Smart Skills.",
         "shot": "settings-skills",
         "caption": "The Skills tab shows installed skills, pinning controls, browsing entry points, and per-skill state.",
-        "overview": "Skills are instruction packs that teach Row-Bot how to handle a type of work. They do not run by themselves; they shape how Row-Bot plans, uses tools, and explains a task.",
+        "overview": "Skills are instruction packs that teach Row-Bot how to handle a type of work. They do not run by themselves; enabled skills may be searched and loaded automatically for a matching task.",
         "controls": [
             "Enable and disable controls decide whether Row-Bot may use a skill.",
             "Pinning keeps useful skills easy to find and can make them more likely to be suggested.",
             "Browse Skills opens Skills Hub for installed, bundled, local, and marketplace-style sources.",
             "Skill details show purpose, source, status, and whether the skill is safe to activate.",
             "Search and filters help find skills by task, source, or installed state.",
+            "Automatically loaded skills appear as an active chip in the task that selected them.",
         ],
         "workflow": [
             "Browse or search for a skill that matches the work.",
@@ -243,7 +245,7 @@ SETTINGS = {
             "Enable the skill, then start a chat or workflow that names the task.",
             "Disable skills you no longer want Row-Bot to consider.",
         ],
-        "saved": "Skill enablement and pins are local Row-Bot preferences. Some skills may also be selected at the thread level when a task needs them.",
+        "saved": "Skill enablement and pins are local Row-Bot preferences. Automatic selections are isolated per parent task or child Agent, restored when that task reopens, and bounded to five automatically selected skills per task.",
         "troubleshoot": [
             "If Row-Bot ignores a skill, check that it is enabled and relevant to the prompt.",
             "If a skill came from outside the app, review its instructions before enabling it.",
@@ -653,11 +655,11 @@ def main() -> int:
         """
 # Row-Bot Documentation
 
-Row-Bot is a local-first desktop AI assistant for people who want models, memory, tools, workflows, design, code help, integrations, and voice in one controllable app. This guide explains how to install Row-Bot, choose a model path, use the main interface, configure settings, and understand what happens when Row-Bot uses external services.
+Row-Bot is a local-first AI workbench for people who want provider-aware models, parent-led agents, durable documents, memory, tools, workflows, design, code help, integrations, and voice in one controllable system. Run it as a desktop application or a private authenticated server; this guide explains installation, Docker deployment, owner access, the main interface, settings, and every explicit external route.
 
-These pages describe Row-Bot 4.5.0, the current stable release represented by this source tree.
+These pages describe Row-Bot 4.6.0, the current stable release represented by this source tree.
 
-<Screenshot id="app-shell-overview" alt="Row-Bot main interface with sidebar, Home tabs, activity center, and terminal." caption="Row-Bot's main interface brings conversations, Home tabs, settings, Buddy, activity, approvals, workflows, and terminal output into one local workspace." />
+<Screenshot id="home-knowledge" alt="Row-Bot desktop workspace showing the Knowledge graph, conversations, tools, workflows, channels, Activity Center, and terminal." caption="The Knowledge workspace brings Row-Bot's local graph together with conversations, tools, workflows, channels, activity, approvals, and terminal output." />
 
 ## Start Here
 
@@ -665,7 +667,9 @@ These pages describe Row-Bot 4.5.0, the current stable release represented by th
 - [Row-Bot Interface](/docs/app-shell/navigation) tours the sidebar, thread list, Home tabs, Activity Center, Buddy, Settings, and terminal.
 - [Chat](/docs/chat/) explains conversations, composer controls, attachments, model selection, approvals, and tool results.
 - [Settings](/docs/settings/) explains every configuration tab and what each choice changes.
-- [Profiles, Goals, And Agents](/docs/profiles-goals-agents/) explains reusable roles, bounded goals, and delegated work.
+- [Profiles, Goals, And Agents](/docs/profiles-goals-agents/) explains reusable roles, bounded goals, parent-led work waves, dependencies, and recovery.
+- [Remote Access And Server Mode](/docs/operations/remote-access) explains invitations, sessions, Tailscale, LAN, HTTPS proxies, and browser-local voice.
+- [Docker And VPS Operations](/docs/operations/docker/) explains the official container, persistent data and secrets, backup, upgrade, and rollback.
 - [Computer Use](/docs/computer-use/) explains the opt-in native desktop tool, setup, live controls, and safety boundaries.
 
 ## Feature Guides
@@ -673,10 +677,11 @@ These pages describe Row-Bot 4.5.0, the current stable release represented by th
 - [Workflows](/docs/guides/workflows) for repeatable background work and scheduled agents.
 - [Designer Studio](/docs/designer/) for creating pages, slides, mockups, branded assets, and exportable designs.
 - [Developer Studio](/docs/developer/) for folders, repositories, code chat, inspectors, commands, and sandbox modes.
-- [Knowledge](/docs/knowledge/) for local memory, documents, graph review, and background organization.
+- [Knowledge](/docs/knowledge/) for local memory, durable document ingestion, graph review, and background organization.
 - [Computer Use](/docs/computer-use/) for target-window automation in native Windows and macOS applications.
-- [Android And Native Desktop](/docs/mobile-native/) for the full owner product in a compact mobile layout and native-only behaviour.
+- [Compact And Native Desktop Layouts](/docs/mobile-native/) for the same owner product across phone-safe and desktop presentations.
 - [Remote Access And Server Mode](/docs/operations/remote-access) for owner invitations, Tailscale, LAN, SSH, Docker, HTTPS proxies, and remote browser voice.
+- [Docker And VPS Operations](/docs/operations/docker/) for the official image, hardened Compose, credentials, backup, upgrade, rollback, and recovery.
 - [Monitor](/docs/monitor/) for logs, journals, channel state, and background activity.
 - [Skills Hub](/docs/skills/) for browsing, enabling, creating, and reviewing skills.
 - [Channels](/docs/integrations/channels), [MCP](/docs/integrations/mcp), and [Plugins](/docs/integrations/plugins) for integrations.
@@ -798,6 +803,16 @@ A model is the AI system that writes responses and reasons through tasks. Row-Bo
 
 For beginners, start with the provider path you already trust. If you are unsure, Ollama is the simplest local-first path, while an API provider is usually the quickest path to strong hosted models.
 
+## Install Private Knowledge Search
+
+Every normal desktop, source, and official Docker install uses the same setup step. The wizard offers **Mixedbread Embed Large v1**, a separate local model for semantic memory and document search, as a checked-by-default 675 MB download. It is not the model that writes chat responses.
+
+The download starts when you finish setup and requires internet access to Hugging Face. Files go into Row-Bot's private cache; documents and memories are not uploaded, and normal recall stays offline after the initial download. Docker keeps this cache in its named `/data` volume.
+
+You can uncheck the option and finish without it. Row-Bot continues with bounded lexical and graph fallback, so chat and memory do not stop working. Later, open [Settings → Documents](/docs/settings/documents) and use **Download model**. **Retry local load** retries an already cached model; **Repair local model** deliberately replaces a damaged download. Rebuild the document and memory vectors after changing the embedding provider or model.
+
+<Screenshot id="settings-documents" alt="Row-Bot Documents settings showing the Mixedbread local embedding model and download, retry, repair, and vector rebuild controls." caption="Settings → Documents shows whether the local embedding model is ready and provides explicit download, retry, repair, and index rebuild actions." />
+
 ## Setup Center
 
 <Screenshot id="setup-center" alt="Row-Bot Setup Center." caption="Setup Center lets you finish optional setup areas later without blocking the first chat." />
@@ -812,6 +827,7 @@ Local model runs can stay on your machine. Hosted, subscription, realtime voice,
 
 - If the wizard cannot find a local model, start Ollama and install a model first.
 - If a hosted provider connects but no models appear, refresh Providers and Models.
+- If the private knowledge model download fails, check internet access to Hugging Face and try finishing setup again, or uncheck it and install it later from Settings → Documents.
 - If you skip optional setup, open Setup Center or Settings later.
 """,
         screenshot=True,
@@ -1281,9 +1297,13 @@ Open Home -> Developer. Choose an existing folder, connect a repository already 
 
 ## Sandbox Modes
 
-Local mode lets Row-Bot operate in the selected workspace with your configured file and command permissions. Docker sandbox mode, when available, isolates command execution in a container and requires an import step before changes affect the real workspace. Docker is safer for risky commands but requires Docker setup and can differ from your local environment.
+Local mode lets Row-Bot operate in the selected workspace with your configured file and command permissions. Docker Sandbox mode, when available on a host installation, isolates command execution in a container and requires an import step before changes affect the real workspace. It requires a supported host Docker runtime and can differ from your local environment.
 
-For most users, start with local mode on a disposable branch. Use Docker when you want stronger isolation or are testing uncertain commands.
+Inside the official Row-Bot application container, Developer Docker Sandbox is unavailable and a requested Docker workspace fails closed; Row-Bot never probes a nested daemon or silently runs that workspace locally. Local mode remains an explicit choice and can see only workspace paths deliberately mounted into the application container.
+
+An approved risky Custom Tool is a third case: it deliberately executes in Local mode inside the application container against the selected visible Custom Tool path. That behavior is shown in the approval dialog and is not a nested Docker sandbox or fallback from a requested Docker workspace. See [Docker And VPS Operations](/docs/operations/docker#developer-and-headless-boundaries) for the complete container boundary.
+
+For a host installation, start with Local mode on a disposable branch. Use Docker Sandbox when you want stronger isolation and the supported host runtime is available.
 
 ## Troubleshooting
 
@@ -1413,7 +1433,7 @@ Authenticated owner sessions receive this complete Settings experience in both d
 - **Providers** connects local, hosted, subscription, and custom model providers.
 - **Models** chooses defaults and pinned Quick Choices.
 - **Documents** manages uploads, extraction, embeddings, and vector rebuilds.
-- **Search** controls web research, local retrieval, and browser automation.
+- **Tools** controls progressive external capability loading, retrieval compression, and search and knowledge tools.
 - **Skills** manages Smart Skills and Skills Hub access.
 - **System** configures local access, workspace boundaries, window behavior, tunnels, logs, and diagnostics.
 - **Accounts** connects account-level integrations.
@@ -1431,7 +1451,7 @@ Authenticated owner sessions receive this complete Settings experience in both d
 
 1. Providers
 2. Models
-3. Documents and Search
+3. Documents and Tools
 4. Skills
 5. System access
 6. Integrations: Accounts, Channels, MCP, Plugins
@@ -1708,7 +1728,7 @@ Computer Use is a distinct opt-in boundary. Row-Bot downloads the pinned Cua Dri
 
 ## Credentials
 
-Enter credentials only in the relevant Settings tab or provider sign-in flow. Row-Bot stores secrets in the operating system key store when available and keeps local metadata for status and diagnostics.
+Enter credentials only in the relevant Settings tab or provider sign-in flow. Row-Bot stores secrets in the operating system key store when available and keeps local metadata for status and diagnostics. An explicitly configured server deployment can use a read-only external master-key file to encrypt owner-entered secrets in its persistent data directory; see [Docker And VPS Operations](/docs/operations/docker#read-only-secret-files).
 
 ## Remote Access
 
@@ -1961,7 +1981,7 @@ Pairing grants access to your local Row-Bot instance. Do not share an invitation
 
 <Screenshot id="mobile-settings" alt="Android-sized Row-Bot Providers settings." caption="Mobile settings use the same provider categories and credential boundaries as desktop." />
 
-Mobile Settings includes Providers, Models, Knowledge, Buddy, Voice, System and Remote Access, Tracker, Documents, Search, Skills, Accounts, Channels, Utilities, MCP, Plugins, and Preferences. Rich Developer Studio and Designer Studio editors remain desktop-layout-oriented and show an explanatory notice in compact presentation.
+Mobile Settings includes Providers, Models, Knowledge, Buddy, Voice, System and Remote Access, Tracker, Documents, Tools, Skills, Accounts, Channels, Utilities, MCP, Plugins, and Preferences. Rich Developer Studio and Designer Studio editors remain desktop-layout-oriented and show an explanatory notice in compact presentation.
 
 ## Native-Only Checks
 
@@ -2131,6 +2151,8 @@ Row-Bot has several kinds of continuity. They work together, but none is a magic
 
 When extraction is enabled, Row-Bot can identify useful information from eligible conversations or documents and save structured records. Search combines the available lexical, vector, and graph signals to choose candidates relevant to a later request. Recall refreshes useful memories; it does not make every stored item equally likely to appear.
 
+Vector search uses an embedding model, which is separate from the chat model. First launch offers Mixedbread Embed Large v1 as a checked-by-default 675 MB local download. If it is skipped, unavailable, or still loading, Row-Bot continues with bounded lexical and graph fallback instead of silently downloading during a chat. Install, retry, or repair the local model later in [Documents Settings](/docs/settings/documents), then rebuild document and memory vectors after changing models. Cloud embeddings are an explicit alternative that sends indexed text to the selected provider.
+
 The source record matters. A graph relation or memory should remain traceable to the conversation, document, or process that produced it. Correct the underlying Knowledge record before rebuilding derived indexes or Wiki Vault pages.
 
 ## What Dream Cycle Does
@@ -2284,6 +2306,8 @@ Row-Bot is local-first, so operational safety starts with knowing which data dir
 ## Remote Access And Server Operations
 
 Use [Remote Access And Server Mode](/docs/operations/remote-access) for the complete guide to one-time invitations, desktop and compact owner sessions, Tailscale Serve, LAN, SSH forwarding, Docker, HTTPS reverse proxies, browser-local voice, access recovery, and proxy error diagnostics.
+
+Use [Docker And VPS Operations](/docs/operations/docker) for pull-first Compose startup, release and digest pins, persistent volumes, offline backup and restore, explicit upgrade and rollback, host Caddy or Tailscale, secret-file mounts, and container-specific Developer boundaries.
 
 Remote access remains off by default in ordinary desktop launches. Server operators should back up access state with the rest of the active data directory, keep one worker, publish one canonical origin, terminate remote traffic with HTTPS, and trust only the exact reverse proxy that connects to Row-Bot.
 

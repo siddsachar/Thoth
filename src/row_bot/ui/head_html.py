@@ -6,7 +6,7 @@ vis-network, and custom Row-Bot styles/scripts.
 
 from __future__ import annotations
 
-from row_bot.brand import APP_BRAND_ACCENT
+from row_bot.brand import APP_BRAND_ACCENT, APP_BRAND_ACCENT_RGB
 from nicegui import ui
 
 HEAD_HTML = """\
@@ -94,16 +94,19 @@ mermaid.initialize({
   ['keydown', 'pointerdown', 'input', 'wheel'].forEach(function(name) {
     window.addEventListener(name, function() { reportActivity(name); }, {passive: true, capture: true});
   });
-  new MutationObserver(function() {
-    try {
-      var body = document.body;
-      if (!body) return;
-      var text = body.innerText || '';
-      if (text.indexOf('trying to connect') !== -1 || text.indexOf('Disconnected') !== -1) {
-        reportConnectionState('NiceGUI client reconnecting');
-      }
-    } catch (err) {}
-  }).observe(document.documentElement, {childList: true, subtree: true, characterData: true});
+  var connectionObserverRoot = document.documentElement;
+  if (connectionObserverRoot instanceof Node) {
+    new MutationObserver(function() {
+      try {
+        var body = document.body;
+        if (!body) return;
+        var text = body.innerText || '';
+        if (text.indexOf('trying to connect') !== -1 || text.indexOf('Disconnected') !== -1) {
+          reportConnectionState('NiceGUI client reconnecting');
+        }
+      } catch (err) {}
+    }).observe(connectionObserverRoot, {childList: true, subtree: true, characterData: true});
+  }
 })();
 </script>
 <script>
@@ -115,6 +118,7 @@ mermaid.initialize({
     if (typeof hljs === 'undefined') return;
     document.querySelectorAll('pre code:not([data-highlighted="yes"])').forEach(function(el) {
       if (el.closest('.row-bot-live-stream')) return;
+      if (el.children.length) return;
       try { hljs.highlightElement(el); } catch (err) {}
     });
   }
@@ -124,9 +128,12 @@ mermaid.initialize({
       requestAnimationFrame(highlightCodeBlocks);
     }, 80);
   };
-  new MutationObserver(function() {
-    window.rowBotHighlightCodeBlocks();
-  }).observe(document.documentElement, {childList: true, subtree: true});
+  var highlightObserverRoot = document.documentElement;
+  if (highlightObserverRoot instanceof Node) {
+    new MutationObserver(function() {
+      window.rowBotHighlightCodeBlocks();
+    }).observe(highlightObserverRoot, {childList: true, subtree: true});
+  }
   window.addEventListener('load', window.rowBotHighlightCodeBlocks);
   window.rowBotHighlightCodeBlocks();
 })();
@@ -165,17 +172,20 @@ mermaid.initialize({
       requestAnimationFrame(function() { window.rowBotNormalizeMermaidDiagrams(root); });
     }).catch(function() {});
   };
-  new MutationObserver(function() {
-    var nodes = Array.from(document.querySelectorAll('pre.mermaid')).filter(function(node) {
-      return !node.closest('.row-bot-live-stream');
-    });
-    if (nodes.length > 0) {
-      clearTimeout(_mermaidTimer);
-      _mermaidTimer = setTimeout(function() {
-        window.rowBotRenderMermaidDiagrams(document);
-      }, 150);
-    }
-  }).observe(document.documentElement, {childList: true, subtree: true});
+  var mermaidObserverRoot = document.documentElement;
+  if (mermaidObserverRoot instanceof Node) {
+    new MutationObserver(function() {
+      var nodes = Array.from(document.querySelectorAll('pre.mermaid')).filter(function(node) {
+        return !node.closest('.row-bot-live-stream');
+      });
+      if (nodes.length > 0) {
+        clearTimeout(_mermaidTimer);
+        _mermaidTimer = setTimeout(function() {
+          window.rowBotRenderMermaidDiagrams(document);
+        }, 150);
+      }
+    }).observe(mermaidObserverRoot, {childList: true, subtree: true});
+  }
 })();
 </script>
 <style>
@@ -302,6 +312,85 @@ mermaid.initialize({
     .row-bot-msg-body .nicegui-code pre {
         white-space: pre-wrap;
         word-break: break-all;
+    }
+    /* Tool traces are secondary transcript metadata. Keep their collapsed
+       controls close to the compact progressive-skill marker without
+       muting the result content revealed inside each expansion. */
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item {
+        min-height: 30px;
+        padding: 2px 4px;
+        color: #9e9e9e;
+    }
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item .q-item__label,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item .q-item__label {
+        font-size: 0.75rem;
+        font-weight: 400;
+        line-height: 1.1rem;
+    }
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item .q-icon,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item .q-icon {
+        color: #9e9e9e;
+        font-size: 15px;
+    }
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item .q-item__section--avatar,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item .q-item__section--avatar {
+        min-width: 24px;
+        padding-right: 4px;
+    }
+    .row-bot-tool-trace > .q-expansion-item__container > .q-item .q-item__section--side,
+    .row-bot-tool-trace-item > .q-expansion-item__container > .q-item .q-item__section--side {
+        padding-left: 4px;
+    }
+    .row-bot-agent-run-list {
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+    .row-bot-agent-run-stud.q-btn {
+        flex: 0 1 auto;
+        width: auto;
+        min-width: 0;
+        max-width: min(100%, 300px);
+        min-height: 30px;
+        padding: 3px 8px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.055);
+        color: #d8dee9;
+        box-shadow: none;
+        transition: none !important;
+    }
+    .row-bot-agent-run-stud.q-btn .q-btn__content {
+        width: 100%;
+        min-width: 0;
+        flex-wrap: nowrap;
+        gap: 0.375rem;
+    }
+    .row-bot-agent-run-stud.q-btn .q-focus-helper {
+        transition: none !important;
+    }
+    .row-bot-agent-run-stud.q-btn:hover {
+        border-color: rgba(__ROW_BOT_BRAND_ACCENT_RGB__, 0.34);
+        background: rgba(__ROW_BOT_BRAND_ACCENT_RGB__, 0.09);
+    }
+    .row-bot-agent-run-stud.q-btn:focus-visible {
+        outline: 2px solid rgba(__ROW_BOT_BRAND_ACCENT_RGB__, 0.78);
+        outline-offset: 2px;
+    }
+    .row-bot-agent-run-name {
+        min-width: 0;
+        max-width: 240px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .row-bot-agent-run-status-dot {
+        flex: 0 0 7px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
     }
     .row-bot-typing .dots span {
         animation: tblink 1.4s infinite both;
@@ -549,7 +638,10 @@ window.rowBotCloseManagedWindow = async function(name) {
 })();
 </script>
 """
-HEAD_HTML = HEAD_HTML.replace("__ROW_BOT_BRAND_ACCENT__", APP_BRAND_ACCENT)
+HEAD_HTML = HEAD_HTML.replace("__ROW_BOT_BRAND_ACCENT__", APP_BRAND_ACCENT).replace(
+    "__ROW_BOT_BRAND_ACCENT_RGB__",
+    APP_BRAND_ACCENT_RGB,
+)
 
 
 def inject_head_html() -> None:

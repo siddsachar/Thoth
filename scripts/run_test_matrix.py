@@ -32,7 +32,14 @@ def _cmd(name: str, *argv: str, env: dict[str, str] | None = None) -> CommandSpe
 
 
 TEST_ENV = {
-    "ROW_BOT_DATA_DIR": str(REPO_ROOT / ".tmp" / "matrix_row_bot"),
+    "ROW_BOT_DATA_DIR": str(
+        Path(
+            os.environ.get(
+                "ROW_BOT_MATRIX_DATA_DIR",
+                str(REPO_ROOT / ".tmp" / "matrix_row_bot"),
+            )
+        )
+    ),
     "ROW_BOT_TEST_MODE": "1",
 }
 

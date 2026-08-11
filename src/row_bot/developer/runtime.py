@@ -54,6 +54,22 @@ _SHELL_CONTROL_OPERATORS = ("&&", "||", "|", ">", "<")
 _ACTIVE_PROCESSES: dict[str, list[subprocess.Popen]] = {}
 
 
+def _unresolved_workspace_result(
+    *,
+    command: str,
+    root: pathlib.Path,
+    workspace_id: str,
+) -> CommandResult:
+    reason = f"Developer workspace could not be resolved: {workspace_id}"
+    return CommandResult(
+        command=command,
+        cwd=str(root),
+        returncode=None,
+        stderr=reason,
+        decision=ApprovalDecision("block", reason),
+    )
+
+
 def split_command(command: str) -> list[str]:
     """Split a simple command without invoking the platform shell."""
     return shlex.split(command, posix=True)
@@ -211,6 +227,12 @@ def run_workspace_command(
             workspace = get_workspace(workspace_id)
         except Exception:
             workspace = None
+        if workspace is None:
+            return _unresolved_workspace_result(
+                command=command,
+                root=root,
+                workspace_id=workspace_id,
+            )
     decision = decide_action(approval_mode, action)  # type: ignore[arg-type]
     decision = _apply_docker_network_policy(workspace, action, decision)
     if decision.decision != "allow":
@@ -297,11 +319,19 @@ def run_workspace_shell_command(
         raise ValueError(f"Workspace folder does not exist: {workspace_path}")
 
     action = classify_command_action(command)
-    try:
-        from row_bot.developer.storage import get_workspace
-        workspace = get_workspace(workspace_id)
-    except Exception:
-        workspace = None
+    workspace = None
+    if workspace_id:
+        try:
+            from row_bot.developer.storage import get_workspace
+            workspace = get_workspace(workspace_id)
+        except Exception:
+            workspace = None
+    if workspace_id and workspace is None:
+        return _unresolved_workspace_result(
+            command=command,
+            root=root,
+            workspace_id=workspace_id,
+        )
     decision = decide_action(approval_mode, action)  # type: ignore[arg-type]
     decision = _apply_docker_network_policy(workspace, action, decision)
     if decision.requires_approval and confirmed:
@@ -534,6 +564,12 @@ def start_workspace_process(
             workspace = get_workspace(workspace_id)
         except Exception:
             workspace = None
+        if workspace is None:
+            return _unresolved_workspace_result(
+                command=command,
+                root=root,
+                workspace_id=workspace_id,
+            )
         if workspace is not None and workspace.execution_mode == "docker":
             from row_bot.developer.sandbox_runtime import start_docker_sandbox_process
 

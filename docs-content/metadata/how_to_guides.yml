@@ -119,6 +119,17 @@ guides:
     - src/row_bot/access/
     - src/row_bot/ui/remote_access_settings.py
     - deploy/docker/README.md
+  operate-docker-vps:
+    title: Operate Row-Bot With Docker Or A VPS
+    route: /docs/operations/docker
+    sources:
+    - deploy/docker/**
+    - deploy/reverse-proxy/Caddyfile.example
+    - src/row_bot/access/
+    - src/row_bot/runtime_paths.py
+    - src/row_bot/secret_store.py
+    - src/row_bot/developer/
+    - scripts/smoke_docker_server.py
   extend-row-bot:
     title: Choose An Extension Type
     route: /docs/extending/

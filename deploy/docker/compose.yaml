@@ -1,9 +1,37 @@
 services:
+  secret-store-init:
+    image: ${ROW_BOT_IMAGE:-ghcr.io/siddsachar/row-bot:latest}
+    init: true
+    restart: "no"
+    user: "0:0"
+    network_mode: none
+    entrypoint:
+      - python
+      - -c
+    command:
+      - >-
+        from row_bot.secret_store import initialize_persistent_server_secret_store;
+        initialize_persistent_server_secret_store('/run/secrets', owner_uid=0,
+        owner_gid=10001, directory_mode=0o750, key_mode=0o440)
+    volumes:
+      - type: volume
+        source: row_bot_secrets
+        target: /run/secrets
+        volume:
+          nocopy: true
+    read_only: true
+    tmpfs:
+      - /data:rw,noexec,nosuid,nodev,size=1m
+      - /tmp:rw,noexec,nosuid,nodev,size=1m
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+
   row-bot:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
-    image: row-bot:remote-access-local
+    image: ${ROW_BOT_IMAGE:-ghcr.io/siddsachar/row-bot:latest}
     init: true
     restart: unless-stopped
     user: "10001:10001"
@@ -25,6 +53,15 @@ services:
       - "${ROW_BOT_BIND_ADDRESS:-127.0.0.1}:${ROW_BOT_HOST_PORT:-8080}:8080"
     volumes:
       - row_bot_data:/data
+      - type: volume
+        source: row_bot_secrets
+        target: /run/secrets
+        read_only: true
+        volume:
+          nocopy: true
+    depends_on:
+      secret-store-init:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m
@@ -34,6 +71,11 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test:
         - CMD
@@ -50,3 +92,4 @@ services:
 
 volumes:
   row_bot_data:
+  row_bot_secrets:

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import sys
+import threading
 
 import pytest
+from langchain_core.messages import ToolMessage
 
 
 pytestmark = pytest.mark.subsystem
@@ -417,12 +420,15 @@ def test_ui_and_voice_source_contract_has_durable_refresh_without_cutoff():
     app_source = Path("src/row_bot/app.py").read_text(encoding="utf-8")
 
     assert "gen.tts_active = False" in streaming_source
-    assert "voice_output.speak_final(_orchestration_acknowledgement)" in streaming_source
-    assert "and not _orchestration_suspended" in streaming_source
+    assert "voice_output.speak_final(speakable.text)" in streaming_source
+    assert "_orchestration_acknowledgement" not in streaming_source
+    assert "remove_latest_checkpoint_ai_message" not in streaming_source
     assert "get_generation_orchestration" in streaming_source
     assert "retry_pending_deliveries" in app_source
     assert "speak_orchestration_final" in app_source
     assert "voice_final" in app_source
+    assert '"parent_progress"' in app_source
+    assert '"parent_final"' in app_source
     assert "240" not in "\n".join(
         line
         for line in app_source.splitlines()
@@ -458,3 +464,330 @@ def test_detached_voice_final_uses_saved_transport():
         realtime_speaker=None,
         now=lambda: 0.0,
     )
+
+
+def test_agent_entrypoints_route_later_input_without_starting_another_graph(
+    monkeypatch,
+):
+    import row_bot.agent as agent
+
+    monkeypatch.setattr(
+        agent,
+        "_route_waiting_parent_input",
+        lambda _text, _config: {"id": "orchestration-1"},
+    )
+    monkeypatch.setattr(
+        agent,
+        "_invoke_agent_graph",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a second graph must not start for parent steering")
+        ),
+    )
+    config = {
+        "configurable": {
+            "thread_id": "thread-1",
+            "generation_id": "later-generation",
+        }
+    }
+
+    assert agent.invoke_agent("Use this too", ["agents"], config) == {
+        "type": "orchestration_waiting",
+        "orchestration_id": "orchestration-1",
+    }
+    assert list(agent.stream_agent("Use this too", ["agents"], config)) == [
+        (
+            "orchestration_waiting",
+            {
+                "orchestration_id": "orchestration-1",
+                "text": "",
+                "output_kind": "steering",
+            },
+        )
+    ]
+
+
+def test_checkpointed_group_wait_consumes_joined_events_before_foreground_final(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runs, orchestrator = _fresh_modules(tmp_path, monkeypatch)
+    import row_bot.agent as agent
+
+    orchestration = orchestrator.create_or_get_orchestration(
+        parent_thread_id="foreground-parent",
+        parent_generation_id="foreground-generation",
+        root_objective="Join before finalizing",
+        model_ref="provider:model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+        orchestration_version=2,
+    )
+    child = agent_runs.create_agent_run(
+        run_id="foreground-child",
+        status="running",
+        parent_thread_id="foreground-parent",
+        thread_id="foreground-child-thread",
+    )
+    orchestrator.register_member(orchestration["id"], child["id"], required=True)
+    agent_runs.finish_agent_run(child["id"], "completed", summary="Joined evidence")
+    event_ids = [
+        event.id for event in orchestrator.pending_thread_events(orchestration["id"])
+    ]
+    monkeypatch.setattr(
+        "row_bot.threads.get_latest_checkpoint_messages",
+        lambda _thread_id: [
+            ToolMessage(
+                name="agent_wait",
+                tool_call_id="wait-call",
+                content=json.dumps({
+                    "ok": True,
+                    "orchestration_id": orchestration["id"],
+                    "barrier_complete": True,
+                    "child_event_ids": event_ids,
+                }),
+            )
+        ],
+    )
+    orchestrator.set_test_executors(
+        parent=lambda *_args: pytest.fail("foreground join must not detach"),
+    )
+    config = {
+        "configurable": {
+            "thread_id": "foreground-parent",
+            "generation_id": "foreground-generation",
+        }
+    }
+
+    result = agent._complete_unified_parent_pass(
+        "Foreground final",
+        ["agents"],
+        config,
+    )
+
+    assert result.waiting is False
+    assert result.output_kind == "final"
+    assert orchestrator.pending_thread_events(orchestration["id"]) == []
+    assert orchestrator.get_orchestration(orchestration["id"])["parent_attempt"] == 0
+    assert orchestrator.sanitize_pending_child_event_ids(
+        orchestration["id"],
+        event_ids,
+    ) == []
+
+
+def test_uncheckpointed_or_mismatched_group_wait_leaves_events_for_recovery(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runs, orchestrator = _fresh_modules(tmp_path, monkeypatch)
+    import row_bot.agent as agent
+
+    orchestration = orchestrator.create_or_get_orchestration(
+        parent_thread_id="recovery-parent",
+        parent_generation_id="recovery-generation",
+        root_objective="Recover missing acknowledgement",
+        model_ref="provider:model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+        orchestration_version=2,
+    )
+    child = agent_runs.create_agent_run(
+        run_id="recovery-child",
+        status="running",
+        parent_thread_id="recovery-parent",
+        thread_id="recovery-child-thread",
+    )
+    orchestrator.register_member(orchestration["id"], child["id"], required=True)
+    agent_runs.finish_agent_run(child["id"], "completed", summary="Pending evidence")
+    event_ids = [
+        event.id for event in orchestrator.pending_thread_events(orchestration["id"])
+    ]
+    monkeypatch.setattr(
+        "row_bot.threads.get_latest_checkpoint_messages",
+        lambda _thread_id: [
+            ToolMessage(
+                name="agent_wait",
+                tool_call_id="wrong-wait-call",
+                content=json.dumps({
+                    "ok": True,
+                    "orchestration_id": "another-orchestration",
+                    "barrier_complete": True,
+                    "child_event_ids": event_ids,
+                }),
+            )
+        ],
+    )
+
+    assert agent._checkpoint_joined_child_event_ids(
+        "recovery-parent",
+        orchestration["id"],
+    ) == []
+    assert [
+        event.id for event in orchestrator.pending_thread_events(orchestration["id"])
+    ] == event_ids
+
+
+def test_required_group_join_stays_in_one_streamed_parent_generation(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runs, orchestrator = _fresh_modules(tmp_path, monkeypatch)
+    import row_bot.agent as agent
+
+    orchestration = orchestrator.create_or_get_orchestration(
+        parent_thread_id="stream-parent",
+        parent_generation_id="stream-generation",
+        root_objective="Delegate and keep working",
+        model_ref="provider:model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+        orchestration_version=2,
+    )
+    child = agent_runs.create_agent_run(
+        run_id="stream-child",
+        status="running",
+        parent_thread_id="stream-parent",
+        thread_id="stream-child-thread",
+    )
+    orchestrator.register_member(orchestration["id"], child["id"], required=True)
+    child_finished = threading.Event()
+    checkpoint_messages: list[ToolMessage] = []
+
+    def finish_child():
+        agent_runs.finish_agent_run(
+            child["id"],
+            "completed",
+            summary="Child evidence",
+        )
+        child_finished.set()
+
+    child_thread = threading.Thread(target=finish_child, daemon=True)
+
+    def fake_stream_graph(_graph, _initial_input, _config, **_kwargs):
+        yield "token", "I started the delegated check."
+        yield "tool_done", {"name": "delegate_work", "run_id": child["id"]}
+        yield "token", " I am checking the local constraints meanwhile."
+        yield "tool_call", {"name": "agent_wait", "orchestration_id": orchestration["id"]}
+        child_thread.start()
+        assert child_finished.wait(timeout=2)
+        joined = orchestrator.wait_for_required_group(orchestration["id"], timeout=0)
+        checkpoint_messages.append(
+            ToolMessage(
+                name="agent_wait",
+                tool_call_id="stream-wait-call",
+                content=json.dumps({"ok": True, **joined}),
+            )
+        )
+        yield "tool_done", {"name": "agent_wait", "result": joined}
+        yield "token", " The joined evidence supports the result."
+        yield "done", "The joined evidence supports the result."
+
+    monkeypatch.setattr(agent, "get_agent_graph", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(agent, "_should_summarize", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        agent,
+        "_new_agent_graph_input",
+        lambda _text, config, **_kwargs: (config, {"messages": []}),
+    )
+    monkeypatch.setattr(agent, "_stream_graph", fake_stream_graph)
+    monkeypatch.setattr(agent, "_memory_recall_warning_events", lambda _config: iter(()))
+    monkeypatch.setattr(
+        "row_bot.threads.get_latest_checkpoint_messages",
+        lambda _thread_id: list(checkpoint_messages),
+    )
+    orchestrator.set_test_executors(
+        parent=lambda *_args: pytest.fail("normal group join must not detach"),
+    )
+    config = {
+        "configurable": {
+            "thread_id": "stream-parent",
+            "generation_id": "stream-generation",
+            "root_objective": "Delegate and keep working",
+            "runtime_mode": "agent",
+            "runtime_surface": "normal_chat",
+            "model_override": "provider:model",
+        }
+    }
+
+    events = list(agent.stream_agent("Delegate and continue", ["agents"], config))
+    child_thread.join(timeout=2)
+
+    assert [event_type for event_type, _payload in events] == [
+        "token",
+        "tool_done",
+        "token",
+        "tool_call",
+        "tool_done",
+        "token",
+        "done",
+    ]
+    assert not any(event_type == "orchestration_waiting" for event_type, _ in events)
+    assert orchestrator.get_orchestration(orchestration["id"])["parent_attempt"] == 0
+    assert orchestrator.pending_thread_events(orchestration["id"]) == []
+
+
+def test_second_foreground_wave_group_waits_without_reviving_first_wave(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runs, orchestrator = _fresh_modules(tmp_path, monkeypatch)
+    import row_bot.agent as agent
+
+    orchestration = orchestrator.create_or_get_orchestration(
+        parent_thread_id="waves-parent",
+        parent_generation_id="waves-generation",
+        root_objective="Run two sequential waves",
+        model_ref="provider:model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+        orchestration_version=2,
+    )
+    checkpoint_messages: list[ToolMessage] = []
+
+    def finish_wave(run_id: str, summary: str) -> dict:
+        run = agent_runs.create_agent_run(
+            run_id=run_id,
+            status="running",
+            parent_thread_id="waves-parent",
+            thread_id=f"thread-{run_id}",
+        )
+        orchestrator.register_member(orchestration["id"], run_id, required=True)
+        agent_runs.finish_agent_run(run_id, "completed", summary=summary)
+        joined = orchestrator.wait_for_required_group(orchestration["id"], timeout=0)
+        checkpoint_messages.append(
+            ToolMessage(
+                name="agent_wait",
+                tool_call_id=f"wait-{run_id}",
+                content=json.dumps({"ok": True, **joined}),
+            )
+        )
+        return joined
+
+    first_join = finish_wave("wave-one-child", "First-wave evidence")
+    second_join = finish_wave("wave-two-child", "Second-wave evidence")
+    monkeypatch.setattr(
+        "row_bot.threads.get_latest_checkpoint_messages",
+        lambda _thread_id: list(checkpoint_messages),
+    )
+    orchestrator.set_test_executors(
+        parent=lambda *_args: pytest.fail("joined waves must not detach"),
+    )
+
+    result = agent._complete_unified_parent_pass(
+        "Both foreground waves are reconciled.",
+        ["agents"],
+        {
+            "configurable": {
+                "thread_id": "waves-parent",
+                "generation_id": "waves-generation",
+            }
+        },
+    )
+
+    assert [run["id"] for run in first_join["runs"]] == ["wave-one-child"]
+    assert [run["id"] for run in second_join["runs"]] == [
+        "wave-one-child",
+        "wave-two-child",
+    ]
+    assert result.waiting is False
+    assert orchestrator.get_orchestration(orchestration["id"])["parent_attempt"] == 0
+    assert orchestrator.pending_thread_events(orchestration["id"]) == []

@@ -60,15 +60,16 @@ def register_plugin(manifest: "PluginManifest",
         skill_name = skill.get("name", "")
         if not skill_name:
             continue
-        if skill_name in _plugin_skills:
-            other = _skill_to_plugin.get(skill_name, "unknown")
+        storage_key = f"{manifest.id}:{skill_name}"
+        if storage_key in _plugin_skills:
+            other = _skill_to_plugin.get(storage_key, "unknown")
             warnings.append(
                 f"Plugin '{manifest.id}' skill '{skill_name}' collides with "
                 f"plugin '{other}' — skipped"
             )
             continue
-        _plugin_skills[skill_name] = skill
-        _skill_to_plugin[skill_name] = manifest.id
+        _plugin_skills[storage_key] = skill
+        _skill_to_plugin[storage_key] = manifest.id
 
     return warnings
 
@@ -155,7 +156,11 @@ def _plugin_skill_allowed(plugin_id: str, allow: set[str] | None) -> bool:
     return False
 
 
-def get_langchain_tools(allow_names: Iterable[str] | None = None) -> list:
+def get_langchain_tools(
+    allow_names: Iterable[str] | None = None,
+    *,
+    refresh_mcp: bool = True,
+) -> list:
     """Return LangChain tool wrappers for all tools from enabled plugins."""
     from row_bot.plugins import state
 
@@ -181,12 +186,14 @@ def get_langchain_tools(allow_names: Iterable[str] | None = None) -> list:
                 continue
             if not getattr(getattr(manifest, "provides", None), "mcp_servers", []):
                 continue
-            tools.extend(
-                mcp_runtime.get_plugin_langchain_tools(
-                    plugin_id,
-                    allow_names=_plugin_mcp_allow_names(plugin_id, allow),
-                )
-            )
+            kwargs = {"allow_names": _plugin_mcp_allow_names(plugin_id, allow)}
+            if not refresh_mcp:
+                kwargs["refresh"] = False
+            try:
+                tools.extend(mcp_runtime.get_plugin_langchain_tools(plugin_id, **kwargs))
+            except TypeError:
+                kwargs.pop("refresh", None)
+                tools.extend(mcp_runtime.get_plugin_langchain_tools(plugin_id, **kwargs))
     except Exception as exc:
         logger.debug("Plugin MCP tool injection skipped: %s", exc, exc_info=True)
     return tools
@@ -199,8 +206,8 @@ def get_skills_prompt(allow_names: Iterable[str] | None = None) -> str:
     allow = _allow_set(allow_names)
     parts: list[str] = []
     allowed_plugins: dict[str, bool] = {}
-    for skill_name, skill_info in _plugin_skills.items():
-        plugin_id = _skill_to_plugin.get(skill_name)
+    for storage_key, skill_info in _plugin_skills.items():
+        plugin_id = _skill_to_plugin.get(storage_key)
         if not plugin_id or not state.is_plugin_enabled(plugin_id):
             continue
         if plugin_id not in allowed_plugins:
@@ -210,7 +217,7 @@ def get_skills_prompt(allow_names: Iterable[str] | None = None) -> str:
         instructions = skill_info.get("instructions", "")
         if instructions:
             icon = skill_info.get("icon", "🔌")
-            display = skill_info.get("display_name", skill_name)
+            display = skill_info.get("display_name", skill_info.get("name", storage_key))
             manifest = _loaded_manifests.get(plugin_id)
             plugin_name = str(getattr(manifest, "name", "") or plugin_id)
             parts.append(f"\n### {icon} {display} (plugin: {plugin_name})\n{instructions}\n")
@@ -383,6 +390,25 @@ def get_plugin_skills(plugin_id: str, *, enabled_only: bool = True) -> list[dict
         info for name, info in _plugin_skills.items()
         if _skill_to_plugin.get(name) == plugin_id
     ]
+
+
+def get_enabled_plugin_skill_records() -> list[dict]:
+    """Return enabled plugin skills with their plugin and root metadata."""
+
+    from row_bot.plugins import state
+
+    records: list[dict] = []
+    for storage_key, info in _plugin_skills.items():
+        plugin_id = _skill_to_plugin.get(storage_key, "")
+        if not plugin_id or not state.is_plugin_enabled(plugin_id):
+            continue
+        manifest = _loaded_manifests.get(plugin_id)
+        records.append({
+            **dict(info),
+            "plugin_id": plugin_id,
+            "plugin_name": str(getattr(manifest, "name", "") or plugin_id),
+        })
+    return records
 
 
 # ── Unregister ───────────────────────────────────────────────────────────────

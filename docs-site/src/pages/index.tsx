@@ -5,16 +5,16 @@ import Link from '@docusaurus/Link';
 export default function Home(): JSX.Element {
   return (
     <Layout
-      title="Local-first desktop AI assistant"
+      title="Local-first AI workbench"
       description="Row-Bot public documentation and downloads"
     >
       <header className="hero hero--primary">
         <div className="container">
           <h1 className="hero__title">Row-Bot</h1>
           <p className="hero__subtitle">
-            A local-first desktop AI assistant for models, memory, tools,
-            workflows, Designer Studio, Developer Studio, Skills Hub, plugins,
-            MCP, channels, and voice.
+            A local-first AI workbench for parent-led agents, durable documents,
+            authenticated remote access, models, tools, workflows, studios,
+            extensions, channels, and voice.
           </p>
           <div className="rowBotHeroActions">
             <Link className="button button--primary button--lg" to="/docs/">
@@ -42,16 +42,16 @@ export default function Home(): JSX.Element {
           <article className="rowBotPanel">
             <h3>Learn the UI</h3>
             <p>
-              Tour chat, the status bar, Workflows, Designer Studio, Developer
-              Studio, Knowledge, Settings, and approvals.
+              Tour chat, coordinated agents, the status bar, Workflows,
+              Developer and Designer Studios, Knowledge, Settings, and approvals.
             </p>
-            <Link to="/docs/ui-tour/">UI tour</Link>
+            <Link to="/docs/app-shell/navigation">Interface tour</Link>
           </article>
           <article className="rowBotPanel">
             <h3>Configure your setup</h3>
             <p>
-              Connect providers, local models, embeddings, tools, channels,
-              skills, plugins, MCP servers, Buddy, and voice.
+              Connect providers, local models, tools, channels, extensions, and
+              voice, or deploy the authenticated Docker and VPS server path.
             </p>
             <Link to="/docs/configuration/models-and-providers">
               Configuration

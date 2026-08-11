@@ -192,6 +192,12 @@ _CREATE_TABLE_SQL: dict[str, str] = {
             continuation_state_json TEXT NOT NULL DEFAULT '{}',
             delivery_context_json TEXT NOT NULL DEFAULT '{}',
             settings_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            orchestration_version INTEGER NOT NULL DEFAULT 1,
+            parent_state TEXT NOT NULL DEFAULT '',
+            wake_requested_at TEXT NOT NULL DEFAULT '',
+            lease_owner TEXT NOT NULL DEFAULT '',
+            lease_expires_at TEXT NOT NULL DEFAULT '',
+            parent_attempt INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             completed_at TEXT NOT NULL DEFAULT '',
@@ -219,7 +225,12 @@ _CREATE_TABLE_SQL: dict[str, str] = {
             run_id TEXT NOT NULL DEFAULT '',
             kind TEXT NOT NULL,
             content TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            source_event_id TEXT NOT NULL DEFAULT '',
             delivery_status TEXT NOT NULL DEFAULT 'pending',
+            consumed_at TEXT NOT NULL DEFAULT '',
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             delivered_at TEXT NOT NULL DEFAULT ''
         )
@@ -344,6 +355,12 @@ _COLUMN_DEFINITIONS: dict[str, dict[str, str]] = {
         "continuation_state_json": "TEXT NOT NULL DEFAULT '{}'",
         "delivery_context_json": "TEXT NOT NULL DEFAULT '{}'",
         "settings_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
+        "orchestration_version": "INTEGER NOT NULL DEFAULT 1",
+        "parent_state": "TEXT NOT NULL DEFAULT ''",
+        "wake_requested_at": "TEXT NOT NULL DEFAULT ''",
+        "lease_owner": "TEXT NOT NULL DEFAULT ''",
+        "lease_expires_at": "TEXT NOT NULL DEFAULT ''",
+        "parent_attempt": "INTEGER NOT NULL DEFAULT 0",
         "created_at": "TEXT NOT NULL DEFAULT ''",
         "updated_at": "TEXT NOT NULL DEFAULT ''",
         "completed_at": "TEXT NOT NULL DEFAULT ''",
@@ -366,7 +383,12 @@ _COLUMN_DEFINITIONS: dict[str, dict[str, str]] = {
         "run_id": "TEXT NOT NULL DEFAULT ''",
         "kind": "TEXT NOT NULL DEFAULT ''",
         "content": "TEXT NOT NULL DEFAULT ''",
+        "payload_json": "TEXT NOT NULL DEFAULT '{}'",
+        "source_event_id": "TEXT NOT NULL DEFAULT ''",
         "delivery_status": "TEXT NOT NULL DEFAULT 'pending'",
+        "consumed_at": "TEXT NOT NULL DEFAULT ''",
+        "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+        "last_error": "TEXT NOT NULL DEFAULT ''",
         "created_at": "TEXT NOT NULL DEFAULT ''",
         "delivered_at": "TEXT NOT NULL DEFAULT ''",
     },
@@ -519,6 +541,10 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_agent_orchestration_messages_delivery "
         "ON agent_orchestration_messages(orchestration_id, delivery_status, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_orchestration_messages_source "
+        "ON agent_orchestration_messages(orchestration_id, source_event_id)"
     )
 
 
@@ -782,7 +808,8 @@ def start_agent_run(run_id: str) -> dict[str, Any] | None:
     conn = _get_conn()
     try:
         conn.execute(
-            "UPDATE agent_runs SET status = 'running', started_at = COALESCE(NULLIF(started_at, ''), ?), "
+            "UPDATE agent_runs SET status = 'running', status_message = '', "
+            "started_at = COALESCE(NULLIF(started_at, ''), ?), "
             "heartbeat_at = ?, updated_at = ? WHERE id = ?",
             (now, now, now, run_id),
         )
@@ -1356,7 +1383,17 @@ def stop_agent_run(run_id: str) -> dict[str, Any] | None:
     finally:
         conn.close()
     append_agent_event(run_id, "run.stopped", {"requested": True}, visibility="log")
-    return get_agent_run(run_id)
+    stopped_run = get_agent_run(run_id)
+    if not terminal:
+        try:
+            from row_bot.agent_orchestrator import handle_run_terminal
+
+            handle_run_terminal(stopped_run or run_id)
+        except Exception:
+            # The requested stop remains durable even if orchestration
+            # reconciliation needs startup repair or an explicit Resume.
+            pass
+    return stopped_run
 
 
 def acquire_agent_write_lock(
@@ -1519,14 +1556,6 @@ def recover_stale_agent_runs() -> dict[str, int]:
         "orchestrations_interrupted": 0,
         "members_interrupted": 0,
     }
-    try:
-        from row_bot.agent_orchestrator import recover_interrupted_orchestrations
-
-        orchestration_recovery = recover_interrupted_orchestrations()
-    except Exception:
-        # Legacy recovery remains available even when additive orchestration
-        # repair encounters an unexpected row.
-        pass
     now = _now()
     stopped: list[tuple[str, str]] = []
     kept_approvals: list[str] = []

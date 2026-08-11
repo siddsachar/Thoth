@@ -241,10 +241,10 @@ def test_registry_detects_tool_and_skill_name_collisions(
         skills=[{"name": "shared_skill", "instructions": "second"}],
     )
 
-    assert len(warnings) == 2
+    assert len(warnings) == 1
     assert all("collides" in warning for warning in warnings)
     assert registry.get_plugin_tool_names() == ["test_tool"]
-    assert registry.get_plugin_skills("second-plugin") == []
+    assert registry.get_plugin_skills("second-plugin", enabled_only=False)[0]["instructions"] == "second"
 
 
 def test_loader_loads_valid_plugin_discovers_skills_and_registers_tool(
@@ -259,6 +259,10 @@ def test_loader_loads_valid_plugin_discovers_skills_and_registers_tool(
         "name: sample_skill\n"
         "display_name: Sample Skill\n"
         "description: Skill from plugin\n"
+        "tags: [sample, workflow]\n"
+        "activation:\n  keywords: [sample]\n"
+        "version: '2.0'\n"
+        "author: Plugin Author\n"
         "---\n"
         "Follow the plugin skill instructions.\n"
     )
@@ -272,7 +276,13 @@ def test_loader_loads_valid_plugin_discovers_skills_and_registers_tool(
     assert result.manifest is not None
     assert result.manifest.id == "sample-plugin"
     assert registry.get_plugin_tool_names() == ["sample_tool"]
-    assert registry.get_plugin_skills("sample-plugin")[0]["name"] == "sample_skill"
+    skill_record = registry.get_plugin_skills("sample-plugin")[0]
+    assert skill_record["name"] == "sample_skill"
+    assert skill_record["tags"] == ["sample", "workflow"]
+    assert skill_record["activation"] == {"keywords": ["sample"]}
+    assert skill_record["version"] == "2.0"
+    assert skill_record["author"] == "Plugin Author"
+    assert skill_record["root"] == plugin_dir / "skills" / "sample_skill"
 
 
 def test_loader_keeps_disabled_plugin_visible_without_registering_runtime_tools(
@@ -705,6 +715,8 @@ def test_refresh_plugin_runtime_registers_enabled_tool_for_agent_graph(
     graph = agent.get_agent_graph([])
 
     assert registry.get_plugin_tool_names() == ["sample_tool"]
-    assert [tool.name for tool in graph.tools] == ["sample_tool"]
+    assert [tool.name for tool in graph.tools] == [
+        "tool_search", "tool_invoke", "skill_search", "skill_load",
+    ]
     assert mcp_calls == ["discover", "discover"]
     assert plugin_dir.exists()

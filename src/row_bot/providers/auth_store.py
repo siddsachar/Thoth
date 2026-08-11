@@ -8,7 +8,7 @@ from typing import Any
 import row_bot.api_keys as api_keys
 import row_bot.secret_store as secret_store
 
-from row_bot.providers.config import update_provider_config
+from row_bot.providers.config import load_provider_config, update_provider_config
 from row_bot.providers.models import AuthMethod, ProviderHealth
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,8 @@ def _chunk_count(provider_id: str, name: str) -> int:
     try:
         marker = secret_store.get_secret(_chunk_marker_name(name), namespace=_namespace(provider_id)) or ""
     except secret_store.SecretStoreError:
+        if secret_store.persistent_server_store_configured():
+            raise
         return 0
     if marker.startswith(CHUNK_VALUE_PREFIX):
         marker = marker.removeprefix(CHUNK_VALUE_PREFIX)
@@ -84,32 +86,49 @@ def _delete_chunked_provider_secret(provider_id: str, name: str) -> None:
         try:
             secret_store.delete_secret(_chunk_name(name, index), namespace=_namespace(provider_id))
         except secret_store.SecretStoreError:
+            if secret_store.persistent_server_store_configured():
+                raise
             pass
     try:
         secret_store.delete_secret(_chunk_marker_name(name), namespace=_namespace(provider_id))
     except secret_store.SecretStoreError:
+        if secret_store.persistent_server_store_configured():
+            raise
         pass
 
 
-def _set_provider_secret_value(provider_id: str, name: str, value: str) -> None:
+def _set_provider_secret_value(provider_id: str, name: str, value: str) -> str:
     _delete_chunked_provider_secret(provider_id, name)
     try:
         secret_store.delete_secret(name, namespace=_namespace(provider_id))
     except secret_store.SecretStoreError:
+        if secret_store.persistent_server_store_configured():
+            raise
         pass
     text = str(value)
     if len(text) <= PROVIDER_SECRET_CHUNK_SIZE:
         try:
-            secret_store.set_secret(name, text, namespace=_namespace(provider_id))
-            return
+            return secret_store.set_secret(name, text, namespace=_namespace(provider_id))
         except secret_store.SecretStoreError:
+            if secret_store.persistent_server_store_configured():
+                raise
             pass
     chunks = [text[index:index + PROVIDER_SECRET_CHUNK_SIZE] for index in range(0, len(text), PROVIDER_SECRET_CHUNK_SIZE)]
     if not chunks:
         chunks = [""]
+    storage_source = ""
     for index, chunk in enumerate(chunks):
-        secret_store.set_secret(_chunk_name(name, index), chunk, namespace=_namespace(provider_id))
-    secret_store.set_secret(_chunk_marker_name(name), f"{CHUNK_VALUE_PREFIX}{len(chunks)}", namespace=_namespace(provider_id))
+        storage_source = secret_store.set_secret(
+            _chunk_name(name, index),
+            chunk,
+            namespace=_namespace(provider_id),
+        )
+    storage_source = secret_store.set_secret(
+        _chunk_marker_name(name),
+        f"{CHUNK_VALUE_PREFIX}{len(chunks)}",
+        namespace=_namespace(provider_id),
+    )
+    return storage_source
 
 
 def _get_provider_secret_value(provider_id: str, name: str) -> str:
@@ -123,12 +142,16 @@ def _get_provider_secret_value(provider_id: str, name: str) -> str:
             try:
                 part = secret_store.get_secret(_chunk_name(name, index), namespace=_namespace(provider_id)) or ""
             except secret_store.SecretStoreError:
+                if secret_store.persistent_server_store_configured():
+                    raise
                 return ""
             parts.append(part)
         return "".join(parts)
     try:
         return secret_store.get_secret(name, namespace=_namespace(provider_id)) or ""
     except secret_store.SecretStoreError:
+        if secret_store.persistent_server_store_configured():
+            raise
         return ""
 
 
@@ -155,7 +178,7 @@ def set_provider_secret(
     storage_source = "keyring"
     metadata_source = source
     try:
-        _set_provider_secret_value(provider_id, name, text)
+        storage_source = _set_provider_secret_value(provider_id, name, text)
         _delete_session_provider_secret(provider_id, name)
         _clear_storage_warning()
     except secret_store.SecretStoreError as exc:
@@ -322,9 +345,20 @@ def provider_secret_status(provider_id: str, credential_name: str = "api_key") -
         }
     try:
         value = _get_provider_secret_value(provider_id, name)
-        source = "keyring" if value else ""
+        provider_config = load_provider_config().get("providers", {}).get(provider_id, {})
+        configured_storage = str(provider_config.get("secret_storage") or "")
+        source = (
+            "encrypted_file"
+            if value and configured_storage == "encrypted_file"
+            else "keyring" if value else ""
+        )
     except secret_store.SecretStoreError:
-        return {"configured": False, "source": "", "fingerprint": "", "error": "keyring unavailable"}
+        return {
+            "configured": False,
+            "source": "",
+            "fingerprint": "",
+            "error": "secure storage unavailable",
+        }
     return {
         "configured": bool(value),
         "source": source,

@@ -168,6 +168,84 @@ def test_provider_auth_store_uses_session_when_keyring_unavailable(tmp_path, mon
         _set_backend_for_tests(None)
 
 
+def test_provider_auth_store_uses_encrypted_server_store_across_process_state(
+    tmp_path,
+    monkeypatch,
+):
+    secrets_dir = tmp_path / "mounted-secrets"
+    data_dir = tmp_path / "data"
+    secrets_dir.mkdir()
+    data_dir.mkdir()
+    (secrets_dir / "ROW_BOT_SECRET_STORE_KEY").write_text("78" * 32, encoding="ascii")
+    monkeypatch.setenv("ROW_BOT_SECRETS_DIR", str(secrets_dir))
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", data_dir / "providers.json")
+    auth_store._clear_session_secrets_for_tests()
+    _set_backend_for_tests(_FailingKeyring())
+    try:
+        set_provider_secret(
+            "codex",
+            "refresh_token",
+            "fake-rotating-refresh-token",
+            source="oauth_device",
+        )
+
+        assert get_provider_secret("codex", "refresh_token") == "fake-rotating-refresh-token"
+        assert auth_store.get_storage_warning() == ""
+        raw_config = json.loads((data_dir / "providers.json").read_text(encoding="utf-8"))
+        assert raw_config["providers"]["codex"]["secret_storage"] == "encrypted_file"
+        assert "fake-rotating-refresh-token" not in repr(raw_config)
+
+        auth_store._clear_session_secrets_for_tests()
+        _set_backend_for_tests(_FailingKeyring())
+        assert get_provider_secret("codex", "refresh_token") == "fake-rotating-refresh-token"
+        assert provider_secret_status("codex", "refresh_token") == {
+            "configured": True,
+            "source": "encrypted_file",
+            "fingerprint": "****oken",
+        }
+    finally:
+        auth_store._clear_session_secrets_for_tests()
+        _set_backend_for_tests(None)
+
+
+def test_provider_auth_store_changed_server_key_cannot_replace_existing_secret(
+    tmp_path,
+    monkeypatch,
+):
+    secrets_dir = tmp_path / "mounted-secrets"
+    data_dir = tmp_path / "data"
+    secrets_dir.mkdir()
+    data_dir.mkdir()
+    key_file = secrets_dir / "ROW_BOT_SECRET_STORE_KEY"
+    key_file.write_text("ab" * 32, encoding="ascii")
+    monkeypatch.setenv("ROW_BOT_SECRETS_DIR", str(secrets_dir))
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", data_dir / "providers.json")
+    auth_store._clear_session_secrets_for_tests()
+    _set_backend_for_tests(_FailingKeyring())
+    try:
+        set_provider_secret("codex", "refresh_token", "fake-original-refresh")
+        records_before = {
+            path.name: path.read_bytes()
+            for path in (data_dir / "secure-secrets").glob("*.secret")
+        }
+
+        key_file.write_text("cd" * 32, encoding="ascii")
+        set_provider_secret("codex", "refresh_token", "fake-replacement-refresh")
+
+        records_after = {
+            path.name: path.read_bytes()
+            for path in (data_dir / "secure-secrets").glob("*.secret")
+        }
+        assert records_after == records_before
+        assert provider_secret_status("codex", "refresh_token")["source"] == "session"
+        assert "session only" in auth_store.get_storage_warning()
+    finally:
+        auth_store._clear_session_secrets_for_tests()
+        _set_backend_for_tests(None)
+
+
 def test_provider_auth_store_keyring_success_clears_session_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
     auth_store._clear_session_secrets_for_tests()

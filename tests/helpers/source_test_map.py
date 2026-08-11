@@ -23,6 +23,23 @@ class SourceTestRule:
 
 SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
     SourceTestRule(
+        "progressive_capability_discovery",
+        (
+            "src/row_bot/capability_search.py",
+            "src/row_bot/tools/discovery.py",
+            "src/row_bot/skill_discovery.py",
+            "src/row_bot/skills_activation.py",
+        ),
+        (
+            "tests/test_capability_search.py",
+            "tests/subsystem/tools/test_progressive_tool_discovery.py",
+            "tests/test_skill_discovery.py",
+            "tests/test_skills_activation.py",
+            "tests/test_chat_tool_trace_ui.py",
+        ),
+        "Progressive tool and skill discovery needs deterministic ranking, closed-snapshot invocation, activation, and durable trace coverage.",
+    ),
+    SourceTestRule(
         "prompt_context",
         (
             "src/row_bot/agent.py",
@@ -44,6 +61,39 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "tests/test_slash_commands.py",
         ),
         "Prompt assembly changes need stable/ephemeral context, provider cache marker, Chat Only, memory, and skill regressions.",
+    ),
+    SourceTestRule(
+        "orchestration_transcript_surfaces",
+        (
+            "src/row_bot/app.py",
+            "src/row_bot/ui/helpers.py",
+            "src/row_bot/ui/transcript.py",
+            "src/row_bot/ui/sidebar.py",
+        ),
+        (
+            "tests/test_transcript_loading.py",
+            "tests/test_thread_pinning.py",
+            "tests/test_orchestration_activity_ui.py",
+            "tests/subsystem/agents",
+            "tests/subsystem/channels/test_channel_thread_notifications.py",
+        ),
+        "Parent checkpoint reconciliation and thread activity indicators need transcript, sidebar, orchestration, and fake-channel regressions.",
+    ),
+    SourceTestRule(
+        "developer_agent_context",
+        ("src/row_bot/developer/agent_context.py",),
+        (
+            "tests/test_developer_studio_phase3.py",
+            "tests/test_developer_studio_phase10.py",
+            "tests/subsystem/developer",
+        ),
+        "Developer context changes must preserve natural model routing and safe Git/non-Git workspace behavior.",
+    ),
+    SourceTestRule(
+        "filesystem_write_contract",
+        ("src/row_bot/tools/filesystem_tool.py",),
+        ("tests/subsystem/tools/test_filesystem_confirmation_contract.py",),
+        "Workspace write semantics need direct-save and conversational-confirmation coverage without changing destructive classification.",
     ),
     SourceTestRule(
         "providers",
@@ -112,6 +162,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
         "remote_access_server",
         (
             "src/row_bot/access/**",
+            "src/row_bot/runtime_paths.py",
             "src/row_bot/ui/access_context.py",
             "src/row_bot/ui/remote_access_settings.py",
             "src/row_bot/ui/settings.py",
@@ -126,6 +177,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "deploy/**",
             "dockerignore",
             "scripts/smoke_remote_access.py",
+            "scripts/smoke_docker_server.py",
         ),
         (
             "tests/subsystem/access",
@@ -434,6 +486,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "src/row_bot/updater.py",
             "scripts/coverage_summary.py",
             "scripts/smoke_app.py",
+            "scripts/smoke_docker_server.py",
             "scripts/verify_runtime_dependencies.py",
             "scripts/export_locked_requirements.py",
             "scripts/app_payload_manifest.py",

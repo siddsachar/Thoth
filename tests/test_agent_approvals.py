@@ -76,6 +76,7 @@ def test_agent_interrupt_creates_approval_and_resume_routes_to_agent_runner(
                     "label": "Run shell command",
                     "approval_reason": "Check the project state.",
                     "args": {"command": "git status"},
+                    "external_discovery_active": True,
                 }
             ],
         }
@@ -83,6 +84,7 @@ def test_agent_interrupt_creates_approval_and_resume_routes_to_agent_runner(
     def fake_resume(enabled_tool_names, config, approved, *, interrupt_ids=None, stop_event):
         assert approved is True
         assert interrupt_ids == ["interrupt-1"]
+        assert config["configurable"]["external_discovery_active"] is True
         return "approved child result"
 
     monkeypatch.setattr(agent_runner, "_invoke_agent", fake_interrupt)
@@ -110,6 +112,39 @@ def test_agent_interrupt_creates_approval_and_resume_routes_to_agent_runner(
     assert "needs approval" in approval["message"]
     assert "Check the project state." in approval["message"]
 
+    parent_messages = threads.get_latest_checkpoint_messages(parent_thread_id)
+    approval_messages = [
+        message
+        for message in parent_messages
+        if (
+            getattr(message, "additional_kwargs", {})
+            .get("row_bot_ui", {})
+            .get("approval_request_id")
+            == approval["id"]
+        )
+    ]
+    assert len(approval_messages) == 1
+    metadata = approval_messages[0].additional_kwargs["row_bot_ui"]
+    assert metadata["agent_approval_for"] == run["id"]
+    assert metadata["agent_run_ids"] == [run["id"]]
+    assert metadata["approval_resume_token"] == approval["resume_token"]
+
+    from row_bot.channels.thread_notifications import notify_agent_run_approval
+
+    assert notify_agent_run_approval(approval["id"]) is True
+    assert len(
+        [
+            message
+            for message in threads.get_latest_checkpoint_messages(parent_thread_id)
+            if (
+                getattr(message, "additional_kwargs", {})
+                .get("row_bot_ui", {})
+                .get("approval_request_id")
+                == approval["id"]
+            )
+        ]
+    ) == 1
+
     assert tasks.respond_to_approval(approval["resume_token"], True) is True
     final = agent_runner.wait_for_agent_run(run["id"], timeout=2.0)
 
@@ -117,6 +152,7 @@ def test_agent_interrupt_creates_approval_and_resume_routes_to_agent_runner(
     assert final["summary"] == "approved child result"
     stored = agent_runs.get_agent_run(run["id"])
     assert stored["resume_state_json"]["approval_id"] == approval["id"]
+    assert stored["resume_state_json"]["external_discovery_active"] is True
     events = {event["type"] for event in agent_runs.get_agent_events(run["id"])}
     assert {"approval.requested", "approval.resolved", "run.completed"} <= events
 

@@ -11,17 +11,17 @@ HTML = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
 CSS = (ROOT / "docs" / "site.css").read_text(encoding="utf-8")
 JS = (ROOT / "docs" / "site.js").read_text(encoding="utf-8")
 
-WINDOWS_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.5.0/"
-    "Row-Bot-4.5.0-Windows-x64.exe"
+SITE_WINDOWS_URL = (
+    "https://github.com/siddsachar/row-bot/releases/download/v4.6.0/"
+    "Row-Bot-4.6.0-Windows-x64.exe"
 )
-MAC_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.5.0/"
-    "Row-Bot-4.5.0-macOS-arm64.dmg"
+SITE_MAC_URL = (
+    "https://github.com/siddsachar/row-bot/releases/download/v4.6.0/"
+    "Row-Bot-4.6.0-macOS-arm64.dmg"
 )
-LINUX_COMMAND = (
+SITE_LINUX_COMMAND = (
     "curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/"
-    "installer/install-linux.sh | bash -s -- 4.5.0"
+    "installer/install-linux.sh | bash -s -- 4.6.0"
 )
 MARKETING_PAGES = ("index.html", "features.html", "architecture.html", "contact.html", "404.html")
 
@@ -79,8 +79,8 @@ def test_landing_page_is_evergreen_and_current() -> None:
     )
     assert json_ld_match
     metadata = json.loads(json_ld_match.group(1))
-    assert metadata["softwareVersion"] == "4.5.0"
-    assert metadata["downloadUrl"].endswith("/releases/tag/v4.5.0")
+    assert metadata["softwareVersion"] == "4.6.0"
+    assert metadata["downloadUrl"].endswith("/releases/tag/v4.6.0")
 
     parser = _parse()
     assert all(image.get("width") and image.get("height") for image in parser.images)
@@ -93,8 +93,15 @@ def test_landing_page_is_evergreen_and_current() -> None:
         "faq",
         "install",
     ]
-    assert "Row-Bot 4.5.0 available" in HTML
-    assert "Row-Bot &middot; v4.5.0 &middot; Apache 2.0" in HTML
+    assert "Row-Bot 4.6.0 available" in HTML
+    assert "Row-Bot &middot; v4.6.0 &middot; Apache 2.0" in HTML
+    assert 'src="img/screenshots/real-ui/home-knowledge.png?v=4.6.0"' in HTML
+    assert (
+        "agents, models, tools, memory, documents, workflows, code, design, "
+        "messaging, and voice"
+    ) in HTML
+    assert "Move across the workbench" in HTML
+    assert "PARENT-LED ORCHESTRATION" not in HTML
 
 
 def test_landing_page_fallbacks_and_links_are_complete() -> None:
@@ -109,12 +116,14 @@ def test_landing_page_fallbacks_and_links_are_complete() -> None:
     assert all(not link["href"].endswith((".exe", ".dmg")) for link in os_primary)
 
     hrefs = [link.get("href") for link in parser.links]
-    assert WINDOWS_URL in hrefs
-    assert MAC_URL in hrefs
-    assert "docs/getting-started/installation" in hrefs
+    assert SITE_WINDOWS_URL in hrefs
+    assert SITE_MAC_URL in hrefs
+    assert "docs/getting-started/installation/" in hrefs
     linux_code = next(code for code in parser.codes if "data-linux-command" in code)
-    assert linux_code["text"] == LINUX_COMMAND
-    assert LINUX_COMMAND in JS
+    assert linux_code["text"] == SITE_LINUX_COMMAND
+    assert SITE_WINDOWS_URL in JS
+    assert SITE_MAC_URL in JS
+    assert SITE_LINUX_COMMAND in JS
 
 
 def test_mobile_handoff_and_product_media_contracts() -> None:
@@ -233,6 +242,30 @@ def test_marketing_navigation_and_footers_share_one_contract() -> None:
         assert "What’s new" not in content
 
 
+def test_marketing_pages_share_analytics_and_download_conversion_contract() -> None:
+    assert "const GA_MEASUREMENT_ID = 'G-0YYKPX5M5E'" in JS
+    assert "const GOOGLE_ADS_ID = 'AW-847204616'" in JS
+    assert "const GOOGLE_ADS_CONVERSION_ID = 'AW-847204616/Lci7CNmwyOwBEIii_ZMD'" in JS
+    assert "initializeAnalytics();" in JS
+    assert "data-row-bot-google-tag" in JS
+    assert "trackAdsConversion" in JS
+
+    for name in MARKETING_PAGES:
+        content = (ROOT / "docs" / name).read_text(encoding="utf-8")
+        assert 'src="site.js?v=4.6.0"' in content, name
+        assert 'href="site.css?v=4.6.0-r1"' in content, name
+        assert "googletagmanager.com/gtag/js" not in content, name
+
+    parser = _parse()
+    download_links = [link for link in parser.links if "data-desktop-download" in link]
+    assert download_links
+    for link in download_links:
+        platform = link["data-desktop-download"]
+        expected = SITE_WINDOWS_URL if platform == "windows" else SITE_MAC_URL
+        assert link["href"] == expected
+        assert link.get("data-placement") in {"platform_selector", "final_install", "mobile_handoff"}
+
+
 def test_all_marketing_internal_links_and_images_resolve() -> None:
     parsed_pages = {name: _page_parser(name) for name in MARKETING_PAGES}
 
@@ -256,9 +289,10 @@ def test_all_marketing_internal_links_and_images_resolve() -> None:
 
         for image in parser.images:
             source = image.get("src", "")
-            if urlsplit(source).scheme:
+            source_parts = urlsplit(source)
+            if source_parts.scheme:
                 continue
-            assert (ROOT / "docs" / unquote(source)).is_file(), f"{name}: {source}"
+            assert (ROOT / "docs" / unquote(source_parts.path)).is_file(), f"{name}: {source}"
             assert image.get("width") and image.get("height"), f"{name}: {source}"
 
 
@@ -297,6 +331,7 @@ def test_architecture_contact_and_not_found_progressive_contracts() -> None:
     assert architecture.count("data-lightbox role=\"dialog\"") == 10
     assert architecture.count("data-lightbox-close") == 10
     assert architecture.count('loading="lazy" decoding="async"') == 20
+    assert ".architecture-page .diagram-card img { display: block; width: 100%; height: auto;" in CSS
     assert "event.key === 'Escape'" in JS
     assert "lightboxBackground.forEach" in JS
     assert "github.com/siddsachar/row-bot/blob/main/docs/ARCHITECTURE.md" in architecture

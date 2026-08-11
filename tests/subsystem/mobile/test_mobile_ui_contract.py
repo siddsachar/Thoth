@@ -156,3 +156,14 @@ def test_mobile_active_chat_hides_global_header_and_bottom_nav() -> None:
     assert "open_settings(\"Providers\")" not in header_section
     assert "width: 24px; height: 24px" in header_section
     assert "text-subtitle2 ellipsis" in header_section
+
+
+def test_mobile_reuses_shared_skill_load_transcript_renderer() -> None:
+    app_src = Path("src/row_bot/app.py").read_text(encoding="utf-8")
+    mobile_src = Path("src/row_bot/ui/mobile.py").read_text(encoding="utf-8")
+    render_src = Path("src/row_bot/ui/render.py").read_text(encoding="utf-8")
+
+    assert "add_chat_message=(" in app_src
+    assert "add_chat_message" in mobile_src
+    assert "render_skill_load_stub" in render_src
+    assert "skill_load" not in mobile_src

@@ -846,12 +846,14 @@ def get_langchain_tools(
     allow_names: Iterable[str] | None = None,
     *,
     source_plugin_id: str | None = None,
+    refresh: bool = True,
 ) -> list[StructuredTool]:
     cfg = _get_effective_config()
     if not cfg.get("enabled"):
         return []
     allow = _allow_names_set(allow_names)
-    discover_enabled_servers()
+    if refresh:
+        discover_enabled_servers()
     _sync_catalog_from_config(cfg)
     wrappers: list[StructuredTool] = []
     with _runtime_lock:
@@ -916,8 +918,14 @@ def get_langchain_tools(
 def get_plugin_langchain_tools(
     plugin_id: str,
     allow_names: Iterable[str] | None = None,
+    *,
+    refresh: bool = True,
 ) -> list[StructuredTool]:
-    return get_langchain_tools(allow_names=allow_names, source_plugin_id=plugin_id)
+    return get_langchain_tools(
+        allow_names=allow_names,
+        source_plugin_id=plugin_id,
+        refresh=refresh,
+    )
 
 
 def get_destructive_tool_names(

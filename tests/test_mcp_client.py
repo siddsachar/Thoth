@@ -777,6 +777,7 @@ class McpClientFoundationTests(unittest.TestCase):
 
     def test_background_allow_all_runs_mcp_destructive_tool_without_interrupt_gate(self) -> None:
         import row_bot.agent as agent
+        import row_bot.mcp_client.runtime as mcp_runtime
         from langchain_core.tools import StructuredTool
 
         interrupt_calls: list[dict] = []
@@ -815,7 +816,9 @@ class McpClientFoundationTests(unittest.TestCase):
                      )), \
                      patch.object(agent, "get_agent_system_prompt", return_value="test prompt"), \
                      patch.object(agent, "create_react_agent", side_effect=_capture_agent), \
-                     patch.object(agent, "interrupt", side_effect=lambda payload: interrupt_calls.append(payload) or True):
+                     patch.object(agent, "interrupt", side_effect=lambda payload: interrupt_calls.append(payload) or True), \
+                     patch.object(mcp_runtime, "get_langchain_tools", return_value=[tool]), \
+                     patch.object(mcp_runtime, "get_destructive_tool_names", return_value={"mcp_manual_delete_note"}):
                     agent.get_agent_graph(["mcp"])
                     return captured_tools["mcp_manual_delete_note"].func()
             finally:

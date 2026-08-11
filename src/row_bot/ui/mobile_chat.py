@@ -75,6 +75,15 @@ def format_mobile_timestamp(value: Any) -> str:
     return parsed.strftime("%Y-%m-%d")
 
 
+def _mobile_conversation_threads(rows: list[tuple], *, limit: int = 20) -> list[tuple]:
+    """Return top-level conversations for the compact thread list."""
+    return [
+        row
+        for row in rows
+        if len(row) <= 6 or str(row[6] or "") != "agent_child"
+    ][:limit]
+
+
 def open_thread_on_mobile(
     thread_id: str,
     *,
@@ -520,7 +529,9 @@ def _build_mobile_thread_composer(
                 icon="keyboard_voice",
                 on_click=_start_browser_voice,
             ).props("flat dense round").tooltip("Talk using this browser")
-            ui.button(icon="send", on_click=_submit).props("unelevated round color=primary").tooltip("Send")
+            ui.button(icon="send", on_click=_submit).props(
+                "unelevated round color=primary"
+            ).classes("row-bot-mobile-send-button").tooltip("Send")
 
 
 def build_mobile_thread_list(
@@ -556,10 +567,22 @@ def build_mobile_thread_list(
 
             ui.label("Recent chats").classes("text-subtitle2 q-mt-sm")
             try:
-                threads = _list_threads(include_details=True)[:20]
+                threads = _mobile_conversation_threads(
+                    _list_threads(include_details=True),
+                    limit=20,
+                )
             except Exception:
                 logger.warning("Could not list mobile chat threads", exc_info=True)
                 threads = []
+            try:
+                from row_bot.agent_orchestrator import get_thread_orchestration_activity
+
+                orchestration_activity = get_thread_orchestration_activity(
+                    [str(row[0]) for row in threads]
+                )
+            except Exception:
+                logger.debug("Could not load mobile Agent activity", exc_info=True)
+                orchestration_activity = {}
             if not threads:
                 with ui.element("div").classes("row-bot-mobile-empty"):
                     ui.icon("chat_bubble_outline").classes("text-grey-6")
@@ -571,8 +594,18 @@ def build_mobile_thread_list(
                 thread_id = str(row[0])
                 name = str(row[1] or "Untitled")
                 updated = format_mobile_timestamp(row[3] if len(row) > 3 else "")
+                agent_activity = orchestration_activity.get(thread_id) or {}
+                agent_is_blocking = bool(
+                    agent_activity.get("blocking")
+                    and str(agent_activity.get("state") or "") == "active"
+                )
                 with ui.row().classes("row-bot-mobile-thread-row w-full items-center gap-2 no-wrap"):
-                    ui.icon("chat_bubble_outline").classes("text-grey-6")
+                    if agent_is_blocking:
+                        ui.spinner("oval", size="xs", color="primary").props(
+                            'role="status" aria-label="Child Agents working"'
+                        ).tooltip("Child Agents working")
+                    else:
+                        ui.icon("chat_bubble_outline").classes("text-grey-6")
                     with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
                         ui.label(name).classes("text-sm text-weight-medium ellipsis")
                         ui.label(updated).classes("text-grey-6 text-xs")
@@ -612,6 +645,7 @@ def build_mobile_thread_detail(
             rebuild_main=rebuild_main,
         ),
     )
+    p.refresh_skill_chips = composer_extras.refresh_from_store
     with ui.column().classes("row-bot-mobile-chat-detail w-full no-wrap").props(
         "data-docs-id=mobile-chat-detail"
     ):

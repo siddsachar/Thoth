@@ -7,12 +7,14 @@ transitions coordinate retries, completion barriers, synthesis, and delivery.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +38,37 @@ ACTIVE_ORCHESTRATION_STATUSES = {
     "waiting_children",
     "waiting_approval",
     "synthesizing",
+}
+ORCHESTRATION_STATUS_LABELS = {
+    "planning": "Planning",
+    "running": "Running",
+    "waiting_children": "Waiting for Agents",
+    "waiting_approval": "Needs approval",
+    "synthesizing": "Preparing final answer",
+    "completed": "Completed",
+    "completed_partial": "Completed with issues",
+    "interrupted": "Interrupted",
+    "failed": "Failed",
+    "stopped": "Stopped",
+}
+AGENT_MEMBER_STATUS_LABELS = {
+    "active": "Running",
+    "queued": "Queued",
+    "running": "Running",
+    "waiting_approval": "Needs approval",
+    "waiting_user": "Needs attention",
+    "paused": "Paused",
+    "completed": "Completed",
+    "completed_delivery_failed": "Completed; delivery failed",
+    "failed": "Failed",
+    "blocked": "Blocked",
+    "stopped": "Stopped",
+    "cleared": "Cleared",
+    "cancelled": "Cancelled",
+    "timed_out": "Timed out",
+    "interrupted": "Interrupted",
+    "retrying": "Retrying",
+    "retried": "Replaced",
 }
 TERMINAL_MEMBER_STATUSES = {
     "completed",
@@ -94,9 +127,30 @@ _PERMANENT_MARKERS = (
 _SERVICE_LOCK = threading.RLock()
 _DELIVERY_LOCK = threading.RLock()
 _SYNTHESIS_THREADS: dict[str, threading.Thread] = {}
+_PARENT_THREADS: dict[str, threading.Thread] = {}
 _SYNTHESIS_EXECUTOR: Callable[[dict[str, Any], str], str] | None = None
+_PARENT_EXECUTOR: Callable[
+    [dict[str, Any], str, list[str], dict[str, Any]], str | dict[str, Any]
+] | None = None
 _RETRY_EXECUTOR: Callable[[dict[str, Any], dict[str, Any], bool], dict[str, Any]] | None = None
 _DELIVERY_EXECUTOR: Callable[[dict[str, Any], str, str, str], bool] | None = None
+CURRENT_ORCHESTRATION_VERSION = 2
+THREAD_EVENT_KINDS = {
+    "child_terminal",
+    "child_approval_requested",
+    "child_approval_resolved",
+    "child_retry_scheduled",
+    "parent_steering",
+    "stop_requested",
+    "goal_continuation",
+    "workflow_continuation",
+}
+CHILD_LIFECYCLE_EVENT_KINDS = {
+    "child_terminal",
+    "child_approval_requested",
+    "child_approval_resolved",
+    "child_retry_scheduled",
+}
 _LEGAL_TRANSITIONS = {
     "planning": {"running", "failed", "stopped", "interrupted"},
     "running": {
@@ -137,6 +191,88 @@ _LEGAL_TRANSITIONS = {
 
 class OrchestrationError(ValueError):
     """Raised when orchestration state or a requested transition is invalid."""
+
+
+@dataclass(frozen=True)
+class ThreadEvent:
+    """One ordered, idempotent model-visible input for a durable parent turn."""
+
+    id: str
+    orchestration_id: str
+    kind: str
+    content: str
+    payload: dict[str, Any]
+    run_id: str = ""
+    source_event_id: str = ""
+    created_at: str = ""
+
+
+@dataclass(frozen=True)
+class ParentPassResult:
+    """Classification applied after one pass of the original parent graph."""
+
+    orchestration_id: str
+    parent_state: str
+    output_kind: str
+    waiting: bool
+    text: str
+
+
+def orchestration_status_label(status: str) -> str:
+    """Return compact user-facing copy for a durable group status."""
+
+    clean = str(status or "").strip()
+    return ORCHESTRATION_STATUS_LABELS.get(
+        clean,
+        clean.replace("_", " ").strip().title() or "Unknown",
+    )
+
+
+def agent_member_status_label(status: str) -> str:
+    """Return compact user-facing copy for a child Agent status."""
+
+    clean = str(status or "").strip()
+    return AGENT_MEMBER_STATUS_LABELS.get(
+        clean,
+        clean.replace("_", " ").strip().title() or "Unknown",
+    )
+
+
+def _emit_orchestration_buddy_event(
+    orchestration: Mapping[str, Any],
+    *,
+    terminal: bool,
+) -> None:
+    orchestration_id = str(orchestration.get("id") or "")
+    if not orchestration_id:
+        return
+    try:
+        from row_bot.buddy.events import BuddyEventType, emit_buddy_event
+
+        thread_id = str(orchestration.get("parent_thread_id") or "")
+        if terminal:
+            emit_buddy_event(
+                BuddyEventType.ORCHESTRATION_DONE,
+                source="agent_orchestrator",
+                payload={
+                    "orchestration_id": orchestration_id,
+                    "thread_id": thread_id,
+                    "label": "Agent work done",
+                },
+            )
+        activity = get_thread_orchestration_activity([thread_id]).get(thread_id, {})
+        if str(activity.get("state") or "") == "active":
+            emit_buddy_event(
+                BuddyEventType.ORCHESTRATION_ACTIVE,
+                source="agent_orchestrator",
+                payload={
+                    "orchestration_id": orchestration_id,
+                    "thread_id": thread_id,
+                    **activity,
+                },
+            )
+    except Exception:
+        logger.debug("Could not publish orchestration Buddy lifecycle", exc_info=True)
 
 
 def _now() -> str:
@@ -193,7 +329,13 @@ def _orchestration_row(row: Any) -> dict[str, Any] | None:
         "settings_snapshot_json",
     ):
         result[name] = _parse_object(result.get(name))
-    for name in ("required_total", "optional_total", "acknowledgement_sent"):
+    for name in (
+        "required_total",
+        "optional_total",
+        "acknowledgement_sent",
+        "orchestration_version",
+        "parent_attempt",
+    ):
         result[name] = int(result.get(name) or 0)
     return result
 
@@ -212,17 +354,30 @@ def _member_row(row: Any) -> dict[str, Any] | None:
     return result
 
 
+def _message_row(row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    result = dict(row)
+    result["payload_json"] = _parse_object(result.get("payload_json"))
+    result["attempt_count"] = int(result.get("attempt_count") or 0)
+    return result
+
+
 def set_test_executors(
     *,
     synthesis: Callable[[dict[str, Any], str], str] | None = None,
+    parent: Callable[
+        [dict[str, Any], str, list[str], dict[str, Any]], str | dict[str, Any]
+    ] | None = None,
     retry: Callable[[dict[str, Any], dict[str, Any], bool], dict[str, Any]] | None = None,
     delivery: Callable[[dict[str, Any], str, str, str], bool] | None = None,
 ) -> None:
     """Install deterministic service executors; passing no callbacks resets them."""
 
-    global _SYNTHESIS_EXECUTOR, _RETRY_EXECUTOR, _DELIVERY_EXECUTOR
+    global _SYNTHESIS_EXECUTOR, _PARENT_EXECUTOR, _RETRY_EXECUTOR, _DELIVERY_EXECUTOR
     with _SERVICE_LOCK:
         _SYNTHESIS_EXECUTOR = synthesis
+        _PARENT_EXECUTOR = parent
         _RETRY_EXECUTOR = retry
         _DELIVERY_EXECUTOR = delivery
 
@@ -238,6 +393,7 @@ def create_or_get_orchestration(
     parent_run_id: str = "",
     settings_snapshot: Mapping[str, Any] | None = None,
     delivery_context: Mapping[str, Any] | None = None,
+    orchestration_version: int = 1,
 ) -> dict[str, Any]:
     """Create the one orchestration owned by a parent generation."""
 
@@ -256,6 +412,8 @@ def create_or_get_orchestration(
 
     snapshot = get_agent_settings_snapshot(settings_snapshot)
     orchestration_id = uuid.uuid4().hex[:12]
+    version = max(1, int(orchestration_version or 1))
+    parent_state = "running" if version >= CURRENT_ORCHESTRATION_VERSION else ""
     now = _now()
     conn = _conn()
     try:
@@ -272,9 +430,10 @@ def create_or_get_orchestration(
                 "root_objective, status, model_ref, approval_mode, runtime_surface, "
                 "required_total, optional_total, acknowledgement_sent, "
                 "continuation_state_json, delivery_context_json, "
-                "settings_snapshot_json, created_at, updated_at, completed_at, "
+                "settings_snapshot_json, orchestration_version, parent_state, "
+                "created_at, updated_at, completed_at, "
                 "error_message) VALUES (?, ?, ?, ?, ?, 'planning', ?, ?, ?, 0, 0, "
-                "0, '{}', ?, ?, ?, ?, '', '')",
+                "0, '{}', ?, ?, ?, ?, ?, ?, '', '')",
                 (
                     orchestration_id,
                     parent_thread_id,
@@ -286,6 +445,8 @@ def create_or_get_orchestration(
                     str(runtime_surface or "chat"),
                     _json_text(dict(delivery_context or {})),
                     _json_text(snapshot),
+                    version,
+                    parent_state,
                     now,
                     now,
                 ),
@@ -368,6 +529,10 @@ def transition_orchestration(
         raise OrchestrationError("Orchestration changed concurrently; retry the action.")
     result = get_orchestration(orchestration_id)
     assert result is not None
+    _emit_orchestration_buddy_event(
+        result,
+        terminal=status in {"completed", "completed_partial", "failed", "stopped"},
+    )
     return result
 
 
@@ -434,6 +599,205 @@ def list_orchestrations(
     return [
         parsed for row in rows if (parsed := _orchestration_row(row)) is not None
     ]
+
+
+def get_thread_orchestration_activity(
+    parent_thread_ids: Sequence[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Return compact durable orchestration activity keyed by parent thread."""
+
+    _ensure_schema()
+    clean_thread_ids = [
+        str(thread_id).strip()
+        for thread_id in (parent_thread_ids or [])
+        if str(thread_id or "").strip()
+    ]
+    clauses = ""
+    params: list[Any] = []
+    if clean_thread_ids:
+        clauses = (
+            f"WHERE parent_thread_id IN ({', '.join('?' for _ in clean_thread_ids)})"
+        )
+        params.extend(clean_thread_ids)
+    active_statuses = sorted(ACTIVE_ORCHESTRATION_STATUSES | {"interrupted"})
+    active_placeholders = ", ".join("?" for _ in active_statuses)
+    conn = _conn()
+    try:
+        rows = conn.execute(
+            "WITH ranked AS ("
+            "SELECT *, ROW_NUMBER() OVER (PARTITION BY parent_thread_id ORDER BY "
+            f"CASE WHEN status IN ({active_placeholders}) THEN 0 ELSE 1 END, "
+            "updated_at DESC, created_at DESC, id DESC) AS activity_rank "
+            f"FROM agent_orchestrations {clauses}) "
+            "SELECT * FROM ranked WHERE activity_rank = 1",
+            (*active_statuses, *params),
+        ).fetchall()
+        orchestration_rows = [
+            parsed
+            for row in rows
+            if (parsed := _orchestration_row(row)) is not None
+        ]
+        orchestration_ids = [str(row.get("id") or "") for row in orchestration_rows]
+        member_rows: list[Any] = []
+        approval_rows: list[Any] = []
+        if orchestration_ids:
+            member_rows = conn.execute(
+                "SELECT m.orchestration_id, m.run_id, m.required, "
+                "m.status AS member_status, "
+                "r.status AS run_status, r.stop_requested "
+                "FROM agent_orchestration_members m "
+                "LEFT JOIN agent_runs r ON r.id = m.run_id "
+                f"WHERE m.orchestration_id IN ({', '.join('?' for _ in orchestration_ids)})",
+                orchestration_ids,
+            ).fetchall()
+            approval_thread_ids = [
+                str(row.get("parent_thread_id") or "")
+                for row in orchestration_rows
+                if str(row.get("parent_thread_id") or "")
+            ]
+            if approval_thread_ids:
+                approval_rows = conn.execute(
+                    "SELECT id, status, parent_thread_id, agent_run_id, step_id "
+                    "FROM approval_requests WHERE status = 'pending' "
+                    f"AND parent_thread_id IN ({', '.join('?' for _ in approval_thread_ids)})",
+                    approval_thread_ids,
+                ).fetchall()
+    finally:
+        conn.close()
+
+    members_by_orchestration: dict[str, list[dict[str, Any]]] = {}
+    for row in member_rows:
+        member = dict(row)
+        members_by_orchestration.setdefault(
+            str(member.get("orchestration_id") or ""), []
+        ).append(member)
+
+    pending_by_thread: dict[str, list[dict[str, Any]]] = {}
+    for row in approval_rows:
+        approval = dict(row)
+        pending_by_thread.setdefault(
+            str(approval.get("parent_thread_id") or ""), []
+        ).append(approval)
+
+    activity_by_thread: dict[str, dict[str, Any]] = {}
+    inactive_member_statuses = TERMINAL_MEMBER_STATUSES | {
+        "cleared",
+        "transferred",
+    }
+    for orchestration in orchestration_rows:
+        orchestration_id = str(orchestration.get("id") or "")
+        members = members_by_orchestration.get(orchestration_id, [])
+        current_members: list[tuple[dict[str, Any], str]] = []
+        for member in members:
+            member_status = str(member.get("member_status") or "")
+            if member_status in {"retried", "transferred", "cleared"}:
+                continue
+            run_status = str(member.get("run_status") or "")
+            effective_status = run_status or member_status
+            current_members.append((member, effective_status))
+
+        active_members = [
+            (member, status)
+            for member, status in current_members
+            if status not in inactive_member_statuses
+        ]
+        failed_members = [
+            (member, status)
+            for member, status in current_members
+            if status in FAILED_MEMBER_STATUSES
+        ]
+        required_active = [
+            (member, status)
+            for member, status in active_members
+            if bool(member.get("required"))
+        ]
+        optional_active = [
+            (member, status)
+            for member, status in active_members
+            if not bool(member.get("required"))
+        ]
+        orchestration_status = str(orchestration.get("status") or "")
+        parent_state = str(orchestration.get("parent_state") or "")
+        parent_thread_id = str(orchestration.get("parent_thread_id") or "")
+        current_run_ids = {
+            str(member.get("run_id") or "")
+            for member, _status in current_members
+            if str(member.get("run_id") or "")
+        }
+        pending_approvals = [
+            approval
+            for approval in pending_by_thread.get(parent_thread_id, [])
+            if (
+                str(approval.get("step_id") or "")
+                == f"orchestration:{orchestration_id}"
+                or str(approval.get("agent_run_id") or "") in current_run_ids
+            )
+        ]
+        has_pending_approval = bool(pending_approvals)
+        missing_parent_approval = (
+            orchestration_status == "waiting_approval"
+            or parent_state == "waiting_approval"
+        ) and not has_pending_approval
+        interrupted = orchestration_status == "interrupted"
+        blocking = orchestration_status in ACTIVE_ORCHESTRATION_STATUSES
+        if interrupted or missing_parent_approval:
+            blocking = False
+        background = (
+            bool(optional_active)
+            and not blocking
+            and not interrupted
+            and not missing_parent_approval
+        )
+        active = blocking or background
+        effective_statuses = [status for _member, status in current_members]
+        if interrupted or missing_parent_approval:
+            state = "attention"
+            phase = "resume_required"
+        elif not active:
+            state = "terminal"
+            phase = orchestration_status or "terminal"
+        elif has_pending_approval:
+            state = "active"
+            phase = "approval_wait"
+        elif any(
+            bool(member.get("stop_requested"))
+            for member, _status in active_members
+        ):
+            state = "active"
+            phase = "stopping"
+        elif (
+            "retrying" in effective_statuses
+            or (blocking and bool(failed_members))
+        ):
+            state = "active"
+            phase = "retry"
+        elif background:
+            state = "active"
+            phase = "background"
+        elif (
+            orchestration_status == "synthesizing"
+            or parent_state in {"running", "runnable"}
+            and int(orchestration.get("parent_attempt") or 0) > 0
+        ):
+            state = "active"
+            phase = "later_wave_parent"
+        elif required_active:
+            state = "active"
+            phase = "child_running"
+        else:
+            state = "active"
+            phase = "later_wave_parent"
+
+        activity_by_thread[parent_thread_id] = {
+            "orchestration_id": orchestration_id,
+            "state": state,
+            "blocking": bool(blocking),
+            "background": bool(background),
+            "phase": phase,
+            "active_members": len(active_members),
+            "failed_members": len(failed_members),
+        }
+    return activity_by_thread
 
 
 def get_member_for_run(run_id: str) -> dict[str, Any] | None:
@@ -650,6 +1014,14 @@ def register_member(
     parsed = _member_row(row)
     if not parsed:
         raise OrchestrationError("Could not register the child member.")
+    if (
+        _is_unified_parent(_orchestration_row(orchestration))
+        and str(run["status"] or "") in TERMINAL_MEMBER_STATUSES
+    ):
+        # Structured waits may join a run that finished before the barrier was
+        # armed. Materialize its terminal event now; request_parent_wake will
+        # defer execution until arm_parent_wait moves the parent to waiting.
+        handle_run_terminal(run_id)
     return parsed
 
 
@@ -805,6 +1177,11 @@ def transfer_member(
     parsed = _member_row(row)
     if not parsed:
         raise OrchestrationError("Could not transfer orchestration membership.")
+    if (
+        _is_unified_parent(_orchestration_row(target))
+        and str(run["status"] or "") in TERMINAL_MEMBER_STATUSES
+    ):
+        handle_run_terminal(run_id)
     return parsed
 
 
@@ -857,15 +1234,30 @@ def _wake_dependency_waiters(orchestration_id: str) -> None:
 
 
 def _member_counts(orchestration_id: str) -> dict[str, int]:
-    members = list_members(orchestration_id, include_runs=False)
+    members = list_members(orchestration_id)
     current_members = [member for member in members if member.get("required")]
+
+    def effective_status(member: dict[str, Any]) -> str:
+        member_status = str(member.get("status") or "")
+        run_status = str((member.get("run") or {}).get("status") or "")
+        if run_status in TERMINAL_MEMBER_STATUSES or run_status == "waiting_approval":
+            return run_status
+        return member_status or run_status
+
+    statuses = [effective_status(member) for member in current_members]
+    running = sum(
+        status in {"queued", "running", "waiting_user", "paused"}
+        for status in statuses
+    )
+    needs_approval = sum(status == "waiting_approval" for status in statuses)
     return {
-        "running": sum(
-            member["status"] in {"queued", "running", "waiting_approval", "interrupted"}
-            for member in current_members
+        "running": running,
+        "needs_approval": needs_approval,
+        "completed": sum(
+            status in {"completed", "completed_delivery_failed"} for status in statuses
         ),
-        "completed": sum(member["status"] == "completed" for member in current_members),
-        "failed": sum(member["status"] in FAILED_MEMBER_STATUSES for member in current_members),
+        "failed": sum(status in FAILED_MEMBER_STATUSES for status in statuses),
+        "active": running + needs_approval,
         "required": len(current_members),
         "total_attempts": len(members),
     }
@@ -890,6 +1282,8 @@ def record_message(
     run_id: str = "",
     message_id: str = "",
     delivery_status: str = "pending",
+    payload: Mapping[str, Any] | None = None,
+    source_event_id: str = "",
 ) -> dict[str, Any]:
     _ensure_schema()
     message_id = str(message_id or uuid.uuid4().hex[:12])
@@ -898,14 +1292,17 @@ def record_message(
     try:
         conn.execute(
             "INSERT OR IGNORE INTO agent_orchestration_messages "
-            "(id, orchestration_id, run_id, kind, content, delivery_status, "
-            "created_at, delivered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(id, orchestration_id, run_id, kind, content, payload_json, "
+            "source_event_id, delivery_status, created_at, delivered_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 message_id,
                 str(orchestration_id),
                 str(run_id or ""),
                 str(kind or "steering"),
                 str(content or ""),
+                _json_text(dict(payload or {})),
+                str(source_event_id or ""),
                 str(delivery_status or "pending"),
                 now,
                 now if delivery_status == "delivered" else "",
@@ -918,7 +1315,7 @@ def record_message(
         conn.commit()
     finally:
         conn.close()
-    return dict(row) if row is not None else {}
+    return _message_row(row) or {}
 
 
 def list_messages(
@@ -942,7 +1339,1420 @@ def list_messages(
         ).fetchall()
     finally:
         conn.close()
-    return [dict(row) for row in rows]
+    return [_message_row(row) or {} for row in rows]
+
+
+def _is_unified_parent(orchestration: Mapping[str, Any] | None) -> bool:
+    return bool(
+        orchestration
+        and int(orchestration.get("orchestration_version") or 0)
+        >= CURRENT_ORCHESTRATION_VERSION
+    )
+
+
+def record_thread_event(
+    orchestration_id: str,
+    *,
+    kind: str,
+    content: str,
+    source_event_id: str,
+    run_id: str = "",
+    payload: Mapping[str, Any] | None = None,
+    request_wake: bool = True,
+) -> ThreadEvent:
+    """Persist one idempotent input for the original parent thread."""
+
+    orchestration = get_orchestration(orchestration_id)
+    if not _is_unified_parent(orchestration):
+        raise OrchestrationError("Thread events require a version 2 orchestration.")
+    clean_kind = str(kind or "").strip()
+    if clean_kind not in THREAD_EVENT_KINDS:
+        raise OrchestrationError(f"Unknown thread event kind: {clean_kind}")
+    source_event_id = str(source_event_id or "").strip()
+    if not source_event_id:
+        raise OrchestrationError("A stable source event id is required.")
+    message_id = f"orchestration:{orchestration_id}:event:{source_event_id}"
+    row = record_message(
+        orchestration_id,
+        kind=f"event.{clean_kind}",
+        content=str(content or ""),
+        run_id=run_id,
+        message_id=message_id,
+        delivery_status="pending",
+        payload=payload,
+        source_event_id=source_event_id,
+    )
+    event = ThreadEvent(
+        id=str(row.get("id") or message_id),
+        orchestration_id=str(orchestration_id),
+        kind=clean_kind,
+        content=str(row.get("content") or ""),
+        payload=dict(row.get("payload_json") or {}),
+        run_id=str(row.get("run_id") or ""),
+        source_event_id=str(row.get("source_event_id") or source_event_id),
+        created_at=str(row.get("created_at") or ""),
+    )
+    if request_wake:
+        request_parent_wake(orchestration_id)
+    return event
+
+
+def pending_thread_events(orchestration_id: str) -> list[ThreadEvent]:
+    """Return ordered unconsumed inputs for one durable parent turn."""
+
+    rows = list_messages(orchestration_id)
+    return [
+        ThreadEvent(
+            id=str(row.get("id") or ""),
+            orchestration_id=str(row.get("orchestration_id") or orchestration_id),
+            kind=str(row.get("kind") or "").removeprefix("event."),
+            content=str(row.get("content") or ""),
+            payload=dict(row.get("payload_json") or {}),
+            run_id=str(row.get("run_id") or ""),
+            source_event_id=str(row.get("source_event_id") or ""),
+            created_at=str(row.get("created_at") or ""),
+        )
+        for row in rows
+        if str(row.get("kind") or "").startswith("event.")
+        and not str(row.get("consumed_at") or "")
+    ]
+
+
+def _parent_wake_ready(orchestration_id: str) -> bool:
+    """Return whether durable inputs justify one detached recovery pass."""
+
+    events = pending_thread_events(orchestration_id)
+    if any(
+        event.kind
+        in {
+            "parent_steering",
+            "stop_requested",
+            "goal_continuation",
+            "workflow_continuation",
+        }
+        for event in events
+    ):
+        return True
+    return bool(events) and _barrier_ready(orchestration_id)
+
+
+def sanitize_pending_child_event_ids(
+    orchestration_id: str,
+    event_ids: Sequence[str] | None,
+) -> list[str]:
+    """Keep only currently pending child lifecycle events from this orchestration."""
+
+    requested = {str(event_id) for event_id in event_ids or () if str(event_id)}
+    if not requested:
+        return []
+    return [
+        event.id
+        for event in pending_thread_events(orchestration_id)
+        if event.id in requested and event.kind in CHILD_LIFECYCLE_EVENT_KINDS
+    ]
+
+
+def _required_group_event_ids(
+    orchestration_id: str,
+    members: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    current_run_ids = {
+        str(member.get("run_id") or "")
+        for member in members
+        if member.get("required") and str(member.get("run_id") or "")
+    }
+    lineage_run_ids = set(current_run_ids)
+    by_run_id = {
+        str(member.get("run_id") or ""): member
+        for member in list_members(orchestration_id, include_runs=False)
+    }
+    pending = list(current_run_ids)
+    while pending:
+        member = by_run_id.get(pending.pop()) or {}
+        prior_run_id = str(member.get("retry_of_run_id") or "")
+        if prior_run_id and prior_run_id not in lineage_run_ids:
+            lineage_run_ids.add(prior_run_id)
+            pending.append(prior_run_id)
+    return [
+        event.id
+        for event in pending_thread_events(orchestration_id)
+        if event.kind in CHILD_LIFECYCLE_EVENT_KINDS
+        and (
+            event.run_id in lineage_run_ids
+            or str(event.payload.get("failed_run_id") or "") in lineage_run_ids
+            or str(event.payload.get("replacement_run_id") or "") in lineage_run_ids
+        )
+    ]
+
+
+def wait_for_required_group(
+    orchestration_id: str,
+    timeout: float | None = 60.0,
+) -> dict[str, Any]:
+    """Join the current required cohort without invoking a provider."""
+
+    import time
+
+    from row_bot import agent_runner
+
+    orchestration = get_orchestration(orchestration_id)
+    if not orchestration:
+        raise OrchestrationError("Orchestration not found.")
+    deadline = (
+        time.monotonic() + max(0.0, float(timeout))
+        if timeout is not None
+        else None
+    )
+
+    while True:
+        members = [
+            member
+            for member in list_members(orchestration_id)
+            if member.get("required")
+        ]
+        outstanding = [
+            member
+            for member in members
+            if str(
+                (member.get("run") or {}).get("status")
+                or member.get("status")
+                or ""
+            )
+            not in TERMINAL_MEMBER_STATUSES
+        ]
+        if not outstanding:
+            break
+        remaining = (
+            None if deadline is None else max(0.0, deadline - time.monotonic())
+        )
+        if remaining is not None and remaining <= 0:
+            break
+        awaited = outstanding[0]
+        agent_runner.wait_for_agent_run_terminal(
+            str(awaited["run_id"]),
+            timeout=remaining,
+        )
+        refreshed = get_member_for_run(str(awaited["run_id"])) or awaited
+        refreshed_run = next(
+            (
+                member.get("run") or {}
+                for member in list_members(orchestration_id)
+                if str(member.get("run_id") or "") == str(awaited["run_id"])
+            ),
+            {},
+        )
+        refreshed_status = str(
+            refreshed_run.get("status") or refreshed.get("status") or ""
+        )
+        if (
+            refreshed_status not in TERMINAL_MEMBER_STATUSES
+            and deadline is not None
+            and time.monotonic() >= deadline
+        ):
+            break
+
+    members = [
+        member
+        for member in list_members(orchestration_id)
+        if member.get("required")
+    ]
+    runs: list[dict[str, Any]] = []
+    outstanding_run_ids: list[str] = []
+    for member in members:
+        run = dict(member.get("run") or {})
+        status = str(run.get("status") or member.get("status") or "")
+        if not run:
+            run = {"id": str(member.get("run_id") or ""), "status": status}
+        if status not in TERMINAL_MEMBER_STATUSES:
+            outstanding_run_ids.append(str(member.get("run_id") or ""))
+        runs.append(run)
+    required_total = int(orchestration.get("required_total") or 0)
+    barrier_complete = (
+        required_total > 0
+        and len(members) == required_total
+        and not outstanding_run_ids
+    )
+    return {
+        "orchestration_id": str(orchestration_id),
+        "runs": runs,
+        "barrier_complete": barrier_complete,
+        "timed_out": bool(outstanding_run_ids),
+        "outstanding_run_ids": outstanding_run_ids,
+        "child_event_ids": _required_group_event_ids(orchestration_id, members),
+    }
+
+
+def _format_thread_events(
+    orchestration: Mapping[str, Any],
+    events: Sequence[ThreadEvent],
+    *,
+    limit: int = 24000,
+) -> str:
+    """Create bounded factual context, not user-facing narration."""
+
+    blocks = [
+        "Thread orchestration events for the same parent turn.",
+        f"Original objective: {orchestration.get('root_objective', '')}",
+        "Continue as the original parent. Use the event facts below, delegate "
+        "later work if useful, and answer the user naturally.",
+    ]
+    for event in events:
+        payload = json.dumps(event.payload, sort_keys=True, ensure_ascii=False)
+        blocks.extend(
+            [
+                "",
+                f"Message Type: {event.kind.upper()}",
+                f"Event ID: {event.source_event_id or event.id}",
+                f"Child run: {event.run_id or '(parent)'}",
+                f"Payload: {payload}",
+                f"Content:\n{event.content}",
+            ]
+        )
+    text = "\n".join(blocks)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 70)].rstrip() + "\n\n[Thread events truncated to context budget.]"
+
+
+def _mark_events_consumed(event_ids: Sequence[str]) -> None:
+    clean_ids = [str(event_id) for event_id in event_ids if str(event_id)]
+    if not clean_ids:
+        return
+    placeholders = ", ".join("?" for _ in clean_ids)
+    conn = _conn()
+    try:
+        conn.execute(
+            f"UPDATE agent_orchestration_messages SET consumed_at = ?, "
+            f"delivery_status = 'consumed' WHERE id IN ({placeholders}) "
+            "AND consumed_at = ''",
+            (_now(), *clean_ids),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _joined_work_pending(orchestration_id: str) -> bool:
+    current = [
+        member
+        for member in list_members(orchestration_id, include_runs=False)
+        if member.get("required")
+    ]
+    return any(
+        str(member.get("status") or "") not in TERMINAL_MEMBER_STATUSES
+        for member in current
+    )
+
+
+def _joined_terminal_events_unaccounted(orchestration_id: str) -> bool:
+    """Close the member-update/event-insert race at the final-answer guard."""
+
+    terminal = [
+        member
+        for member in list_members(orchestration_id, include_runs=False)
+        if member.get("required")
+        and str(member.get("status") or "") in TERMINAL_MEMBER_STATUSES
+        and str(member.get("status") or "") != "retried"
+    ]
+    if not terminal:
+        return False
+    conn = _conn()
+    try:
+        for member in terminal:
+            source_event_id = (
+                f"run:{member.get('run_id')}:terminal:{member.get('status')}"
+            )
+            row = conn.execute(
+                "SELECT consumed_at FROM agent_orchestration_messages "
+                "WHERE orchestration_id = ? AND source_event_id = ? LIMIT 1",
+                (orchestration_id, source_event_id),
+            ).fetchone()
+            if row is None or not str(row["consumed_at"] or ""):
+                return True
+    finally:
+        conn.close()
+    return False
+
+
+def _completion_status(orchestration_id: str) -> str:
+    members = list_members(orchestration_id, include_runs=False)
+    failed = any(
+        str(member.get("status") or "") in FAILED_MEMBER_STATUSES
+        for member in members
+        if str(member.get("status") or "") != "retried"
+    )
+    return "completed_partial" if failed else "completed"
+
+
+def _checkpoint_output_metadata(parent_thread_id: str, text: str) -> dict[str, str]:
+    """Identify the exact parent-authored checkpoint row for an output."""
+
+    try:
+        from row_bot.threads import (
+            get_latest_checkpoint_messages,
+            get_latest_checkpoint_revision,
+        )
+
+        checkpoint_message_id = ""
+        for message in reversed(get_latest_checkpoint_messages(parent_thread_id)):
+            if str(getattr(message, "type", "") or "") != "ai":
+                continue
+            content = getattr(message, "content", "")
+            if isinstance(content, list):
+                content = "\n".join(
+                    str(item.get("text") or item.get("content") or "")
+                    if isinstance(item, dict)
+                    else str(item)
+                    for item in content
+                )
+            if str(content or "").strip() != str(text or "").strip():
+                continue
+            checkpoint_message_id = str(getattr(message, "id", "") or "").strip()
+            break
+        return {
+            "checkpoint_message_id": checkpoint_message_id,
+            "checkpoint_revision": get_latest_checkpoint_revision(parent_thread_id),
+        }
+    except Exception:
+        logger.debug(
+            "Could not identify parent checkpoint output for thread %s",
+            parent_thread_id,
+            exc_info=True,
+        )
+        return {"checkpoint_message_id": "", "checkpoint_revision": ""}
+
+
+def complete_parent_pass(
+    orchestration_id: str,
+    output: str | Mapping[str, Any],
+    *,
+    continuation_state: Mapping[str, Any] | None = None,
+    delivery_context: Mapping[str, Any] | None = None,
+    foreground: bool,
+    consumed_event_ids: Sequence[str] | None = None,
+) -> ParentPassResult:
+    """Classify one pass of the original parent graph as progress or final."""
+
+    orchestration = get_orchestration(orchestration_id)
+    if not _is_unified_parent(orchestration):
+        raise OrchestrationError("Parent passes require a version 2 orchestration.")
+    if consumed_event_ids:
+        _mark_events_consumed(consumed_event_ids)
+    state = dict(orchestration.get("continuation_state_json") or {})
+    state.update(dict(continuation_state or {}))
+    state["finalization_ready"] = True
+    delivery = dict(orchestration.get("delivery_context_json") or {})
+    delivery.update(dict(delivery_context or {}))
+    if isinstance(output, Mapping):
+        output_type = str(output.get("type") or "")
+        if output_type == "interrupt":
+            _persist_parent_approval(
+                orchestration,
+                output,
+                continuation_state=state,
+                delivery_context=delivery,
+            )
+            return ParentPassResult(
+                orchestration_id=orchestration_id,
+                parent_state="waiting_approval",
+                output_kind="approval",
+                waiting=True,
+                text="",
+            )
+        text = str(output.get("message") or output.get("error") or "").strip()
+    else:
+        text = str(output or "").strip()
+    state.pop("parent_approval", None)
+    state.pop("parent_interrupt", None)
+    if not text:
+        raise OrchestrationError("The original parent returned no output.")
+
+    waiting = (
+        _joined_work_pending(orchestration_id)
+        or _joined_terminal_events_unaccounted(orchestration_id)
+        or bool(pending_thread_events(orchestration_id))
+    )
+    current = get_orchestration(orchestration_id) or orchestration
+    attempt = int(current.get("parent_attempt") or 0)
+    output_kind = "progress" if waiting else "final"
+    parent_state = "waiting" if waiting else "completed"
+    status = "waiting_children" if waiting else _completion_status(orchestration_id)
+    message_kind = f"parent_{output_kind}"
+    message_id = f"orchestration:{orchestration_id}:{message_kind}:{attempt}"
+    checkpoint_metadata = _checkpoint_output_metadata(
+        str(orchestration.get("parent_thread_id") or ""),
+        text,
+    )
+    record_message(
+        orchestration_id,
+        kind=message_kind,
+        content=text,
+        message_id=message_id,
+        delivery_status="delivered" if foreground else "pending",
+        payload={
+            "foreground": bool(foreground),
+            "parent_attempt": attempt,
+            **checkpoint_metadata,
+        },
+    )
+    now = _now()
+    conn = _conn()
+    try:
+        conn.execute(
+            "UPDATE agent_orchestrations SET status = ?, parent_state = ?, "
+            "continuation_state_json = ?, delivery_context_json = ?, "
+            "wake_requested_at = ?, completed_at = ?, error_message = '', "
+            "updated_at = ? WHERE id = ?",
+            (
+                status,
+                parent_state,
+                _json_text(state),
+                _json_text(delivery),
+                now if waiting and pending_thread_events(orchestration_id) else "",
+                "" if waiting else now,
+                now,
+                orchestration_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    final_row = get_orchestration(orchestration_id) or current
+    _emit_orchestration_buddy_event(final_row, terminal=not waiting)
+    try:
+        from row_bot.threads import touch_thread
+
+        touch_thread(str(final_row.get("parent_thread_id") or ""))
+    except Exception:
+        logger.debug("Could not touch parent thread after checkpoint pass", exc_info=True)
+    if not foreground:
+        _deliver_once(
+            final_row,
+            kind=output_kind,
+            text=text,
+            message_key=message_id,
+        )
+    if waiting and _parent_wake_ready(orchestration_id):
+        request_parent_wake(orchestration_id)
+    if not waiting:
+        _notify_surface_completion(final_row, text)
+    return ParentPassResult(
+        orchestration_id=orchestration_id,
+        parent_state=parent_state,
+        output_kind=output_kind,
+        waiting=waiting,
+        text=text,
+    )
+
+
+def arm_parent_wait(
+    orchestration_id: str,
+    *,
+    continuation_state: Mapping[str, Any],
+    delivery_context: Mapping[str, Any] | None = None,
+) -> bool:
+    """Arm a structured workflow delegation that has no initial model pass."""
+
+    orchestration = get_orchestration(orchestration_id)
+    if not _is_unified_parent(orchestration):
+        return False
+    state = dict(orchestration.get("continuation_state_json") or {})
+    incoming_state = copy.deepcopy(dict(continuation_state or {}))
+    if incoming_state.get("workflow_direct_child"):
+        workflow_config = incoming_state.get("config")
+        if isinstance(workflow_config, dict):
+            workflow_config.setdefault("configurable", {})[
+                "thread_event_new_turn"
+            ] = True
+    state.update(incoming_state)
+    state["finalization_ready"] = True
+    delivery = dict(orchestration.get("delivery_context_json") or {})
+    delivery.update(dict(delivery_context or {}))
+    conn = _conn()
+    try:
+        conn.execute(
+            "UPDATE agent_orchestrations SET status = 'waiting_children', "
+            "parent_state = 'waiting', continuation_state_json = ?, "
+            "delivery_context_json = ?, updated_at = ? WHERE id = ?",
+            (_json_text(state), _json_text(delivery), _now(), orchestration_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    if _parent_wake_ready(orchestration_id):
+        request_parent_wake(orchestration_id)
+    return True
+
+
+def start_parent_event_turn(
+    *,
+    parent_thread_id: str,
+    parent_generation_id: str,
+    root_objective: str,
+    model_ref: str,
+    approval_mode: str,
+    runtime_surface: str,
+    event_kind: str,
+    event_content: str,
+    source_event_id: str,
+    config: Mapping[str, Any],
+    enabled_tool_names: Sequence[str],
+    delivery_context: Mapping[str, Any] | None = None,
+    parent_run_id: str = "",
+    event_payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create and wake a v2 parent turn from a durable non-user event."""
+
+    orchestration = create_or_get_orchestration(
+        parent_thread_id=parent_thread_id,
+        parent_generation_id=parent_generation_id,
+        parent_run_id=parent_run_id,
+        root_objective=root_objective,
+        model_ref=model_ref,
+        approval_mode=approval_mode,
+        runtime_surface=runtime_surface,
+        delivery_context=delivery_context,
+        orchestration_version=CURRENT_ORCHESTRATION_VERSION,
+    )
+    parent_config = copy.deepcopy(dict(config))
+    parent_config.setdefault("configurable", {})["thread_event_new_turn"] = True
+    arm_parent_wait(
+        str(orchestration["id"]),
+        continuation_state={
+            "config": parent_config,
+            "enabled_tool_names": [
+                str(name) for name in enabled_tool_names if str(name or "").strip()
+            ],
+        },
+        delivery_context=delivery_context,
+    )
+    record_thread_event(
+        str(orchestration["id"]),
+        kind=event_kind,
+        content=event_content,
+        source_event_id=source_event_id,
+        payload=event_payload,
+    )
+    return get_orchestration(str(orchestration["id"])) or orchestration
+
+
+def request_parent_wake(orchestration_id: str) -> bool:
+    """Request a bounded original-parent pass without holding a provider call."""
+
+    orchestration = get_orchestration(orchestration_id)
+    if not _is_unified_parent(orchestration):
+        return False
+    if str(orchestration.get("status") or "") in {
+        "completed",
+        "completed_partial",
+        "failed",
+        "stopped",
+        "interrupted",
+    }:
+        return False
+    if not _parent_wake_ready(orchestration_id):
+        return True
+    parent_state = str(orchestration.get("parent_state") or "")
+    now = _now()
+    conn = _conn()
+    try:
+        if parent_state in {"waiting", "runnable"}:
+            conn.execute(
+                "UPDATE agent_orchestrations SET parent_state = 'runnable', "
+                "wake_requested_at = ?, updated_at = ? WHERE id = ? "
+                "AND parent_state IN ('waiting', 'runnable')",
+                (now, now, orchestration_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE agent_orchestrations SET wake_requested_at = ?, "
+                "updated_at = ? WHERE id = ?",
+                (now, now, orchestration_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    if parent_state in {"waiting", "runnable"}:
+        _schedule_parent_runner(orchestration_id)
+    return True
+
+
+def route_parent_steering(
+    *,
+    parent_thread_id: str,
+    incoming_generation_id: str,
+    content: str,
+) -> dict[str, Any] | None:
+    """Route a later user message into the waiting original parent turn."""
+
+    text = str(content or "").strip()
+    if not parent_thread_id or not incoming_generation_id or not text:
+        return None
+    orchestration = get_active_orchestration(parent_thread_id)
+    if (
+        not _is_unified_parent(orchestration)
+        or str(orchestration.get("status") or "") != "waiting_children"
+        or str(orchestration.get("parent_state") or "")
+        not in {"waiting", "runnable", "running"}
+        or str(orchestration.get("parent_generation_id") or "")
+        == str(incoming_generation_id)
+    ):
+        return None
+    record_thread_event(
+        str(orchestration["id"]),
+        kind="parent_steering",
+        content=text,
+        source_event_id=f"steering:{incoming_generation_id}",
+        payload={"incoming_generation_id": str(incoming_generation_id)},
+    )
+    return get_orchestration(str(orchestration["id"])) or orchestration
+
+
+def _claim_parent_lease(orchestration_id: str) -> tuple[dict[str, Any], str] | None:
+    lease_owner = uuid.uuid4().hex
+    now = _now()
+    expires = (datetime.now() + timedelta(minutes=2)).isoformat()
+    conn = _conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT * FROM agent_orchestrations WHERE id = ?",
+            (orchestration_id,),
+        ).fetchone()
+        orchestration = _orchestration_row(row)
+        pending_event = conn.execute(
+            "SELECT 1 FROM agent_orchestration_messages "
+            "WHERE orchestration_id = ? AND kind LIKE 'event.%' "
+            "AND consumed_at = '' LIMIT 1",
+            (orchestration_id,),
+        ).fetchone()
+        if (
+            not _is_unified_parent(orchestration)
+            or str(orchestration.get("parent_state") or "") not in {"waiting", "runnable"}
+            or str(orchestration.get("status") or "") in {
+                "completed",
+                "completed_partial",
+                "failed",
+                "stopped",
+                "interrupted",
+                "waiting_approval",
+            }
+            or pending_event is None
+        ):
+            conn.commit()
+            return None
+        existing_owner = str(orchestration.get("lease_owner") or "")
+        existing_expiry = str(orchestration.get("lease_expires_at") or "")
+        if existing_owner and existing_expiry and existing_expiry > now:
+            conn.commit()
+            return None
+        changed = conn.execute(
+            "UPDATE agent_orchestrations SET parent_state = 'running', "
+            "lease_owner = ?, lease_expires_at = ?, wake_requested_at = '', "
+            "parent_attempt = parent_attempt + 1, updated_at = ? "
+            "WHERE id = ? AND parent_state IN ('waiting', 'runnable')",
+            (lease_owner, expires, now, orchestration_id),
+        ).rowcount
+        row = conn.execute(
+            "SELECT * FROM agent_orchestrations WHERE id = ?",
+            (orchestration_id,),
+        ).fetchone()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if not changed:
+        return None
+    claimed = _orchestration_row(row)
+    return (claimed, lease_owner) if claimed else None
+
+
+def _release_parent_lease(orchestration_id: str, lease_owner: str) -> None:
+    conn = _conn()
+    try:
+        conn.execute(
+            "UPDATE agent_orchestrations SET lease_owner = '', lease_expires_at = '', "
+            "updated_at = ? WHERE id = ? AND lease_owner = ?",
+            (_now(), orchestration_id, lease_owner),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _bind_recorded_parent_resources(
+    orchestration: Mapping[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Restore exact thread resources before a background parent wake."""
+
+    thread_id = str(orchestration.get("parent_thread_id") or "")
+    configurable = config.setdefault("configurable", {})
+    saved_developer_workspace_id = str(
+        configurable.get("developer_workspace_id") or ""
+    )
+    saved_project_workspace_id = str(
+        configurable.get("project_workspace_id") or ""
+    )
+    saved_designer_project_id = str(configurable.get("designer_project_id") or "")
+    try:
+        from row_bot.threads import (
+            _get_thread_developer_workspace,
+            _get_thread_project_id,
+            _get_thread_project_workspace,
+        )
+
+        developer_workspace_id = _get_thread_developer_workspace(thread_id)
+        project_workspace_id = _get_thread_project_workspace(thread_id)
+        project_id = _get_thread_project_id(thread_id)
+    except Exception:
+        developer_workspace_id = ""
+        project_workspace_id = ""
+        project_id = ""
+    for label, saved, durable in (
+        ("Developer workspace", saved_developer_workspace_id, developer_workspace_id),
+        ("Developer project workspace", saved_project_workspace_id, project_workspace_id),
+        ("Designer project", saved_designer_project_id, project_id),
+    ):
+        if saved and durable and saved != durable:
+            raise OrchestrationError(
+                f"{label} binding changed while the parent Agent was waiting. "
+                "Resume from the originally bound thread or start a new turn."
+            )
+    effective_developer_workspace_id = (
+        saved_developer_workspace_id or developer_workspace_id
+    )
+    effective_project_workspace_id = (
+        saved_project_workspace_id or project_workspace_id
+    )
+    effective_designer_project_id = saved_designer_project_id or project_id
+    if effective_developer_workspace_id or effective_project_workspace_id:
+        from row_bot.developer.storage import get_workspace
+
+        for label, workspace_id in (
+            ("Developer workspace", effective_developer_workspace_id),
+            ("Developer project workspace", effective_project_workspace_id),
+        ):
+            if workspace_id and get_workspace(workspace_id) is None:
+                raise OrchestrationError(
+                    f"{label} {workspace_id} no longer exists."
+                )
+    if effective_developer_workspace_id:
+        configurable["developer_workspace_id"] = effective_developer_workspace_id
+    if effective_project_workspace_id:
+        configurable["project_workspace_id"] = effective_project_workspace_id
+    if effective_designer_project_id:
+        configurable["designer_project_id"] = effective_designer_project_id
+        try:
+            from row_bot.designer.session import bind_project_to_thread
+
+            bind_project_to_thread(thread_id, effective_designer_project_id)
+        except ImportError:
+            pass
+
+
+def _default_parent_executor(
+    orchestration: dict[str, Any],
+    event_context: str,
+    enabled_tools: list[str],
+    config: dict[str, Any],
+) -> str | dict[str, Any]:
+    from row_bot.agent import invoke_agent
+
+    configurable = config.setdefault("configurable", {})
+    configurable.update(
+        {
+            "thread_id": str(orchestration["parent_thread_id"]),
+            "generation_id": str(orchestration["parent_generation_id"]),
+            "root_objective": str(orchestration["root_objective"]),
+            "model_override": str(orchestration["model_ref"]),
+            "approval_mode": str(orchestration["approval_mode"]),
+            "runtime_surface": str(orchestration.get("runtime_surface") or "normal_chat"),
+            "orchestration_id": str(orchestration["id"]),
+            "thread_event_context": True,
+            "orchestration_internal_wake": True,
+        }
+    )
+    _bind_recorded_parent_resources(orchestration, config)
+    return invoke_agent(event_context, enabled_tools, config)
+
+
+def _interrupt_fingerprint(interrupts: object) -> str:
+    """Return a compact ID-independent fingerprint for protected actions."""
+
+    items = interrupts if isinstance(interrupts, list) else [interrupts]
+    actions: list[str] = []
+    for raw in items:
+        if not isinstance(raw, Mapping):
+            continue
+        args = raw.get("args")
+        action = {
+            "tool": str(raw.get("tool") or raw.get("name") or ""),
+            "args": args if isinstance(args, Mapping) else args or {},
+        }
+        actions.append(
+            json.dumps(action, sort_keys=True, separators=(",", ":"), default=str)
+        )
+    canonical = "[" + ",".join(sorted(actions)) + "]"
+    return hashlib.sha256(canonical.encode("utf-8", errors="replace")).hexdigest()[:24]
+
+
+def _approval_payload_from_db_row(row: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not row:
+        return {}
+    return _parse_object(row.get("approval_payload_json"))
+
+
+def _persist_parent_approval(
+    orchestration: Mapping[str, Any],
+    result: Mapping[str, Any],
+    *,
+    continuation_state: Mapping[str, Any] | None = None,
+    delivery_context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Commit one parent approval and its orchestration wait state together."""
+
+    interrupts = result.get("interrupts") or []
+    if not isinstance(interrupts, list):
+        interrupts = []
+    fingerprint = _interrupt_fingerprint(interrupts)
+    try:
+        from row_bot.approval_messages import compact_message, normalize_interrupts
+
+        payload = normalize_interrupts(
+            interrupts,
+            source_label="Parent Agent",
+            parent_thread_id=str(orchestration.get("parent_thread_id") or ""),
+        )
+        payload["orchestration_id"] = str(orchestration.get("id") or "")
+        payload["interrupt_fingerprint"] = fingerprint
+        message = compact_message(payload) or "The parent Agent needs approval to continue."
+    except Exception:
+        payload = {
+            "interrupts": interrupts,
+            "source_label": "Parent Agent",
+            "orchestration_id": str(orchestration.get("id") or ""),
+            "interrupt_fingerprint": fingerprint,
+        }
+        message = "The parent Agent needs approval to continue."
+
+    orchestration_id = str(orchestration.get("id") or "")
+    parent_thread_id = str(orchestration.get("parent_thread_id") or "")
+    step_id = f"orchestration:{orchestration_id}"
+    created = False
+    approval: dict[str, Any] = {}
+    conn = _conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT continuation_state_json, delivery_context_json "
+            "FROM agent_orchestrations WHERE id = ?",
+            (orchestration_id,),
+        ).fetchone()
+        if current is None:
+            raise OrchestrationError("Orchestration not found while creating approval.")
+        continuation = (
+            dict(continuation_state)
+            if continuation_state is not None
+            else _parse_object(current["continuation_state_json"])
+        )
+        delivery = (
+            dict(delivery_context)
+            if delivery_context is not None
+            else _parse_object(current["delivery_context_json"])
+        )
+        existing = continuation.get("parent_approval")
+        existing_row = None
+        if isinstance(existing, Mapping) and existing.get("approval_id"):
+            existing_row = conn.execute(
+                "SELECT * FROM approval_requests WHERE id = ?",
+                (str(existing.get("approval_id") or ""),),
+            ).fetchone()
+        if existing_row is None:
+            existing_row = conn.execute(
+                "SELECT * FROM approval_requests WHERE resume_kind = 'parent_orchestration' "
+                "AND step_id = ? AND status = 'pending' ORDER BY requested_at DESC LIMIT 1",
+                (step_id,),
+            ).fetchone()
+        if existing_row is not None:
+            existing_data = dict(existing_row)
+            existing_payload = _approval_payload_from_db_row(existing_data)
+            existing_fingerprint = str(
+                (existing or {}).get("interrupt_fingerprint")
+                if isinstance(existing, Mapping)
+                else ""
+            ) or str(existing_payload.get("interrupt_fingerprint") or "")
+            if not existing_fingerprint:
+                existing_interrupts = (
+                    (existing or {}).get("interrupts")
+                    if isinstance(existing, Mapping)
+                    else existing_payload.get("interrupts")
+                )
+                existing_fingerprint = _interrupt_fingerprint(existing_interrupts)
+            if existing_fingerprint == fingerprint:
+                approval = {
+                    "approval_id": str(existing_data.get("id") or ""),
+                    "resume_token": str(existing_data.get("resume_token") or ""),
+                    "interrupts": interrupts,
+                    "interrupt_fingerprint": fingerprint,
+                }
+                if str(existing_data.get("status") or "") == "pending":
+                    continuation["parent_approval"] = approval
+                elif str(existing_data.get("status") or "") in {"approved", "denied"}:
+                    approval.update(
+                        {
+                            "resolved": True,
+                            "approved": str(existing_data.get("status") or "") == "approved",
+                        }
+                    )
+                    continuation["parent_approval"] = approval
+                else:
+                    approval = {}
+            elif str(existing_data.get("status") or "") == "pending":
+                conn.execute(
+                    "UPDATE approval_requests SET status = 'cancelled', "
+                    "responded_at = ?, response_note = ? WHERE id = ? "
+                    "AND status = 'pending'",
+                    (
+                        _now(),
+                        "Superseded by a different parent checkpoint interrupt.",
+                        str(existing_data.get("id") or ""),
+                    ),
+                )
+            if not approval:
+                continuation.pop("parent_approval", None)
+
+        if not approval:
+            approval_id = uuid.uuid4().hex[:12]
+            resume_token = uuid.uuid4().hex
+            requested_at = _now()
+            timeout_at = (datetime.now() + timedelta(minutes=30)).isoformat()
+            conn.execute(
+                "INSERT INTO approval_requests "
+                "(id, run_id, task_id, step_id, resume_token, message, channel, "
+                "status, requested_at, timeout_at, agent_run_id, resume_kind, "
+                "source_label, source_thread_id, parent_thread_id, approval_payload_json) "
+                "VALUES (?, ?, '', ?, ?, ?, NULL, 'pending', ?, ?, '', "
+                "'parent_orchestration', 'Parent Agent', ?, ?, ?)",
+                (
+                    approval_id,
+                    str(orchestration.get("parent_run_id") or ""),
+                    step_id,
+                    resume_token,
+                    message,
+                    requested_at,
+                    timeout_at,
+                    parent_thread_id,
+                    parent_thread_id,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            )
+            approval = {
+                "approval_id": approval_id,
+                "resume_token": resume_token,
+                "interrupts": interrupts,
+                "interrupt_fingerprint": fingerprint,
+            }
+            continuation["parent_approval"] = approval
+            created = True
+        continuation["parent_interrupt"] = dict(result)
+        conn.execute(
+            "UPDATE agent_orchestrations SET status = 'waiting_approval', "
+            "parent_state = 'waiting_approval', continuation_state_json = ?, "
+            "delivery_context_json = ?, wake_requested_at = '', updated_at = ? "
+            "WHERE id = ?",
+            (
+                _json_text(continuation),
+                _json_text(delivery),
+                _now(),
+                orchestration_id,
+            ),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if created:
+        try:
+            from row_bot.tasks import _emit_buddy_approval_event
+
+            _emit_buddy_approval_event(
+                "needed",
+                run_id=str(orchestration.get("parent_run_id") or ""),
+                step_id=step_id,
+                approval_id=str(approval.get("approval_id") or ""),
+                resume_token=str(approval.get("resume_token") or ""),
+                label="Approval pending",
+                message=message,
+            )
+        except Exception:
+            logger.debug("Could not publish parent approval Buddy event", exc_info=True)
+    try:
+        from row_bot.channels.thread_notifications import notify_agent_run_approval
+
+        if created:
+            notify_agent_run_approval(str(approval.get("approval_id") or ""))
+    except Exception:
+        logger.debug("Could not publish parent approval", exc_info=True)
+    return approval
+
+
+def _schedule_parent_runner(orchestration_id: str) -> None:
+    with _SERVICE_LOCK:
+        existing = _PARENT_THREADS.get(orchestration_id)
+        if existing is not None and existing.is_alive():
+            return
+        thread = threading.Thread(
+            target=_run_parent_thread,
+            args=(orchestration_id,),
+            daemon=True,
+            name=f"orchestration-parent-{orchestration_id}",
+        )
+        _PARENT_THREADS[orchestration_id] = thread
+        thread.start()
+
+
+def _run_parent_thread(orchestration_id: str) -> None:
+    lease_owner = ""
+    try:
+        claim = _claim_parent_lease(orchestration_id)
+        if claim is None:
+            return
+        orchestration, lease_owner = claim
+        events = pending_thread_events(orchestration_id)
+        if not events:
+            conn = _conn()
+            try:
+                conn.execute(
+                    "UPDATE agent_orchestrations SET parent_state = 'waiting', "
+                    "updated_at = ? WHERE id = ? AND lease_owner = ?",
+                    (_now(), orchestration_id, lease_owner),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return
+        continuation = orchestration.get("continuation_state_json") or {}
+        saved_config = continuation.get("config")
+        config = copy.deepcopy(saved_config) if isinstance(saved_config, dict) else {
+            "configurable": {}
+        }
+        starts_new_turn = bool(
+            (config.get("configurable") or {}).get("thread_event_new_turn")
+        )
+        if starts_new_turn:
+            # Persist that the first pass has started before issuing provider
+            # work. A crash or provider error then resumes any checkpointed
+            # budget instead of resetting the logical turn.
+            retry_config = copy.deepcopy(config)
+            retry_config.setdefault("configurable", {}).pop(
+                "thread_event_new_turn",
+                None,
+            )
+            retry_continuation = {
+                **continuation,
+                "config": retry_config,
+            }
+            conn = _conn()
+            try:
+                conn.execute(
+                    "UPDATE agent_orchestrations SET continuation_state_json = ?, "
+                    "updated_at = ? WHERE id = ? AND lease_owner = ?",
+                    (
+                        _json_text(retry_continuation),
+                        _now(),
+                        orchestration_id,
+                        lease_owner,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        config.setdefault("configurable", {})["thread_event_messages"] = [
+            {
+                "role": "human" if event.kind == "parent_steering" else "assistant",
+                "content": (
+                    event.content
+                    if event.kind == "parent_steering"
+                    else _format_thread_events(orchestration, [event])
+                ),
+                "source_event_id": event.source_event_id,
+            }
+            for event in events
+        ]
+        enabled_tools = [
+            str(name)
+            for name in continuation.get("enabled_tool_names") or []
+            if str(name or "").strip()
+        ]
+        context = _format_thread_events(orchestration, events)
+        executor = _PARENT_EXECUTOR or _default_parent_executor
+        output = executor(orchestration, context, enabled_tools, config)
+        # Event-only Goal/workflow starts establish a fresh logical turn once.
+        # Later waves must resume the budget checkpointed by that first pass.
+        config.setdefault("configurable", {}).pop("thread_event_new_turn", None)
+        pass_result = complete_parent_pass(
+            orchestration_id,
+            output,
+            continuation_state={
+                **continuation,
+                "config": config,
+                "enabled_tool_names": enabled_tools,
+            },
+            foreground=False,
+            consumed_event_ids=[event.id for event in events],
+        )
+        if pass_result.output_kind == "approval" and isinstance(output, Mapping):
+            current = get_orchestration(orchestration_id) or orchestration
+            approval = _persist_parent_approval(current, output)
+            if approval.get("resolved"):
+                if lease_owner:
+                    _release_parent_lease(orchestration_id, lease_owner)
+                    lease_owner = ""
+                resume_parent_orchestration(
+                    orchestration_id,
+                    resume_token=str(approval.get("resume_token") or ""),
+                    approved=bool(approval.get("approved")),
+                )
+    except Exception as exc:
+        logger.exception("Original parent wake failed for %s", orchestration_id)
+        conn = _conn()
+        try:
+            conn.execute(
+                "UPDATE agent_orchestrations SET parent_state = 'waiting', "
+                "error_message = ?, updated_at = ? WHERE id = ?",
+                (str(exc), _now(), orchestration_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    finally:
+        if lease_owner:
+            _release_parent_lease(orchestration_id, lease_owner)
+        with _SERVICE_LOCK:
+            _PARENT_THREADS.pop(orchestration_id, None)
+        current = get_orchestration(orchestration_id)
+        if (
+            _is_unified_parent(current)
+            and str(current.get("parent_state") or "") == "runnable"
+            and _parent_wake_ready(orchestration_id)
+        ):
+            _schedule_parent_runner(orchestration_id)
+
+
+def wait_for_parent(
+    orchestration_id: str,
+    timeout: float = 5.0,
+    *,
+    terminal_only: bool = True,
+    minimum_attempts: int = 0,
+) -> dict[str, Any] | None:
+    """Bounded test/CLI wait; correctness does not depend on polling."""
+
+    import time
+
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while time.monotonic() <= deadline:
+        current = get_orchestration(orchestration_id)
+        if not current:
+            return None
+        terminal = str(current.get("status") or "") in {
+            "completed",
+            "completed_partial",
+            "failed",
+            "stopped",
+            "interrupted",
+        }
+        attempted = int(current.get("parent_attempt") or 0) >= int(minimum_attempts or 0)
+        if attempted and (terminal or not terminal_only):
+            with _SERVICE_LOCK:
+                thread = _PARENT_THREADS.get(orchestration_id)
+            if thread is None or not thread.is_alive():
+                return current
+        time.sleep(0.01)
+    return get_orchestration(orchestration_id)
+
+
+def _mark_parent_resume_interrupted(
+    orchestration_id: str,
+    continuation: Mapping[str, Any],
+    exc: BaseException,
+) -> None:
+    clean = dict(continuation)
+    clean.pop("parent_approval", None)
+    clean.pop("parent_interrupt", None)
+    message = f"Resume is required after the approval continuation failed: {exc}"
+    conn = _conn()
+    try:
+        conn.execute(
+            "UPDATE agent_orchestrations SET status = 'interrupted', "
+            "parent_state = 'interrupted', continuation_state_json = ?, "
+            "lease_owner = '', lease_expires_at = '', wake_requested_at = '', "
+            "error_message = ?, updated_at = ? WHERE id = ?",
+            (_json_text(clean), message[:1000], _now(), orchestration_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def resume_parent_orchestration(
+    orchestration_id: str,
+    *,
+    resume_token: str,
+    approved: bool,
+) -> dict[str, Any] | None:
+    """Resume a background interrupt in the original parent checkpoint."""
+
+    orchestration = get_orchestration(orchestration_id)
+    if not _is_unified_parent(orchestration):
+        return None
+    if str(orchestration.get("parent_state") or "") != "waiting_approval":
+        return orchestration
+    continuation = dict(orchestration.get("continuation_state_json") or {})
+    approval = continuation.get("parent_approval")
+    if not isinstance(approval, dict) or str(approval.get("resume_token") or "") != str(
+        resume_token or ""
+    ):
+        raise OrchestrationError("The parent approval resume token does not match.")
+    config_value = continuation.get("config")
+    config = copy.deepcopy(config_value) if isinstance(config_value, dict) else {
+        "configurable": {}
+    }
+    enabled_tools = [
+        str(name)
+        for name in continuation.get("enabled_tool_names") or []
+        if str(name or "").strip()
+    ]
+    configurable = config.setdefault("configurable", {})
+    configurable.update(
+        {
+            "thread_id": str(orchestration["parent_thread_id"]),
+            "generation_id": str(orchestration["parent_generation_id"]),
+            "root_objective": str(orchestration["root_objective"]),
+            "model_override": str(orchestration["model_ref"]),
+            "approval_mode": str(orchestration["approval_mode"]),
+            "runtime_surface": str(orchestration.get("runtime_surface") or "normal_chat"),
+            "orchestration_id": str(orchestration_id),
+            "orchestration_internal_wake": True,
+        }
+    )
+    approval_fingerprint = str(approval.get("interrupt_fingerprint") or "")
+    if not approval_fingerprint:
+        approval_fingerprint = _interrupt_fingerprint(approval.get("interrupts") or [])
+    current_interrupts: list[dict[str, Any]] = []
+    interrupt_ids: list[str] | None = None
+    if _PARENT_EXECUTOR is None:
+        try:
+            from row_bot.agent import get_invoke_agent_interrupts
+
+            current_interrupts = get_invoke_agent_interrupts(enabled_tools, config)
+            if not current_interrupts:
+                raise OrchestrationError(
+                    "The saved parent checkpoint no longer contains an approval interrupt."
+                )
+            current_fingerprint = _interrupt_fingerprint(current_interrupts)
+            if current_fingerprint != approval_fingerprint:
+                _persist_parent_approval(
+                    orchestration,
+                    {"type": "interrupt", "interrupts": current_interrupts},
+                )
+                return get_orchestration(orchestration_id)
+            interrupt_ids = [
+                str(item.get("__interrupt_id") or "")
+                for item in current_interrupts
+                if str(item.get("__interrupt_id") or "")
+            ]
+            if len(interrupt_ids) != len(current_interrupts):
+                raise OrchestrationError(
+                    "The saved parent checkpoint has an incomplete interrupt group."
+                )
+        except Exception as exc:
+            _mark_parent_resume_interrupted(orchestration_id, continuation, exc)
+            raise
+
+    clean_continuation = dict(continuation)
+    clean_continuation.pop("parent_approval", None)
+    clean_continuation.pop("parent_interrupt", None)
+    lease_owner = uuid.uuid4().hex
+    expires = (datetime.now() + timedelta(minutes=2)).isoformat()
+    conn = _conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        changed = conn.execute(
+            "UPDATE agent_orchestrations SET status = 'running', "
+            "parent_state = 'running', lease_owner = ?, lease_expires_at = ?, "
+            "parent_attempt = parent_attempt + 1, continuation_state_json = ?, "
+            "wake_requested_at = '', error_message = '', updated_at = ? "
+            "WHERE id = ? AND parent_state = 'waiting_approval'",
+            (
+                lease_owner,
+                expires,
+                _json_text(clean_continuation),
+                _now(),
+                orchestration_id,
+            ),
+        ).rowcount
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if not changed:
+        return get_orchestration(orchestration_id)
+    try:
+        _bind_recorded_parent_resources(orchestration, config)
+        if _PARENT_EXECUTOR is not None:
+            event_context = (
+                "Message Type: PARENT_APPROVAL_RESOLVED\n"
+                f"Approved: {str(bool(approved)).lower()}\n"
+                "Continue the original parent turn naturally."
+            )
+            result = _PARENT_EXECUTOR(
+                get_orchestration(orchestration_id) or orchestration,
+                event_context,
+                enabled_tools,
+                config,
+            )
+        else:
+            from row_bot.agent import resume_invoke_agent
+
+            result = resume_invoke_agent(
+                enabled_tools,
+                config,
+                approved,
+                interrupt_ids=interrupt_ids,
+            )
+        pass_result = complete_parent_pass(
+            orchestration_id,
+            result,
+            continuation_state={
+                **clean_continuation,
+                "config": config,
+                "enabled_tool_names": enabled_tools,
+            },
+            foreground=False,
+        )
+        if pass_result.output_kind == "approval" and isinstance(result, Mapping):
+            _persist_parent_approval(
+                get_orchestration(orchestration_id) or orchestration,
+                result,
+            )
+    except Exception as exc:
+        _mark_parent_resume_interrupted(
+            orchestration_id,
+            clean_continuation,
+            exc,
+        )
+        raise
+    finally:
+        _release_parent_lease(orchestration_id, lease_owner)
+    return get_orchestration(orchestration_id)
 
 
 def message_orchestration(
@@ -1295,6 +3105,9 @@ def _default_delivery_executor(
             "orchestration_id": orchestration["id"],
             "runtime_surface": orchestration.get("runtime_surface", ""),
         },
+        checkpoint_authoritative=(
+            _is_unified_parent(orchestration) and kind in {"progress", "final"}
+        ),
     )
 
 
@@ -1303,12 +3116,13 @@ def _deliver_once(
     *,
     kind: str,
     text: str,
+    message_key: str = "",
 ) -> bool:
     with _DELIVERY_LOCK:
-        key = f"orchestration:{orchestration['id']}:{kind}"
+        key = str(message_key or f"orchestration:{orchestration['id']}:{kind}")
         existing = record_message(
             str(orchestration["id"]),
-            kind=kind,
+            kind=f"parent_{kind}" if message_key else kind,
             content=text,
             message_id=key,
         )
@@ -1316,16 +3130,26 @@ def _deliver_once(
             return True
         executor = _DELIVERY_EXECUTOR or _default_delivery_executor
         delivered = False
+        delivery_error = ""
         try:
             delivered = bool(executor(orchestration, kind, text, key))
-        except Exception:
+            if not delivered:
+                delivery_error = "Delivery executor returned false."
+        except Exception as exc:
+            delivery_error = str(exc)
             logger.exception("Orchestration %s delivery failed", key)
         conn = _conn()
         try:
             conn.execute(
                 "UPDATE agent_orchestration_messages SET delivery_status = ?, "
-                "delivered_at = ? WHERE id = ?",
-                ("delivered" if delivered else "failed", _now() if delivered else "", key),
+                "delivered_at = ?, attempt_count = attempt_count + 1, "
+                "last_error = ? WHERE id = ?",
+                (
+                    "delivered" if delivered else "failed",
+                    _now() if delivered else "",
+                    "" if delivered else delivery_error[:1000],
+                    key,
+                ),
             )
             conn.commit()
         finally:
@@ -1379,6 +3203,38 @@ def finalize_parent_generation(
     orchestration = get_orchestration(orchestration_id)
     if not orchestration or int(orchestration.get("required_total") or 0) <= 0:
         return False
+    if _is_unified_parent(orchestration):
+        state = dict(continuation_state or {})
+        output = str(state.pop("parent_output", "") or "").strip()
+        if not output:
+            try:
+                from row_bot.threads import get_latest_checkpoint_messages
+
+                for message in reversed(
+                    get_latest_checkpoint_messages(
+                        str(orchestration.get("parent_thread_id") or "")
+                    )
+                ):
+                    if str(getattr(message, "type", "") or "") != "ai":
+                        continue
+                    content = getattr(message, "content", "")
+                    output = str(content if isinstance(content, str) else "")
+                    if output.strip():
+                        break
+            except Exception:
+                logger.debug("Could not recover the parent pass output", exc_info=True)
+        if not output:
+            raise OrchestrationError(
+                "The original parent output is required for unified orchestration."
+            )
+        result = complete_parent_pass(
+            orchestration_id,
+            output,
+            continuation_state=state,
+            delivery_context=delivery_context,
+            foreground=True,
+        )
+        return result.waiting
     if orchestration["status"] in {
         "completed",
         "completed_partial",
@@ -1519,6 +3375,7 @@ def _run_synthesis(orchestration_id: str) -> None:
             conn.close()
         if changed:
             final = get_orchestration(orchestration_id) or orchestration
+            _emit_orchestration_buddy_event(final, terminal=True)
             _deliver_once(final, kind="final", text=text)
             _notify_surface_completion(final, text)
     except Exception as exc:
@@ -1537,6 +3394,7 @@ def _run_synthesis(orchestration_id: str) -> None:
         if changed:
             orchestration = get_orchestration(orchestration_id)
             if orchestration:
+                _emit_orchestration_buddy_event(orchestration, terminal=True)
                 _deliver_once(
                     orchestration,
                     kind="final",
@@ -1611,12 +3469,54 @@ def handle_run_terminal(run_or_id: Mapping[str, Any] | str) -> bool:
         and int(member.get("attempt") or 1) < 2
     ):
         try:
-            retry_member(run_id)
+            replacement = retry_member(run_id)
+            if _is_unified_parent(orchestration):
+                record_thread_event(
+                    orchestration_id,
+                    kind="child_retry_scheduled",
+                    content=(
+                        f"Child {run.get('display_name') or run_id} failed transiently; "
+                        f"replacement {replacement.get('id') or ''} was scheduled."
+                    ),
+                    run_id=run_id,
+                    source_event_id=f"run:{run_id}:retry:{replacement.get('id') or ''}",
+                    payload={
+                        "failed_run_id": run_id,
+                        "replacement_run_id": str(replacement.get("id") or ""),
+                        "status": status,
+                        "error": str(run.get("error") or run.get("status_message") or ""),
+                    },
+                )
             # Neither required nor optional callers should see an intermediate
             # completion notification when a durable replacement is active.
             return True
         except Exception as exc:
             logger.warning("Automatic child retry failed for %s: %s", run_id, exc)
+    if _is_unified_parent(orchestration):
+        record_thread_event(
+            orchestration_id,
+            kind="child_terminal",
+            content=str(
+                run.get("summary")
+                or run.get("error")
+                or run.get("status_message")
+                or f"Child {run_id} finished with status {status}."
+            ),
+            run_id=run_id,
+            source_event_id=f"run:{run_id}:terminal:{status}",
+            payload={
+                "run_id": run_id,
+                "display_name": str(run.get("display_name") or ""),
+                "status": status,
+                "summary": str(run.get("summary") or ""),
+                "error": str(run.get("error") or ""),
+                "terminal_reason": str(run.get("terminal_reason") or ""),
+                "workspace_path": str(run.get("workspace_path") or ""),
+                "required": bool(member.get("required")),
+                "attempt": int(member.get("attempt") or 1),
+            },
+        )
+        return owns_completion_delivery
     if orchestration.get("status") == "waiting_approval":
         continuation = orchestration.get("continuation_state_json") or {}
         next_status = "waiting_children" if continuation.get("finalization_ready") else "running"
@@ -1668,6 +3568,7 @@ def handle_run_status(run_id: str, status: str) -> bool:
         return False
     orchestration_id = str(member["orchestration_id"])
     status = str(status or "")
+    orchestration = get_orchestration(orchestration_id)
     conn = _conn()
     try:
         conn.execute(
@@ -1675,14 +3576,14 @@ def handle_run_status(run_id: str, status: str) -> bool:
             "WHERE orchestration_id = ? AND run_id = ?",
             (status, orchestration_id, str(run_id)),
         )
-        if status == "waiting_approval":
+        if status == "waiting_approval" and not _is_unified_parent(orchestration):
             conn.execute(
                 "UPDATE agent_orchestrations SET status = 'waiting_approval', "
                 "updated_at = ? WHERE id = ? AND status NOT IN "
                 "('completed', 'completed_partial', 'failed', 'stopped', 'interrupted')",
                 (_now(), orchestration_id),
             )
-        elif status in {"queued", "running"}:
+        elif status in {"queued", "running"} and not _is_unified_parent(orchestration):
             row = conn.execute(
                 "SELECT continuation_state_json FROM agent_orchestrations WHERE id = ?",
                 (orchestration_id,),
@@ -1697,6 +3598,15 @@ def handle_run_status(run_id: str, status: str) -> bool:
         conn.commit()
     finally:
         conn.close()
+    if status == "waiting_approval" and _is_unified_parent(orchestration):
+        record_thread_event(
+            orchestration_id,
+            kind="child_approval_requested",
+            content=f"Child {run_id} is waiting for approval.",
+            run_id=run_id,
+            source_event_id=f"run:{run_id}:approval:requested",
+            payload={"run_id": run_id, "status": status},
+        )
     return True
 
 
@@ -1705,19 +3615,42 @@ def stop_orchestration(orchestration_id: str, *, run_id: str = "") -> dict[str, 
     if not orchestration:
         raise OrchestrationError("Orchestration not found.")
     from row_bot import agent_runner
+    unified = _is_unified_parent(orchestration)
 
     if run_id:
         member = get_member_for_run(run_id)
         if not member or member["orchestration_id"] != orchestration_id:
             raise OrchestrationError("The Agent Run is not in this orchestration.")
-        record_message(
-            orchestration_id,
-            kind="stop",
-            content="Stop requested",
-            run_id=run_id,
-            delivery_status="delivered",
-        )
+        if unified:
+            record_thread_event(
+                orchestration_id,
+                kind="stop_requested",
+                content=f"Stop requested for child {run_id}.",
+                run_id=run_id,
+                source_event_id=f"stop:{run_id}",
+                payload={"scope": "child", "run_id": run_id},
+            )
+        else:
+            record_message(
+                orchestration_id,
+                kind="stop",
+                content="Stop requested",
+                run_id=run_id,
+                delivery_status="delivered",
+            )
         agent_runner.stop_agent_run(run_id)
+        return orchestration_overview(orchestration_id)
+    if unified:
+        record_thread_event(
+            orchestration_id,
+            kind="stop_requested",
+            content="The user requested that all joined child work stop.",
+            source_event_id=f"stop-all:{orchestration_id}",
+            payload={"scope": "all"},
+        )
+        for member in list_members(orchestration_id, include_runs=False):
+            if member["status"] not in TERMINAL_MEMBER_STATUSES:
+                agent_runner.stop_agent_run(str(member["run_id"]))
         return orchestration_overview(orchestration_id)
     conn = _conn()
     try:
@@ -1730,6 +3663,9 @@ def stop_orchestration(orchestration_id: str, *, run_id: str = "") -> dict[str, 
         conn.commit()
     finally:
         conn.close()
+    terminal_row = get_orchestration(orchestration_id)
+    if terminal_row:
+        _emit_orchestration_buddy_event(terminal_row, terminal=True)
     record_message(
         orchestration_id,
         kind="stop",
@@ -1742,52 +3678,168 @@ def stop_orchestration(orchestration_id: str, *, run_id: str = "") -> dict[str, 
     return orchestration_overview(orchestration_id)
 
 
-def recover_interrupted_orchestrations() -> dict[str, int]:
-    """Mark active orchestration work interrupted without issuing provider calls."""
+_TERMINAL_EVENT_STATUS = {
+    "run.completed": "completed",
+    "run.failed": "failed",
+    "run.stopped": "stopped",
+    "run.blocked": "blocked",
+}
+
+
+def _latest_recorded_terminal_status(
+    conn: Any,
+    run_id: str,
+) -> tuple[str, str]:
+    row = conn.execute(
+        "SELECT type, ts FROM agent_run_events WHERE run_id = ? "
+        "AND type IN ('run.completed', 'run.failed', 'run.stopped', 'run.blocked') "
+        "ORDER BY ts DESC LIMIT 1",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return "", ""
+    return _TERMINAL_EVENT_STATUS.get(str(row["type"] or ""), ""), str(
+        row["ts"] or ""
+    )
+
+
+def repair_interrupted_orchestrations_batch(
+    *,
+    limit: int = 20,
+    after_id: str = "",
+) -> dict[str, Any]:
+    """Repair one bounded restart batch using only local durable records."""
 
     _ensure_schema()
-    active_statuses = sorted(ACTIVE_ORCHESTRATION_STATUSES)
-    placeholders = ", ".join("?" for _ in active_statuses)
+    statuses = sorted(ACTIVE_ORCHESTRATION_STATUSES | {"interrupted"})
+    placeholders = ", ".join("?" for _ in statuses)
+    batch_limit = max(1, min(100, int(limit or 20)))
+    cursor = str(after_id or "")
     now = _now()
+    processed = 0
+    interrupted_members = 0
+    restored_runs = 0
+    next_cursor = cursor
     conn = _conn()
     try:
         conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
-            f"SELECT id FROM agent_orchestrations WHERE status IN ({placeholders})",
-            active_statuses,
+            f"SELECT * FROM agent_orchestrations WHERE status IN ({placeholders}) "
+            "AND id > ? ORDER BY id LIMIT ?",
+            (*statuses, cursor, batch_limit),
         ).fetchall()
-        orchestration_ids = [str(row["id"]) for row in rows]
-        interrupted_members = 0
-        if orchestration_ids:
-            orch_placeholders = ", ".join("?" for _ in orchestration_ids)
-            interrupted_members = conn.execute(
-                f"UPDATE agent_orchestration_members SET status = 'interrupted' "
-                f"WHERE orchestration_id IN ({orch_placeholders}) "
-                f"AND status NOT IN ({', '.join('?' for _ in TERMINAL_MEMBER_STATUSES)})",
-                (*orchestration_ids, *sorted(TERMINAL_MEMBER_STATUSES)),
-            ).rowcount
-            run_rows = conn.execute(
-                f"SELECT run_id FROM agent_orchestration_members "
-                f"WHERE orchestration_id IN ({orch_placeholders}) "
-                "AND status = 'interrupted'",
-                orchestration_ids,
+        for orchestration_row in rows:
+            orchestration = dict(orchestration_row)
+            orchestration_id = str(orchestration.get("id") or "")
+            next_cursor = orchestration_id
+            processed += 1
+            member_rows = conn.execute(
+                "SELECT m.run_id, m.status AS member_status, r.status AS run_status "
+                "FROM agent_orchestration_members m "
+                "LEFT JOIN agent_runs r ON r.id = m.run_id "
+                "WHERE m.orchestration_id = ?",
+                (orchestration_id,),
             ).fetchall()
-            run_ids = [str(row["run_id"]) for row in run_rows]
-            if run_ids:
-                run_placeholders = ", ".join("?" for _ in run_ids)
-                conn.execute(
-                    f"UPDATE agent_runs SET status = 'interrupted', "
-                    f"status_message = 'App restarted; Resume is required', "
-                    f"heartbeat_at = '', updated_at = ? "
-                    f"WHERE id IN ({run_placeholders})",
-                    (now, *run_ids),
-                )
-            conn.execute(
-                f"UPDATE agent_orchestrations SET status = 'interrupted', "
-                f"error_message = 'App restarted; Resume is required', updated_at = ? "
-                f"WHERE id IN ({orch_placeholders})",
-                (now, *orchestration_ids),
+            parent_thread_id = str(orchestration.get("parent_thread_id") or "")
+            pending_rows = conn.execute(
+                "SELECT agent_run_id, step_id FROM approval_requests "
+                "WHERE status = 'pending' AND parent_thread_id = ?",
+                (parent_thread_id,),
+            ).fetchall()
+            member_run_ids = {
+                str(row["run_id"] or "")
+                for row in member_rows
+                if str(row["run_id"] or "")
+            }
+            pending_run_ids = {
+                str(row["agent_run_id"] or "")
+                for row in pending_rows
+                if str(row["agent_run_id"] or "") in member_run_ids
+            }
+            parent_approval_pending = any(
+                str(row["step_id"] or "") == f"orchestration:{orchestration_id}"
+                for row in pending_rows
             )
+            for member_row in member_rows:
+                member = dict(member_row)
+                run_id = str(member.get("run_id") or "")
+                member_status = str(member.get("member_status") or "")
+                run_status = str(member.get("run_status") or member_status)
+                if member_status in {"retried", "transferred", "cleared"}:
+                    continue
+                desired_status = run_status
+                terminal_ts = ""
+                if run_status in TERMINAL_MEMBER_STATUSES:
+                    desired_status = run_status
+                elif run_status == "interrupted":
+                    recorded_status, terminal_ts = _latest_recorded_terminal_status(
+                        conn,
+                        run_id,
+                    )
+                    desired_status = recorded_status or "interrupted"
+                elif run_status == "waiting_approval" and run_id in pending_run_ids:
+                    desired_status = "waiting_approval"
+                else:
+                    desired_status = "interrupted"
+
+                if desired_status in TERMINAL_MEMBER_STATUSES and run_status not in TERMINAL_MEMBER_STATUSES:
+                    restored_runs += conn.execute(
+                        "UPDATE agent_runs SET status = ?, "
+                        "status_message = CASE WHEN status_message = '' "
+                        "THEN 'Recovered from the latest terminal event' ELSE status_message END, "
+                        "finished_at = CASE WHEN finished_at = '' THEN ? ELSE finished_at END, "
+                        "heartbeat_at = '', updated_at = ? WHERE id = ? "
+                        f"AND status NOT IN ({', '.join('?' for _ in TERMINAL_MEMBER_STATUSES)})",
+                        (
+                            desired_status,
+                            terminal_ts or now,
+                            now,
+                            run_id,
+                            *sorted(TERMINAL_MEMBER_STATUSES),
+                        ),
+                    ).rowcount
+                elif desired_status == "interrupted" and run_status not in TERMINAL_MEMBER_STATUSES:
+                    conn.execute(
+                        "UPDATE agent_runs SET status = 'interrupted', "
+                        "status_message = 'App restarted; Resume is required', "
+                        "heartbeat_at = '', updated_at = ? WHERE id = ? "
+                        f"AND status NOT IN ({', '.join('?' for _ in TERMINAL_MEMBER_STATUSES)})",
+                        (now, run_id, *sorted(TERMINAL_MEMBER_STATUSES)),
+                    )
+                if member_status != desired_status:
+                    conn.execute(
+                        "UPDATE agent_orchestration_members SET status = ? "
+                        "WHERE orchestration_id = ? AND run_id = ?",
+                        (desired_status, orchestration_id, run_id),
+                    )
+                    if desired_status == "interrupted":
+                        interrupted_members += 1
+
+            has_pending_approval = parent_approval_pending or bool(pending_run_ids)
+            if has_pending_approval:
+                conn.execute(
+                    "UPDATE agent_orchestrations SET lease_owner = '', "
+                    "lease_expires_at = '', wake_requested_at = '', updated_at = ? "
+                    "WHERE id = ?",
+                    (now, orchestration_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE agent_orchestrations SET status = 'interrupted', "
+                    "parent_state = CASE WHEN orchestration_version >= 2 "
+                    "THEN 'interrupted' ELSE parent_state END, "
+                    "lease_owner = '', lease_expires_at = '', wake_requested_at = '', "
+                    "error_message = 'App restarted; Resume is required', updated_at = ? "
+                    "WHERE id = ?",
+                    (now, orchestration_id),
+                )
+        has_more = False
+        if rows:
+            has_more = conn.execute(
+                f"SELECT 1 FROM agent_orchestrations WHERE status IN ({placeholders}) "
+                "AND id > ? LIMIT 1",
+                (*statuses, next_cursor),
+            ).fetchone() is not None
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1795,9 +3847,35 @@ def recover_interrupted_orchestrations() -> dict[str, int]:
     finally:
         conn.close()
     return {
-        "orchestrations_interrupted": len(orchestration_ids),
+        "processed": processed,
+        "orchestrations_interrupted": processed,
         "members_interrupted": interrupted_members,
+        "runs_restored": restored_runs,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
     }
+
+
+def recover_interrupted_orchestrations() -> dict[str, int]:
+    """Compatibility helper that drains the bounded local repair batches."""
+
+    totals = {
+        "orchestrations_interrupted": 0,
+        "members_interrupted": 0,
+    }
+    cursor = ""
+    while True:
+        result = repair_interrupted_orchestrations_batch(
+            limit=50,
+            after_id=cursor,
+        )
+        totals["orchestrations_interrupted"] += int(result.get("processed") or 0)
+        totals["members_interrupted"] += int(
+            result.get("members_interrupted") or 0
+        )
+        if not result.get("has_more"):
+            return totals
+        cursor = str(result.get("next_cursor") or cursor)
 
 
 def _validate_resume(orchestration: Mapping[str, Any]) -> None:
@@ -1814,6 +3892,33 @@ def _validate_resume(orchestration: Mapping[str, Any]) -> None:
         ensure_agent_ready(model_ref)
     except Exception as exc:
         raise OrchestrationError(str(exc)) from exc
+    continuation = orchestration.get("continuation_state_json") or {}
+    saved_config = continuation.get("config")
+    config = copy.deepcopy(saved_config) if isinstance(saved_config, dict) else {
+        "configurable": {}
+    }
+    _bind_recorded_parent_resources(orchestration, config)
+    delivery = orchestration.get("delivery_context_json") or {}
+    runtime_surface = str(
+        delivery.get("runtime_surface")
+        or orchestration.get("runtime_surface")
+        or ""
+    )
+    if runtime_surface == "channel":
+        from row_bot.tasks import get_thread_channel_ref
+
+        channel_ref = get_thread_channel_ref(
+            str(orchestration.get("parent_thread_id") or "")
+        )
+        if not channel_ref:
+            raise OrchestrationError(
+                "The saved channel target no longer exists for this parent thread."
+            )
+        saved_channel = str(delivery.get("runtime_channel") or "")
+        if saved_channel and str(channel_ref.get("channel") or "") != saved_channel:
+            raise OrchestrationError(
+                "The saved channel binding changed; refusing to resume to a new target."
+            )
     for member in list_members(str(orchestration["id"])):
         if member["status"] != "interrupted":
             continue
@@ -1853,6 +3958,28 @@ def resume_orchestration(orchestration_id: str) -> dict[str, Any]:
         retry_member(str(member["run_id"]), explicit_resume=True, force=True)
     current = get_orchestration(orchestration_id) or orchestration
     continuation = current.get("continuation_state_json") or {}
+    if _is_unified_parent(current):
+        target_status = (
+            "waiting_children"
+            if continuation.get("finalization_ready")
+            else "running"
+        )
+        conn = _conn()
+        try:
+            conn.execute(
+                "UPDATE agent_orchestrations SET status = ?, parent_state = 'waiting', "
+                "error_message = '', lease_owner = '', lease_expires_at = '', "
+                "updated_at = ? WHERE id = ?",
+                (target_status, _now(), orchestration_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        if continuation.get("finalization_ready") and _parent_wake_ready(
+            orchestration_id
+        ):
+            request_parent_wake(orchestration_id)
+        return orchestration_overview(orchestration_id)
     if continuation.get("finalization_ready"):
         conn = _conn()
         try:
@@ -1874,7 +4001,7 @@ def retry_pending_deliveries(limit: int = 50) -> int:
     try:
         rows = conn.execute(
             "SELECT * FROM agent_orchestration_messages "
-            "WHERE kind IN ('acknowledgement', 'final') "
+            "WHERE kind IN ('acknowledgement', 'final', 'parent_progress', 'parent_final') "
             "AND delivery_status != 'delivered' ORDER BY created_at LIMIT ?",
             (max(1, int(limit or 50)),),
         ).fetchall()
@@ -1883,10 +4010,12 @@ def retry_pending_deliveries(limit: int = 50) -> int:
     delivered = 0
     for row in rows:
         orchestration = get_orchestration(str(row["orchestration_id"]))
+        kind = str(row["kind"])
         if orchestration and _deliver_once(
             orchestration,
-            kind=str(row["kind"]),
+            kind=kind.removeprefix("parent_"),
             text=str(row["content"]),
+            message_key=str(row["id"]) if kind.startswith("parent_") else "",
         ):
             delivered += 1
     return delivered

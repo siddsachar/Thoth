@@ -1,8 +1,8 @@
-"""Small OS keyring wrapper for Row-Bot secrets.
+"""Secure storage adapters for Row-Bot secrets.
 
-This module intentionally stays tiny: it delegates persistence to the
-platform keyring when available and reports failures to callers instead of
-falling back to plaintext files.
+The platform keyring remains the default. An explicitly keyed server deployment
+can use encrypted records in its persistent data directory when the platform
+backend is unavailable. This module never falls back to plaintext files.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import logging
 import os
 import pathlib
 import re
+import secrets
 import stat
 from typing import Any
 
@@ -33,6 +34,12 @@ SERVER_SECRETS_DIR_ENV = "ROW_BOT_SECRETS_DIR"
 DEFAULT_SERVER_SECRETS_DIR = pathlib.Path("/run/secrets")
 MAX_SERVER_SECRET_BYTES = 64 * 1024
 _SERVER_SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+PERSISTENT_SERVER_SECRET_KEY_NAME = "ROW_BOT_SECRET_STORE_KEY"
+PERSISTENT_SERVER_SECRET_DIR_NAME = "secure-secrets"
+_PERSISTENT_SERVER_SECRET_KEY = re.compile(r"^[0-9a-fA-F]{64}$")
+_PERSISTENT_SERVER_SECRET_MAGIC = b"ROWBOT-SECRET-V1\x00"
+_PERSISTENT_SERVER_SECRET_NONCE_BYTES = 12
+MAX_PERSISTENT_SERVER_SECRET_BYTES = MAX_SERVER_SECRET_BYTES + 1024
 
 _backend_override: Any | None = None
 
@@ -43,6 +50,108 @@ def _docs_capture_active() -> bool:
 
 class SecretStoreError(RuntimeError):
     """Raised when the platform secret store cannot complete an operation."""
+
+
+def initialize_persistent_server_secret_store(
+    directory: pathlib.Path | str,
+    *,
+    owner_uid: int | None = None,
+    owner_gid: int | None = None,
+    directory_mode: int = 0o700,
+    key_mode: int = 0o400,
+) -> pathlib.Path:
+    """Create or validate the master key used by a headless server deployment.
+
+    The key is generated once with an exclusive create and is never returned or
+    logged.  Existing keys are validated before their ownership or permissions
+    are normalized, so an invalid or replaced key always fails closed.
+    """
+    target_directory = pathlib.Path(directory)
+    if target_directory.is_symlink():
+        raise SecretStoreError(
+            "persistent server secret directory must not be a symlink"
+        )
+    try:
+        target_directory.mkdir(mode=directory_mode, parents=True, exist_ok=True)
+        if not target_directory.is_dir():
+            raise SecretStoreError("persistent server secret path must be a directory")
+    except SecretStoreError:
+        raise
+    except OSError as exc:
+        raise SecretStoreError(
+            "persistent server secret directory is unavailable"
+        ) from exc
+
+    key_path = target_directory / PERSISTENT_SERVER_SECRET_KEY_NAME
+    if key_path.is_symlink():
+        raise SecretStoreError("persistent server secret key must not be a symlink")
+    try:
+        descriptor = os.open(
+            key_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            key_mode,
+        )
+    except FileExistsError:
+        descriptor = None
+    except OSError as exc:
+        raise SecretStoreError(
+            "persistent server secret key could not be created"
+        ) from exc
+
+    if descriptor is not None:
+        try:
+            with os.fdopen(descriptor, "w", encoding="ascii", newline="") as handle:
+                descriptor = None
+                handle.write(secrets.token_hex(32))
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            try:
+                key_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise SecretStoreError(
+                "persistent server secret key could not be written"
+            ) from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+
+    try:
+        if key_path.is_symlink():
+            raise SecretStoreError("persistent server secret key must not be a symlink")
+        info = key_path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise SecretStoreError("persistent server secret key must be regular")
+        value = key_path.read_text(encoding="ascii")
+    except SecretStoreError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise SecretStoreError(
+            "persistent server secret key could not be validated"
+        ) from exc
+    if value.endswith("\r\n"):
+        value = value[:-2]
+    elif value.endswith("\n"):
+        value = value[:-1]
+    if not _PERSISTENT_SERVER_SECRET_KEY.fullmatch(value):
+        raise SecretStoreError(
+            f"{PERSISTENT_SERVER_SECRET_KEY_NAME} must contain exactly 64 hexadecimal characters"
+        )
+
+    uid = -1 if owner_uid is None else int(owner_uid)
+    gid = -1 if owner_gid is None else int(owner_gid)
+    try:
+        os.chmod(target_directory, directory_mode)
+        os.chmod(key_path, key_mode)
+        if uid != -1 or gid != -1:
+            os.chown(target_directory, uid, gid)
+            os.chown(key_path, uid, gid)
+    except OSError as exc:
+        raise SecretStoreError(
+            "persistent server secret permissions could not be secured"
+        ) from exc
+    return key_path
 
 
 def server_secrets_dir() -> pathlib.Path | None:
@@ -120,6 +229,153 @@ def server_secret_status(
     }
 
 
+def _persistent_server_secret_key() -> bytes | None:
+    value = read_server_secret(
+        PERSISTENT_SERVER_SECRET_KEY_NAME,
+        allowed_names={PERSISTENT_SERVER_SECRET_KEY_NAME},
+    )
+    if value is None:
+        return None
+    if not _PERSISTENT_SERVER_SECRET_KEY.fullmatch(value):
+        raise SecretStoreError(
+            f"{PERSISTENT_SERVER_SECRET_KEY_NAME} must contain exactly 64 hexadecimal characters"
+        )
+    return bytes.fromhex(value)
+
+
+def persistent_server_store_configured() -> bool:
+    """Return whether an explicit encrypted server secret store is configured."""
+    return _persistent_server_secret_key() is not None
+
+
+def _persistent_server_secret_directory() -> pathlib.Path:
+    configured = str(os.environ.get(APP_DATA_DIR_ENV) or "").strip()
+    data_dir = pathlib.Path(configured) if configured else DATA_DIR
+    return data_dir / PERSISTENT_SERVER_SECRET_DIR_NAME
+
+
+def _persistent_server_secret_identity(service: str, account: str) -> tuple[pathlib.Path, bytes]:
+    identity = f"{service}\x00{account}".encode("utf-8")
+    filename = f"{hashlib.sha256(identity).hexdigest()}.secret"
+    return _persistent_server_secret_directory() / filename, identity
+
+
+def _prepare_persistent_server_secret_directory() -> pathlib.Path:
+    directory = _persistent_server_secret_directory()
+    if directory.is_symlink():
+        raise SecretStoreError("persistent server secret directory must not be a symlink")
+    try:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not directory.is_dir():
+            raise SecretStoreError("persistent server secret path must be a directory")
+        os.chmod(directory, 0o700)
+    except SecretStoreError:
+        raise
+    except OSError as exc:
+        raise SecretStoreError("persistent server secret directory is unavailable") from exc
+    return directory
+
+
+def _read_persistent_server_secret(
+    service: str,
+    account: str,
+) -> tuple[bool, str | None]:
+    key = _persistent_server_secret_key()
+    if key is None:
+        return False, None
+    path, identity = _persistent_server_secret_identity(service, account)
+    try:
+        if path.is_symlink():
+            raise SecretStoreError("persistent server secret record must not be a symlink")
+        info = path.stat()
+    except FileNotFoundError:
+        return True, None
+    except SecretStoreError:
+        raise
+    except OSError as exc:
+        raise SecretStoreError("persistent server secret record cannot be inspected") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise SecretStoreError("persistent server secret record must be regular")
+    if info.st_size > MAX_PERSISTENT_SERVER_SECRET_BYTES:
+        raise SecretStoreError("persistent server secret record is too large")
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise SecretStoreError("persistent server secret record cannot be read") from exc
+    prefix_size = len(_PERSISTENT_SERVER_SECRET_MAGIC)
+    nonce_end = prefix_size + _PERSISTENT_SERVER_SECRET_NONCE_BYTES
+    if not payload.startswith(_PERSISTENT_SERVER_SECRET_MAGIC) or len(payload) <= nonce_end:
+        raise SecretStoreError("persistent server secret record has an unsupported format")
+    nonce = payload[prefix_size:nonce_end]
+    ciphertext = payload[nonce_end:]
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        plaintext = AESGCM(key).decrypt(nonce, ciphertext, identity)
+        value = plaintext.decode("utf-8")
+    except Exception as exc:
+        raise SecretStoreError("persistent server secret record could not be decrypted") from exc
+    return True, value or None
+
+
+def _write_persistent_server_secret(service: str, account: str, value: str) -> bool:
+    key = _persistent_server_secret_key()
+    if key is None:
+        return False
+    directory = _prepare_persistent_server_secret_directory()
+    path, identity = _persistent_server_secret_identity(service, account)
+    if path.exists() or path.is_symlink():
+        _read_persistent_server_secret(service, account)
+    nonce = secrets.token_bytes(_PERSISTENT_SERVER_SECRET_NONCE_BYTES)
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        ciphertext = AESGCM(key).encrypt(nonce, str(value).encode("utf-8"), identity)
+    except Exception as exc:
+        raise SecretStoreError("persistent server secret could not be encrypted") from exc
+    payload = _PERSISTENT_SERVER_SECRET_MAGIC + nonce + ciphertext
+    temporary = directory / f".{path.name}.{secrets.token_hex(8)}.tmp"
+    file_descriptor: int | None = None
+    try:
+        file_descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        with os.fdopen(file_descriptor, "wb") as handle:
+            file_descriptor = None
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise SecretStoreError("persistent server secret record could not be written") from exc
+    return True
+
+
+def _delete_persistent_server_secret(service: str, account: str) -> bool:
+    key = _persistent_server_secret_key()
+    if key is None:
+        return False
+    path, _identity = _persistent_server_secret_identity(service, account)
+    if path.is_symlink():
+        raise SecretStoreError("persistent server secret record must not be a symlink")
+    if path.exists():
+        _read_persistent_server_secret(service, account)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise SecretStoreError("persistent server secret record could not be deleted") from exc
+    return True
+
+
 def _is_unavailable_error(exc: BaseException) -> bool:
     """Return True for expected missing/disabled keyring backend failures."""
     name = exc.__class__.__name__.lower()
@@ -175,33 +431,60 @@ def get_secret(name: str, *, namespace: str = "api_keys", service: str | None = 
     """Return a stored secret, or None if it is unset/unavailable."""
     if _docs_capture_active():
         return None
+    resolved_service = service or SERVICE_NAME
+    account = _account(name, namespace=namespace)
     try:
-        value = _backend().get_password(service or SERVICE_NAME, _account(name, namespace=namespace))
+        value = _backend().get_password(resolved_service, account)
     except Exception as exc:
+        if _is_unavailable_error(exc):
+            configured, stored = _read_persistent_server_secret(resolved_service, account)
+            if configured:
+                return stored
         _raise_secret_error("read", name, exc)
-    return value if isinstance(value, str) and value else None
+    if isinstance(value, str) and value:
+        return value
+    configured, stored = _read_persistent_server_secret(resolved_service, account)
+    return stored if configured else None
 
 
-def set_secret(name: str, value: str, *, namespace: str = "api_keys", service: str | None = None) -> None:
-    """Persist a secret in the OS keyring."""
+def set_secret(name: str, value: str, *, namespace: str = "api_keys", service: str | None = None) -> str:
+    """Persist a secret and return the secure storage backend used."""
     if value is None:
         delete_secret(name, namespace=namespace, service=service)
-        return
+        return ""
+    resolved_service = service or SERVICE_NAME
+    account = _account(name, namespace=namespace)
     try:
-        _backend().set_password(service or SERVICE_NAME, _account(name, namespace=namespace), str(value))
+        _backend().set_password(resolved_service, account, str(value))
     except Exception as exc:
+        if _is_unavailable_error(exc) and _write_persistent_server_secret(
+            resolved_service,
+            account,
+            str(value),
+        ):
+            return "encrypted_file"
         _raise_secret_error("write", name, exc)
+    return "keyring"
 
 
 def delete_secret(name: str, *, namespace: str = "api_keys", service: str | None = None) -> None:
     """Remove a secret from the OS keyring if it exists."""
+    resolved_service = service or SERVICE_NAME
+    account = _account(name, namespace=namespace)
     try:
-        _backend().delete_password(service or SERVICE_NAME, _account(name, namespace=namespace))
+        _backend().delete_password(resolved_service, account)
     except Exception as exc:
         message = str(exc).lower()
         if "not found" in message or "not exist" in message or "no such" in message:
+            _delete_persistent_server_secret(resolved_service, account)
+            return
+        if _is_unavailable_error(exc) and _delete_persistent_server_secret(
+            resolved_service,
+            account,
+        ):
             return
         _raise_secret_error("delete", name, exc)
+    _delete_persistent_server_secret(resolved_service, account)
 
 
 def fingerprint(value: str) -> str:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 from tests.fixtures.channels import FakeChannel
@@ -52,7 +54,11 @@ def test_channel_approval_helpers_round_trip_interrupt_text() -> None:
 def test_child_agent_approval_routes_to_parent_channel(tmp_path, monkeypatch) -> None:
     tasks = fresh_tasks_module(tmp_path, monkeypatch)
     from row_bot.channels import registry
+    from row_bot.channels.thread_notifications import notify_agent_run_approval
+    import row_bot.threads as threads
     import row_bot.agent_runner as agent_runner
+
+    threads = importlib.reload(threads)
 
     registry._reset()
     source = FakeChannel(name="source")
@@ -90,13 +96,25 @@ def test_child_agent_approval_routes_to_parent_channel(tmp_path, monkeypatch) ->
         },
     )
 
-    assert tasks.push_approval_to_parent_channel(approval_id) is True
-    assert source.approvals
+    assert notify_agent_run_approval(approval_id) is True
+    assert notify_agent_run_approval(approval_id) is True
+    assert len(source.approvals) == 1
     sent = source.approvals[0]
     assert sent["target"] == "conversation-1"
     assert sent["config"]["approval_kind"] == "agent_run"
     assert sent["config"]["resume_token"] == token
     assert "Check the current branch." in sent["config"]["message"]
+    approval_messages = [
+            message
+            for message in threads.get_latest_checkpoint_messages("parent-thread")
+        if (
+            getattr(message, "additional_kwargs", {})
+            .get("row_bot_ui", {})
+            .get("approval_request_id")
+            == approval_id
+        )
+    ]
+    assert len(approval_messages) == 1
 
     assert tasks.respond_to_approval(token, True, source="web") is True
 

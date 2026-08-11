@@ -1,0 +1,54 @@
+---
+title: "Settings: Tools"
+description: "Configure progressive external-tool loading, retrieval compression, and search and knowledge tools."
+---
+
+import Screenshot from '@site/src/components/Screenshot';
+
+# Settings: Tools
+
+Tools settings control how Row-Bot exposes enabled external capabilities to the model and configure its search and retrieval helpers.
+
+<Screenshot id="settings-tools" alt="Settings: Tools in Row-Bot." caption="The Tools tab includes progressive capability loading, retrieval compression, and search and knowledge tool controls." />
+
+## Where To Find It
+
+Open **Settings**, then choose **Tools** from the left tab list.
+
+## Capability Loading
+
+- **Auto-select external tools (recommended)** lets Row-Bot search enabled MCP, plugin, Custom Tool, and channel capabilities when a request needs them. Core tools remain available under the active profile.
+- **Load all external tools** is the eager compatibility mode. It sends every enabled external schema allowed by the current provider and policy, which can consume more context.
+
+Both modes preserve tool enablement, provider compatibility, Agent Profile restrictions, workspace policy, approval gates, prompt-injection handling, and execution budgets.
+
+## Other Controls
+
+- **Retrieval Compression** controls how search results are filtered before they reach the model.
+- **Search & Knowledge Tools** enables or disables configured research and reference tools such as arXiv, DuckDuckGo, web search, Wikipedia, Wolfram Alpha, and YouTube.
+- Provider-specific setup fields store the credentials required by optional search services.
+
+## Recommended Workflow
+
+1. Keep **Auto-select external tools** enabled for normal use.
+2. Enable only the search and integration tools you intend Row-Bot to use.
+3. Confirm external services are healthy before relying on them.
+4. Use eager mode temporarily only when testing compatibility with an older model or integration.
+5. Review approvals before any action that writes, sends, or changes external state.
+
+## What Is Saved
+
+The capability-loading choice and tool settings are local global preferences. Per-task skill activation is stored separately and does not change this tool policy.
+
+## Privacy And Safety
+
+Auto mode reduces schemas in the model prompt, but it does not make a networked tool local. When Row-Bot actually calls a hosted model, remote MCP server, plugin service, account integration, or channel, the data required by that operation can leave your machine. Disabled or profile-denied tools are not made available by discovery.
+
+## Troubleshooting
+
+- If an external tool is not found, check its plugin, MCP, Custom Tool, or channel configuration and the active Agent Profile.
+- If a direct tool worked previously but discovery does not select it, use a precise prompt and inspect Row-Bot Status for effective tool groups.
+- If a provider rejects tool schemas, choose a compatible tool-capable model or temporarily test eager mode.
+- If retrieval is noisy, change compression mode or disable unnecessary search tools.
+
+For the full runtime model, see [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills).

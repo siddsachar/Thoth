@@ -1,3 +1,5 @@
+import copy
+import json
 import threading
 import time
 import re
@@ -511,9 +513,72 @@ def _normalize_agent_config(config: dict | None) -> dict:
     return normalized
 
 
-def _new_agent_graph_input(user_input: str, config: dict) -> tuple[dict, dict]:
+def _new_agent_graph_input(user_input: str, config: dict, *, agent=None) -> tuple[dict, dict]:
     """Create one logical-turn budget and its derived graph ceiling."""
 
+    configurable = (config or {}).get("configurable") or {}
+    if configurable.get("thread_event_context"):
+        if agent is None:
+            raise ValueError("Thread event continuation requires the active agent graph.")
+        starts_new_turn = bool(configurable.get("thread_event_new_turn"))
+        if starts_new_turn:
+            normalized = _normalize_agent_config(config)
+            budget = new_execution_budget(
+                str(configurable.get("generation_id") or "")
+            )
+            normalized["recursion_limit"] = framework_recursion_limit(
+                remaining_iterations(budget)
+            )
+        else:
+            normalized = _resume_agent_graph_config(agent, config)
+            budget = None
+        event_messages: list[BaseMessage] = []
+        raw_event_messages = configurable.get("thread_event_messages") or []
+        if isinstance(raw_event_messages, list):
+            for item in raw_event_messages:
+                if not isinstance(item, dict):
+                    continue
+                content = str(item.get("content") or "")
+                if not content:
+                    continue
+                if str(item.get("role") or "") == "human":
+                    event_messages.append(
+                        HumanMessage(
+                            content=content,
+                            additional_kwargs={
+                                "row_bot_ui": {
+                                    "thread_event": True,
+                                    "source_event_id": str(
+                                        item.get("source_event_id") or ""
+                                    ),
+                                }
+                            },
+                        )
+                    )
+                else:
+                    event_messages.append(
+                        AIMessage(
+                            content=content,
+                            additional_kwargs={
+                                "row_bot_internal_event": True,
+                                "row_bot_ui": {"hidden": True},
+                            },
+                        )
+                    )
+        if not event_messages:
+            event_messages = [
+                AIMessage(
+                    content=user_input,
+                    additional_kwargs={
+                        "row_bot_internal_event": True,
+                        "row_bot_ui": {"hidden": True},
+                    },
+                )
+            ]
+        initial_input = {"messages": event_messages}
+        if budget is not None:
+            initial_input["execution_budget"] = budget
+        return normalized, initial_input
     normalized = _normalize_agent_config(config)
     configurable = normalized.get("configurable") or {}
     budget = new_execution_budget(str(configurable.get("generation_id") or ""))
@@ -868,6 +933,33 @@ def _is_browser_snapshot_tool_name(tool_name: str) -> bool:
     return action in {"snapshot", "take_screenshot"}
 
 
+def _effective_tool_message_name(messages: list, message: ToolMessage) -> str:
+    """Resolve the underlying target for a ``tool_invoke`` result when available."""
+
+    raw_name = str(getattr(message, "name", "") or "")
+    if raw_name != "tool_invoke":
+        return raw_name
+    tool_call_id = str(getattr(message, "tool_call_id", "") or "")
+    if not tool_call_id:
+        return raw_name
+    message_index = next(
+        (index for index, candidate in enumerate(messages) if candidate is message),
+        len(messages),
+    )
+    for candidate in reversed(messages[:message_index]):
+        if not isinstance(candidate, AIMessage):
+            continue
+        for call in getattr(candidate, "tool_calls", None) or []:
+            if str((call or {}).get("id") or "") != tool_call_id:
+                continue
+            if str((call or {}).get("name") or "") != "tool_invoke":
+                return raw_name
+            args = (call or {}).get("args")
+            name = str(args.get("name") or "").strip() if isinstance(args, dict) else ""
+            return name or raw_name
+    return raw_name
+
+
 def _is_browser_navigation_tool_name(tool_name: str) -> bool:
     action = _browser_action_name(tool_name)
     return action in {"navigate", "navigate_back", "back", "click", "type", "fill_form", "press_key", "select_option", "hover", "drag", "scroll", "tab"}
@@ -928,7 +1020,6 @@ def _interactive_progress_contract(runtime_surface: str) -> str:
 _INJECTION_OVERHEAD_TOKENS = 800
 _CUSTOM_ENDPOINT_COMPACT_CONTEXT_LIMIT = 32_768
 _CUSTOM_ENDPOINT_MIN_TOOL_RESERVE_TOKENS = 6_000
-_CUSTOM_ENDPOINT_TOOL_PARENT_RESERVE_TOKENS = 700
 _CUSTOM_ENDPOINT_MAX_TOOL_RESERVE_RATIO = 0.60
 _CUSTOM_ENDPOINT_INJECTION_RESERVE_TOKENS = 4_000
 _CUSTOM_ENDPOINT_RESPONSE_RESERVE_TOKENS = 2_048
@@ -965,10 +1056,10 @@ def _agent_history_budget_tokens(context_size: int) -> int:
     if not _active_custom_openai_provider():
         return default_budget
 
-    enabled_parent_count = len(_current_enabled_tool_names_var.get(()) or ())
+    actual_schema_tokens = int(_current_bound_tool_schema_tokens_var.get(0) or 0)
     tool_reserve = max(
         _CUSTOM_ENDPOINT_MIN_TOOL_RESERVE_TOKENS,
-        enabled_parent_count * _CUSTOM_ENDPOINT_TOOL_PARENT_RESERVE_TOKENS,
+        actual_schema_tokens,
     )
     tool_reserve = min(tool_reserve, int(context_size * _CUSTOM_ENDPOINT_MAX_TOOL_RESERVE_RATIO))
     custom_budget = (
@@ -1117,7 +1208,7 @@ _UNTRUSTED_TOOLS: frozenset[str] = frozenset({
     "browser_scroll", "browser_snapshot", "browser_back", "browser_tab",
     "computer_use",
     "workspace_read_file", "run_command",
-    "arxiv_search", "wikipedia_search",
+    "arxiv_search", "wikipedia_search", "tool_search", "skill_search",
 })
 
 # Compiled regex patterns for common prompt‑injection techniques.
@@ -1292,7 +1383,7 @@ def _pre_model_trim(state: dict) -> dict:
     browser_indices = [
         i for i, m in enumerate(messages)
         if m.type == "tool"
-        and _is_browser_tool_name(getattr(m, "name", "") or "")
+        and _is_browser_tool_name(_effective_tool_message_name(messages, m))
     ]
     _n_keep = _keep_browser_snapshots()
     if len(browser_indices) > _n_keep:
@@ -1309,7 +1400,7 @@ def _pre_model_trim(state: dict) -> dict:
                     title = line[7:].strip()
                 if url and title:
                     break
-            action = _browser_action_name(getattr(m, "name", "") or "browser")
+            action = _browser_action_name(_effective_tool_message_name(messages, m) or "browser")
             stub = (
                 f"[Prior browser {action} — "
                 f"URL: {url or '(unknown)'}, "
@@ -1328,7 +1419,7 @@ def _pre_model_trim(state: dict) -> dict:
     # LAST occurrence and replace earlier ones with a short note.
     _tool_msg_indices = [
         i for i, m in enumerate(messages)
-        if m.type == "tool" and not _is_browser_tool_name(getattr(m, "name", "") or "")
+        if m.type == "tool" and not _is_browser_tool_name(_effective_tool_message_name(messages, m))
     ]
     if _tool_msg_indices:
         _seen_hashes: dict[str, list[int]] = {}  # hash → [indices]
@@ -1342,7 +1433,7 @@ def _pre_model_trim(state: dict) -> dict:
                 for i in _indices[:-1]:  # keep the last, replace earlier
                     _m = messages[i]
                     messages[i] = ToolMessage(
-                        content=f"[Duplicate result from {getattr(_m, 'name', 'tool')} — see later occurrence]",
+                        content=f"[Duplicate result from {_effective_tool_message_name(messages, _m) or 'tool'} — see later occurrence]",
                         name=_m.name,
                         tool_call_id=_m.tool_call_id,
                     )
@@ -1361,7 +1452,7 @@ def _pre_model_trim(state: dict) -> dict:
             _c = _content_to_str(_m.content)
             if len(_c) > 500:
                 messages[i] = ToolMessage(
-                    content=_summarize_tool_result(getattr(_m, "name", "tool"), _c),
+                    content=_summarize_tool_result(_effective_tool_message_name(messages, _m) or "tool", _c),
                     name=_m.name,
                     tool_call_id=_m.tool_call_id,
                 )
@@ -1407,7 +1498,7 @@ def _pre_model_trim(state: dict) -> dict:
     # are never clipped.
     for i in tool_indices:
         m = messages[i]
-        _tool_name = getattr(m, "name", "") or ""
+        _tool_name = _effective_tool_message_name(messages, m)
         if _tool_name in _UNTRUSTED_TOOLS or _tool_name.startswith("mcp_"):
             _raw = _content_to_str(m.content)
             _tagged = (
@@ -1707,68 +1798,45 @@ def _pre_model_trim(state: dict) -> dict:
                 _ephemeral_injection_sections.append(_section)
 
     # Skill instructions
-    skills_text = ""
     if compact_custom_endpoint:
         logger.debug("Skill injection skipped for compact custom endpoint context")
     else:
+        tool_guides_text = ""
         try:
             from row_bot.skills import get_skills_prompt
-            from row_bot.skills_activation import record_usage, resolve_active_skill_names
-            from row_bot.threads import get_thread_skills_override
 
-            _thread_id = _current_thread_id_var.get() or None
-            skills_override = None
-            if _thread_id:
-                skills_override = get_thread_skills_override(_thread_id)
-            active_tool_names = _current_enabled_tool_names_var.get()
-            manual_skill_names = None
-
-            # In designer mode, suppress manual skills — only tool guides
-            # (like designer_guide) are injected automatically unless the
-            # Designer composer has set an explicit thread override.
-            if _dp is not None:
-                manual_skill_names = (
-                    resolve_active_skill_names(
-                        _thread_id or "",
-                        explicit_override=skills_override,
-                        is_background=True,
-                    )
-                    if skills_override is not None
-                    else []
-                )
-            elif is_background_workflow():
-                # Background workflows are deterministic: only an explicit
-                # task/thread skills_override may affect manual skills.
-                manual_skill_names = resolve_active_skill_names(
-                    _thread_id or "",
-                    explicit_override=skills_override,
-                    is_background=True,
-                )
-            else:
-                manual_skill_names = resolve_active_skill_names(
-                    _thread_id or "",
-                    explicit_override=skills_override,
-                    is_background=False,
-                )
-
+            active_tool_names = _current_effective_tool_parent_names_var.get()
             tool_guides_text = get_skills_prompt(
                 [],
                 active_tool_names=active_tool_names,
             )
-            manual_skills_text = get_skills_prompt(
-                manual_skill_names,
-                active_tool_names=[],
-            )
-            skills_text = "\n".join(
-                text for text in (tool_guides_text, manual_skills_text) if text
-            )
-            _section = stable_section(
-                "skills.tool_guides",
-                tool_guides_text,
-                source="skills",
-            )
-            if _section is not None:
-                _stable_injection_sections.append(_section)
+        except Exception as exc:
+            logger.debug("Tool-guide injection skipped (non-fatal): %s", exc)
+        _section = stable_section(
+            "skills.tool_guides",
+            tool_guides_text,
+            source="skills",
+        )
+        if _section is not None:
+            _stable_injection_sections.append(_section)
+
+        try:
+            from row_bot.skills_activation import record_usage
+            from row_bot.skill_discovery import render_active_skills_prompt
+
+            _thread_id = _current_thread_id_var.get() or None
+            # Unified active-skill resolution separately preserves the Designer,
+            # background, profile, and child-Agent boundaries.
+            authorized_skill_records = _current_authorized_skill_records_var.get()
+            if authorized_skill_records is None:
+                authorized_skill_records = _build_runtime_skill_snapshot()[0]
+            active_skill_records = _resolve_active_skill_records(tuple(authorized_skill_records))
+            manual_skill_names = [
+                record.canonical_id
+                for record in active_skill_records
+                if record.source == "manual"
+            ]
+            manual_skills_text = render_active_skills_prompt(active_skill_records)
             _section = stable_section(
                 "skills.manual",
                 manual_skills_text,
@@ -1780,44 +1848,6 @@ def _pre_model_trim(state: dict) -> dict:
                 record_usage(_thread_id, manual_skill_names, source="agent")
         except Exception as exc:
             logger.debug("Skill injection skipped (non-fatal): %s", exc)
-            if not skills_text:
-                try:
-                    from row_bot.skills import get_skills_prompt as _fallback_get_skills_prompt
-
-                    skills_text = _fallback_get_skills_prompt()
-                    if skills_text:
-                        _section = stable_section(
-                            "skills.manual",
-                            skills_text,
-                            source="skills",
-                        )
-                        if _section is not None:
-                            _stable_injection_sections.append(_section)
-                except Exception:
-                    pass
-
-    # Plugin skills
-    if not compact_custom_endpoint:
-        try:
-            from row_bot.plugins import registry as _plugin_reg
-            plugin_skill_allowlist = (
-                _current_tool_allowlist_var.get()
-                if _current_tool_allowlist_active_var.get(False)
-                else None
-            )
-            plugin_skills_text = _plugin_reg.get_skills_prompt(
-                allow_names=plugin_skill_allowlist
-            )
-            if plugin_skills_text:
-                _section = stable_section(
-                    "skills.plugins",
-                    plugin_skills_text,
-                    source="plugins",
-                )
-                if _section is not None:
-                    _stable_injection_sections.append(_section)
-        except Exception as exc:
-            logger.debug("Plugin skill injection skipped: %s", exc)
 
     # Batch-insert all injections at insert_idx
     _injection_sections = _stable_injection_sections + _ephemeral_injection_sections
@@ -2008,6 +2038,7 @@ def _pre_model_trim(state: dict) -> dict:
 
 # Cache compiled agent graphs keyed by frozenset of enabled tool names
 _agent_cache: dict[frozenset[str], object] = {}
+_agent_cache_metadata: dict[frozenset[str], dict[str, Any]] = {}
 
 # Thread-local storage for misc flags; background flag uses ContextVar
 # for proper propagation to LangGraph executor threads.
@@ -2039,6 +2070,15 @@ _current_thread_id_var: _contextvars.ContextVar[str] = _contextvars.ContextVar(
 )
 _current_enabled_tool_names_var: _contextvars.ContextVar[tuple[str, ...]] = _contextvars.ContextVar(
     "current_enabled_tool_names", default=()
+)
+_current_effective_tool_parent_names_var: _contextvars.ContextVar[tuple[str, ...]] = _contextvars.ContextVar(
+    "current_effective_tool_parent_names", default=()
+)
+_current_bound_tool_schema_tokens_var: _contextvars.ContextVar[int] = _contextvars.ContextVar(
+    "current_bound_tool_schema_tokens", default=0
+)
+_current_authorized_skill_records_var: _contextvars.ContextVar[tuple | None] = _contextvars.ContextVar(
+    "current_authorized_skill_records", default=None
 )
 _current_runtime_surface_var: _contextvars.ContextVar[str] = _contextvars.ContextVar(
     "current_runtime_surface", default=""
@@ -2081,6 +2121,9 @@ _current_channel_streaming_var: _contextvars.ContextVar[bool] = _contextvars.Con
 )
 _current_agent_run_id_var: _contextvars.ContextVar[str] = _contextvars.ContextVar(
     "current_agent_run_id", default=""
+)
+_current_external_discovery_active_var: _contextvars.ContextVar[bool] = _contextvars.ContextVar(
+    "current_external_discovery_active", default=False
 )
 
 
@@ -2130,6 +2173,7 @@ def _set_active_runtime_context(
     agent_profile_snapshot: dict | None = None,
     channel_streaming: bool = False,
     agent_run_id: str = "",
+    external_discovery_active: bool = False,
 ) -> None:
     _current_thread_id_var.set(thread_id or "")
     _current_runtime_surface_var.set(runtime_surface or "")
@@ -2147,6 +2191,10 @@ def _set_active_runtime_context(
     _current_agent_profile_snapshot_var.set(dict(agent_profile_snapshot or {}))
     _current_channel_streaming_var.set(bool(channel_streaming))
     _current_agent_run_id_var.set(agent_run_id or "")
+    _current_external_discovery_active_var.set(bool(external_discovery_active))
+    _current_authorized_skill_records_var.set(None)
+    _current_effective_tool_parent_names_var.set(())
+    _current_bound_tool_schema_tokens_var.set(0)
 
 
 def _agent_profile_system_context(thread_id: str = "") -> str:
@@ -2600,11 +2648,18 @@ def _wrap_with_interrupt_gate(tool) -> None:
                         "Do NOT retry this tool. Inform the user that this "
                         "action was skipped and move on.")
             desc = _enrich_description(_tname, _label, args_str, kwargs)
+            try:
+                from row_bot.tools.discovery import is_external_discovery_invocation
+
+                external_discovery_active = is_external_discovery_invocation()
+            except Exception:
+                external_discovery_active = False
             approval = interrupt({
                 "tool": _tname,
                 "label": _label,
                 "description": desc,
                 "args": kwargs or (args[0] if args else {}),
+                "external_discovery_active": external_discovery_active,
             })
             if not approval:
                 return "Action cancelled by user."
@@ -2630,11 +2685,18 @@ def _wrap_with_interrupt_gate(tool) -> None:
                         "Do NOT retry this tool. Inform the user that this "
                         "action was skipped and move on.")
             desc = _enrich_description(_tname, _label, args_str, kwargs)
+            try:
+                from row_bot.tools.discovery import is_external_discovery_invocation
+
+                external_discovery_active = is_external_discovery_invocation()
+            except Exception:
+                external_discovery_active = False
             approval = interrupt({
                 "tool": _tname,
                 "label": _label,
                 "description": desc,
                 "args": kwargs or (args[0] if args else {}),
+                "external_discovery_active": external_discovery_active,
             })
             if not approval:
                 return "Action cancelled by user."
@@ -2646,6 +2708,7 @@ def _wrap_with_interrupt_gate(tool) -> None:
 def clear_agent_cache():
     """Clear the cached agent graphs so tools are rebuilt on next call."""
     _agent_cache.clear()
+    _agent_cache_metadata.clear()
     _TOOL_DISPLAY_NAMES.clear()
 
 
@@ -2876,6 +2939,249 @@ def _runtime_tool_allowlist(configurable: dict | None) -> tuple[str, ...] | None
     return tuple()
 
 
+def _call_with_optional_keyword(func, /, *args, **kwargs):
+    """Call a compatibility hook while tolerating older test/plugin signatures."""
+
+    try:
+        return func(*args, **kwargs)
+    except TypeError as exc:
+        optional = {"refresh", "refresh_mcp"} & set(kwargs)
+        if not optional:
+            raise
+        reduced = {key: value for key, value in kwargs.items() if key not in optional}
+        try:
+            return func(*args, **reduced)
+        except TypeError:
+            raise exc
+
+
+def _collect_agent_tool_candidates(
+    enabled_tool_names: list[str],
+    allow_set: set[str] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[str]]:
+    """Enumerate core and external tools locally, retaining source provenance."""
+
+    eager_core: list[dict[str, Any]] = []
+    external: list[dict[str, Any]] = []
+    destructive_names: set[str] = set()
+
+    for name in enabled_tool_names:
+        tool_obj = tool_registry.get_tool(name)
+        if tool_obj is None:
+            continue
+        if name == "mcp":
+            if allow_set is not None and "mcp" not in allow_set and not any(
+                item.startswith("mcp_") for item in allow_set
+            ):
+                continue
+            try:
+                from row_bot.mcp_client import runtime as mcp_runtime
+
+                mcp_tools = _call_with_optional_keyword(
+                    mcp_runtime.get_langchain_tools,
+                    allow_names=allow_set,
+                    refresh=False,
+                )
+                destructive_names.update(
+                    mcp_runtime.get_destructive_tool_names(allow_names=allow_set)
+                )
+            except Exception as exc:
+                logger.debug("MCP local tool snapshot skipped: %s", exc, exc_info=True)
+                mcp_tools = tool_obj.as_langchain_tools() if allow_set is None or "mcp" in allow_set else []
+                destructive_names.update(tool_obj.destructive_tool_names)
+            for lc_tool in mcp_tools:
+                external.append({
+                    "tool": lc_tool,
+                    "source": "mcp",
+                    "parent": "mcp",
+                })
+            continue
+        if allow_set is not None and name not in allow_set:
+            continue
+        for lc_tool in tool_obj.as_langchain_tools():
+            eager_core.append({"tool": lc_tool, "source": "core", "parent": name})
+        destructive_names.update(tool_obj.destructive_tool_names)
+
+    try:
+        from row_bot.plugins import registry as plugin_registry_mod
+
+        plugin_tools = _call_with_optional_keyword(
+            plugin_registry_mod.get_langchain_tools,
+            allow_names=allow_set,
+            refresh_mcp=False,
+        )
+        destructive_names.update(plugin_registry_mod.get_destructive_names(allow_names=allow_set))
+        metadata_by_name = {
+            str(record.get("runtime_name") or ""): record
+            for record in plugin_registry_mod.get_enabled_plugin_tool_records()
+        }
+        for lc_tool in plugin_tools:
+            runtime_name = str(getattr(lc_tool, "name", "") or "")
+            metadata = metadata_by_name.get(runtime_name, {})
+            plugin_id = str(metadata.get("plugin_id") or "plugin")
+            normalized_tags = {
+                str(tag).strip().lower() for tag in (metadata.get("tags") or [])
+            }
+            is_custom_tool = (
+                "custom-tool" in normalized_tags
+                or plugin_id.startswith("custom-tool-")
+            )
+            source = f"{'custom' if is_custom_tool else 'plugin'}:{plugin_id}"
+            if metadata.get("source") == "mcp" and metadata.get("server_name"):
+                source += f":mcp:{metadata['server_name']}"
+            external.append({
+                "tool": lc_tool,
+                "source": source,
+                "parent": str(metadata.get("parent_name") or plugin_id),
+            })
+    except Exception as exc:
+        logger.debug("Plugin tool injection skipped: %s", exc, exc_info=True)
+
+    if allow_set is None:
+        try:
+            from row_bot.channels.registry import running_channels as _running_channels
+            from row_bot.channels.tool_factory import create_channel_tools as _create_ch_tools
+            from row_bot.channels.tool_factory import destructive_channel_tool_names as _channel_destructive_names
+
+            for channel in _running_channels():
+                try:
+                    channel_tools = _create_ch_tools(channel)
+                    for lc_tool in channel_tools:
+                        external.append({
+                            "tool": lc_tool,
+                            "source": f"channel:{channel.name}",
+                            "parent": str(channel.name),
+                        })
+                    try:
+                        destructive_names.update(_channel_destructive_names(channel))
+                    except Exception as exc:
+                        logger.debug("Channel destructive metadata for %s skipped: %s", channel.name, exc)
+                    logger.debug("Injected %d tools for channel %s", len(channel_tools), channel.name)
+                except Exception as exc:
+                    logger.debug("Channel tool injection for %s skipped: %s", channel.name, exc)
+        except Exception as exc:
+            logger.debug("Channel tool injection skipped: %s", exc)
+
+    return eager_core, external, destructive_names
+
+
+def _activate_agent_cache_metadata(cache_key: frozenset[str]) -> None:
+    metadata = _agent_cache_metadata.get(cache_key, {})
+    _current_effective_tool_parent_names_var.set(tuple(metadata.get("tool_parents") or ()))
+    _current_bound_tool_schema_tokens_var.set(int(metadata.get("bound_schema_tokens") or 0))
+    _current_authorized_skill_records_var.set(tuple(metadata.get("skill_records") or ()))
+
+
+def _active_profile_snapshot() -> dict[str, Any]:
+    snapshot = dict(_current_agent_profile_snapshot_var.get({}) or {})
+    if snapshot:
+        return snapshot if snapshot.get("enabled", True) else {}
+    profile_id = str(_current_agent_profile_id_var.get("") or "").strip()
+    if not profile_id:
+        return {}
+    try:
+        from row_bot.agent_profiles import get_agent_profile
+
+        profile = get_agent_profile(profile_id, enabled_only=False)
+        return dict(profile or {}) if profile and profile.get("enabled", True) else {}
+    except Exception:
+        return {}
+
+
+def _resolve_active_skill_records(authorized_records: tuple) -> list:
+    """Resolve ordered task-local active records inside the frozen authorization set."""
+
+    from row_bot.skills_activation import get_thread_activation_state
+    from row_bot.threads import get_thread_skills_override
+
+    thread_id = _current_thread_id_var.get("") or "default"
+    surface = str(_current_runtime_surface_var.get("") or "")
+    profile = _active_profile_snapshot()
+    is_child = surface.startswith("agent_child")
+    is_background = is_background_workflow()
+    override = get_thread_skills_override(thread_id)
+    state = get_thread_activation_state(thread_id)
+    disabled = {str(name) for name in state.get("disabled", [])}
+    authorized_by_id = {record.canonical_id: record for record in authorized_records}
+
+    selected: list[str] = []
+    if profile:
+        skill_policy = profile.get("skill_policy_json") or {}
+        if isinstance(skill_policy, dict):
+            selected.extend(str(name) for name in (skill_policy.get("skills_override") or []))
+    elif override is not None:
+        selected.extend(str(name) for name in override)
+
+    if not is_background and not profile and surface != "designer":
+        selected.extend(str(name) for name in state.get("pinned", []))
+    if not is_background:
+        selected.extend(str(name) for name in state.get("auto_loaded", []))
+
+    ordered: list = []
+    seen: set[str] = set()
+    for skill_id in selected:
+        if skill_id in seen or skill_id in disabled:
+            continue
+        record = authorized_by_id.get(skill_id)
+        if record is None:
+            continue
+        seen.add(skill_id)
+        ordered.append(record)
+    return ordered
+
+
+def _build_runtime_skill_snapshot() -> tuple[tuple, tuple[str, ...], bool, str]:
+    """Return frozen authorized records, active ids, bridge policy, and fingerprint."""
+
+    from row_bot.skill_discovery import collect_enabled_skill_records, skill_snapshot_fingerprint
+    from row_bot.skills_activation import is_smart_off
+
+    all_records = tuple(collect_enabled_skill_records())
+    surface = str(_current_runtime_surface_var.get("") or "")
+    profile = _active_profile_snapshot()
+    is_child = surface.startswith("agent_child")
+    background = is_background_workflow()
+
+    if profile and not is_child:
+        skill_policy = profile.get("skill_policy_json") or {}
+        selected = {
+            str(name)
+            for name in (skill_policy.get("skills_override") or [])
+        } if isinstance(skill_policy, dict) else set()
+        authorized = tuple(record for record in all_records if record.canonical_id in selected)
+    elif background:
+        try:
+            from row_bot.threads import get_thread_skills_override
+
+            selected = set(get_thread_skills_override(_current_thread_id_var.get("") or "") or [])
+        except Exception:
+            selected = set()
+        authorized = tuple(record for record in all_records if record.canonical_id in selected)
+    else:
+        authorized = all_records
+
+    active_records = _resolve_active_skill_records(authorized)
+    active_ids = tuple(record.canonical_id for record in active_records)
+    smart_off = is_smart_off(_current_thread_id_var.get("") or "default")
+    discoverable = bool(
+        not background
+        and not smart_off
+        and any(record.canonical_id not in set(active_ids) for record in authorized)
+    )
+    fingerprint = skill_snapshot_fingerprint(
+        authorized,
+        active_ids=active_ids,
+        policy={
+            "surface": surface,
+            "profile": str(profile.get("id") or profile.get("slug") or ""),
+            "child": is_child,
+            "background": background,
+            "smart_off": smart_off,
+        },
+    )
+    return authorized, active_ids, discoverable, fingerprint
+
+
 def get_agent_graph(enabled_tool_names: list[str] | None = None,
                     model_override: str | None = None,
                     tool_allowlist: list[str] | tuple[str, ...] | set[str] | None = None):
@@ -2917,6 +3223,78 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
     is_background = _background_workflow_var.get()
     approval_mode = get_approval_mode()
     effective_context = get_context_size(model_label)
+    eager_core_entries, external_entries, destructive_names = _collect_agent_tool_candidates(
+        enabled_tool_names,
+        allow_set,
+    )
+    combined_entries = eager_core_entries + external_entries
+    if approval_mode == "block":
+        combined_entries = [
+            entry for entry in combined_entries
+            if str(getattr(entry["tool"], "name", "") or "") not in destructive_names
+        ]
+    compatible_tools = _apply_provider_tool_schema_compatibility(
+        [entry["tool"] for entry in combined_entries],
+        readiness,
+        has_explicit_allowlist=normalized_allowlist is not None,
+    )
+    compatible_ids = {id(tool) for tool in compatible_tools}
+    compatible_entries = [entry for entry in combined_entries if id(entry["tool"]) in compatible_ids]
+    eager_core_entries = [entry for entry in compatible_entries if entry["source"] == "core"]
+    external_entries = [entry for entry in compatible_entries if entry["source"] != "core"]
+
+    from row_bot.tools.discovery import (
+        ExternalToolRecord,
+        capability_fingerprint,
+        filter_external_collisions,
+    )
+
+    external_records = [
+        ExternalToolRecord.from_tool(
+            entry["tool"],
+            source=entry["source"],
+            parent=entry["parent"],
+        )
+        for entry in external_entries
+    ]
+    external_records, omitted_names = filter_external_collisions(
+        external_records,
+        eager_core_names={str(getattr(entry["tool"], "name", "") or "") for entry in eager_core_entries},
+    )
+    if omitted_names:
+        logger.warning(
+            "Omitted colliding external tool names from discovery: %s",
+            ", ".join(omitted_names),
+        )
+    filtered_target_ids = {id(record.target) for record in external_records}
+    external_entries = [entry for entry in external_entries if id(entry["tool"]) in filtered_target_ids]
+
+    loading_mode = tool_registry.get_external_tool_loading_mode()
+    force_external_discovery = bool(_current_external_discovery_active_var.get(False))
+    effective_loading_mode = (
+        "auto" if force_external_discovery else "eager" if is_background else loading_mode
+    )
+    discovery_fingerprint = capability_fingerprint(
+        external_records,
+        mode=effective_loading_mode,
+        policy={
+            "approval": approval_mode,
+            "provider": readiness.provider_id,
+            "transport": str(getattr(readiness, "transport", "")),
+            "profile": _current_agent_profile_id_var.get(""),
+            "allowlist": normalized_allowlist,
+            "channels": sorted(
+                record.source for record in external_records if record.source.startswith("channel:")
+            ),
+            "forced_resume": force_external_discovery,
+        },
+    )
+    (
+        authorized_skill_records,
+        active_skill_ids,
+        skill_discovery_enabled,
+        skill_fingerprint,
+    ) = _build_runtime_skill_snapshot()
     cache_key = frozenset(enabled_tool_names) | frozenset({
         f"ctx:{effective_context}",
         f"model:{model_label}",
@@ -2926,6 +3304,10 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
         f"bg:{is_background}",
         f"approval:{approval_mode}",
         f"tool_allowlist:{'none' if normalized_allowlist is None else 'active'}",
+        f"external_loading:{effective_loading_mode}",
+        f"external_resume:{force_external_discovery}",
+        f"capabilities:{discovery_fingerprint}",
+        f"skills:{skill_fingerprint}",
     })
     if normalized_allowlist is not None:
         cache_key = cache_key | frozenset(
@@ -2935,69 +3317,14 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
     if cache_key not in _agent_cache:
         with _agent_cache_lock:
             if cache_key in _agent_cache:
+                _activate_agent_cache_metadata(cache_key)
                 return _agent_cache[cache_key]
             # Collect LangChain tool wrappers for enabled tools.
-            lc_tools = []
-            destructive_names: set[str] = set()
-            for name in enabled_tool_names:
-                tool_obj = tool_registry.get_tool(name)
-                if tool_obj is not None:
-                    if allow_set is not None:
-                        if name == "mcp":
-                            mcp_selected = "mcp" in allow_set or any(
-                                item.startswith("mcp_") for item in allow_set
-                            )
-                            if not mcp_selected:
-                                continue
-                            try:
-                                from row_bot.mcp_client import runtime as mcp_runtime
-
-                                lc_tools.extend(mcp_runtime.get_langchain_tools(allow_names=allow_set))
-                                destructive_names.update(
-                                    mcp_runtime.get_destructive_tool_names(allow_names=allow_set)
-                                )
-                            except Exception as exc:
-                                logger.debug("MCP allow-list injection skipped: %s", exc, exc_info=True)
-                                if "mcp" in allow_set:
-                                    lc_tools.extend(tool_obj.as_langchain_tools())
-                                    destructive_names.update(tool_obj.destructive_tool_names)
-                            continue
-                        if name not in allow_set:
-                            continue
-                    lc_tools.extend(tool_obj.as_langchain_tools())
-                    destructive_names.update(tool_obj.destructive_tool_names)
+            eager_core_tools = [entry["tool"] for entry in eager_core_entries]
+            external_tools = [entry["tool"] for entry in external_entries]
+            lc_tools = eager_core_tools + external_tools
 
             # Append tools from enabled plugins (totally separate registry)
-            try:
-                from row_bot.plugins import registry as plugin_registry_mod
-                if allow_set is None:
-                    lc_tools.extend(plugin_registry_mod.get_langchain_tools())
-                    destructive_names.update(plugin_registry_mod.get_destructive_names())
-                else:
-                    lc_tools.extend(plugin_registry_mod.get_langchain_tools(allow_names=allow_set))
-                    destructive_names.update(plugin_registry_mod.get_destructive_names(allow_names=allow_set))
-            except Exception as exc:
-                logger.debug("Plugin tool injection skipped: %s", exc)
-
-            # Append auto-generated tools for running channels (tool_factory)
-            if allow_set is None:
-                try:
-                    from row_bot.channels.registry import running_channels as _running_channels
-                    from row_bot.channels.tool_factory import create_channel_tools as _create_ch_tools
-                    from row_bot.channels.tool_factory import destructive_channel_tool_names as _channel_destructive_names
-                    for _ch in _running_channels():
-                        try:
-                            _ch_tools = _create_ch_tools(_ch)
-                            lc_tools.extend(_ch_tools)
-                            destructive_names.update(_channel_destructive_names(_ch))
-                            logger.debug("Injected %d tools for channel %s",
-                                         len(_ch_tools), _ch.name)
-                        except Exception as exc:
-                            logger.debug("Channel tool injection for %s skipped: %s",
-                                         _ch.name, exc)
-                except Exception as exc:
-                    logger.debug("Channel tool injection skipped: %s", exc)
-
             if is_background:
                 if approval_mode in {"block", "approve"}:
                     # BG gating: block=strip destructive tools; approve=wrap
@@ -3081,6 +3408,73 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
                             return f"Tool error: {exc}"
                     t._run = _safe_run
 
+            if effective_loading_mode == "auto" and (external_tools or force_external_discovery):
+                try:
+                    from row_bot.tools.discovery import build_tool_discovery_tools
+
+                    bridge_records = [
+                        ExternalToolRecord.from_tool(
+                            entry["tool"],
+                            source=entry["source"],
+                            parent=entry["parent"],
+                        )
+                        for entry in external_entries
+                    ]
+                    bridges = list(build_tool_discovery_tools(
+                        bridge_records,
+                        context_tokens=effective_context,
+                    ))
+                    bridges = _apply_provider_tool_schema_compatibility(
+                        bridges,
+                        readiness,
+                        has_explicit_allowlist=False,
+                    )
+                    if len(bridges) != 2:
+                        raise RuntimeError("provider rejected an external discovery bridge")
+                    _install_custom_tool_validation_repair(bridges, readiness.provider_id)
+                    lc_tools = eager_core_tools + bridges
+                except Exception as exc:
+                    logger.warning(
+                        "External tool discovery assembly failed; using eager compatibility snapshot: %s",
+                        type(exc).__name__,
+                    )
+                    lc_tools = eager_core_tools + external_tools
+
+            if skill_discovery_enabled:
+                try:
+                    from row_bot.skill_discovery import build_skill_discovery_tools
+
+                    existing_names = {str(getattr(tool, "name", "") or "") for tool in lc_tools}
+                    if not {"skill_search", "skill_load"} & existing_names:
+                        skill_bridges = list(build_skill_discovery_tools(
+                            authorized_skill_records,
+                            thread_id=_current_thread_id_var.get("") or "default",
+                            context_tokens=effective_context,
+                            active_skill_ids=active_skill_ids,
+                            child_boundaries=str(_current_runtime_surface_var.get("") or "").startswith("agent_child"),
+                        ))
+                        skill_bridges = _apply_provider_tool_schema_compatibility(
+                            skill_bridges,
+                            readiness,
+                            has_explicit_allowlist=False,
+                        )
+                        if len(skill_bridges) != 2:
+                            raise RuntimeError("provider rejected a skill discovery bridge")
+                        _install_custom_tool_validation_repair(skill_bridges, readiness.provider_id)
+                        lc_tools.extend(skill_bridges)
+                except Exception as exc:
+                    logger.warning("Skill discovery assembly skipped: %s", type(exc).__name__)
+
+            from row_bot.tools.discovery import estimate_bound_tool_schema_tokens
+
+            effective_parent_names = {
+                str(entry["parent"])
+                for entry in eager_core_entries
+                if str(entry["parent"])
+            }
+            if any(record.parent == "mcp" or record.source.startswith("mcp") for record in external_records):
+                effective_parent_names.add("mcp")
+
             if not lc_tools:
                 # Agent without tools is pointless — fall back to plain LLM
                 lc_tools = []
@@ -3097,12 +3491,60 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
                 version="v2",
             )
             _agent_cache[cache_key] = agent
+            _agent_cache_metadata[cache_key] = {
+                "tool_parents": tuple(sorted(effective_parent_names)),
+                "bound_schema_tokens": estimate_bound_tool_schema_tokens(lc_tools),
+                "skill_records": tuple(authorized_skill_records),
+            }
 
+    _activate_agent_cache_metadata(cache_key)
     return _agent_cache[cache_key]
 
 
-def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
-                 *, stop_event: threading.Event | None = None) -> str | dict:
+def _graph_interrupt_result(state: Any) -> dict[str, Any] | None:
+    """Return normalized interrupt data from a paused LangGraph state."""
+
+    if not state or not getattr(state, "next", None):
+        return None
+    all_interrupts: list[dict[str, Any]] = []
+    for task in getattr(state, "tasks", ()) or ():
+        for intr in getattr(task, "interrupts", ()) or ():
+            value = getattr(intr, "value", None)
+            item = (
+                dict(value)
+                if isinstance(value, dict)
+                else {"description": str(value)}
+            )
+            item["__interrupt_id"] = str(getattr(intr, "id", "") or "")
+            all_interrupts.append(item)
+    if not all_interrupts:
+        return None
+    return {"type": "interrupt", "interrupts": all_interrupts}
+
+
+def get_invoke_agent_interrupts(
+    enabled_tool_names: list[str],
+    config: dict,
+) -> list[dict[str, Any]]:
+    """Read the current paused interrupt group without invoking the model."""
+
+    normalized = _normalize_agent_config(config)
+    configurable = normalized.get("configurable") or {}
+    model_override = configurable.get("model_override")
+    agent = get_agent_graph(
+        enabled_tool_names,
+        model_override=model_override,
+        tool_allowlist=_runtime_tool_allowlist(configurable),
+    )
+    result = _graph_interrupt_result(agent.get_state(normalized))
+    if not result:
+        return []
+    interrupts = result.get("interrupts") or []
+    return [dict(item) for item in interrupts if isinstance(item, dict)]
+
+
+def _invoke_agent_graph(user_input: str, enabled_tool_names: list[str], config: dict,
+                        *, stop_event: threading.Event | None = None) -> str | dict:
     """Invoke the ReAct agent and return the final answer text.
 
     If *stop_event* is provided and becomes set, the function raises
@@ -3160,6 +3602,7 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         agent_profile_snapshot=configurable.get("agent_profile_snapshot") or {},
         channel_streaming=bool(configurable.get("channel_streaming")),
         agent_run_id=str(configurable.get("agent_run_id") or ""),
+        external_discovery_active=bool(configurable.get("external_discovery_active")),
     )
     _developer_context_var.set(
         configurable.get("developer_context", "") or ""
@@ -3190,7 +3633,7 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         _do_summarize(agent, config, model_override=_model_ov)
     if stop_event and stop_event.is_set():
         raise TaskStoppedError("Task stopped after summarization")
-    config, initial_input = _new_agent_graph_input(user_input, config)
+    config, initial_input = _new_agent_graph_input(user_input, config, agent=agent)
 
     # Use node-level streaming so we can check stop_event between nodes
     if stop_event is not None:
@@ -3240,18 +3683,11 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         # ── Interrupt detection ──────────────────────────────────────
         # If the graph paused due to an interrupt() call (e.g. shell
         # tool approval gate), return interrupt data instead of text.
-        if state and state.next:
-            all_interrupts: list[dict] = []
-            for task in state.tasks:
-                if hasattr(task, "interrupts") and task.interrupts:
-                    for intr in task.interrupts:
-                        item = dict(intr.value) if isinstance(intr.value, dict) else {"description": str(intr.value)}
-                        item["__interrupt_id"] = intr.id
-                        all_interrupts.append(item)
-            if all_interrupts:
-                logger.info("invoke_agent: interrupted after %.1fs",
-                            time.monotonic() - _invoke_t0)
-                return {"type": "interrupt", "interrupts": all_interrupts}
+        interrupt_result = _graph_interrupt_result(state)
+        if interrupt_result is not None:
+            logger.info("invoke_agent: interrupted after %.1fs",
+                        time.monotonic() - _invoke_t0)
+            return interrupt_result
 
         if state and state.values:
             for msg in reversed(state.values.get("messages", [])):
@@ -3276,6 +3712,12 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         )
     except (ExecutionBudgetExhausted, AgentNoProgress) as exc:
         return _handle_agent_terminal(agent, config, exc)
+    state = agent.get_state(config)
+    interrupt_result = _graph_interrupt_result(state)
+    if interrupt_result is not None:
+        logger.info("invoke_agent: interrupted after %.1fs",
+                    time.monotonic() - _invoke_t0)
+        return interrupt_result
     # The agent returns messages; the last AI message is the answer
     messages = result.get("messages", [])
     for msg in reversed(messages):
@@ -3291,6 +3733,153 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
     if finalized.strip():
         return finalized
     return "I wasn't able to generate a response."
+
+
+def _checkpoint_joined_child_event_ids(
+    parent_thread_id: str,
+    orchestration_id: str,
+) -> list[str]:
+    """Read durable group-wait acknowledgements from the parent checkpoint."""
+
+    try:
+        from row_bot.agent_orchestrator import sanitize_pending_child_event_ids
+        from row_bot.threads import get_latest_checkpoint_messages
+
+        reported_ids: list[str] = []
+        for message in get_latest_checkpoint_messages(parent_thread_id):
+            if not isinstance(message, ToolMessage):
+                continue
+            if str(getattr(message, "name", "") or "") != "agent_wait":
+                continue
+            content = _content_to_str(getattr(message, "content", ""))
+            try:
+                payload = json.loads(content)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if (
+                not isinstance(payload, dict)
+                or not payload.get("ok")
+                or str(payload.get("orchestration_id") or "") != orchestration_id
+                or "barrier_complete" not in payload
+                or not isinstance(payload.get("child_event_ids"), list)
+            ):
+                continue
+            reported_ids.extend(
+                str(event_id)
+                for event_id in payload["child_event_ids"]
+                if str(event_id or "")
+            )
+        return sanitize_pending_child_event_ids(orchestration_id, reported_ids)
+    except Exception:
+        logger.exception(
+            "Could not read joined child events from parent checkpoint: thread=%s orchestration=%s",
+            parent_thread_id,
+            orchestration_id,
+        )
+        return []
+
+
+def _complete_unified_parent_pass(
+    result: str | dict,
+    enabled_tool_names: list[str],
+    config: dict,
+):
+    """Apply the shared final-answer guard after the original parent graph."""
+
+    configurable = (config or {}).get("configurable") or {}
+    if configurable.get("orchestration_internal_wake"):
+        return None
+    thread_id = str(configurable.get("thread_id") or "")
+    generation_id = str(configurable.get("generation_id") or "")
+    if not thread_id or not generation_id:
+        return None
+    try:
+        from row_bot.agent_orchestrator import (
+            CURRENT_ORCHESTRATION_VERSION,
+            complete_parent_pass,
+            get_generation_orchestration,
+        )
+
+        orchestration = get_generation_orchestration(thread_id, generation_id)
+        if (
+            not orchestration
+            or int(orchestration.get("orchestration_version") or 0)
+            < CURRENT_ORCHESTRATION_VERSION
+        ):
+            return None
+        return complete_parent_pass(
+            str(orchestration["id"]),
+            result,
+            continuation_state={
+                "config": copy.deepcopy(config),
+                "enabled_tool_names": list(enabled_tool_names),
+            },
+            delivery_context={
+                "runtime_surface": str(configurable.get("runtime_surface") or ""),
+                "runtime_channel": str(configurable.get("runtime_channel") or ""),
+                "plugin_id": str(configurable.get("plugin_id") or ""),
+                "channel_streaming": bool(configurable.get("channel_streaming")),
+                "voice_mode": bool(configurable.get("voice_mode")),
+                "voice_transport": str(configurable.get("voice_transport") or ""),
+            },
+            foreground=True,
+            consumed_event_ids=_checkpoint_joined_child_event_ids(
+                thread_id,
+                str(orchestration["id"]),
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "Unified parent final-answer guard failed: thread=%s generation=%s",
+            thread_id,
+            generation_id,
+        )
+        raise
+
+
+def _route_waiting_parent_input(user_input: str, config: dict):
+    configurable = (config or {}).get("configurable") or {}
+    if (
+        configurable.get("orchestration_internal_wake")
+        or configurable.get("internal_goal_continuation")
+        or configurable.get("thread_event_context")
+    ):
+        return None
+    thread_id = str(configurable.get("thread_id") or "")
+    generation_id = str(configurable.get("generation_id") or "")
+    if not thread_id or not generation_id:
+        return None
+    try:
+        from row_bot.agent_orchestrator import route_parent_steering
+
+        return route_parent_steering(
+            parent_thread_id=thread_id,
+            incoming_generation_id=generation_id,
+            content=user_input,
+        )
+    except Exception:
+        logger.exception("Could not route user input to the waiting parent turn")
+        raise
+
+
+def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
+                 *, stop_event: threading.Event | None = None) -> str | dict:
+    """Invoke the shared parent graph and apply the durable orchestration guard."""
+
+    routed = _route_waiting_parent_input(user_input, config)
+    if routed is not None:
+        return {
+            "type": "orchestration_waiting",
+            "orchestration_id": str(routed.get("id") or ""),
+        }
+    result = _invoke_agent_graph(
+        user_input,
+        enabled_tool_names,
+        config,
+        stop_event=stop_event,
+    )
+    _complete_unified_parent_pass(result, enabled_tool_names, config)
+    return result
 
 
 import re as _re
@@ -3349,6 +3938,7 @@ _SAFE_TOOL_CALL_ARG_KEYS = {
     "include_events",
     "limit",
     "model",
+    "name",
     "parent_message_id",
     "parent_run_id",
     "parent_thread_id",
@@ -3421,12 +4011,24 @@ def _safe_tool_call_args(args: Any) -> dict[str, Any]:
     return safe
 
 
+def _tool_call_runtime_name(tc: dict[str, Any]) -> str:
+    raw_name = str(tc.get("name") or "")
+    args = tc.get("args")
+    if raw_name == "tool_invoke" and isinstance(args, dict):
+        requested_name = str(args.get("name") or "").strip()
+        if requested_name:
+            return requested_name
+    return raw_name
+
+
 def _tool_call_payload(tc: dict[str, Any]) -> ToolCallPayload:
     raw_name = str(tc.get("name") or "")
+    args = tc.get("args")
+    effective_name = _tool_call_runtime_name(tc)
     return ToolCallPayload(
-        _resolve_tool_display_name(raw_name),
+        _resolve_tool_display_name(effective_name),
         raw_name=raw_name,
-        args=_safe_tool_call_args(tc.get("args")),
+        args=_safe_tool_call_args(args),
         call_id=str(tc.get("id") or raw_name),
     )
 
@@ -3539,6 +4141,7 @@ def stream_chat_only(
         agent_profile_snapshot=configurable.get("agent_profile_snapshot") or {},
         channel_streaming=bool(configurable.get("channel_streaming")),
         agent_run_id=str(configurable.get("agent_run_id") or ""),
+        external_discovery_active=bool(configurable.get("external_discovery_active")),
     )
     set_active_model_override(model_label)
     _readiness_started = time.perf_counter()
@@ -3751,6 +4354,17 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
     * ``"summarizing"`` – payload = ``None`` (condensing older context)
     * ``"done"``        – payload = full answer text (str)
     """
+    routed = _route_waiting_parent_input(user_input, config)
+    if routed is not None:
+        yield (
+            "orchestration_waiting",
+            {
+                "orchestration_id": str(routed.get("id") or ""),
+                "text": "",
+                "output_kind": "steering",
+            },
+        )
+        return
     _disabled_custom_tool_response = _custom_tool_builder_disabled_response(
         user_input, enabled_tool_names
     )
@@ -3787,6 +4401,7 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         agent_profile_snapshot=configurable.get("agent_profile_snapshot") or {},
         channel_streaming=bool(configurable.get("channel_streaming")),
         agent_run_id=str(configurable.get("agent_run_id") or ""),
+        external_discovery_active=bool(configurable.get("external_discovery_active")),
     )
     auto_allowed = runtime_mode == "auto" and runtime_surface in {"normal_chat", "channel"}
     if runtime_mode == "chat_only" or auto_allowed:
@@ -3884,6 +4499,7 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         agent_profile_snapshot=configurable.get("agent_profile_snapshot") or {},
         channel_streaming=bool(configurable.get("channel_streaming")),
         agent_run_id=str(configurable.get("agent_run_id") or ""),
+        external_discovery_active=bool(configurable.get("external_discovery_active")),
     )
     _developer_context_var.set(
         (config.get("configurable") or {}).get("developer_context", "") or ""
@@ -3908,12 +4524,27 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
             time.perf_counter() - _summarize_started
         ) * 1000.0
 
-    config, initial_input = _new_agent_graph_input(user_input, config)
+    config, initial_input = _new_agent_graph_input(user_input, config, agent=agent)
     for event in _stream_graph(agent, initial_input, config,
                                stop_event=stop_event,
                                phase_timings=phase_timings):
         yield from _memory_recall_warning_events(config)
         yield event
+        if event[0] == "done":
+            parent_pass = _complete_unified_parent_pass(
+                event[1],
+                enabled_tool_names,
+                config,
+            )
+            if parent_pass is not None and parent_pass.waiting:
+                yield (
+                    "orchestration_waiting",
+                    {
+                        "orchestration_id": parent_pass.orchestration_id,
+                        "text": parent_pass.text,
+                        "output_kind": parent_pass.output_kind,
+                    },
+                )
     yield from _memory_recall_warning_events(config)
 
 
@@ -4012,6 +4643,7 @@ def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: b
         agent_profile_snapshot=configurable.get("agent_profile_snapshot") or {},
         channel_streaming=bool(configurable.get("channel_streaming")),
         agent_run_id=str(configurable.get("agent_run_id") or ""),
+        external_discovery_active=bool(configurable.get("external_discovery_active")),
     )
     _developer_context_var.set(
         configurable.get("developer_context", "") or ""
@@ -4039,12 +4671,27 @@ def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: b
     ):
         yield from _memory_recall_warning_events(config)
         yield event
+        if event[0] == "done":
+            parent_pass = _complete_unified_parent_pass(
+                event[1],
+                enabled_tool_names,
+                config,
+            )
+            if parent_pass is not None and parent_pass.waiting:
+                yield (
+                    "orchestration_waiting",
+                    {
+                        "orchestration_id": parent_pass.orchestration_id,
+                        "text": parent_pass.text,
+                        "output_kind": parent_pass.output_kind,
+                    },
+                )
     yield from _memory_recall_warning_events(config)
 
 
-def resume_invoke_agent(enabled_tool_names: list[str], config: dict, approved: bool,
-                        *, interrupt_ids: list[str] | None = None,
-                        stop_event: threading.Event | None = None) -> str | dict:
+def _resume_invoke_agent_graph(enabled_tool_names: list[str], config: dict, approved: bool,
+                               *, interrupt_ids: list[str] | None = None,
+                               stop_event: threading.Event | None = None) -> str | dict:
     """Resume an interrupted agent graph (non-streaming, for tasks).
 
     Returns the final answer text, or an interrupt dict if the graph
@@ -4075,6 +4722,7 @@ def resume_invoke_agent(enabled_tool_names: list[str], config: dict, approved: b
         agent_profile_snapshot=configurable.get("agent_profile_snapshot") or {},
         channel_streaming=bool(configurable.get("channel_streaming")),
         agent_run_id=str(configurable.get("agent_run_id") or ""),
+        external_discovery_active=bool(configurable.get("external_discovery_active")),
     )
     _developer_context_var.set(
         configurable.get("developer_context", "") or ""
@@ -4141,6 +4789,22 @@ def resume_invoke_agent(enabled_tool_names: list[str], config: dict, approved: b
                 if text.strip():
                     return text
     return "I wasn't able to generate a response."
+
+
+def resume_invoke_agent(enabled_tool_names: list[str], config: dict, approved: bool,
+                        *, interrupt_ids: list[str] | None = None,
+                        stop_event: threading.Event | None = None) -> str | dict:
+    """Resume the shared graph and apply the durable orchestration guard."""
+
+    result = _resume_invoke_agent_graph(
+        enabled_tool_names,
+        config,
+        approved,
+        interrupt_ids=interrupt_ids,
+        stop_event=stop_event,
+    )
+    _complete_unified_parent_pass(result, enabled_tool_names, config)
+    return result
 
 
 def _latest_ai_text_from_state(agent, config: dict) -> str:
@@ -4518,6 +5182,7 @@ def _stream_graph(agent, input_data, config: dict,
     decoder = _ReasoningTextStreamDecoder()
     _finish_reason: str | None = None  # tracks API finish_reason from last chunk
     _seen_tool_calls: set[str] = set()
+    _tool_call_display_names: dict[str, str] = {}
     _answer_chars = 0
     _answer_chunks = 0
     _reasoning_chars = 0
@@ -4689,13 +5354,17 @@ def _stream_graph(agent, input_data, config: dict,
                         for tc in tc_list:
                             provider_call["tool_calls"] = int(provider_call.get("tool_calls") or 0) + 1
                             tc_id = tc.get("id", tc["name"])
+                            runtime_tool_name = _tool_call_runtime_name(tc)
+                            _tool_call_display_names[str(tc_id)] = _resolve_tool_display_name(
+                                runtime_tool_name
+                            )
                             if tc_id not in _seen_tool_calls:
                                 _seen_tool_calls.add(tc_id)
                                 yield ("tool_call", _tool_call_payload(tc))
 
-                            if _is_browser_tool_name(tc["name"]):
+                            if _is_browser_tool_name(runtime_tool_name):
                                 _browser_tool_count += 1
-                                _recent_browser_actions.append(_browser_action_name(tc["name"]))
+                                _recent_browser_actions.append(_browser_action_name(runtime_tool_name))
                                 _recent_browser_actions = _recent_browser_actions[-8:]
                                 _snapshot_heavy = len(_recent_browser_actions) >= 6 and all(
                                     action in {"snapshot", "take_screenshot", "navigate", "navigate_back", "back"}
@@ -4710,7 +5379,10 @@ def _stream_graph(agent, input_data, config: dict,
                         _last_tool_result_at = event_seen_at
                         _tool_result_count += 1
                         yield ("tool_done", {
-                            "name": _resolve_tool_display_name(m.name),
+                            "name": _tool_call_display_names.get(
+                                str(getattr(m, "tool_call_id", "") or ""),
+                                _resolve_tool_display_name(m.name),
+                            ),
                             "raw_name": m.name,
                             "content": getattr(m, "content", ""),
                         })
@@ -4826,10 +5498,17 @@ def _stream_graph(agent, input_data, config: dict,
                                 tc_list = getattr(m, "tool_calls", [])
                                 if tc_list:
                                     for tc in tc_list:
+                                        tc_id = str(tc.get("id", tc["name"]))
+                                        _tool_call_display_names[tc_id] = _resolve_tool_display_name(
+                                            _tool_call_runtime_name(tc)
+                                        )
                                         yield ("tool_call", _tool_call_payload(tc))
                                 if m.type == "tool":
                                     yield ("tool_done", {
-                                        "name": _resolve_tool_display_name(m.name),
+                                        "name": _tool_call_display_names.get(
+                                            str(getattr(m, "tool_call_id", "") or ""),
+                                            _resolve_tool_display_name(m.name),
+                                        ),
                                         "raw_name": m.name,
                                         "content": getattr(m, "content", ""),
                                     })

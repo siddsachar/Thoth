@@ -46,7 +46,7 @@ def _acquire_child_capacity(
     with _DISPATCH_CONDITION:
         if ticket not in _DISPATCH_QUEUE:
             _DISPATCH_QUEUE.append(ticket)
-        update_agent_status(run_id, "queued", "Queued for Agent capacity")
+        queued_status_published = False
         while not stop_event.is_set():
             settings = load_agent_runtime_settings()
             parent_active, global_active = _dispatch_counts(ticket[1])
@@ -69,6 +69,9 @@ def _acquire_child_capacity(
                 _DISPATCH_QUEUE.remove(ticket)
                 _DISPATCH_ACTIVE[ticket[0]] = ticket[1]
                 return True
+            if not queued_status_published:
+                update_agent_status(run_id, "queued", "Queued for Agent capacity")
+                queued_status_published = True
             _DISPATCH_CONDITION.wait(timeout=0.1)
         if ticket in _DISPATCH_QUEUE:
             _DISPATCH_QUEUE.remove(ticket)
@@ -298,6 +301,20 @@ def _writer_lock_key(
     return f"thread:{child_thread_id or 'default'}"
 
 
+def _developer_workspace_supports_auto_worktree(workspace_id: str) -> bool:
+    """Return whether an automatic child worktree can use this workspace."""
+
+    if not str(workspace_id or "").strip():
+        return False
+    try:
+        from row_bot.developer.storage import get_workspace, is_git_repository_root
+
+        workspace = get_workspace(workspace_id)
+        return bool(workspace and is_git_repository_root(workspace.path))
+    except Exception:
+        return False
+
+
 def _parent_thread_defaults(parent_thread_id: str) -> dict[str, Any]:
     if not parent_thread_id:
         return {
@@ -305,12 +322,14 @@ def _parent_thread_defaults(parent_thread_id: str) -> dict[str, Any]:
             "model_override": "",
             "developer_workspace_id": "",
             "project_workspace_id": "",
+            "designer_project_id": "",
             "skills_override": None,
         }
     from row_bot.threads import (
         _get_thread_approval_mode,
         _get_thread_developer_workspace,
         _get_thread_model_override,
+        _get_thread_project_id,
         _get_thread_project_workspace,
         get_thread_skills_override,
     )
@@ -320,6 +339,7 @@ def _parent_thread_defaults(parent_thread_id: str) -> dict[str, Any]:
         "model_override": _get_thread_model_override(parent_thread_id),
         "developer_workspace_id": _get_thread_developer_workspace(parent_thread_id),
         "project_workspace_id": _get_thread_project_workspace(parent_thread_id),
+        "designer_project_id": _get_thread_project_id(parent_thread_id),
         "skills_override": get_thread_skills_override(parent_thread_id),
     }
 
@@ -366,6 +386,7 @@ def _build_child_config(
     approval_mode: str,
     model_override: str = "",
     developer_workspace_id: str = "",
+    designer_project_id: str = "",
     parent_thread_id: str = "",
     parent_run_id: str = "",
     profile_snapshot: Mapping[str, Any],
@@ -392,6 +413,8 @@ def _build_child_config(
         configurable["model_override"] = model_override
     if developer_workspace_id:
         configurable["developer_workspace_id"] = developer_workspace_id
+    if designer_project_id:
+        configurable["designer_project_id"] = designer_project_id
     return {"configurable": configurable}
 
 
@@ -459,8 +482,10 @@ def spawn_agent_run(
         and requires_write_lock
         and parent_developer_workspace_id
         and effective_workspace_mode != "worktree"
+        and _developer_workspace_supports_auto_worktree(parent_developer_workspace_id)
     ):
-        # Parallel automatic writers must not share the parent checkout.
+        # Parallel automatic writers must not share a Git checkout. Ordinary
+        # folders retain the profile's single-writer lock instead.
         effective_workspace_mode = "worktree"
 
     from row_bot.agent_context import build_child_agent_prompt
@@ -531,6 +556,7 @@ def spawn_agent_run(
     child_thread_id = create_thread(
         child_display,
         thread_type="agent_child",
+        project_id=str(parent_defaults.get("designer_project_id") or ""),
         developer_workspace_id=effective_developer_workspace_id,
         project_workspace_id=str(
             (worktree_allocation or {}).get("project_workspace_id")
@@ -566,6 +592,7 @@ def spawn_agent_run(
         approval_mode=effective_approval,
         model_override=model,
         developer_workspace_id=effective_developer_workspace_id,
+        designer_project_id=str(parent_defaults.get("designer_project_id") or ""),
         parent_thread_id=parent_thread_id,
         parent_run_id=parent_run_id,
         profile_snapshot=profile_snapshot,
@@ -706,7 +733,8 @@ def _pause_agent_for_approval(
     enabled_tool_names: list[str],
 ) -> None:
     from row_bot.agent_runs import get_agent_run, save_agent_resume_state
-    from row_bot.tasks import create_approval_request, push_approval_to_parent_channel
+    from row_bot.channels.thread_notifications import notify_agent_run_approval
+    from row_bot.tasks import create_approval_request
     from row_bot.approval_messages import compact_message, normalize_interrupts
 
     run = get_agent_run(run_id) or {}
@@ -729,6 +757,11 @@ def _pause_agent_for_approval(
         "tool_allowlist": list(configurable.get("tool_allowlist") or []),
         "interrupts": interrupts,
         "approval_payload": approval_payload,
+        "external_discovery_active": any(
+            bool(item.get("external_discovery_active"))
+            for item in interrupts
+            if isinstance(item, dict)
+        ),
     }
     resume_token, approval_id = create_approval_request(
         run_id=run_id,
@@ -750,7 +783,7 @@ def _pause_agent_for_approval(
         status="waiting_approval",
         status_message="Waiting for approval",
     )
-    push_approval_to_parent_channel(approval_id)
+    notify_agent_run_approval(approval_id)
 
 
 def _run_agent_thread(
@@ -966,6 +999,43 @@ def resume_agent_run(
     run = get_agent_run(run_id)
     if not run:
         return None
+    try:
+        from row_bot.agent_orchestrator import (
+            get_member_for_run,
+            get_orchestration,
+            record_thread_event,
+        )
+
+        member = get_member_for_run(run_id)
+        orchestration = (
+            get_orchestration(str(member.get("orchestration_id") or ""))
+            if member
+            else None
+        )
+        if orchestration and int(orchestration.get("orchestration_version") or 0) >= 2:
+            approval_id = str(
+                (run.get("resume_state_json") or {}).get("approval_id") or "approval"
+            )
+            record_thread_event(
+                str(orchestration["id"]),
+                kind="child_approval_resolved",
+                content=(
+                    f"Approval for child {run_id} was "
+                    f"{'approved' if approved else 'denied'}."
+                ),
+                run_id=run_id,
+                source_event_id=(
+                    f"run:{run_id}:approval:{approval_id}:"
+                    f"{'approved' if approved else 'denied'}"
+                ),
+                payload={
+                    "run_id": run_id,
+                    "approved": bool(approved),
+                    "approval_id": approval_id,
+                },
+            )
+    except Exception:
+        logger.debug("Could not publish child approval resolution", exc_info=True)
     if not approved:
         append_agent_event(
             run_id,
@@ -989,6 +1059,12 @@ def resume_agent_run(
             error="Missing Agent resume state",
             status_message="Missing Agent resume state",
         )
+    config = dict(config)
+    configurable = dict(config.get("configurable") or {})
+    configurable["external_discovery_active"] = bool(
+        resume_state.get("external_discovery_active")
+    )
+    config["configurable"] = configurable
     interrupt_ids: list[str] = []
     seen_interrupt_ids: set[str] = set()
     for intr in resume_state.get("interrupts", []):

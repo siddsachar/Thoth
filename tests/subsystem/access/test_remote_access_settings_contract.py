@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from row_bot.access.access_routes import (
+    AccessRouteConfig,
     AccessRouteConfigStore,
     AccessRouteKind,
     ListenMode,
@@ -114,6 +115,136 @@ def test_owner_actions_create_both_layouts_and_lifetimes(tmp_path) -> None:
     assert desktop.next_path == "/"
     assert compact.invitation.session_lifetime is SessionLifetime.TEMPORARY
     assert compact.next_path == "/?mobile=1"
+
+
+def test_owner_actions_create_custom_origin_for_both_layouts_and_lifetimes(
+    tmp_path,
+) -> None:
+    service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    actions = RemoteAccessActions(
+        service=service,
+        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        authorizer=_owner_authorizer,
+    )
+
+    desktop = actions.create_custom_invitation(
+        layout="desktop",
+        origin=ORIGIN,
+        lifetime="trusted",
+    )
+    compact = actions.create_custom_invitation(
+        layout="compact",
+        origin="https://tablet.row-bot.example:8443",
+        lifetime="temporary",
+    )
+
+    assert desktop.invitation.session_lifetime is SessionLifetime.TRUSTED
+    assert desktop.invitation.intended_origin == ORIGIN
+    assert desktop.invitation.created_by == "settings_owner"
+    assert desktop.invitation.access_route == "settings_custom"
+    assert desktop.next_path == "/"
+    assert compact.invitation.session_lifetime is SessionLifetime.TEMPORARY
+    assert compact.invitation.intended_origin == ("https://tablet.row-bot.example:8443")
+    assert compact.invitation.created_by == "settings_owner"
+    assert compact.invitation.access_route == "settings_custom"
+    assert compact.next_path == "/?mobile=1"
+
+
+def test_custom_origin_canonicalization_is_delegated_to_access_service(
+    tmp_path,
+) -> None:
+    service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    actions = RemoteAccessActions(
+        service=service,
+        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        authorizer=_owner_authorizer,
+    )
+
+    created = actions.create_custom_invitation(
+        layout="desktop",
+        origin=" HTTPS://ROW-BOT.EXAMPLE:443/ ",
+        lifetime="trusted",
+    )
+
+    assert created.invitation.intended_origin == ORIGIN
+    assert created.invitation_url().startswith(f"{ORIGIN}/connect?invitation=")
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "ftp://row-bot.example",
+        "https://owner:secret@row-bot.example",
+        "https://row-bot.example/path",
+        "https://row-bot.example?query=1",
+        "https://row-bot.example#fragment",
+        "https://row-bot.example:not-a-port",
+    ],
+)
+def test_invalid_custom_origins_create_no_invitation(tmp_path, origin: str) -> None:
+    service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    actions = RemoteAccessActions(
+        service=service,
+        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        authorizer=_owner_authorizer,
+    )
+
+    with pytest.raises(ValueError):
+        actions.create_custom_invitation(
+            layout="desktop",
+            origin=origin,
+            lifetime="trusted",
+        )
+
+    assert service.list_invitations() == []
+
+
+@pytest.mark.parametrize(
+    ("layout", "lifetime"),
+    [
+        ("wide", "trusted"),
+        ("desktop", "forever"),
+        ("desktop", "migrated"),
+    ],
+)
+def test_invalid_custom_layouts_and_lifetimes_create_no_invitation(
+    tmp_path,
+    layout: str,
+    lifetime: str,
+) -> None:
+    service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    actions = RemoteAccessActions(
+        service=service,
+        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        authorizer=_owner_authorizer,
+    )
+
+    with pytest.raises(ValueError):
+        actions.create_custom_invitation(
+            layout=layout,
+            origin=ORIGIN,
+            lifetime=lifetime,
+        )
+
+    assert service.list_invitations() == []
+
+
+def test_unauthenticated_custom_origin_cannot_create_invitation(tmp_path) -> None:
+    service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    actions = RemoteAccessActions(
+        service=service,
+        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        authorizer=_unauthenticated_authorizer,
+    )
+
+    with pytest.raises(PermissionError, match="authentication_required"):
+        actions.create_custom_invitation(
+            layout="desktop",
+            origin=ORIGIN,
+            lifetime="trusted",
+        )
+
+    assert service.list_invitations() == []
 
 
 def test_unauthenticated_context_cannot_mutate_access_state(tmp_path) -> None:
@@ -672,6 +803,81 @@ def test_invitation_selector_uses_stable_ids_and_bounded_live_options() -> None:
     assert module._route_select_options(inventory) == {
         route.id: route.label for route in inventory.invitation_routes
     }
+
+
+def test_invitation_selector_surfaces_the_selected_route_warning() -> None:
+    module = __import__(
+        "row_bot.ui.remote_access_settings",
+        fromlist=["RemoteAccessActions"],
+    )
+    inventory = build_route_inventory(
+        port=8080,
+        config=AccessRouteConfig(listen_mode=ListenMode.LOCAL_NETWORK),
+        lan_addresses=("8.8.8.8",),
+        reverse_proxy_origins=(ORIGIN,),
+    )
+    lan_route = inventory.by_kind(AccessRouteKind.LAN)[0]
+    https_route = inventory.by_kind(AccessRouteKind.REVERSE_PROXY)[0]
+
+    assert module._route_help_state(inventory, None) == (
+        "Choose a connection route.",
+        False,
+    )
+    lan_text, lan_warning = module._route_help_state(inventory, lan_route.id)
+    assert "outside private IP ranges" in lan_text
+    assert lan_warning is True
+    assert module._route_help_state(inventory, https_route.id) == ("", False)
+    assert module._route_help_state(build_route_inventory(port=8080), None) == (
+        "No cross-device route is ready. Check Tailscale, enable Local network, "
+        "or configure an HTTPS address.",
+        False,
+    )
+
+    dialog_source = inspect.getsource(module._invitation_dialog)
+    assert 'route_select.on("update:model-value"' in dialog_source
+    assert "refresh_route_help()" in dialog_source
+
+
+def test_custom_origin_ui_is_collapsed_separate_and_disclosed() -> None:
+    module = __import__(
+        "row_bot.ui.remote_access_settings",
+        fromlist=["RemoteAccessActions"],
+    )
+    dialog_source = inspect.getsource(module._invitation_dialog)
+    route_handler = dialog_source.split("def create() -> None:", 1)[1].split(
+        'ui.button(\n            "Create invitation"',
+        1,
+    )[0]
+    custom_handler = dialog_source.split("def create_custom() -> None:", 1)[1].split(
+        'ui.button(\n                "Create for configured address"',
+        1,
+    )[0]
+
+    assert '"Use another configured address"' in dialog_source
+    assert "value=False" in dialog_source
+    assert 'label="Browser-facing origin"' in dialog_source
+    assert 'placeholder="https://row-bot.example.com"' in dialog_source
+    assert '"Create invitation"' in dialog_source
+    assert '"Create for configured address"' in dialog_source
+    assert "actions.create_invitation(" in route_handler
+    assert "route_id=selected_route_id" in route_handler
+    assert "actions.create_custom_invitation(" not in route_handler
+    assert "actions.create_custom_invitation(" in custom_handler
+    assert "actions.create_invitation(" not in custom_handler
+    assert custom_handler.index("if not origin.strip()") < custom_handler.index(
+        "actions.create_custom_invitation("
+    )
+    for boundary in (
+        "Cloudflare",
+        "DNS",
+        "TLS",
+        "proxy trust",
+        "firewall rules",
+        "Row-Bot's listen address",
+    ):
+        assert boundary in dialog_source
+    assert "only creates an invitation" in dialog_source
+    assert "does not configure or verify" in dialog_source
 
 
 def test_route_inventory_can_be_injected_without_detection() -> None:
