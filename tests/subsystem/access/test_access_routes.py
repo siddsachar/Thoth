@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +16,7 @@ from row_bot.access.access_routes import (
     ListenMode,
     apply_listen_mode,
     build_route_inventory,
+    discover_private_lan_addresses,
     resolve_listen_host,
 )
 
@@ -172,6 +176,76 @@ def test_route_inventory_is_canonical_private_first_and_separates_ngrok() -> Non
     assert reverse_proxy[0].origin == "https://row-bot.example"
     assert len(reverse_proxy) == 1
     assert inventory.preferred_invitation_origin() == tailscale[0].origin
+
+
+def test_discovery_includes_assigned_unicast_outside_private_ranges(
+    monkeypatch,
+) -> None:
+    entry = SimpleNamespace
+    fake_psutil = SimpleNamespace(
+        net_if_addrs=lambda: {
+            "Ethernet": [
+                entry(family=socket.AF_INET, address="8.8.8.8"),
+                entry(family=socket.AF_INET, address="8.8.8.8"),
+                entry(family=socket.AF_INET, address="172.26.32.1"),
+                entry(family=socket.AF_INET, address="100.64.1.10"),
+            ],
+            "IPv6": [
+                entry(family=socket.AF_INET6, address="2001:4860::8888%7"),
+                entry(family=socket.AF_INET6, address="fd00::1"),
+            ],
+            "Excluded": [
+                entry(family=socket.AF_INET, address="127.0.0.1"),
+                entry(family=socket.AF_INET, address="169.254.20.1"),
+                entry(family=socket.AF_INET, address="0.0.0.0"),
+                entry(family=socket.AF_INET, address="224.0.0.1"),
+                entry(family=socket.AF_INET, address="not-an-address"),
+                entry(family=socket.AF_INET6, address="::1"),
+                entry(family=socket.AF_INET6, address="fe80::1%3"),
+                entry(family=socket.AF_INET6, address="ff02::1"),
+                entry(family=object(), address="8.8.4.4"),
+            ],
+        }
+    )
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+
+    assert discover_private_lan_addresses() == (
+        "8.8.8.8",
+        "172.26.32.1",
+        "100.64.1.10",
+        "2001:4860::8888",
+        "fd00::1",
+    )
+
+
+def test_non_private_interface_routes_are_exact_and_visibly_warned() -> None:
+    inventory = build_route_inventory(
+        port=8080,
+        config=AccessRouteConfig(listen_mode=ListenMode.LOCAL_NETWORK),
+        lan_addresses=(
+            "8.8.8.8",
+            "100.64.1.10",
+            "10.0.0.7",
+            "127.0.0.1",
+            "169.254.1.1",
+            "224.0.0.1",
+            "0.0.0.0",
+        ),
+    )
+
+    routes = {route.origin: route for route in inventory.by_kind(AccessRouteKind.LAN)}
+
+    assert set(routes) == {
+        "http://8.8.8.8:8080",
+        "http://100.64.1.10:8080",
+        "http://10.0.0.7:8080",
+    }
+    assert routes["http://10.0.0.7:8080"].private is True
+    assert "LAN HTTP is unencrypted" in (routes["http://10.0.0.7:8080"].warning or "")
+    for origin in ("http://8.8.8.8:8080", "http://100.64.1.10:8080"):
+        assert routes[origin].private is False
+        assert "outside private IP ranges" in (routes[origin].warning or "")
+        assert "verify firewall exposure" in (routes[origin].warning or "")
 
 
 def test_two_instances_keep_independent_listen_state_and_ports(tmp_path) -> None:

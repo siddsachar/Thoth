@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from row_bot.access.access_routes import (
+    AccessRouteConfig,
     AccessRouteConfigStore,
     AccessRouteKind,
     ListenMode,
@@ -143,9 +144,7 @@ def test_owner_actions_create_custom_origin_for_both_layouts_and_lifetimes(
     assert desktop.invitation.access_route == "settings_custom"
     assert desktop.next_path == "/"
     assert compact.invitation.session_lifetime is SessionLifetime.TEMPORARY
-    assert compact.invitation.intended_origin == (
-        "https://tablet.row-bot.example:8443"
-    )
+    assert compact.invitation.intended_origin == ("https://tablet.row-bot.example:8443")
     assert compact.invitation.created_by == "settings_owner"
     assert compact.invitation.access_route == "settings_custom"
     assert compact.next_path == "/?mobile=1"
@@ -804,6 +803,39 @@ def test_invitation_selector_uses_stable_ids_and_bounded_live_options() -> None:
     assert module._route_select_options(inventory) == {
         route.id: route.label for route in inventory.invitation_routes
     }
+
+
+def test_invitation_selector_surfaces_the_selected_route_warning() -> None:
+    module = __import__(
+        "row_bot.ui.remote_access_settings",
+        fromlist=["RemoteAccessActions"],
+    )
+    inventory = build_route_inventory(
+        port=8080,
+        config=AccessRouteConfig(listen_mode=ListenMode.LOCAL_NETWORK),
+        lan_addresses=("8.8.8.8",),
+        reverse_proxy_origins=(ORIGIN,),
+    )
+    lan_route = inventory.by_kind(AccessRouteKind.LAN)[0]
+    https_route = inventory.by_kind(AccessRouteKind.REVERSE_PROXY)[0]
+
+    assert module._route_help_state(inventory, None) == (
+        "Choose a connection route.",
+        False,
+    )
+    lan_text, lan_warning = module._route_help_state(inventory, lan_route.id)
+    assert "outside private IP ranges" in lan_text
+    assert lan_warning is True
+    assert module._route_help_state(inventory, https_route.id) == ("", False)
+    assert module._route_help_state(build_route_inventory(port=8080), None) == (
+        "No cross-device route is ready. Check Tailscale, enable Local network, "
+        "or configure an HTTPS address.",
+        False,
+    )
+
+    dialog_source = inspect.getsource(module._invitation_dialog)
+    assert 'route_select.on("update:model-value"' in dialog_source
+    assert "refresh_route_help()" in dialog_source
 
 
 def test_custom_origin_ui_is_collapsed_separate_and_disclosed() -> None:

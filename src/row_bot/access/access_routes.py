@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import hashlib
 import inspect
-from ipaddress import ip_address
+from ipaddress import IPv4Address, IPv6Address, ip_address
 import json
 import os
 from pathlib import Path
@@ -51,6 +51,15 @@ _ROUTE_PRIORITY = {
     AccessRouteKind.NGROK: 4,
     AccessRouteKind.LOCALHOST: 9,
 }
+
+_PRIVATE_LAN_WARNING = (
+    "LAN HTTP is unencrypted. Row-Bot authentication is still required."
+)
+_NON_PRIVATE_LAN_WARNING = (
+    "This interface address is outside private IP ranges and may be externally "
+    "routable. LAN HTTP is unencrypted; verify firewall exposure and prefer HTTPS "
+    "or Tailscale. Row-Bot authentication is still required."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,20 +392,12 @@ def build_route_inventory(
         routes.append(tailscale_route)
 
     for raw_address in lan_addresses:
-        try:
-            address = ip_address(str(raw_address).strip())
-        except ValueError:
-            continue
-        if (
-            address.is_loopback
-            or address.is_unspecified
-            or address.is_multicast
-            or address.is_link_local
-            or not address.is_private
-        ):
+        address = _usable_interface_address(raw_address)
+        if address is None:
             continue
         host = f"[{address.compressed}]" if address.version == 6 else address.compressed
         origin = canonical_origin(f"http://{host}:{int(port)}")
+        is_private = address.is_private
         routes.append(
             AccessRoute(
                 id=_route_id(AccessRouteKind.LAN, origin),
@@ -404,11 +405,14 @@ def build_route_inventory(
                 label=f"Local network — {_origin_authority(origin, include_port=False)}",
                 origin=origin,
                 available=selected_config.lan_enabled,
-                private=True,
+                private=is_private,
                 enabled=selected_config.lan_enabled,
-                detail="Reachable from devices on the same local network.",
+                detail=(
+                    "Address assigned to this computer; reachability depends on the "
+                    "network and firewall."
+                ),
                 warning=(
-                    "LAN HTTP is unencrypted. Row-Bot authentication is still required."
+                    _PRIVATE_LAN_WARNING if is_private else _NON_PRIVATE_LAN_WARNING
                 ),
                 eligible=True,
                 priority=_ROUTE_PRIORITY[AccessRouteKind.LAN],
@@ -494,7 +498,7 @@ def build_route_inventory(
 
 
 def discover_private_lan_addresses() -> tuple[str, ...]:
-    """Read local interface addresses without DNS or outbound connections."""
+    """Read usable assigned interface addresses without DNS or network probes."""
     try:
         import psutil
     except ImportError:
@@ -508,23 +512,32 @@ def discover_private_lan_addresses() -> tuple[str, ...]:
         for entry in entries:
             if entry.family not in {socket.AF_INET, socket.AF_INET6}:
                 continue
-            raw = str(entry.address or "").split("%", 1)[0]
-            try:
-                address = ip_address(raw)
-            except ValueError:
-                continue
-            if (
-                not address.is_private
-                or address.is_loopback
-                or address.is_link_local
-                or address.is_unspecified
-                or address.is_multicast
-            ):
+            address = _usable_interface_address(entry.address)
+            if address is None:
                 continue
             normalized = address.compressed
             if normalized not in addresses:
                 addresses.append(normalized)
     return tuple(addresses)
+
+
+def _usable_interface_address(
+    value: object,
+) -> IPv4Address | IPv6Address | None:
+    """Return an assigned unicast address suitable for an exact LAN route."""
+    raw = str(value or "").strip().split("%", 1)[0]
+    try:
+        address = ip_address(raw)
+    except ValueError:
+        return None
+    if (
+        address.is_loopback
+        or address.is_link_local
+        or address.is_unspecified
+        or address.is_multicast
+    ):
+        return None
+    return address
 
 
 def _optional_origin(value: object) -> str | None:
