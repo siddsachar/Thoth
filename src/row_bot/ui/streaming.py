@@ -44,6 +44,7 @@ from row_bot.ui.render import (
 )
 from row_bot.ui.performance import log_ui_perf
 from row_bot.ui.tool_trace import (
+    TOOL_TRACE_EXPANSION_CLASSES,
     canonical_tool_name,
     display_tool_content,
     parse_agent_tool_payload,
@@ -789,7 +790,10 @@ def _live_tool_group(gen: GenerationState, tool_name: str) -> dict[str, Any] | N
         activity = _tool_activity_line(display_name)
         if activity:
             ui.label(activity).classes("text-xs text-grey-6 q-ml-sm")
-        exp = ui.expansion(f"Running {display_name} - 0 calls", icon="hourglass_empty").classes("w-full")
+        exp = ui.expansion(
+            f"Running {display_name} - 0 calls",
+            icon="hourglass_empty",
+        ).classes(TOOL_TRACE_EXPANSION_CLASSES)
     group = {
         "name": display_name,
         "expansion": exp,
@@ -3437,7 +3441,7 @@ async def consume_generation(
                     with gen.tool_col:
                         _pending_exp = ui.expansion(
                             f"\U0001f504 {tool_name}\u2026", icon="hourglass_empty"
-                        ).classes("w-full")
+                        ).classes(TOOL_TRACE_EXPANSION_CLASSES)
                         # FIFO queue per tool name - parallel calls to the
                         # same tool must each get their own pending slot so
                         # later tool_done events can still match them.
@@ -4366,7 +4370,7 @@ async def _handle_tool_done(
                     with ui.expansion(
                         f"{'Failed' if failed else 'Done'} {tool_name}",
                         icon="error" if failed else "check_circle",
-                    ).classes("w-full"):
+                    ).classes(TOOL_TRACE_EXPANSION_CLASSES):
                         if tool_content:
                             tool_result_for_live = {"name": tool_name, "content": tool_content}
                             if (

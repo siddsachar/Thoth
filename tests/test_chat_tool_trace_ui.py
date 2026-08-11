@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from row_bot.ui.tool_trace import (
+    TOOL_TRACE_EXPANSION_CLASSES,
+    TOOL_TRACE_ITEM_EXPANSION_CLASSES,
     agent_runs_from_payload,
     canonical_tool_name,
     display_tool_content,
@@ -41,6 +43,109 @@ def test_tool_results_group_by_name_without_losing_entries():
     assert [g.count for g in groups] == [2, 2, 1]
     assert [r["content"] for r in groups[0].results] == ["first", "second"]
     assert [r["content"] for r in groups[1].results] == ["clicked", "clicked again"]
+
+
+def test_reloaded_and_live_tool_rows_use_the_shared_compact_style(monkeypatch):
+    from nicegui import ui
+    from row_bot.ui import render, streaming
+
+    monkeypatch.setattr(render.ui, "run_javascript", lambda *_args, **_kwargs: None)
+    restored_container = ui.column()
+    live_container = ui.column()
+    try:
+        with restored_container:
+            render.render_message_content({
+                "role": "assistant",
+                "content": "",
+                "tool_results": [
+                    {"name": "web_search", "content": "result"},
+                    {"name": "workspace_read_file", "content": "Error: failed"},
+                ],
+            })
+
+        expansions = [
+            item
+            for item in restored_container.descendants()
+            if type(item).__name__ == "Expansion"
+        ]
+        group_expansions = [
+            item for item in expansions if "row-bot-tool-trace" in item._classes
+        ]
+        item_expansions = [
+            item for item in expansions if "row-bot-tool-trace-item" in item._classes
+        ]
+        assert len(group_expansions) == 2
+        assert len(item_expansions) == 2
+        assert all(
+            set(TOOL_TRACE_EXPANSION_CLASSES.split()).issubset(item._classes)
+            for item in group_expansions
+        )
+        assert all(
+            set(TOOL_TRACE_ITEM_EXPANSION_CLASSES.split()).issubset(item._classes)
+            for item in item_expansions
+        )
+        assert [item._props["icon"] for item in group_expansions] == [
+            "check_circle",
+            "warning",
+        ]
+        assert [item._props["label"] for item in group_expansions] == [
+            "Done web_search · 1 call",
+            "Needs attention workspace_read_file · 1 call",
+        ]
+        assert not any(
+            emoji in item._props["label"]
+            for item in group_expansions
+            for emoji in ("✅", "⚠️")
+        )
+
+        gen = SimpleNamespace(
+            detached=False,
+            tool_col=live_container,
+            pending_tools={},
+        )
+        with live_container:
+            streaming._add_live_tool_pending(gen, "web_search")
+
+        live_expansion = gen.pending_tools["web_search"]["expansion"]
+        assert set(TOOL_TRACE_EXPANSION_CLASSES.split()).issubset(live_expansion._classes)
+        assert streaming._finish_live_tool_result(gen, "web_search", "result") is True
+        assert live_expansion._props["icon"] == "check_circle"
+        assert live_expansion._props["label"].startswith("Done web_search")
+        assert set(TOOL_TRACE_EXPANSION_CLASSES.split()).issubset(live_expansion._classes)
+    finally:
+        restored_container.delete()
+        live_container.delete()
+
+
+def test_tool_trace_css_is_compact_muted_and_header_only():
+    head_src = Path("src/row_bot/ui/head_html.py").read_text(encoding="utf-8")
+    css = head_src.split("/* Tool traces are secondary transcript metadata.", 1)[1].split(
+        ".row-bot-agent-run-list",
+        1,
+    )[0]
+
+    assert ".row-bot-tool-trace > .q-expansion-item__container > .q-item" in css
+    assert ".row-bot-tool-trace-item > .q-expansion-item__container > .q-item" in css
+    assert "min-height: 30px" in css
+    assert "font-size: 0.75rem" in css
+    assert "font-weight: 400" in css
+    assert "color: #9e9e9e" in css
+    assert ".q-expansion-item__content" not in css
+
+
+def test_normal_studio_and_mobile_chats_share_the_tool_trace_renderer():
+    app_src = Path("src/row_bot/app.py").read_text(encoding="utf-8")
+    developer_src = Path("src/row_bot/developer/ui.py").read_text(encoding="utf-8")
+    designer_src = Path("src/row_bot/designer/editor.py").read_text(encoding="utf-8")
+    mobile_src = Path("src/row_bot/ui/mobile.py").read_text(encoding="utf-8")
+
+    assert app_src.count("lambda msg, **kwargs: add_chat_message(") >= 4
+    assert "build_chat_messages(" in developer_src
+    assert "add_chat_message=_add_developer_chat_message" in developer_src
+    assert "build_chat_messages(" in designer_src
+    assert "add_chat_message=add_chat_message" in designer_src
+    assert "build_mobile_chat(" in mobile_src
+    assert "add_chat_message=add_chat_message" in mobile_src
 
 
 def test_browser_group_labels_are_activity_summaries():
