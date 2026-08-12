@@ -10,7 +10,7 @@ def test_brand_constants_define_row_bot_identity():
     import row_bot.brand as brand
     from row_bot.version import __version__
 
-    assert __version__ == "4.6.0"
+    assert __version__ == "4.7.0"
     assert brand.APP_DISPLAY_NAME == "Row-Bot"
     assert brand.APP_SLUG == "row-bot"
     assert brand.APP_PYTHON_IDENTIFIER == "row_bot"
@@ -18,8 +18,8 @@ def test_brand_constants_define_row_bot_identity():
     assert brand.APP_BRAND_ACCENT_RGB == "79, 120, 164"
     assert brand.APP_WEBSITE_URL == "https://row-bot.ai"
     assert brand.APP_REPOSITORY_URL == "https://github.com/siddsachar/row-bot"
-    assert brand.APP_USER_AGENT == "Row-Bot/4.6.0"
-    assert brand.UPDATER_USER_AGENT == "Row-Bot-Updater/4.6.0"
+    assert brand.APP_USER_AGENT == "Row-Bot/4.7.0"
+    assert brand.UPDATER_USER_AGENT == "Row-Bot-Updater/4.7.0"
     assert brand.APP_DATA_DIR_ENV == "ROW_BOT_DATA_DIR"
     assert brand.APP_PORT_ENV == "ROW_BOT_PORT"
     assert brand.MACOS_APP_BUNDLE_NAME == "Row-Bot.app"
