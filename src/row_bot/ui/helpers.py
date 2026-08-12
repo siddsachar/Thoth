@@ -715,7 +715,7 @@ def load_thread_messages(thread_id: str) -> list[dict]:
     """Rebuild the message list from checkpoint storage without agent startup."""
     started = time.perf_counter()
     try:
-        from row_bot.threads import get_latest_checkpoint_messages
+        from row_bot.threads import get_latest_checkpoint_messages, list_thread_events, merge_thread_events
 
         read_t0 = time.perf_counter()
         raw_messages = get_latest_checkpoint_messages(thread_id)
@@ -725,6 +725,7 @@ def load_thread_messages(thread_id: str) -> list[dict]:
         convert_elapsed = time.perf_counter() - convert_t0
         media_t0 = time.perf_counter()
         hydrated = _hydrate_thread_media(thread_id, msgs)
+        hydrated = merge_thread_events(hydrated, list_thread_events(thread_id))
         media_elapsed = time.perf_counter() - media_t0
         logger.info(
             "perf: load_thread_messages total=%.3fs checkpoint=%.3fs convert=%.3fs media=%.3fs thread=%s raw=%d ui=%d",

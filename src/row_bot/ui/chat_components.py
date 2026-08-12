@@ -19,7 +19,13 @@ from typing import Any, Callable
 from row_bot.brand import APP_NATIVE_ENV
 from nicegui import events, run, ui
 
-from row_bot.ui.state import AppState, P, _active_generations
+from row_bot.ui.state import (
+    AppState,
+    P,
+    _active_generations,
+    clear_context_usage_projection,
+    context_history_present,
+)
 from row_bot.ui.constants import ALLOWED_UPLOAD_SUFFIXES
 from row_bot.ui.performance import log_ui_perf
 from row_bot.ui.streaming import request_generation_stop
@@ -560,6 +566,301 @@ def build_file_upload(
     return hidden_upload
 
 
+def _context_token_text(value: int | None) -> str:
+    tokens = max(0, int(value or 0))
+    if tokens >= 1_000_000:
+        return f"{tokens / 1_000_000:.1f}M"
+    if tokens >= 1_000:
+        rounded = tokens / 1_000
+        return f"{rounded:.0f}K" if rounded >= 10 else f"{rounded:.1f}K"
+    return str(tokens)
+
+
+def context_policy_presentation(policy: Any) -> dict[str, Any]:
+    """Format one resolved context policy consistently across UI surfaces."""
+    native_limit = int(getattr(policy, "native_limit_tokens", None) or 0) or None
+    requested_limit = int(getattr(policy, "requested_limit_tokens", None) or 0) or None
+    effective_limit = int(getattr(policy, "effective_limit_tokens", None) or 0) or None
+    provider_policy = str(getattr(policy, "policy_kind", "") or "") == "provider"
+    advanced_override = (
+        provider_policy
+        and requested_limit is not None
+        and str(getattr(policy, "capacity_source", "") or "") == "advanced_override"
+    )
+    app_fallback = (
+        provider_policy
+        and native_limit is None
+        and requested_limit is None
+        and effective_limit is not None
+        and str(getattr(policy, "capacity_source", "") or "") == "app_fallback"
+    )
+    if app_fallback:
+        return {
+            "category": "unknown_fallback",
+            "settings_note": "Native limit unknown · using Row-Bot 128K fallback",
+            "mobile_note": "Native limit unknown · Row-Bot 128K fallback active",
+            "notification": (
+                "Native context window unknown. Row-Bot is using its 128K application fallback. "
+                "The model's actual limit may be different. Verify the limit in Settings for "
+                "reliable context management."
+            ),
+            "warning": True,
+            "effective_override_tokens": None,
+            "effective_limit_tokens": effective_limit,
+        }
+    if provider_policy and native_limit is None and effective_limit is None:
+        model_name = str(
+            getattr(policy, "runtime_model", "")
+            or getattr(policy, "model_ref", "")
+            or "selected model"
+        )
+        notification = (
+            f"Context limit unknown for {model_name}. Cloud Context is Auto, so Row-Bot "
+            "will not send requests to this model. Refresh the provider catalog, set an "
+            "Advanced override in Settings → Models → Advanced context, or choose another model."
+        )
+        return {
+            "category": "unknown_auto",
+            "settings_note": "Native limit unknown · no override set",
+            "mobile_note": "Context setup required · native limit unknown · no override set",
+            "notification": notification,
+            "warning": True,
+            "effective_override_tokens": None,
+            "effective_limit_tokens": None,
+        }
+    if provider_policy and native_limit is None and advanced_override and effective_limit:
+        limit_text = _context_token_text(effective_limit)
+        return {
+            "category": "unknown_override",
+            "settings_note": f"Native limit unknown · using {limit_text} override",
+            "mobile_note": f"Native limit unknown · using {limit_text} override",
+            "notification": (
+                f"Native context is unknown; Row-Bot will use your {limit_text} Advanced override."
+            ),
+            "warning": False,
+            "effective_override_tokens": effective_limit,
+            "effective_limit_tokens": effective_limit,
+        }
+    if provider_policy and native_limit:
+        native_text = _context_token_text(native_limit)
+        effective_text = _context_token_text(effective_limit or native_limit)
+        if advanced_override and requested_limit:
+            requested_text = _context_token_text(requested_limit)
+            note = f"Native max {native_text} · effective {effective_text} from {requested_text} override"
+        else:
+            note = f"Native max {native_text} · effective {effective_text} Auto"
+        return {
+            "category": "known",
+            "settings_note": note,
+            "mobile_note": note,
+            "notification": "",
+            "warning": False,
+            "effective_override_tokens": requested_limit if advanced_override else None,
+            "effective_limit_tokens": effective_limit,
+        }
+    return {
+        "category": "known" if effective_limit else "unavailable",
+        "settings_note": "",
+        "mobile_note": "",
+        "notification": "",
+        "warning": False,
+        "effective_override_tokens": requested_limit if advanced_override else None,
+        "effective_limit_tokens": effective_limit,
+    }
+
+
+def _remember_context_policy_state(state: AppState, policy: Any) -> dict[str, Any]:
+    presentation = context_policy_presentation(policy)
+    state.context_capacity_state = str(presentation["category"])
+    state.context_capacity_override_tokens = presentation["effective_override_tokens"]
+    state.context_capacity_effective_tokens = presentation["effective_limit_tokens"]
+    state.context_capacity_model_ref = str(getattr(policy, "model_ref", "") or "")
+    return presentation
+
+
+def notify_context_policy_once(state: AppState, policy: Any) -> bool:
+    """Notify once per thread/provider/model/policy identity, with a small bound."""
+    presentation = _remember_context_policy_state(state, policy)
+    category = str(presentation.get("category") or "")
+    message = str(presentation.get("notification") or "")
+    if category not in {"unknown_auto", "unknown_fallback", "unknown_override"} or not message:
+        return False
+    thread_id = str(getattr(state, "thread_id", "") or "")
+    provider_id = str(getattr(policy, "provider_id", "") or "")
+    model_ref = str(getattr(policy, "model_ref", "") or "")
+    key = (
+        thread_id,
+        provider_id,
+        model_ref,
+        category,
+        presentation.get("effective_override_tokens"),
+    )
+    notice_keys = getattr(state, "context_policy_notice_keys", None)
+    if not isinstance(notice_keys, dict):
+        notice_keys = {}
+        state.context_policy_notice_keys = notice_keys
+    if notice_keys.get(thread_id) == key:
+        return False
+    notice_keys[thread_id] = key
+    while len(notice_keys) > 128:
+        notice_keys.pop(next(iter(notice_keys)))
+    ui.notify(
+        message,
+        type="warning" if presentation.get("warning") else "info",
+        close_button=True,
+        timeout=12000 if presentation.get("warning") else 8000,
+    )
+    return True
+
+
+class ContextMeterController:
+    """Event-driven desktop context meter; persisted snapshots are display-only."""
+
+    def __init__(self, root, label, progress, marker, tooltip) -> None:
+        self.root = root
+        self.label = label
+        self.progress = progress
+        self.marker = marker
+        self.tooltip = tooltip
+        self.last_usage: dict[str, Any] | None = None
+
+    def update(
+        self,
+        usage: dict | None,
+        *,
+        status: str | None = None,
+        capacity_state: str = "",
+        effective_limit_tokens: int | None = None,
+        has_history: bool = False,
+    ) -> None:
+        snapshot = dict(usage or {})
+        if status:
+            snapshot["status"] = status
+        if snapshot:
+            self.last_usage = snapshot
+        else:
+            self.last_usage = None
+        current = str(snapshot.get("status") or "unavailable")
+        used = int(snapshot.get("estimated_input_tokens") or 0)
+        usable = int(snapshot.get("usable_input_tokens") or 0)
+        compact_at = int(snapshot.get("compact_at_tokens") or 0)
+        model_window = int(
+            snapshot.get("effective_limit_tokens")
+            or effective_limit_tokens
+            or 0
+        )
+        percent = min(1.0, used / usable) if usable else 0.0
+        if used > 0 and 0 < percent < 0.01:
+            percent_text = "<1%"
+        else:
+            percent_text = f"{percent:.0%}"
+        stale = str(snapshot.get("snapshot_freshness") or "") == "stale"
+        measured_label = f"Context {'~' if stale else ''}{percent_text}"
+        if current == "compacting":
+            label_text = "Compacting context..."
+        elif current == "ready" and usable:
+            label_text = measured_label
+        elif current == "failed" and usable:
+            label_text = f"{measured_label} - compaction failed"
+        elif not snapshot and capacity_state == "unknown_auto":
+            label_text = "Context unavailable"
+            percent = 0.0
+        elif not snapshot:
+            label_text = "Context not measured" if has_history else "Context ready"
+            percent = 0.0
+        else:
+            label_text = "Context unavailable"
+            percent = 0.0
+        self.label.text = label_text
+        self.progress.value = percent
+        marker_position = min(1.0, compact_at / usable) if usable and compact_at else 0.0
+        self.marker.style(
+            f"left: {marker_position * 100:.2f}%; "
+            f"display: {'block' if marker_position else 'none'};"
+        )
+        if current in {"ready", "compacting", "failed"} and usable:
+            tooltip_lines = [
+                f"Approximately {_context_token_text(used)} of {_context_token_text(usable)} usable",
+            ]
+            if stale:
+                tooltip_lines.insert(0, "Last measured; updates after the next turn.")
+            native_window = int(snapshot.get("native_window_tokens") or 0) or None
+            capacity_source = str(snapshot.get("capacity_source") or "")
+            if native_window is None and capacity_source == "app_fallback" and model_window > 0:
+                tooltip_lines.extend((
+                    "Row-Bot fallback limit: 128K",
+                    "Native model window: unknown",
+                    f"Compacts around {_context_token_text(compact_at)}",
+                ))
+            elif (
+                native_window is None
+                and capacity_source == "advanced_override"
+                and model_window > 0
+            ):
+                tooltip_lines.extend((
+                    f"Compacts around {_context_token_text(compact_at)}",
+                    f"Override limit: {_context_token_text(model_window)}",
+                    "Native model window: unknown",
+                ))
+            elif model_window > 0:
+                tooltip_lines.append(f"Compacts around {_context_token_text(compact_at)}")
+                tooltip_lines.append(f"Model window: {_context_token_text(model_window)}")
+            tooltip_text = "\n".join(tooltip_lines)
+        elif capacity_state == "unknown_fallback" and model_window > 0:
+            tooltip_text = "\n".join((
+                "Row-Bot fallback limit: 128K",
+                "Native model window: unknown",
+                f"Compacts around {_context_token_text(int(model_window * 0.75))}",
+            ))
+        elif capacity_state == "unknown_auto":
+            tooltip_text = (
+                "Model context limit is unknown. Refresh the provider catalog or set an "
+                "Advanced override before sending."
+            )
+        else:
+            tooltip_text = "Context will appear after the next validated model preparation."
+        self.tooltip.text = tooltip_text
+        self.root.props(
+            f'tabindex="0" role="status" aria-label="{label_text}; '
+            f'compaction threshold marker"'
+        )
+        for element in (self.label, self.progress, self.marker, self.tooltip, self.root):
+            try:
+                element.update()
+            except Exception:
+                pass
+
+
+def create_context_meter(p: P, state: AppState) -> ContextMeterController:
+    """Create the single interactive context meter used by desktop composers."""
+    with ui.element("div").classes("row-bot-context-meter").style(
+        "position: absolute; top: 8px; right: 12px; z-index: 2; opacity: 0.78; "
+        "min-width: 112px; cursor: help; outline-offset: 3px;"
+    ).props('tabindex="0" role="status"') as root:
+        with ui.column().classes("gap-0 items-end"):
+            label = ui.label("Context ready").classes("text-xs text-grey-6")
+            with ui.element("div").style("height: 3px; width: 112px; position: relative;"):
+                progress = ui.linear_progress(value=0, show_value=False).style(
+                    "height: 3px; width: 112px;"
+                )
+                marker = ui.element("span").classes("row-bot-context-threshold-marker").style(
+                    "position: absolute; top: -2px; width: 1px; height: 7px; "
+                    "background: rgba(255,255,255,0.55); display: none;"
+                ).props('aria-label="Automatic compaction threshold"')
+        tooltip = ui.tooltip("Context will appear after the next validated model preparation.")
+    controller = ContextMeterController(root, label, progress, marker, tooltip)
+    p.context_meter = controller
+    p.token_label = label
+    p.token_bar = progress
+    controller.update(
+        state.context_usage,
+        capacity_state=str(getattr(state, "context_capacity_state", "") or ""),
+        effective_limit_tokens=getattr(state, "context_capacity_effective_tokens", None),
+        has_history=context_history_present(state),
+    )
+    return controller
+
+
 # Composer
 # CHAT INPUT BAR (textarea + buttons + model picker + voice + stop)
 # Composer
@@ -656,16 +957,7 @@ def build_chat_input_bar(
             except Exception:
                 logger.debug("Shared composer extras failed to render", exc_info=True)
 
-        # Context counter - absolute overlay, top-right
-        with ui.row().classes("items-center gap-1").style(
-            "position: absolute; top: 8px; right: 12px; z-index: 1; "
-            "pointer-events: none; opacity: 0.7;"
-        ):
-            with ui.column().classes("gap-0 items-end").style("min-width: 100px;"):
-                p.token_label = ui.label("Context: 0K / 32K (0%)").classes("text-xs text-grey-6")
-                p.token_bar = ui.linear_progress(value=0, show_value=False).style(
-                    "height: 3px; width: 100px;"
-                )
+        create_context_meter(p, state)
 
         # Textarea
         p.chat_input = (
@@ -1021,7 +1313,6 @@ def _build_inline_model_picker(
     from row_bot.models import (
         get_current_model,
         get_context_policy,
-        get_model_max_context,
         CONTEXT_SIZE_LABELS,
     )
     from row_bot.providers.selection import (
@@ -1128,14 +1419,16 @@ def _build_inline_model_picker(
             val = _default_opt
         _current_picker_value[0] = val
         e.sender.set_value(val)
+        clear_context_usage_projection(state)
         clear_agent_cache()
         _eff = state.thread_model_override or get_current_model()
         if on_model_switch:
             on_model_switch()
         _policy = await run.io_bound(lambda: get_context_policy(_eff))
+        notify_context_policy_once(state, _policy)
+        if on_model_switch:
+            on_model_switch()
         _native_max = _policy.native_max
-        if _native_max is None:
-            _native_max = await run.io_bound(lambda: get_model_max_context(_eff))
         if _native_max is not None and _policy.user_cap > _native_max:
             _ml = CONTEXT_SIZE_LABELS.get(_native_max, f"{_native_max:,}")
             _ul = CONTEXT_SIZE_LABELS.get(_policy.user_cap, f"{_policy.user_cap:,}")

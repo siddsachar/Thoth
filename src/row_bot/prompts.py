@@ -1,7 +1,7 @@
 """Centralised LLM prompt definitions for Row-Bot.
 
-All system prompts, extraction prompts, and summarization prompts live
-here so they can be reviewed, diffed, and edited in one place.
+Shared system and extraction prompts live here so they can be reviewed,
+diffed, and edited in one place.
 """
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -301,40 +301,9 @@ AGENT_BG_OVERRIDE = (
 )
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Summarization prompt — used by context summarization to condense history
+# Memory extraction prompt — used by background extraction to find personal facts
 # ═════════════════════════════════════════════════════════════════════════════
 
-SUMMARIZE_PROMPT = (
-    "Summarize the following conversation between a user and an AI assistant. "
-    "The assistant will rely on this summary as its ONLY knowledge of the "
-    "earlier part of the conversation, so accuracy matters more than brevity.\n\n"
-    "Output the summary using EXACTLY these four section headers:\n\n"
-    "## Decisions & Commitments\n"
-    "Anything the user decided, agreed to, or asked the assistant to do — "
-    "tasks created, settings changed, files generated, plans made. If the "
-    "user corrected a fact, record ONLY the corrected version.\n\n"
-    "## User Facts & Preferences\n"
-    "Personal info the user shared, preferences stated, questions asked and "
-    "their answers.\n\n"
-    "## Tool Outcomes\n"
-    "One line per tool use: what tool, what was done, key result. Do NOT "
-    "reproduce raw tool output.\n\n"
-    "## Open Threads\n"
-    "Topics started but not finished, follow-ups promised, questions still "
-    "unanswered. Remove items that have since been resolved.\n\n"
-    "ROLLING SUMMARIES: If the input starts with '[Previous summary of even\n"
-    "earlier messages]', that block covers an older portion of the conversation.\n"
-    "Merge its sections with the new messages into ONE cohesive summary — "
-    "integrate, update, and condense. Do not repeat the previous summary "
-    "verbatim. Move resolved Open Threads out of that section.\n\n"
-    "Write in third-person narrative form within each section.\n"
-    "Omit a section entirely if there is nothing to put in it.\n"
-    "Do NOT include any preamble or explanation — output ONLY the summary itself."
-)
-
-# ═════════════════════════════════════════════════════════════════════════════
-# Memory extraction prompt — used by background extraction to find personal
-# facts in past conversations
 # ═════════════════════════════════════════════════════════════════════════════
 
 EXTRACTION_PROMPT = """\

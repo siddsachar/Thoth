@@ -25,10 +25,20 @@ from row_bot.threads import (
     create_thread,
     get_thread_name,
 )
-from row_bot.ui.chat_components import build_chat_messages, build_file_upload
+from row_bot.ui.chat_components import (
+    build_chat_messages,
+    build_file_upload,
+    context_policy_presentation,
+    notify_context_policy_once,
+)
 from row_bot.ui.chat_composer_extras import create_chat_composer_extras
 from row_bot.ui.streaming import request_generation_stop
-from row_bot.ui.state import AppState, P, _active_generations
+from row_bot.ui.state import (
+    AppState,
+    P,
+    _active_generations,
+    clear_context_usage_projection,
+)
 from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
 
 logger = logging.getLogger(__name__)
@@ -185,16 +195,23 @@ def _compact_model_label(state: AppState) -> str:
     return label
 
 
-def _model_policy_summary(state: AppState) -> tuple[str, str, str]:
+def _model_policy_summary(state: AppState) -> tuple[str, str, str, bool]:
     try:
-        from row_bot.models import is_cloud_model
+        from row_bot.models import get_context_policy, is_cloud_model
 
         model_value = state.thread_model_override or state.current_model
+        presentation = context_policy_presentation(get_context_policy(model_value))
+        if presentation["category"] == "unknown_fallback":
+            return "warning", "128K context fallback", presentation["mobile_note"], True
+        if presentation["category"] == "unknown_auto":
+            return "warning", "Context setup required", presentation["mobile_note"], True
+        if presentation["category"] == "unknown_override":
+            return "info", "Context override", presentation["mobile_note"], False
         if is_cloud_model(model_value):
-            return "cloud", "Cloud", "Messages may be sent to the selected provider."
+            return "cloud", "Cloud", "Messages may be sent to the selected provider.", False
     except Exception:
         logger.debug("Could not resolve mobile model policy", exc_info=True)
-    return "computer", "Local/default", "Thread uses local or default model policy."
+    return "computer", "Local/default", "Thread uses local or default model policy.", False
 
 
 def _agent_profile_options_for_mobile() -> dict[str, str]:
@@ -287,12 +304,14 @@ def _build_chat_controls_dialog(
                 ui.label("Chat controls").classes("text-subtitle1")
                 ui.button(icon="close", on_click=dialog.close).props("flat dense round")
             ui.label("These apply to the active thread.").classes("text-grey-6 text-sm")
-            policy_icon, policy_label, policy_detail = _model_policy_summary(state)
+            policy_icon, policy_label, policy_detail, policy_warning = _model_policy_summary(state)
             with ui.element("div").classes("row-bot-mobile-policy-chip"):
                 ui.icon(policy_icon)
                 with ui.column().classes("gap-0").style("min-width: 0;"):
                     ui.label(policy_label).classes("text-xs text-weight-medium")
-                    ui.label(policy_detail).classes("text-grey-6 text-xs")
+                    ui.label(policy_detail).classes(
+                        "text-warning text-xs" if policy_warning else "text-grey-6 text-xs"
+                    )
 
             model_options = _model_options_for_mobile(state)
             model_value = state.thread_model_override or "__default__"
@@ -346,6 +365,16 @@ def _build_chat_controls_dialog(
                     _set_thread_agent_profile(state.thread_id, profile_value)
                 state.thread_model_override = model_override
                 state.thread_approval_mode = str(approval_select.value or "block")
+                clear_context_usage_projection(state)
+                try:
+                    from row_bot.models import get_context_policy
+
+                    policy = get_context_policy(
+                        state.thread_model_override or state.current_model
+                    )
+                    notify_context_policy_once(state, policy)
+                except Exception:
+                    logger.debug("Could not refresh mobile context policy", exc_info=True)
                 dialog.close()
                 rebuild_main(immediate=True, reason="mobile_chat_controls")
 
@@ -353,7 +382,7 @@ def _build_chat_controls_dialog(
                 ui.button(
                     "Full settings",
                     icon="settings",
-                    on_click=lambda: (dialog.close(), open_settings("Providers")),
+                    on_click=lambda: (dialog.close(), open_settings("Models")),
                 ).props("flat dense no-caps")
                 ui.button("Apply", icon="check", on_click=_save_controls).props(
                     "unelevated dense no-caps color=primary"

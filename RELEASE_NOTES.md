@@ -2,6 +2,23 @@
 
 ---
 
+## Unreleased - Context Window Meter and Rolling Compaction
+
+- The desktop composer now shows an event-driven estimate of the complete next
+  model input, including system prompts, images, and bound tool schemas. Mobile
+  keeps the narrower composer and shows only durable compaction status rows.
+- Agent Mode, tool-loop calls, resumes, and Chat Only share token accounting and
+  bounded rolling compaction. Older history is summarized as untrusted reference
+  data while recent complete turns and tool-call/result groups remain intact.
+- Context settings migrate to policy version 2. The historical local 32K value
+  becomes Auto (still requesting 32K, capped by native/observed Ollama capacity),
+  and the historical provider 128K value becomes Auto. Because an old explicit
+  128K selection cannot be distinguished from the former default, restore it via
+  **Settings â†’ Models â†’ Advanced context â†’ Provider context override** if needed.
+- Successful compaction produces one durable presentation-only timeline notice
+  and, for channel-originated turns, one separately claimed channel notice.
+  Context events never enter model prompts, summaries, or token accounting.
+
 ## v4.6.0 - Agent Orchestration, Remote Access & Docker Operations
 
 This release builds on v4.5.0 with a durable-agent, document-processing,

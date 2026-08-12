@@ -1,7 +1,13 @@
 import row_bot.providers.config as provider_config
 from row_bot.providers.custom import custom_provider_id, save_custom_endpoint
 from row_bot.providers.models import TransportMode
-from row_bot.providers.readiness import AGENT_MODE_MIN_CONTEXT, CHAT_ONLY_MIN_CONTEXT, evaluate_agent_readiness, evaluate_runtime_readiness
+from row_bot.providers.readiness import (
+    AGENT_MODE_MIN_CONTEXT,
+    CHAT_ONLY_MIN_CONTEXT,
+    evaluate_agent_readiness,
+    evaluate_chat_readiness,
+    evaluate_runtime_readiness,
+)
 from row_bot.providers.resolution import resolve_provider_config
 from types import SimpleNamespace
 
@@ -30,6 +36,64 @@ def test_known_cloud_model_passes_readiness_without_live_probe(monkeypatch):
     assert result.tool_calling is True
     assert result.tool_round_trip is True
     assert result.capability_source in {"trusted_provider", "catalog"}
+
+
+def test_unknown_auto_capacity_blocks_agent_and_chat_with_all_remedies(monkeypatch):
+    import row_bot.providers.readiness as readiness
+    import row_bot.models as models
+
+    monkeypatch.setattr(readiness, "provider_status", lambda provider_id, **kwargs: {"configured": True})
+    monkeypatch.setattr(models, "get_context_policy", lambda value: models.ContextPolicy(
+        model_ref="model:openai:opaque-model",
+        provider_id="openai",
+        runtime_model="opaque-model",
+        native_max=None,
+        user_cap=0,
+        effective_context=0,
+        policy_kind="provider",
+        cap_source="unknown",
+        request_application="trim_only",
+        native_limit_tokens=None,
+        requested_limit_tokens=None,
+        effective_limit_tokens=None,
+        capacity_state="unavailable",
+    ))
+
+    agent_result = evaluate_agent_readiness("model:openai:opaque-model")
+    chat_result = evaluate_chat_readiness("model:openai:opaque-model")
+
+    for result in (agent_result, chat_result):
+        assert result.ready is False
+        message = result.user_message()
+        assert "Refresh the provider catalog" in message
+        assert "Advanced context override" in message
+        assert "known-capacity model" in message
+
+
+def test_unknown_native_explicit_override_is_ready(monkeypatch):
+    import row_bot.providers.readiness as readiness
+    import row_bot.models as models
+
+    monkeypatch.setattr(readiness, "provider_status", lambda provider_id, **kwargs: {"configured": True})
+    monkeypatch.setattr(models, "get_context_policy", lambda value: models.ContextPolicy(
+        model_ref="model:openai:opaque-model",
+        provider_id="openai",
+        runtime_model="opaque-model",
+        native_max=None,
+        user_cap=262_144,
+        effective_context=262_144,
+        policy_kind="provider",
+        cap_source="advanced_override",
+        request_application="trim_only",
+        native_limit_tokens=None,
+        requested_limit_tokens=262_144,
+        effective_limit_tokens=262_144,
+        capacity_source="advanced_override",
+        capacity_state="ready",
+    ))
+
+    assert evaluate_agent_readiness("model:openai:opaque-model").ready is True
+    assert evaluate_chat_readiness("model:openai:opaque-model").ready is True
 
 
 def test_claude_subscription_passes_agent_readiness_after_native_tool_transport(monkeypatch):
@@ -297,6 +361,53 @@ def test_ollama_probe_can_promote_catalog_unknown_model_to_agent(monkeypatch):
     assert result.ready is True
     assert result.tool_calling_source == "ollama_probe"
     assert result.capability_source == "probe"
+
+
+def test_ollama_readiness_rechecks_observed_loaded_context(monkeypatch):
+    import row_bot.providers.ollama as ollama
+    import row_bot.providers.readiness as readiness
+    import row_bot.models as models
+
+    observed = {"loaded": False}
+    monkeypatch.setattr(readiness, "provider_status", lambda provider_id: {"configured": True})
+
+    def context_policy(_value):
+        effective = 24_576 if observed["loaded"] else 32_768
+        return models.ContextPolicy(
+            model_ref="model:ollama:gemma3:4b",
+            provider_id="ollama",
+            runtime_model="gemma3:4b",
+            native_max=131_072,
+            user_cap=32_768,
+            effective_context=effective,
+            policy_kind="local",
+            cap_source="observed_allocation" if observed["loaded"] else "provider_metadata",
+            request_application="ollama_num_ctx",
+            effective_limit_tokens=effective,
+            warning="Loaded allocation is below 32K." if observed["loaded"] else "",
+        )
+
+    monkeypatch.setattr(models, "get_context_policy", context_policy)
+    monkeypatch.setattr(
+        models,
+        "refresh_observed_local_context_after_load",
+        lambda model_id: observed.update(loaded=True) or 24_576,
+    )
+    monkeypatch.setattr(ollama, "probe_ollama_tool_round_trip", lambda model_id: {
+        "ok": True,
+        "tool_calling": True,
+        "tool_round_trip": True,
+    })
+
+    result = evaluate_agent_readiness(
+        "model:ollama:gemma3:4b",
+        probe_ollama_tools=True,
+    )
+
+    assert result.ready is False
+    assert result.context_window == 24_576
+    assert any("requires at least 32,000" in error for error in result.errors)
+    assert "Loaded allocation is below 32K." in result.warnings
 
 
 def test_ollama_probe_failure_routes_to_chat_only(monkeypatch):

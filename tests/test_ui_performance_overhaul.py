@@ -233,15 +233,24 @@ def test_detached_finalize_marks_live_render_state_without_repaint() -> None:
     assert "cb.mark_chat_message_rendered = _mark_chat_message_rendered" in app_src
 
 
-def test_token_counter_is_debounced_and_generation_safe() -> None:
+def test_context_meter_uses_persisted_event_driven_snapshots() -> None:
     app_src = _read("src/row_bot/app.py")
 
-    assert '"scheduled_key": None' in app_src
-    assert '"generation": 0' in app_src
-    assert "async def _schedule_token_counter_async" in app_src
-    assert "await asyncio.sleep(0.75)" in app_src
-    assert 'context="token counter refresh"' in app_src
-    assert "generation != _token_counter_state" in app_src
+    assert "load_context_usage" in app_src
+    assert "_load_active_context_projection" in app_src
+    assert "cache_and_project_context_usage" in app_src
+    assert "_schedule_token_counter_async" not in app_src
+    assert "await asyncio.sleep(0.75)" not in app_src
+    assert "safe_timer(5.0, _update_token_counter)" not in app_src
+
+
+def test_unknown_context_preflight_precedes_optimistic_transcript_mutation() -> None:
+    streaming_src = _read("src/row_bot/ui/streaming.py")
+
+    preflight = streaming_src.index("if not await _context_capacity_ready_for_send(selected_model)")
+    optimistic_append = streaming_src.index("state.messages.append(user_msg)", preflight)
+
+    assert preflight < optimistic_append
 
 
 def test_ui_performance_harness_profiles_real_transcripts() -> None:

@@ -31,8 +31,12 @@ def _patch_parent_context(monkeypatch, messages=None, summary="Parent summary.")
     )
     monkeypatch.setattr(
         threads,
-        "load_thread_summary",
-        lambda thread_id: {"summary": summary, "msg_count": 3},
+        "load_validated_summary_state",
+        lambda thread_id, mode, messages=None: (
+            {"summary": summary, "boundary_message_count": 3}
+            if mode == "agent"
+            else None
+        ),
     )
 
 
@@ -73,6 +77,7 @@ def test_recent_context_includes_summary_and_recent_turns(monkeypatch):
     assert packet["mode"] == "recent"
     assert "PARENT SUMMARY" in packet["prompt"]
     assert "Parent summary." in packet["prompt"]
+    assert '<HISTORICAL_CONTEXT untrusted="true">' in packet["prompt"]
     assert "RECENT PARENT TURNS" in packet["prompt"]
     assert "User: Focus on token handling." in packet["prompt"]
 

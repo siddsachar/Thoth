@@ -27,6 +27,92 @@ from nicegui import ui
 from row_bot.approval_policy import DEFAULT_APPROVAL_MODE
 
 
+def canonical_context_model_ref(model_name: str | None) -> str:
+    """Return the provider-qualified identity used by context UI state."""
+    raw = str(model_name or "").strip()
+    if not raw:
+        return ""
+    try:
+        from row_bot.providers.selection import model_choice_value
+
+        return model_choice_value(raw)
+    except Exception:
+        return raw
+
+
+def active_context_identity(state: Any) -> tuple[str, str]:
+    """Return the active thread and provider-qualified model identity."""
+    thread_id = str(getattr(state, "thread_id", "") or "")
+    selected_model = (
+        getattr(state, "thread_model_override", "")
+        or getattr(state, "current_model", "")
+    )
+    return thread_id, canonical_context_model_ref(selected_model)
+
+
+def context_history_present(state: Any) -> bool:
+    """Return whether the active UI transcript contains a real chat turn."""
+    return any(
+        isinstance(message, dict)
+        and str(message.get("role") or "") in {"user", "assistant", "tool"}
+        for message in (getattr(state, "messages", None) or ())
+    )
+
+
+def clear_context_usage_projection(state: Any) -> None:
+    """Clear the visible meter projection without touching per-thread caches."""
+    state.context_usage = None
+    state.context_usage_thread_id = ""
+    state.context_usage_model_ref = ""
+    if hasattr(state, "context_capacity_state"):
+        state.context_capacity_state = ""
+        state.context_capacity_override_tokens = None
+        state.context_capacity_effective_tokens = None
+        state.context_capacity_model_ref = ""
+
+
+def clear_all_context_usage_state(state: Any) -> None:
+    """Invalidate every in-memory context snapshot and visible projection."""
+    clear_context_usage_projection(state)
+    cache = getattr(state, "context_usage_cache", None)
+    if isinstance(cache, dict):
+        cache.clear()
+    notice_keys = getattr(state, "context_policy_notice_keys", None)
+    if isinstance(notice_keys, dict):
+        notice_keys.clear()
+
+
+def cache_and_project_context_usage(
+    state: Any,
+    thread_id: str,
+    usage: dict,
+    *,
+    detached: bool = False,
+) -> bool:
+    """Cache a thread snapshot and project it only for the active identity."""
+    cached_usage = dict(usage or {})
+    event_thread_id = str(thread_id or "")
+    usage_cache = getattr(state, "context_usage_cache", None)
+    if event_thread_id and isinstance(usage_cache, dict):
+        usage_cache[event_thread_id] = cached_usage
+
+    active_thread_id, active_model_ref = active_context_identity(state)
+    event_model_ref = canonical_context_model_ref(cached_usage.get("model_ref"))
+    if (
+        detached
+        or not event_thread_id
+        or event_thread_id != active_thread_id
+        or not event_model_ref
+        or event_model_ref != active_model_ref
+    ):
+        return False
+
+    state.context_usage = cached_usage
+    state.context_usage_thread_id = active_thread_id
+    state.context_usage_model_ref = event_model_ref
+    return True
+
+
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # SHARED APPLICATION STATE (module-level singleton)
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -42,6 +128,15 @@ class AppState:
         self.messages: list[dict] = []
         self.current_model: str = get_current_model()
         self.context_size: int = get_user_context_size()
+        self.context_usage: dict | None = None
+        self.context_usage_thread_id: str = ""
+        self.context_usage_model_ref: str = ""
+        self.context_usage_cache: dict[str, dict] = {}
+        self.context_capacity_state: str = ""
+        self.context_capacity_override_tokens: int | None = None
+        self.context_capacity_effective_tokens: int | None = None
+        self.context_capacity_model_ref: str = ""
+        self.context_policy_notice_keys: dict[str, tuple] = {}
         self.is_generating: bool = False
         self.stop_event: threading.Event = threading.Event()
         self.pending_interrupt: dict | None = None
@@ -143,6 +238,7 @@ class GenerationState:
     baseline_child_agent_run_ids: set[str] = field(default_factory=set)
     chart_data: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
+    context_event_ids: set[int] = field(default_factory=set)
     captured_images: list = field(default_factory=list)
     captured_images_persist: list = field(default_factory=list)
     captured_videos: list = field(default_factory=list)
@@ -212,6 +308,7 @@ class P:
     thread_filter_container: ui.row = None  # type: ignore[assignment]
     token_label: ui.label = None        # type: ignore[assignment]
     token_bar: ui.linear_progress = None  # type: ignore[assignment]
+    context_meter: Any = None
     voice_status_label: ui.label = None  # type: ignore[assignment]
     stop_btn: ui.button = None          # type: ignore[assignment]
     voice_switch: Any = None           # type: ignore[assignment]

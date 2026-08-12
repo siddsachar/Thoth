@@ -390,7 +390,12 @@ def _fork_thread_for_duplicate(
         return
     import sqlite3
     try:
-        from row_bot.threads import DB_PATH, _save_thread_meta, _set_thread_project_id
+        from row_bot.threads import (
+            DB_PATH,
+            _save_thread_meta,
+            _set_thread_project_id,
+            copy_validated_summary_state,
+        )
         from row_bot.threads import _thread_ui_media_path, _MEDIA_DIR
     except Exception:
         logger.debug("Thread module unavailable; skipping thread fork", exc_info=True)
@@ -443,6 +448,7 @@ def _fork_thread_for_duplicate(
     try:
         _save_thread_meta(new_thread_id, new_project_name)
         _set_thread_project_id(new_thread_id, new_project_id)
+        copy_validated_summary_state(old_thread_id, new_thread_id)
     except Exception:
         logger.exception(
             "Failed to register thread_meta for forked thread %s", new_thread_id,
