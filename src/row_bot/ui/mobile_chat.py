@@ -201,6 +201,8 @@ def _model_policy_summary(state: AppState) -> tuple[str, str, str, bool]:
 
         model_value = state.thread_model_override or state.current_model
         presentation = context_policy_presentation(get_context_policy(model_value))
+        if presentation["category"] == "unknown_fallback":
+            return "warning", "128K context fallback", presentation["mobile_note"], True
         if presentation["category"] == "unknown_auto":
             return "warning", "Context setup required", presentation["mobile_note"], True
         if presentation["category"] == "unknown_override":

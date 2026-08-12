@@ -77,6 +77,9 @@ class ContextUsage:
     model_ref: str
     checkpoint_revision: str | None
     preparation_fingerprint: str
+    policy_fingerprint: str = ""
+    snapshot_kind: str = "transient"
+    checkpoint_message_digest: str = ""
     last_confirmed_input_tokens: int | None = None
     status: str = "ready"
 
@@ -1991,7 +1994,7 @@ def _collect_agent_complete_input(state: dict) -> dict:
     return {"llm_input_messages": trimmed, "execution_budget": budget}
 
 
-_CONTEXT_USAGE_SCHEMA_VERSION = 1
+_CONTEXT_USAGE_SCHEMA_VERSION = 2
 _SUMMARY_STATE_SCHEMA_VERSION = 1
 _COMPACTION_LOCKS: dict[str, threading.Lock] = {}
 _COMPACTION_LOCKS_GUARD = threading.Lock()
@@ -2217,13 +2220,13 @@ def _prepare_model_input(
         model_ref=inputs.model_ref,
         checkpoint_revision=inputs.checkpoint_revision,
         preparation_fingerprint=_preparation_fingerprint(inputs),
+        policy_fingerprint=inputs.policy_fingerprint,
         status=status,
     )
     return PreparedModelInput(messages=messages, usage=usage)
 
 
 def _collect_agent_preparation_inputs(state: dict, config: dict | None = None) -> PreparationInputs:
-    del config
     collected = _collect_agent_complete_input(state)
     messages = tuple(collected["llm_input_messages"])
     raw_messages = tuple(state.get("messages") or ())
@@ -2256,7 +2259,7 @@ def _collect_agent_preparation_inputs(state: dict, config: dict | None = None) -
         policy_fingerprint=_policy_fingerprint(policy),
         execution_budget=collected.get("execution_budget"),
     )
-    _current_last_preparation_var.set(inputs)
+    _remember_preparation_inputs(config, inputs)
     return inputs
 
 
@@ -2283,9 +2286,9 @@ def _persist_context_usage(thread_id: str, usage: ContextUsage) -> None:
     if not thread_id:
         return
     try:
-        from row_bot.threads import save_context_usage
+        from row_bot.threads import save_context_usage_cas
 
-        save_context_usage(thread_id, usage.to_dict())
+        save_context_usage_cas(thread_id, usage.to_dict())
     except Exception:
         logger.debug("Context usage snapshot persistence failed", exc_info=True)
 
@@ -2302,7 +2305,6 @@ def _mark_context_overflow(inputs: PreparationInputs | None) -> None:
         status="unavailable",
     )
     _emit_context_event("context_usage", _usage_event_payload(prepared.usage))
-    _persist_context_usage(_current_thread_id_var.get() or "", prepared.usage)
 
 
 def _validated_summary_for_inputs(inputs: PreparationInputs) -> dict | None:
@@ -2670,11 +2672,9 @@ def _prepare_with_compaction(inputs: PreparationInputs) -> PreparedModelInput:
             usage=ContextUsage(**{**prepared.usage.to_dict(), "status": "unavailable"}),
         )
         _emit_context_event("context_usage", _usage_event_payload(unavailable.usage))
-        _persist_context_usage(thread_id, unavailable.usage)
         return unavailable
     if prepared.usage.estimated_input_tokens < compact_at:
         _emit_context_event("context_usage", _usage_event_payload(prepared.usage))
-        _persist_context_usage(thread_id, prepared.usage)
         return prepared
 
     failure_key = (thread_id, inputs.checkpoint_revision or "")
@@ -2706,7 +2706,6 @@ def _prepare_with_compaction(inputs: PreparationInputs) -> PreparedModelInput:
         )
         if prepared.usage.estimated_input_tokens < compact_at:
             _emit_context_event("context_usage", _usage_event_payload(prepared.usage))
-            _persist_context_usage(thread_id, prepared.usage)
             return prepared
         _emit_context_event("compaction_started", _usage_event_payload(prepared.usage))
         try:
@@ -2790,7 +2789,6 @@ def _prepare_with_compaction(inputs: PreparationInputs) -> PreparedModelInput:
                 "event_type": "context_compacted",
                 "display_copy": str((event.get("payload") or {}).get("display_copy") or ""),
             })
-            _persist_context_usage(thread_id, rebuilt.usage)
             return rebuilt
         except TaskStoppedError:
             raise
@@ -2818,7 +2816,6 @@ def _prepare_with_compaction(inputs: PreparationInputs) -> PreparedModelInput:
                         (failure_event.get("payload") or {}).get("display_copy") or ""
                     ),
                 })
-                _persist_context_usage(thread_id, failed.usage)
                 return failed
             raise _terminal_compaction_failure(inputs, failed, reason) from exc
 
@@ -2855,11 +2852,17 @@ def _persist_settled_context_usage(
         )
     thread_id = _current_thread_id_var.get() or ""
     try:
-        from row_bot.threads import get_latest_checkpoint_revision
+        from row_bot.threads import context_boundary_digest, get_latest_checkpoint_revision
 
         revision = get_latest_checkpoint_revision(thread_id) or None
+        checkpoint_message_digest = context_boundary_digest(
+            new_raw_messages,
+            len(new_raw_messages),
+            inputs.mode,
+        )
     except Exception:
         revision = None
+        checkpoint_message_digest = ""
     settled_inputs = PreparationInputs(
         complete_messages=tuple(complete),
         raw_messages=tuple(new_raw_messages),
@@ -2883,6 +2886,8 @@ def _persist_settled_context_usage(
     )
     usage = ContextUsage(**{
         **prepared.usage.to_dict(),
+        "snapshot_kind": "settled",
+        "checkpoint_message_digest": checkpoint_message_digest,
         "last_confirmed_input_tokens": last_confirmed_input_tokens,
     })
     _current_last_preparation_var.set(settled_inputs)
@@ -2947,6 +2952,8 @@ _current_canonical_tools_var: _contextvars.ContextVar[tuple[dict, ...]] = _conte
 _current_last_preparation_var: _contextvars.ContextVar[PreparationInputs | None] = _contextvars.ContextVar(
     "current_last_preparation", default=None
 )
+_PREPARATION_CARRIER: dict[str, PreparationInputs] = {}
+_PREPARATION_CARRIER_LOCK = _threading.Lock()
 _current_stop_event_var: _contextvars.ContextVar[threading.Event | None] = _contextvars.ContextVar(
     "current_stop_event", default=None
 )
@@ -3001,6 +3008,55 @@ _current_agent_run_id_var: _contextvars.ContextVar[str] = _contextvars.ContextVa
 _current_external_discovery_active_var: _contextvars.ContextVar[bool] = _contextvars.ContextVar(
     "current_external_discovery_active", default=False
 )
+
+
+def _preparation_carrier_key(config: dict | None = None) -> str:
+    configurable = (config or {}).get("configurable") or {}
+    generation_id = str(
+        configurable.get("generation_id")
+        or _current_generation_id_var.get("")
+        or ""
+    )
+    if generation_id:
+        return f"generation:{generation_id}"
+    thread_id = str(
+        configurable.get("thread_id")
+        or _current_thread_id_var.get("")
+        or ""
+    )
+    return f"thread:{thread_id}" if thread_id else ""
+
+
+def _remember_preparation_inputs(
+    config: dict | None,
+    inputs: PreparationInputs,
+) -> None:
+    """Publish preparation state across LangGraph execution contexts."""
+    _current_last_preparation_var.set(inputs)
+    key = _preparation_carrier_key(config)
+    if key:
+        with _PREPARATION_CARRIER_LOCK:
+            _PREPARATION_CARRIER[key] = inputs
+            while len(_PREPARATION_CARRIER) > 128:
+                _PREPARATION_CARRIER.pop(next(iter(_PREPARATION_CARRIER)))
+
+
+def _last_preparation_inputs(config: dict | None) -> PreparationInputs | None:
+    key = _preparation_carrier_key(config)
+    if key:
+        with _PREPARATION_CARRIER_LOCK:
+            inputs = _PREPARATION_CARRIER.get(key)
+        if inputs is not None:
+            return inputs
+    return _current_last_preparation_var.get()
+
+
+def _forget_preparation_inputs(config: dict | None) -> None:
+    key = _preparation_carrier_key(config)
+    if key:
+        with _PREPARATION_CARRIER_LOCK:
+            _PREPARATION_CARRIER.pop(key, None)
+    _current_last_preparation_var.set(None)
 
 
 def get_current_thread_id() -> str:
@@ -5165,26 +5221,29 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
 
     # The graph pre-model hook prepares and accounts every primary model call.
     config, initial_input = _new_agent_graph_input(user_input, config, agent=agent)
-    for event in _stream_graph(agent, initial_input, config,
-                               stop_event=stop_event,
-                               phase_timings=phase_timings):
-        yield from _memory_recall_warning_events(config)
-        yield event
-        if event[0] == "done":
-            parent_pass = _complete_unified_parent_pass(
-                event[1],
-                enabled_tool_names,
-                config,
-            )
-            if parent_pass is not None and parent_pass.waiting:
-                yield (
-                    "orchestration_waiting",
-                    {
-                        "orchestration_id": parent_pass.orchestration_id,
-                        "text": parent_pass.text,
-                        "output_kind": parent_pass.output_kind,
-                    },
+    try:
+        for event in _stream_graph(agent, initial_input, config,
+                                   stop_event=stop_event,
+                                   phase_timings=phase_timings):
+            yield from _memory_recall_warning_events(config)
+            yield event
+            if event[0] == "done":
+                parent_pass = _complete_unified_parent_pass(
+                    event[1],
+                    enabled_tool_names,
+                    config,
                 )
+                if parent_pass is not None and parent_pass.waiting:
+                    yield (
+                        "orchestration_waiting",
+                        {
+                            "orchestration_id": parent_pass.orchestration_id,
+                            "text": parent_pass.text,
+                            "output_kind": parent_pass.output_kind,
+                        },
+                    )
+    finally:
+        _forget_preparation_inputs(config)
     yield from _memory_recall_warning_events(config)
 
 
@@ -5309,29 +5368,32 @@ def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: b
         resume_val = {iid: approved for iid in interrupt_ids}
     else:
         resume_val = approved
-    for event in _stream_graph(
-        agent,
-        Command(resume=resume_val),
-        config,
-        stop_event=stop_event,
-    ):
-        yield from _memory_recall_warning_events(config)
-        yield event
-        if event[0] == "done":
-            parent_pass = _complete_unified_parent_pass(
-                event[1],
-                enabled_tool_names,
-                config,
-            )
-            if parent_pass is not None and parent_pass.waiting:
-                yield (
-                    "orchestration_waiting",
-                    {
-                        "orchestration_id": parent_pass.orchestration_id,
-                        "text": parent_pass.text,
-                        "output_kind": parent_pass.output_kind,
-                    },
+    try:
+        for event in _stream_graph(
+            agent,
+            Command(resume=resume_val),
+            config,
+            stop_event=stop_event,
+        ):
+            yield from _memory_recall_warning_events(config)
+            yield event
+            if event[0] == "done":
+                parent_pass = _complete_unified_parent_pass(
+                    event[1],
+                    enabled_tool_names,
+                    config,
                 )
+                if parent_pass is not None and parent_pass.waiting:
+                    yield (
+                        "orchestration_waiting",
+                        {
+                            "orchestration_id": parent_pass.orchestration_id,
+                            "text": parent_pass.text,
+                            "output_kind": parent_pass.output_kind,
+                        },
+                    )
+    finally:
+        _forget_preparation_inputs(config)
     yield from _memory_recall_warning_events(config)
 
 
@@ -5935,7 +5997,7 @@ def _stream_graph(agent, input_data, config: dict,
         # Auto-repair orphaned tool calls and retry once. Provider overflow is
         # never replayed because a prior attempt may already have incurred cost.
         if _is_context_overflow_error(exc):
-            _mark_context_overflow(_current_last_preparation_var.get())
+            _mark_context_overflow(_last_preparation_inputs(config))
             yield ("error", _friendly_api_error(exc_str))
             return
         if "tool_call" in exc_str and ("do not have a corresponding" in exc_str
@@ -6143,7 +6205,7 @@ def _stream_graph(agent, input_data, config: dict,
         exc_str = str(exc)
         # Auto-repair orphaned tool calls and retry once. Never replay overflow.
         if _is_context_overflow_error(exc):
-            _mark_context_overflow(_current_last_preparation_var.get())
+            _mark_context_overflow(_last_preparation_inputs(config))
             yield ("error", _friendly_api_error(exc_str))
             return
         if "tool_call" in exc_str and ("do not have a corresponding" in exc_str
@@ -6408,7 +6470,7 @@ def _stream_graph(agent, input_data, config: dict,
         )
 
     try:
-        preparation_inputs = _current_last_preparation_var.get()
+        preparation_inputs = _last_preparation_inputs(config)
         latest_state = agent.get_state(config)
         latest_messages = list((getattr(latest_state, "values", None) or {}).get("messages", []))
         if preparation_inputs is not None and latest_messages:

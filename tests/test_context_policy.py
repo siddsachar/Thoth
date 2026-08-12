@@ -316,7 +316,7 @@ def test_local_auto_requests_32k_and_caps_to_observed_allocation(monkeypatch):
     assert policy.usable_input_tokens == int(24_576 * 0.85)
 
 
-def test_unknown_remote_auto_capacity_is_unavailable(monkeypatch):
+def test_unknown_remote_auto_capacity_uses_disclosed_128k_application_fallback(monkeypatch):
     import row_bot.models as models
 
     monkeypatch.setattr(models, "_cloud_context_override", None)
@@ -326,10 +326,13 @@ def test_unknown_remote_auto_capacity_is_unavailable(monkeypatch):
 
     policy = models.get_context_policy("model:openai:not-a-maintained-model")
 
-    assert policy.effective_limit_tokens is None
-    assert policy.usable_input_tokens is None
-    assert policy.compact_at_tokens is None
-    assert policy.capacity_state == "unavailable"
+    assert policy.native_limit_tokens is None
+    assert policy.requested_limit_tokens is None
+    assert policy.effective_limit_tokens == 131_072
+    assert policy.usable_input_tokens == int(131_072 * 0.85)
+    assert policy.compact_at_tokens == int(131_072 * 0.75)
+    assert policy.capacity_state == "ready"
+    assert policy.capacity_source == "app_fallback"
 
 
 @pytest.mark.parametrize("reported", [None, 0, -1, "0", "invalid"])

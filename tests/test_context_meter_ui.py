@@ -56,7 +56,7 @@ def test_streaming_updates_meter_and_inserts_durable_event_once() -> None:
     assert '"role": "context_event"' in streaming
 
 
-def test_meter_controller_clears_stale_snapshot_and_holds_compacting_value() -> None:
+def test_meter_controller_shows_neutral_empty_state_and_holds_compacting_value() -> None:
     from row_bot.ui.chat_components import ContextMeterController
 
     class FakeElement:
@@ -97,11 +97,11 @@ def test_meter_controller_clears_stale_snapshot_and_holds_compacting_value() -> 
     assert label.text == "Compacting context..."
     assert progress.value == ready_value
     controller.update(None)
-    assert label.text == "Context unavailable"
+    assert label.text == "Context ready"
     assert progress.value == 0.0
 
 
-def test_meter_distinguishes_no_snapshot_unknown_auto_and_unknown_override() -> None:
+def test_meter_distinguishes_fresh_legacy_fallback_and_unknown_override() -> None:
     from row_bot.ui.chat_components import ContextMeterController
 
     class FakeElement:
@@ -123,18 +123,25 @@ def test_meter_distinguishes_no_snapshot_unknown_auto_and_unknown_override() -> 
     _root, label, _progress, _marker, tooltip = elements
 
     controller.update(None)
+    assert label.text == "Context ready"
     assert tooltip.text == "Context will appear after the next validated model preparation."
 
-    controller.update(None, capacity_state="unknown_auto")
-    assert label.text == "Context unavailable"
-    assert "Refresh the provider catalog" in tooltip.text
-    assert "Advanced override" in tooltip.text
-    assert "max 0" not in tooltip.text.lower()
+    controller.update(None, has_history=True)
+    assert label.text == "Context not measured"
+
+    controller.update(
+        None,
+        capacity_state="unknown_fallback",
+        effective_limit_tokens=131_072,
+    )
+    assert label.text == "Context ready"
+    assert "Row-Bot fallback limit: 128K" in tooltip.text
+    assert "Native model window: unknown" in tooltip.text
 
     controller.update(
         {
             "status": "ready",
-            "estimated_input_tokens": 10_000,
+            "estimated_input_tokens": 677,
             "usable_input_tokens": 222_822,
             "compact_at_tokens": 196_608,
             "native_window_tokens": None,
@@ -142,7 +149,7 @@ def test_meter_distinguishes_no_snapshot_unknown_auto_and_unknown_override() -> 
             "capacity_source": "advanced_override",
         }
     )
-    assert label.text.startswith("Context ")
+    assert label.text == "Context <1%"
     assert "Override limit: 262K" in tooltip.text
     assert "Native model window: unknown" in tooltip.text
     assert "Model window: 262K" not in tooltip.text
@@ -154,19 +161,19 @@ def test_context_policy_presentation_and_notice_deduplication(monkeypatch):
     from row_bot.ui import chat_components
 
     state = SimpleNamespace(thread_id="thread-1", context_policy_notice_keys={})
-    unknown_auto = SimpleNamespace(
+    unknown_fallback = SimpleNamespace(
         model_ref="model:openai:opaque",
         provider_id="openai",
         runtime_model="opaque",
         policy_kind="provider",
         native_limit_tokens=None,
         requested_limit_tokens=None,
-        effective_limit_tokens=None,
-        capacity_source="unknown",
+        effective_limit_tokens=131_072,
+        capacity_source="app_fallback",
     )
     unknown_override = SimpleNamespace(
         **{
-            **unknown_auto.__dict__,
+            **unknown_fallback.__dict__,
             "requested_limit_tokens": 262_144,
             "effective_limit_tokens": 262_144,
             "capacity_source": "advanced_override",
@@ -175,23 +182,63 @@ def test_context_policy_presentation_and_notice_deduplication(monkeypatch):
     notices = []
     monkeypatch.setattr(chat_components.ui, "notify", lambda message, **kwargs: notices.append((message, kwargs)))
 
-    auto_view = chat_components.context_policy_presentation(unknown_auto)
+    fallback_view = chat_components.context_policy_presentation(unknown_fallback)
     override_view = chat_components.context_policy_presentation(unknown_override)
 
-    assert auto_view["settings_note"] == "Native limit unknown · no override set"
-    assert auto_view["mobile_note"] == "Context setup required · native limit unknown · no override set"
-    assert "Refresh the provider catalog" in auto_view["notification"]
-    assert "Advanced override" in auto_view["notification"]
-    assert "choose another model" in auto_view["notification"]
+    assert fallback_view["category"] == "unknown_fallback"
+    assert fallback_view["settings_note"] == "Native limit unknown · using Row-Bot 128K fallback"
+    assert fallback_view["mobile_note"] == "Native limit unknown · Row-Bot 128K fallback active"
+    assert fallback_view["warning"] is True
+    assert fallback_view["effective_override_tokens"] is None
+    assert fallback_view["effective_limit_tokens"] == 131_072
+    assert fallback_view["notification"] == (
+        "Native context window unknown. Row-Bot is using its 128K application fallback. "
+        "The model's actual limit may be different. Verify the limit in Settings for "
+        "reliable context management."
+    )
     assert override_view["settings_note"] == "Native limit unknown · using 262K override"
     assert override_view["notification"] == (
         "Native context is unknown; Row-Bot will use your 262K Advanced override."
     )
 
-    assert chat_components.notify_context_policy_once(state, unknown_auto) is True
-    assert chat_components.notify_context_policy_once(state, unknown_auto) is False
+    assert chat_components.notify_context_policy_once(state, unknown_fallback) is True
+    assert chat_components.notify_context_policy_once(state, unknown_fallback) is False
     assert chat_components.notify_context_policy_once(state, unknown_override) is True
     assert len(notices) == 2
+
+
+def test_meter_marks_compatible_older_snapshot_as_last_measured() -> None:
+    from row_bot.ui.chat_components import ContextMeterController
+
+    class FakeElement:
+        def __init__(self) -> None:
+            self.text = ""
+            self.value = 0.0
+
+        def style(self, _value):
+            return self
+
+        def props(self, _value):
+            return self
+
+        def update(self):
+            return None
+
+    elements = [FakeElement() for _ in range(5)]
+    controller = ContextMeterController(*elements)
+    _root, label, _progress, _marker, tooltip = elements
+
+    controller.update({
+        "status": "ready",
+        "snapshot_freshness": "stale",
+        "estimated_input_tokens": 42_000,
+        "usable_input_tokens": 109_000,
+        "compact_at_tokens": 98_304,
+        "effective_limit_tokens": 131_072,
+    })
+
+    assert label.text == "Context ~39%"
+    assert "Last measured" in tooltip.text
 
 
 def test_context_snapshot_projection_requires_active_thread_and_provider_model_identity():

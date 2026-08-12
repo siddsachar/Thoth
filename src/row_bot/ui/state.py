@@ -50,6 +50,15 @@ def active_context_identity(state: Any) -> tuple[str, str]:
     return thread_id, canonical_context_model_ref(selected_model)
 
 
+def context_history_present(state: Any) -> bool:
+    """Return whether the active UI transcript contains a real chat turn."""
+    return any(
+        isinstance(message, dict)
+        and str(message.get("role") or "") in {"user", "assistant", "tool"}
+        for message in (getattr(state, "messages", None) or ())
+    )
+
+
 def clear_context_usage_projection(state: Any) -> None:
     """Clear the visible meter projection without touching per-thread caches."""
     state.context_usage = None
@@ -58,6 +67,7 @@ def clear_context_usage_projection(state: Any) -> None:
     if hasattr(state, "context_capacity_state"):
         state.context_capacity_state = ""
         state.context_capacity_override_tokens = None
+        state.context_capacity_effective_tokens = None
         state.context_capacity_model_ref = ""
 
 
@@ -124,6 +134,7 @@ class AppState:
         self.context_usage_cache: dict[str, dict] = {}
         self.context_capacity_state: str = ""
         self.context_capacity_override_tokens: int | None = None
+        self.context_capacity_effective_tokens: int | None = None
         self.context_capacity_model_ref: str = ""
         self.context_policy_notice_keys: dict[str, tuple] = {}
         self.is_generating: bool = False

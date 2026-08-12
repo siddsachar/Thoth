@@ -127,7 +127,7 @@ def test_models_advanced_context_explains_auto_and_unknown_capacity() -> None:
     render_src = _function_source("_render_models_tab_content")
 
     assert "Auto uses the provider/model limit when known." in render_src
-    assert "you must set an Advanced override before sending." in render_src
+    assert "uses Row-Bot's disclosed 128K application fallback" in render_src
     assert '"Auto (recommended)"' in render_src
     assert 'label="Cloud Context"' in render_src
     assert "context_policy_presentation" in render_src

@@ -345,6 +345,7 @@ from row_bot.ui.state import (
     cache_and_project_context_usage,
     canonical_context_model_ref,
     clear_context_usage_projection,
+    context_history_present,
     startup_ready, startup_status, startup_warnings,
 )
 from row_bot.ui.constants import EXAMPLE_PROMPTS, welcome_message
@@ -1749,31 +1750,28 @@ async def index():
     _rebuild_gen = [0]
 
     def _load_active_context_projection() -> dict | None:
-        """Load only a revision- and identity-matching display snapshot."""
+        """Load a current or explicitly last-measured display snapshot."""
         thread_id, model_ref = active_context_identity(state)
         if not thread_id or not model_ref:
             clear_context_usage_projection(state)
             return None
         try:
-            from row_bot.threads import get_latest_checkpoint_revision, load_context_usage
+            from row_bot.threads import load_context_usage
 
-            revision = get_latest_checkpoint_revision(thread_id)
             current = state.context_usage
             if (
                 isinstance(current, dict)
                 and state.context_usage_thread_id == thread_id
                 and canonical_context_model_ref(state.context_usage_model_ref) == model_ref
                 and canonical_context_model_ref(current.get("model_ref")) == model_ref
-                and str(current.get("checkpoint_revision") or "") == str(revision or "")
+                and thread_id in _active_generations
             ):
                 return current
             clear_context_usage_projection(state)
             usage = load_context_usage(
                 thread_id,
-                expected={
-                    "checkpoint_revision": revision,
-                    "model_ref": model_ref,
-                },
+                expected={"model_ref": model_ref},
+                allow_stale=True,
             )
         except Exception:
             logger.debug("Context snapshot load failed", exc_info=True)
@@ -2785,6 +2783,8 @@ async def index():
             p.context_meter.update(
                 usage,
                 capacity_state=state.context_capacity_state,
+                effective_limit_tokens=state.context_capacity_effective_tokens,
+                has_history=context_history_present(state),
             )
 
     _notification_timer = safe_timer(1.0, _poll_notifications)

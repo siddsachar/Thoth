@@ -7,6 +7,7 @@ import json
 import time
 import gc
 import hashlib
+import threading
 from datetime import datetime, timedelta
 
 from row_bot.data_paths import get_row_bot_data_dir
@@ -1125,7 +1126,8 @@ def set_thread_skills_override(thread_id: str, skill_names: list[str] | None) ->
 
 
 SUMMARY_STATE_SCHEMA_VERSION = 1
-CONTEXT_USAGE_SCHEMA_VERSION = 1
+CONTEXT_USAGE_SCHEMA_VERSION = 2
+_CONTEXT_USAGE_SAVE_LOCK = threading.Lock()
 CONTEXT_COMPACTED_COPY = (
     "Context compacted — Older conversation was summarized so this chat can continue. "
     "Recent messages were preserved."
@@ -1284,12 +1286,36 @@ def save_context_usage(thread_id: str, usage: dict) -> None:
         conn.commit()
 
 
+def save_context_usage_cas(thread_id: str, usage: dict) -> bool:
+    """Persist a settled snapshot only if it represents the current messages."""
+    if not thread_id:
+        return False
+    payload = dict(usage or {})
+    if (
+        int(payload.get("schema_version") or 0) != CONTEXT_USAGE_SCHEMA_VERSION
+        or str(payload.get("snapshot_kind") or "") != "settled"
+    ):
+        return False
+    mode = str(payload.get("mode") or "")
+    expected_digest = str(payload.get("checkpoint_message_digest") or "")
+    if mode not in {"agent", "chat_only"} or len(expected_digest) != 64:
+        return False
+    with _CONTEXT_USAGE_SAVE_LOCK:
+        current_messages = get_latest_checkpoint_messages(thread_id)
+        current_digest = context_boundary_digest(current_messages, len(current_messages), mode)
+        if current_digest != expected_digest:
+            return False
+        save_context_usage(thread_id, payload)
+    return True
+
+
 def load_context_usage(
     thread_id: str,
     *,
     expected: dict | None = None,
+    allow_stale: bool = False,
 ) -> dict | None:
-    """Load a snapshot only when supplied identity fields still match."""
+    """Load an identity-compatible snapshot and classify semantic freshness."""
     if not thread_id:
         return None
     _ensure_thread_db()
@@ -1304,14 +1330,32 @@ def load_context_usage(
         usage = json.loads(row[0])
     except (TypeError, json.JSONDecodeError):
         return None
-    if not isinstance(usage, dict) or int(usage.get("schema_version") or 0) != CONTEXT_USAGE_SCHEMA_VERSION:
+    if not isinstance(usage, dict):
+        return None
+    schema_version = int(usage.get("schema_version") or 0)
+    if schema_version not in {1, CONTEXT_USAGE_SCHEMA_VERSION}:
         return None
     for key, value in dict(expected or {}).items():
         if value is not None and usage.get(key) != value:
             return None
-    expected_revision = str((expected or {}).get("checkpoint_revision") or "")
-    if expected_revision and expected_revision != get_latest_checkpoint_revision(thread_id):
+    if schema_version == CONTEXT_USAGE_SCHEMA_VERSION:
+        if str(usage.get("snapshot_kind") or "") != "settled":
+            return None
+        mode = str(usage.get("mode") or "")
+        saved_digest = str(usage.get("checkpoint_message_digest") or "")
+        if mode not in {"agent", "chat_only"} or len(saved_digest) != 64:
+            return None
+        current_messages = get_latest_checkpoint_messages(thread_id)
+        current_digest = context_boundary_digest(current_messages, len(current_messages), mode)
+        freshness = "current" if current_digest == saved_digest else "stale"
+    else:
+        saved_revision = str(usage.get("checkpoint_revision") or "")
+        current_revision = get_latest_checkpoint_revision(thread_id)
+        freshness = "current" if saved_revision and saved_revision == current_revision else "stale"
+    if freshness == "stale" and not allow_stale:
         return None
+    if allow_stale:
+        usage = {**usage, "snapshot_freshness": freshness}
     return usage
 
 

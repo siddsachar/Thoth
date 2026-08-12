@@ -33,6 +33,7 @@ from row_bot.ui.state import (
     P,
     _active_generations,
     cache_and_project_context_usage,
+    context_history_present,
 )
 from row_bot.ui.constants import (
 
@@ -3387,6 +3388,8 @@ async def consume_generation(
                     p.context_meter.update(
                         usage,
                         capacity_state=state.context_capacity_state,
+                        effective_limit_tokens=state.context_capacity_effective_tokens,
+                        has_history=context_history_present(state),
                     )
                 except Exception as exc:
                     _handle_ui_runtime_error(gen, state, exc, "context meter event")

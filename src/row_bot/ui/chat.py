@@ -20,7 +20,7 @@ from typing import Callable
 from row_bot.brand import APP_NATIVE_ENV
 from nicegui import events, run, ui
 
-from row_bot.ui.state import AppState, P, _active_generations
+from row_bot.ui.state import AppState, P, _active_generations, context_history_present
 from row_bot.ui.constants import ALLOWED_UPLOAD_SUFFIXES, welcome_message, EXAMPLE_PROMPTS
 from row_bot.ui.render import (
     agent_result_use_prompt,
@@ -390,6 +390,8 @@ def build_chat(
                 p.context_meter.update(
                     state.context_usage,
                     capacity_state=state.context_capacity_state,
+                    effective_limit_tokens=state.context_capacity_effective_tokens,
+                    has_history=context_history_present(state),
                 )
         except Exception:
             logger.debug("Could not render context capacity policy", exc_info=True)
@@ -409,6 +411,8 @@ def build_chat(
             p.context_meter.update(
                 state.context_usage,
                 capacity_state=state.context_capacity_state,
+                effective_limit_tokens=state.context_capacity_effective_tokens,
+                has_history=context_history_present(state),
             )
         surface = _model_surface_placeholder()
         _render_model_banner(surface)

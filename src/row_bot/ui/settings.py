@@ -1975,7 +1975,8 @@ def open_settings(
             with ui.expansion("Advanced context", icon="tune").classes("w-full"):
                 ui.label(
                     "Auto uses the provider/model limit when known. If Row-Bot cannot determine it, "
-                    "you must set an Advanced override before sending."
+                    "it uses Row-Bot's disclosed 128K application fallback. Set an Advanced override "
+                    "after verifying the model's actual limit."
                 ).classes("text-grey-6 text-xs q-mb-sm")
                 cloud_advanced_options = {"auto": "Auto (recommended)", **cloud_ctx_opts}
                 cloud_ctx_select = ui.select(
@@ -1984,7 +1985,7 @@ def open_settings(
                     value=get_cloud_context_override() or "auto",
                     on_change=_on_cloud_ctx_change,
                 ).classes("min-w-[220px]").props("dense outlined").tooltip(
-                    "Advanced cap for providers whose exact capacity is known."
+                    "Optional verified cap. Auto prefers provider metadata and otherwise uses the 128K fallback."
                 )
                 cloud_ctx_select.visible = _is_cloud_ctx
                 local_advanced_options = {"auto": "Auto (requested 32K)", **ctx_opts}

@@ -86,7 +86,7 @@ def test_mobile_chat_controls_expose_context_setup_without_a_meter() -> None:
     assert "clear_context_usage_projection" in src
 
 
-def test_mobile_policy_summary_distinguishes_unknown_auto_and_override(monkeypatch) -> None:
+def test_mobile_policy_summary_distinguishes_app_fallback_and_override(monkeypatch) -> None:
     from types import SimpleNamespace
 
     import row_bot.models as models
@@ -103,16 +103,16 @@ def test_mobile_policy_summary_distinguishes_unknown_auto_and_override(monkeypat
         policy_kind="provider",
         native_limit_tokens=None,
         requested_limit_tokens=None,
-        effective_limit_tokens=None,
-        capacity_source="unknown",
+        effective_limit_tokens=131_072,
+        capacity_source="app_fallback",
     )
     monkeypatch.setattr(models, "get_context_policy", lambda model_ref: policy)
     monkeypatch.setattr(models, "is_cloud_model", lambda model_ref: True)
 
     assert _model_policy_summary(state) == (
         "warning",
-        "Context setup required",
-        "Context setup required · native limit unknown · no override set",
+        "128K context fallback",
+        "Native limit unknown · Row-Bot 128K fallback active",
         True,
     )
 

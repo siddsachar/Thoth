@@ -887,7 +887,12 @@ def get_context_policy(model_name: str | None = None) -> ContextPolicy:
         if value is not None and int(value) > 0
     ]
     if remote_policy and requested_limit is None and native_max is None:
-        effective_limit = None
+        # Keep the persisted setting on Auto, but give unknown remote models a
+        # conservative, explicitly disclosed application limit.  This is trim
+        # and compaction authority only; it is never presented as provider
+        # metadata or a user-selected override.
+        effective_limit = DEFAULT_CLOUD_CONTEXT_SIZE
+        capacity_source = "app_fallback"
     else:
         effective_limit = min(candidates) if candidates else None
 

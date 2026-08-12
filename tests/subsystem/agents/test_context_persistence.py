@@ -200,6 +200,90 @@ def test_context_usage_snapshot_requires_matching_identity(isolated_thread_db, m
     ) is None
 
 
+def test_settled_snapshot_uses_message_digest_and_can_load_as_last_measured(
+    isolated_thread_db,
+    monkeypatch,
+):
+    settled_messages = [HumanMessage(content="one"), AIMessage(content="answer")]
+    newer_messages = [*settled_messages, HumanMessage(content="two")]
+    usage = {
+        "schema_version": 2,
+        "snapshot_kind": "settled",
+        "model_ref": "model:openai:test",
+        "mode": "agent",
+        "checkpoint_revision": "rev-1",
+        "checkpoint_message_digest": threads.context_boundary_digest(
+            settled_messages,
+            len(settled_messages),
+            "agent",
+        ),
+        "preparation_fingerprint": "prepared",
+    }
+    monkeypatch.setattr(
+        threads,
+        "get_latest_checkpoint_messages",
+        lambda thread_id: list(settled_messages),
+    )
+
+    assert threads.save_context_usage_cas("thread-1", usage)
+    current = threads.load_context_usage(
+        "thread-1",
+        expected={"model_ref": "model:openai:test"},
+        allow_stale=True,
+    )
+    assert current is not None
+    assert current["snapshot_freshness"] == "current"
+
+    monkeypatch.setattr(
+        threads,
+        "get_latest_checkpoint_messages",
+        lambda thread_id: list(newer_messages),
+    )
+    assert threads.load_context_usage(
+        "thread-1",
+        expected={"model_ref": "model:openai:test"},
+    ) is None
+    stale = threads.load_context_usage(
+        "thread-1",
+        expected={"model_ref": "model:openai:test"},
+        allow_stale=True,
+    )
+    assert stale is not None
+    assert stale["snapshot_freshness"] == "stale"
+    assert threads.load_context_usage(
+        "thread-1",
+        expected={"model_ref": "model:anthropic:test"},
+        allow_stale=True,
+    ) is None
+
+
+def test_settled_snapshot_cas_rejects_detached_older_message_state(
+    isolated_thread_db,
+    monkeypatch,
+):
+    older_messages = [HumanMessage(content="one")]
+    current_messages = [*older_messages, AIMessage(content="answer")]
+    monkeypatch.setattr(
+        threads,
+        "get_latest_checkpoint_messages",
+        lambda thread_id: list(current_messages),
+    )
+    usage = {
+        "schema_version": 2,
+        "snapshot_kind": "settled",
+        "model_ref": "model:openai:test",
+        "mode": "agent",
+        "checkpoint_message_digest": threads.context_boundary_digest(
+            older_messages,
+            len(older_messages),
+            "agent",
+        ),
+    }
+
+    assert not threads.save_context_usage_cas("thread-1", usage)
+    assert threads.load_context_usage("thread-1") is None
+
+
 def test_global_policy_change_clears_all_display_snapshots(isolated_thread_db):
     with sqlite3.connect(isolated_thread_db) as conn:
         conn.execute(

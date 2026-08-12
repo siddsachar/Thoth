@@ -270,6 +270,68 @@ def test_provider_input_usage_is_diagnostic_only(provider_id, metadata, expected
     assert agent._normalized_confirmed_input_tokens(metadata, provider_id) == expected
 
 
+def test_preparation_carrier_crosses_context_boundary_and_is_cleared() -> None:
+    import contextvars
+
+    config = {
+        "configurable": {
+            "thread_id": "thread-carrier",
+            "generation_id": "generation-carrier",
+        }
+    }
+    inputs = _inputs([HumanMessage(content="hello")])
+
+    contextvars.copy_context().run(agent._remember_preparation_inputs, config, inputs)
+
+    assert agent._last_preparation_inputs(config) is inputs
+    agent._forget_preparation_inputs(config)
+    assert agent._last_preparation_inputs(config) is None
+
+
+def test_pre_model_measurement_is_transient_and_not_persisted(monkeypatch) -> None:
+    inputs = _inputs([HumanMessage(content="hello")])
+    persisted = []
+    emitted = []
+    monkeypatch.setattr(agent, "count_tokens_approximately", lambda *args, **kwargs: 100)
+    monkeypatch.setattr(agent, "_validated_summary_for_inputs", lambda _inputs: None)
+    monkeypatch.setattr(agent, "_emit_context_event", lambda kind, payload: emitted.append((kind, payload)))
+    monkeypatch.setattr(agent, "_persist_context_usage", lambda *args, **kwargs: persisted.append(args))
+
+    prepared = agent._prepare_with_compaction(inputs)
+
+    assert prepared.usage.status == "ready"
+    assert [kind for kind, _payload in emitted] == ["context_usage"]
+    assert persisted == []
+
+
+def test_post_turn_measurement_is_settled_with_current_message_digest(monkeypatch) -> None:
+    raw = [HumanMessage(content="hello")]
+    final_messages = [*raw, AIMessage(content="world")]
+    inputs = _inputs(raw)
+    persisted = []
+    emitted = []
+    expected_digest = "d" * 64
+    monkeypatch.setattr(agent, "count_tokens_approximately", lambda *args, **kwargs: 100)
+    monkeypatch.setattr(agent, "_validated_summary_for_inputs", lambda _inputs: None)
+    monkeypatch.setattr(agent, "_persist_context_usage", lambda thread_id, usage: persisted.append((thread_id, usage)))
+    monkeypatch.setattr(agent, "_emit_context_event", lambda kind, payload: emitted.append((kind, payload)))
+    monkeypatch.setattr("row_bot.threads.get_latest_checkpoint_revision", lambda thread_id: "rev-final")
+    monkeypatch.setattr("row_bot.threads.context_boundary_digest", lambda *args, **kwargs: expected_digest)
+    token = agent._current_thread_id_var.set("thread-settled")
+    try:
+        usage = agent._persist_settled_context_usage(inputs, final_messages)
+    finally:
+        agent._current_thread_id_var.reset(token)
+
+    assert usage is not None
+    assert usage.schema_version == 2
+    assert usage.snapshot_kind == "settled"
+    assert usage.checkpoint_revision == "rev-final"
+    assert usage.checkpoint_message_digest == expected_digest
+    assert persisted == [("thread-settled", usage)]
+    assert [kind for kind, _payload in emitted] == ["context_usage"]
+
+
 def test_agent_provider_overflow_is_terminal_without_graph_replay(monkeypatch):
     class OverflowGraph:
         def __init__(self) -> None:
