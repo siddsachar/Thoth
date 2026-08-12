@@ -49,6 +49,7 @@ def test_system_control_inventory_uses_current_remote_access_surface() -> None:
 
     assert {
         "Invite a device",
+        "Trust address and create invitation",
         "Check Tailscale status",
         "Review private route",
         "Allow local-network connections",

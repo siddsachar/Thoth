@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from row_bot.access.config import AccessConfigError, canonical_host, canonical_origin
 from row_bot.data_paths import get_row_bot_data_dir
 
-ROUTE_CONFIG_VERSION = 1
+ROUTE_CONFIG_VERSION = 2
 ROUTE_CONFIG_FILENAME = "access_routes.json"
 DEFAULT_LISTEN_HOST = "127.0.0.1"
 LAN_LISTEN_HOST = "0.0.0.0"
@@ -62,10 +62,40 @@ _NON_PRIVATE_LAN_WARNING = (
 )
 
 
+def _normalize_configured_origins(values: Iterable[object]) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)):
+        raise AccessRouteConfigError(
+            "configured remote access origins must be a collection"
+        )
+    normalized: list[str] = []
+    for value in values:
+        try:
+            origin = canonical_origin(value)
+        except AccessConfigError as exc:
+            raise AccessRouteConfigError(
+                "configured remote access origin is malformed"
+            ) from exc
+        if "*" in urlsplit(origin).netloc:
+            raise AccessRouteConfigError(
+                "configured remote access origins must use an exact host"
+            )
+        if origin not in normalized:
+            normalized.append(origin)
+    return tuple(normalized)
+
+
 @dataclass(frozen=True, slots=True)
 class AccessRouteConfig:
     version: int = ROUTE_CONFIG_VERSION
     listen_mode: ListenMode = ListenMode.LOCAL_ONLY
+    configured_origins: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "configured_origins",
+            _normalize_configured_origins(self.configured_origins),
+        )
 
     @property
     def lan_enabled(self) -> bool:
@@ -75,6 +105,7 @@ class AccessRouteConfig:
         return {
             "version": self.version,
             "listen_mode": self.listen_mode.value,
+            "configured_origins": list(self.configured_origins),
         }
 
     @classmethod
@@ -86,11 +117,22 @@ class AccessRouteConfig:
             raise AccessRouteConfigError(
                 "remote access route config is malformed"
             ) from exc
-        if version != ROUTE_CONFIG_VERSION:
+        if version not in {1, ROUTE_CONFIG_VERSION}:
             raise AccessRouteConfigError(
                 "unsupported remote access route config version"
             )
-        return cls(version=version, listen_mode=listen_mode)
+        configured_origins: object = (
+            () if version == 1 else value.get("configured_origins", ())
+        )
+        if not isinstance(configured_origins, (list, tuple)):
+            raise AccessRouteConfigError(
+                "configured remote access origins must be a list"
+            )
+        return cls(
+            version=ROUTE_CONFIG_VERSION,
+            listen_mode=listen_mode,
+            configured_origins=tuple(configured_origins),
+        )
 
 
 class AccessRouteConfigStore:
@@ -160,7 +202,34 @@ class AccessRouteConfigStore:
                     pass
 
     def set_listen_mode(self, mode: ListenMode | str) -> AccessRouteConfig:
-        config = AccessRouteConfig(listen_mode=ListenMode(mode))
+        previous = self.load_or_default()
+        config = AccessRouteConfig(
+            listen_mode=ListenMode(mode),
+            configured_origins=previous.configured_origins,
+        )
+        self.save(config)
+        return config
+
+    def add_configured_origin(self, origin: object) -> AccessRouteConfig:
+        previous = self.load_or_default()
+        config = AccessRouteConfig(
+            listen_mode=previous.listen_mode,
+            configured_origins=(*previous.configured_origins, str(origin or "")),
+        )
+        self.save(config)
+        return config
+
+    def remove_configured_origin(self, origin: object) -> AccessRouteConfig:
+        normalized = _normalize_configured_origins((origin,))[0]
+        previous = self.load_or_default()
+        config = AccessRouteConfig(
+            listen_mode=previous.listen_mode,
+            configured_origins=tuple(
+                saved
+                for saved in previous.configured_origins
+                if saved != normalized
+            ),
+        )
         self.save(config)
         return config
 
@@ -459,11 +528,11 @@ def build_route_inventory(
                 available=True,
                 private=origin.startswith("https://"),
                 enabled=True,
-                detail="Operator-configured canonical proxy origin.",
+                detail="Configured browser-facing origin.",
                 warning=(
                     None
                     if origin.startswith("https://")
-                    else "Public reverse-proxy access should use HTTPS."
+                    else "This address uses unencrypted HTTP."
                 ),
                 eligible=True,
                 priority=_ROUTE_PRIORITY[AccessRouteKind.REVERSE_PROXY],

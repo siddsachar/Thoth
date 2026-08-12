@@ -30,6 +30,7 @@ from row_bot.access.tailscale import (
 )
 from row_bot.tunnel import TunnelManager, TunnelProvider
 from row_bot.ui.remote_access_settings import (
+    ExternallyManagedAccessError,
     LAN_RESTART_NOTICE,
     RemoteAccessActions,
     StaleInvitationRouteError,
@@ -117,22 +118,30 @@ def test_owner_actions_create_both_layouts_and_lifetimes(tmp_path) -> None:
     assert compact.next_path == "/?mobile=1"
 
 
-def test_owner_actions_create_custom_origin_for_both_layouts_and_lifetimes(
+def test_owner_actions_trust_origins_hot_apply_and_create_invitations(
     tmp_path,
 ) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    store = AccessRouteConfigStore(tmp_path / "routes.json")
+    policy = RuntimeAccessPolicy(
+        AccessConfig.build(
+            deployment_mode="server",
+            allowed_hosts=("localhost",),
+        )
+    )
     actions = RemoteAccessActions(
         service=service,
-        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        route_store=store,
+        runtime_access_policy=policy,
         authorizer=_owner_authorizer,
     )
 
-    desktop = actions.create_custom_invitation(
+    desktop = actions.trust_origin_and_create_invitation(
         layout="desktop",
         origin=ORIGIN,
         lifetime="trusted",
     )
-    compact = actions.create_custom_invitation(
+    compact = actions.trust_origin_and_create_invitation(
         layout="compact",
         origin="https://tablet.row-bot.example:8443",
         lifetime="temporary",
@@ -141,31 +150,41 @@ def test_owner_actions_create_custom_origin_for_both_layouts_and_lifetimes(
     assert desktop.invitation.session_lifetime is SessionLifetime.TRUSTED
     assert desktop.invitation.intended_origin == ORIGIN
     assert desktop.invitation.created_by == "settings_owner"
-    assert desktop.invitation.access_route == "settings_custom"
+    assert desktop.invitation.access_route == "settings_trusted_origin"
     assert desktop.next_path == "/"
     assert compact.invitation.session_lifetime is SessionLifetime.TEMPORARY
     assert compact.invitation.intended_origin == ("https://tablet.row-bot.example:8443")
     assert compact.invitation.created_by == "settings_owner"
-    assert compact.invitation.access_route == "settings_custom"
+    assert compact.invitation.access_route == "settings_trusted_origin"
     assert compact.next_path == "/?mobile=1"
+    assert store.load().configured_origins == (
+        ORIGIN,
+        "https://tablet.row-bot.example:8443",
+    )
+    effective = policy.snapshot().base_config
+    assert effective.origin_allowed(ORIGIN)
+    assert effective.host_allowed("tablet.row-bot.example:8443")
+    assert effective.host_allowed("tablet.row-bot.example:9443") is False
 
 
-def test_custom_origin_canonicalization_is_delegated_to_access_service(
+def test_trust_and_invite_reuses_one_canonical_origin(
     tmp_path,
 ) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    store = AccessRouteConfigStore(tmp_path / "routes.json")
     actions = RemoteAccessActions(
         service=service,
-        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        route_store=store,
         authorizer=_owner_authorizer,
     )
 
-    created = actions.create_custom_invitation(
+    created = actions.trust_origin_and_create_invitation(
         layout="desktop",
         origin=" HTTPS://ROW-BOT.EXAMPLE:443/ ",
         lifetime="trusted",
     )
 
+    assert store.load().configured_origins == (ORIGIN,)
     assert created.invitation.intended_origin == ORIGIN
     assert created.invitation_url().startswith(f"{ORIGIN}/connect?invitation=")
 
@@ -178,24 +197,32 @@ def test_custom_origin_canonicalization_is_delegated_to_access_service(
         "https://row-bot.example/path",
         "https://row-bot.example?query=1",
         "https://row-bot.example#fragment",
+        "https://*.row-bot.example",
         "https://row-bot.example:not-a-port",
+        "",
     ],
 )
-def test_invalid_custom_origins_create_no_invitation(tmp_path, origin: str) -> None:
+def test_invalid_trusted_origins_mutate_nothing(tmp_path, origin: str) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    store = AccessRouteConfigStore(tmp_path / "routes.json")
+    policy = RuntimeAccessPolicy(AccessConfig.build())
+    previous_snapshot = policy.snapshot()
     actions = RemoteAccessActions(
         service=service,
-        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        route_store=store,
+        runtime_access_policy=policy,
         authorizer=_owner_authorizer,
     )
 
     with pytest.raises(ValueError):
-        actions.create_custom_invitation(
+        actions.trust_origin_and_create_invitation(
             layout="desktop",
             origin=origin,
             lifetime="trusted",
         )
 
+    assert not store.path.exists()
+    assert policy.snapshot() is previous_snapshot
     assert service.list_invitations() == []
 
 
@@ -207,43 +234,140 @@ def test_invalid_custom_origins_create_no_invitation(tmp_path, origin: str) -> N
         ("desktop", "migrated"),
     ],
 )
-def test_invalid_custom_layouts_and_lifetimes_create_no_invitation(
+def test_invalid_trusted_layouts_and_lifetimes_mutate_nothing(
     tmp_path,
     layout: str,
     lifetime: str,
 ) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    store = AccessRouteConfigStore(tmp_path / "routes.json")
     actions = RemoteAccessActions(
         service=service,
-        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        route_store=store,
         authorizer=_owner_authorizer,
     )
 
     with pytest.raises(ValueError):
-        actions.create_custom_invitation(
+        actions.trust_origin_and_create_invitation(
             layout=layout,
             origin=ORIGIN,
             lifetime=lifetime,
         )
 
+    assert not store.path.exists()
     assert service.list_invitations() == []
 
 
-def test_unauthenticated_custom_origin_cannot_create_invitation(tmp_path) -> None:
+def test_unauthenticated_origin_cannot_be_trusted_or_removed(tmp_path) -> None:
     service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    store = AccessRouteConfigStore(tmp_path / "routes.json")
     actions = RemoteAccessActions(
         service=service,
-        route_store=AccessRouteConfigStore(tmp_path / "routes.json"),
+        route_store=store,
         authorizer=_unauthenticated_authorizer,
     )
 
     with pytest.raises(PermissionError, match="authentication_required"):
-        actions.create_custom_invitation(
+        actions.trust_origin_and_create_invitation(
+            layout="desktop",
+            origin=ORIGIN,
+            lifetime="trusted",
+        )
+    with pytest.raises(PermissionError, match="authentication_required"):
+        actions.remove_configured_origin(ORIGIN)
+
+    assert not store.path.exists()
+    assert service.list_invitations() == []
+
+
+def test_persistence_failure_prevents_runtime_change_and_invitation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    store = AccessRouteConfigStore(tmp_path / "routes.json")
+    policy = RuntimeAccessPolicy(AccessConfig.build())
+    previous_snapshot = policy.snapshot()
+    actions = RemoteAccessActions(
+        service=service,
+        route_store=store,
+        runtime_access_policy=policy,
+        authorizer=_owner_authorizer,
+    )
+
+    def fail_save(_config) -> None:
+        raise OSError("injected persistence failure")
+
+    monkeypatch.setattr(store, "save", fail_save)
+
+    with pytest.raises(OSError, match="injected persistence failure"):
+        actions.trust_origin_and_create_invitation(
             layout="desktop",
             origin=ORIGIN,
             lifetime="trusted",
         )
 
+    assert not store.path.exists()
+    assert policy.snapshot() is previous_snapshot
+    assert service.list_invitations() == []
+
+
+def test_removal_persists_before_runtime_replacement(tmp_path, monkeypatch) -> None:
+    store = AccessRouteConfigStore(tmp_path / "routes.json")
+    store.add_configured_origin(ORIGIN)
+    policy = RuntimeAccessPolicy(
+        AccessConfig.build(),
+        configured_origins=(ORIGIN,),
+    )
+    actions = RemoteAccessActions(
+        service=AccessService(AccessStore(tmp_path / "mobile.db")),
+        route_store=store,
+        runtime_access_policy=policy,
+        authorizer=_owner_authorizer,
+    )
+    original_set = policy.set_configured_origins
+    observed_persisted_origins: list[tuple[str, ...]] = []
+
+    def observe_set(origins):
+        observed_persisted_origins.append(store.load().configured_origins)
+        return original_set(origins)
+
+    monkeypatch.setattr(policy, "set_configured_origins", observe_set)
+
+    assert actions.refresh_route_inventory().by_kind(AccessRouteKind.REVERSE_PROXY)
+    assert actions.remove_configured_origin(ORIGIN) is True
+    assert observed_persisted_origins == [()]
+    assert store.load().configured_origins == ()
+    assert policy.snapshot().base_config is policy.base_config
+    assert actions.refresh_route_inventory().by_kind(AccessRouteKind.REVERSE_PROXY) == ()
+
+
+def test_environment_managed_host_policy_rejects_ui_mutations(tmp_path) -> None:
+    store = AccessRouteConfigStore(tmp_path / "routes.json")
+    store.add_configured_origin(ORIGIN)
+    policy = RuntimeAccessPolicy(AccessConfig.build())
+    previous_snapshot = policy.snapshot()
+    service = AccessService(AccessStore(tmp_path / "mobile.db"))
+    actions = RemoteAccessActions(
+        service=service,
+        route_store=store,
+        runtime_access_policy=policy,
+        environment_origins=("https://managed.example",),
+        host_admission_managed_externally=True,
+        authorizer=_owner_authorizer,
+    )
+
+    with pytest.raises(ExternallyManagedAccessError, match="ROW_BOT_ALLOWED_HOSTS"):
+        actions.trust_origin_and_create_invitation(
+            layout="desktop",
+            origin="https://new.example",
+            lifetime="trusted",
+        )
+    with pytest.raises(ExternallyManagedAccessError, match="ROW_BOT_ALLOWED_HOSTS"):
+        actions.remove_configured_origin(ORIGIN)
+
+    assert store.load().configured_origins == (ORIGIN,)
+    assert policy.snapshot() is previous_snapshot
     assert service.list_invitations() == []
 
 
@@ -718,6 +842,9 @@ def test_settings_provider_uses_process_cache_and_registered_manager_url_only() 
     assert "_process_tailscale_status_cache()" in settings_source
     assert "_tailscale_status_snapshot()" in provider_source
     assert "ngrok_url=tunnel_manager.get_url(_access_port)" in provider_source
+    assert "route_config = _access_route_store.load_or_default()" in provider_source
+    assert "*route_config.configured_origins" in provider_source
+    assert "*_environment_access_origins" in provider_source
     assert "._provider" not in provider_source
     assert "start_tunnel(" not in provider_source
     assert "detect(" not in provider_source
@@ -739,6 +866,8 @@ def test_settings_copy_covers_layouts_owner_access_qr_one_time_and_ngrok() -> No
     assert "must press Connect" in source
     assert "generate_qr_png_b64" in source
     assert "Copy invitation link" in source
+    assert "Add another trusted address" in source
+    assert "Trust address and create invitation" in source
     assert "ngrok — Public tunnel (Advanced)" in source
     assert "Row-Bot authentication is " in source
     assert "still required on its public endpoint" in source
@@ -829,7 +958,7 @@ def test_invitation_selector_surfaces_the_selected_route_warning() -> None:
     assert module._route_help_state(inventory, https_route.id) == ("", False)
     assert module._route_help_state(build_route_inventory(port=8080), None) == (
         "No cross-device route is ready. Check Tailscale, enable Local network, "
-        "or configure an HTTPS address.",
+        "or add a trusted address.",
         False,
     )
 
@@ -838,7 +967,7 @@ def test_invitation_selector_surfaces_the_selected_route_warning() -> None:
     assert "refresh_route_help()" in dialog_source
 
 
-def test_custom_origin_ui_is_collapsed_separate_and_disclosed() -> None:
+def test_trusted_origin_ui_adds_removes_and_discloses_boundaries() -> None:
     module = __import__(
         "row_bot.ui.remote_access_settings",
         fromlist=["RemoteAccessActions"],
@@ -848,36 +977,62 @@ def test_custom_origin_ui_is_collapsed_separate_and_disclosed() -> None:
         'ui.button(\n            "Create invitation"',
         1,
     )[0]
-    custom_handler = dialog_source.split("def create_custom() -> None:", 1)[1].split(
-        'ui.button(\n                "Create for configured address"',
+    trusted_handler = dialog_source.split("def trust_and_create() -> None:", 1)[
+        1
+    ].split(
+        "trust_button = ui.button(",
         1,
     )[0]
 
-    assert '"Use another configured address"' in dialog_source
+    assert '"Add another trusted address"' in dialog_source
     assert "value=False" in dialog_source
-    assert 'label="Browser-facing origin"' in dialog_source
+    assert 'label="Exact HTTP or HTTPS origin"' in dialog_source
     assert 'placeholder="https://row-bot.example.com"' in dialog_source
     assert '"Create invitation"' in dialog_source
-    assert '"Create for configured address"' in dialog_source
+    assert '"Trust address and create invitation"' in dialog_source
     assert "actions.create_invitation(" in route_handler
     assert "route_id=selected_route_id" in route_handler
-    assert "actions.create_custom_invitation(" not in route_handler
-    assert "actions.create_custom_invitation(" in custom_handler
-    assert "actions.create_invitation(" not in custom_handler
-    assert custom_handler.index("if not origin.strip()") < custom_handler.index(
-        "actions.create_custom_invitation("
+    assert "actions.trust_origin_and_create_invitation(" not in route_handler
+    assert "actions.trust_origin_and_create_invitation(" in trusted_handler
+    assert "actions.create_invitation(" not in trusted_handler
+    assert trusted_handler.index("if not origin.strip()") < trusted_handler.index(
+        "actions.trust_origin_and_create_invitation("
     )
     for boundary in (
-        "Cloudflare",
+        "DNS lookup",
         "DNS",
         "TLS",
-        "proxy trust",
+        "proxies",
         "firewall rules",
-        "Row-Bot's listen address",
+        "reachability",
+        "trusted-proxy",
     ):
         assert boundary in dialog_source
-    assert "only creates an invitation" in dialog_source
-    assert "does not configure or verify" in dialog_source
+    assert "HTTP traffic is unencrypted" in dialog_source
+    assert "actions.remove_configured_origin(" in dialog_source
+    assert "may stop immediately" in dialog_source
+    assert "Managed externally" in dialog_source
+    assert "ROW_BOT_ALLOWED_HOSTS" in dialog_source
+    assert "custom_origin.disable()" in dialog_source
+    assert "remove_button.disable()" in dialog_source
+
+
+def test_startup_and_settings_inject_one_live_policy_and_respect_managed_hosts() -> (
+    None
+):
+    app_source = Path("src/row_bot/app.py").read_text(encoding="utf-8")
+    settings_source = Path("src/row_bot/ui/settings.py").read_text(encoding="utf-8")
+
+    assert "_access_route_config = _access_route_store.load_or_default()" in app_source
+    assert app_source.count("_access_route_store.load_or_default()") == 1
+    assert '"ROW_BOT_ALLOWED_HOSTS" in os.environ' in app_source
+    assert "else _access_route_config.configured_origins" in app_source
+    assert "runtime_access_policy=_runtime_access_policy" in app_source
+    assert "runtime_access_policy: RuntimeAccessPolicy | None = None" in settings_source
+    assert settings_source.count(
+        "runtime_access_policy=runtime_access_policy"
+    ) >= 2
+    assert "host_admission_managed_externally" in settings_source
 
 
 def test_route_inventory_can_be_injected_without_detection() -> None:

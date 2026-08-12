@@ -15,7 +15,7 @@ import os
 import pathlib
 import time
 from datetime import datetime
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from row_bot.brand import APP_DISPLAY_NAME, DEFAULT_DATA_DIR_NAME
 from row_bot.data_paths import get_row_bot_data_dir
@@ -34,6 +34,9 @@ from row_bot.ui.performance import (
     timed_ui_section,
 )
 from row_bot.ui.timer_utils import defer_ui, safe_ui_task
+
+if TYPE_CHECKING:
+    from row_bot.access.runtime_policy import RuntimeAccessPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -349,6 +352,7 @@ def open_settings(
     initial_tab: str = "Providers",
     *,
     mobile: bool = False,
+    runtime_access_policy: RuntimeAccessPolicy | None = None,
 ) -> None:
     """Build and open the maximised settings dialog.
 
@@ -418,7 +422,13 @@ def open_settings(
         p.settings_dlg.close()
         if tab == "Cloud":
             tab = "Providers"
-        open_settings(state, p, initial_tab=tab, mobile=mobile)
+        open_settings(
+            state,
+            p,
+            initial_tab=tab,
+            mobile=mobile,
+            runtime_access_policy=runtime_access_policy,
+        )
 
     def _close_settings() -> None:
         settings_generation.invalidate()
@@ -3492,7 +3502,10 @@ def open_settings(
             )
             else None
         )
-        _public_access_origins = AccessConfig.from_env().public_origins
+        _environment_access_origins = AccessConfig.from_env().public_origins
+        _host_admission_managed_externally = (
+            "ROW_BOT_ALLOWED_HOSTS" in os.environ
+        )
 
         def _tailscale_status_snapshot():
             return _tailscale_status_cache.get(
@@ -3511,15 +3524,19 @@ def open_settings(
 
         def _route_inventory_provider():
             tailscale_snapshot = _tailscale_status_snapshot()
+            route_config = _access_route_store.load_or_default()
             return build_route_inventory(
                 port=_access_port,
-                config=_access_route_store.load_or_default(),
+                config=route_config,
                 lan_addresses=discover_private_lan_addresses(),
                 tailscale_state=(
                     tailscale_snapshot.status if tailscale_snapshot else None
                 ),
                 ngrok_url=tunnel_manager.get_url(_access_port),
-                reverse_proxy_origins=_public_access_origins,
+                reverse_proxy_origins=(
+                    *route_config.configured_origins,
+                    *_environment_access_origins,
+                ),
                 current_server_origin=_current_server_origin,
             )
 
@@ -3547,6 +3564,11 @@ def open_settings(
             ),
             restart_child=_request_access_restart,
             tailscale_controller=TailscaleServeController(),
+            runtime_access_policy=runtime_access_policy,
+            environment_origins=_environment_access_origins,
+            host_admission_managed_externally=(
+                _host_admission_managed_externally
+            ),
             port=_access_port,
             status_dot=_status_dot,
             metric_chip=_metric_chip,

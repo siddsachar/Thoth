@@ -218,6 +218,75 @@ def test_unexpected_host_and_untrusted_forwarding_are_rejected() -> None:
     assert forwarded.json()["error"] == "untrusted_forwarding_headers"
 
 
+def test_configured_origin_hot_apply_and_removal_change_exact_http_admission() -> None:
+    origin = "http://trusted.example:8443"
+    policy = RuntimeAccessPolicy(_server_config())
+    client = _app(policy.base_config, runtime_policy=policy)
+    headers = {
+        "host": "trusted.example:8443",
+        "x-test-session": "desktop",
+    }
+
+    before = client.get("/context", headers=headers)
+    policy.set_configured_origins((origin,))
+    admitted = client.get("/context", headers=headers)
+    wrong_port = client.get(
+        "/context",
+        headers={**headers, "host": "trusted.example:8444"},
+    )
+    spoofed_forwarding = client.get(
+        "/context",
+        headers={**headers, "x-forwarded-for": "198.51.100.25"},
+    )
+    policy.set_configured_origins(())
+    removed = client.get("/context", headers=headers)
+
+    assert before.status_code == 400
+    assert admitted.status_code == 200
+    assert admitted.json()["origin"] == origin
+    assert wrong_port.status_code == 400
+    assert wrong_port.json()["error"] == "unexpected_host"
+    assert spoofed_forwarding.status_code == 400
+    assert spoofed_forwarding.json()["error"] == "untrusted_forwarding_headers"
+    assert removed.status_code == 400
+    assert removed.json()["error"] == "unexpected_host"
+
+
+def test_configured_origin_hot_apply_and_removal_change_websocket_admission() -> None:
+    origin = "http://trusted.example:8443"
+    policy = RuntimeAccessPolicy(_server_config())
+    client = _app(policy.base_config, runtime_policy=policy)
+    headers = {
+        "host": "trusted.example:8443",
+        "origin": origin,
+        "x-test-session": "desktop",
+    }
+
+    policy.set_configured_origins((origin,))
+    with client.websocket_connect("/ws", headers=headers) as websocket:
+        websocket.send_text("trusted")
+        assert websocket.receive_text() == "trusted"
+
+    with pytest.raises(WebSocketDisconnect) as wrong_port:
+        with client.websocket_connect(
+            "/ws",
+            headers={
+                **headers,
+                "host": "trusted.example:8444",
+                "origin": "http://trusted.example:8444",
+            },
+        ):
+            pass
+
+    policy.set_configured_origins(())
+    with pytest.raises(WebSocketDisconnect) as removed:
+        with client.websocket_connect("/ws", headers=headers):
+            pass
+
+    assert wrong_port.value.code == 1008
+    assert removed.value.code == 1008
+
+
 def test_trusted_proxy_supplies_validated_origin_and_effective_client() -> None:
     client = _app(
         _server_config(
