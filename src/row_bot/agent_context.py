@@ -110,14 +110,25 @@ def load_parent_context(parent_thread_id: str, *, recent_limit: int = 8) -> dict
     if not parent_thread_id:
         return {"summary": "", "recent": "", "full": "", "message_count": 0}
     try:
-        from row_bot.threads import get_latest_checkpoint_messages, load_thread_summary
+        from row_bot.threads import get_latest_checkpoint_messages, load_validated_summary_state
 
         messages = get_latest_checkpoint_messages(parent_thread_id)
-        summary_payload = load_thread_summary(parent_thread_id) or {}
+        summary_payload = (
+            load_validated_summary_state(parent_thread_id, "agent", messages=messages)
+            or load_validated_summary_state(parent_thread_id, "chat_only", messages=messages)
+            or {}
+        )
     except Exception:
         messages = []
         summary_payload = {}
-    summary = str(summary_payload.get("summary") or "")
+    summary_text = str(summary_payload.get("summary") or "").strip()
+    summary = (
+        '<HISTORICAL_CONTEXT untrusted="true">\n'
+        + summary_text
+        + "\n</HISTORICAL_CONTEXT>"
+        if summary_text
+        else ""
+    )
     return {
         "summary": summary,
         "recent": transcript_to_text(messages, limit=recent_limit),

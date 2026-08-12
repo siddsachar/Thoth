@@ -1686,6 +1686,25 @@ def add_chat_message(
     """Append a rendered chat message to the chat container."""
     if p.chat_container is None:
         return
+    if msg.get("role") == "context_event":
+        severity = str(msg.get("severity") or "info")
+        icon = str(msg.get("icon") or ("warning" if severity == "warning" else "compress"))
+        text = str(msg.get("content") or "")
+        stamp = str(msg.get("timestamp") or "")
+        tone = "rgba(245, 158, 11, 0.10)" if severity == "warning" else "rgba(255,255,255,0.035)"
+        border = "rgba(245, 158, 11, 0.30)" if severity == "warning" else "rgba(255,255,255,0.10)"
+        with p.chat_container:
+            with ui.row().classes(
+                "row-bot-context-event row-bot-tool-trace w-full items-center no-wrap gap-2"
+            ).props("data-docs-id=context-event-row").style(
+                f"padding: 5px 9px; border: 1px solid {border}; border-radius: 8px; "
+                f"background: {tone}; opacity: 0.82; min-height: 28px;"
+            ) as event_row:
+                ui.icon(icon, size="14px").classes("text-grey-5 shrink-0")
+                ui.label(text).classes("text-xs text-grey-5 flex-grow")
+                if stamp:
+                    ui.label(stamp).classes("text-xs text-grey-7 shrink-0")
+        return event_row
     is_user = msg["role"] == "user"
     avatar_cls = "row-bot-avatar row-bot-avatar-user" if is_user else "row-bot-avatar row-bot-avatar-bot"
     if is_user:

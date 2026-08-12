@@ -207,6 +207,7 @@ def _run_agent_sync(user_text: str, config: dict) -> tuple[str, dict | None, lis
     enabled = [t.name for t in tool_registry.get_enabled_tools()]
     full_answer: list[str] = []
     tool_reports: list[str] = []
+    context_notices: list[dict] = []
     interrupt_data: dict | None = None
 
     for event_type, payload in agent_mod.stream_agent(user_text, enabled, config):
@@ -219,6 +220,12 @@ def _run_agent_sync(user_text: str, config: dict) -> tuple[str, dict | None, lis
             tool_reports.append(f"✅ {name} done")
         elif event_type == "interrupt":
             interrupt_data = payload
+        elif event_type == "compaction_succeeded" and isinstance(payload, dict):
+            if int(payload.get("event_id") or 0):
+                context_notices.append({
+                    "event_id": int(payload["event_id"]),
+                    "display_copy": str(payload.get("display_copy") or ""),
+                })
         elif event_type == "error":
             full_answer.append(f"⚠️ Error: {payload}")
         elif event_type == "done":
@@ -231,7 +238,7 @@ def _run_agent_sync(user_text: str, config: dict) -> tuple[str, dict | None, lis
     if tool_reports and not answer:
         answer = "\n".join(tool_reports)
 
-    return answer or "(No response)", interrupt_data, []
+    return answer or "(No response)", interrupt_data, context_notices
 
 
 def _resume_agent_sync(config: dict, approved: bool,
@@ -244,6 +251,7 @@ def _resume_agent_sync(config: dict, approved: bool,
     enabled = [t.name for t in tool_registry.get_enabled_tools()]
     full_answer: list[str] = []
     tool_reports: list[str] = []
+    context_notices: list[dict] = []
     interrupt_data: dict | None = None
 
     for event_type, payload in agent_mod.resume_stream_agent(
@@ -258,6 +266,12 @@ def _resume_agent_sync(config: dict, approved: bool,
             tool_reports.append(f"✅ {name} done")
         elif event_type == "interrupt":
             interrupt_data = payload
+        elif event_type == "compaction_succeeded" and isinstance(payload, dict):
+            if int(payload.get("event_id") or 0):
+                context_notices.append({
+                    "event_id": int(payload["event_id"]),
+                    "display_copy": str(payload.get("display_copy") or ""),
+                })
         elif event_type == "error":
             full_answer.append(f"Error: {payload}")
         elif event_type == "done":
@@ -270,7 +284,7 @@ def _resume_agent_sync(config: dict, approved: bool,
     elif tool_reports:
         answer = "\n".join(tool_reports)
 
-    return answer or "(No response)", interrupt_data, []
+    return answer or "(No response)", interrupt_data, context_notices
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -508,7 +522,7 @@ async def _handle_inbound_sms(request) -> Any:
         ch_runtime.resolve_goal_approval_for_config(config, approved)
 
         loop = asyncio.get_event_loop()
-        answer, new_interrupt, _ = await loop.run_in_executor(
+        answer, new_interrupt, context_notices = await loop.run_in_executor(
             None,
             lambda: _resume_agent_sync(
                 config, approved, interrupt_ids=interrupt_ids
@@ -516,6 +530,14 @@ async def _handle_inbound_sms(request) -> Any:
         )
         if answer and not ch_runtime.channel_turn_is_suspended(answer):
             _send_reply(from_number, answer)
+        if context_notices:
+            from row_bot.channels.streaming import deliver_context_notices_sync
+
+            deliver_context_notices_sync(
+                context_notices,
+                channel="sms",
+                send_text=lambda message: _send_reply(from_number, message),
+            )
         if new_interrupt:
             with _pending_lock:
                 _pending_interrupts[from_number] = {
@@ -553,7 +575,7 @@ async def _handle_inbound_sms(request) -> Any:
 
     loop = asyncio.get_event_loop()
     try:
-        answer, interrupt_data, _ = await loop.run_in_executor(
+        answer, interrupt_data, context_notices = await loop.run_in_executor(
             None, _run_agent_sync, body, config
         )
     except Exception as exc:
@@ -566,7 +588,7 @@ async def _handle_inbound_sms(request) -> Any:
                     None, repair_orphaned_tool_calls, None, config
                 )
                 log.info("Repaired orphaned tool calls for %s, retrying", from_number)
-                answer, interrupt_data, _ = await loop.run_in_executor(
+                answer, interrupt_data, context_notices = await loop.run_in_executor(
                     None, _run_agent_sync, body, config
                 )
             except Exception as retry_exc:
@@ -583,6 +605,14 @@ async def _handle_inbound_sms(request) -> Any:
 
     if answer and not ch_runtime.channel_turn_is_suspended(answer):
         _send_reply(from_number, answer)
+    if context_notices:
+        from row_bot.channels.streaming import deliver_context_notices_sync
+
+        deliver_context_notices_sync(
+            context_notices,
+            channel="sms",
+            send_text=lambda message: _send_reply(from_number, message),
+        )
 
     if interrupt_data:
         with _pending_lock:

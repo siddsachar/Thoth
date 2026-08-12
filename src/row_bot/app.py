@@ -341,6 +341,11 @@ _patch_json_serializer()
 from row_bot.ui.state import (
     AppState, GenerationState, P,
     _active_generations,
+    active_context_identity,
+    cache_and_project_context_usage,
+    canonical_context_model_ref,
+    clear_context_usage_projection,
+    context_history_present,
     startup_ready, startup_status, startup_warnings,
 )
 from row_bot.ui.constants import EXAMPLE_PROMPTS, welcome_message
@@ -432,12 +437,6 @@ def _load_channel_modules() -> list[str]:
             skipped.append(f"{module_name}: {exc}")
             logger.info("Optional channel module skipped: %s (%s)", module_name, exc)
     return skipped
-
-
-def _get_token_usage_lazy(config: dict | None = None, model_override: str | None = None) -> tuple[int, int]:
-    from row_bot.agent import get_token_usage
-
-    return get_token_usage(config, model_override=model_override)
 
 
 def _startup_fields(**fields) -> str:
@@ -1766,6 +1765,37 @@ async def index():
     # started in the meantime, the stale hydration aborts.
     _rebuild_gen = [0]
 
+    def _load_active_context_projection() -> dict | None:
+        """Load a current or explicitly last-measured display snapshot."""
+        thread_id, model_ref = active_context_identity(state)
+        if not thread_id or not model_ref:
+            clear_context_usage_projection(state)
+            return None
+        try:
+            from row_bot.threads import load_context_usage
+
+            current = state.context_usage
+            if (
+                isinstance(current, dict)
+                and state.context_usage_thread_id == thread_id
+                and canonical_context_model_ref(state.context_usage_model_ref) == model_ref
+                and canonical_context_model_ref(current.get("model_ref")) == model_ref
+                and thread_id in _active_generations
+            ):
+                return current
+            clear_context_usage_projection(state)
+            usage = load_context_usage(
+                thread_id,
+                expected={"model_ref": model_ref},
+                allow_stale=True,
+            )
+        except Exception:
+            logger.debug("Context snapshot load failed", exc_info=True)
+            usage = None
+        if usage is not None:
+            cache_and_project_context_usage(state, thread_id, usage)
+        return state.context_usage
+
     def _rebuild_main(immediate: bool = False, reason: str = "unspecified") -> None:
         """Rebuild the main content column.
 
@@ -1780,6 +1810,7 @@ async def index():
         """
         if p.main_col is None:
             return
+        _load_active_context_projection()
         _started = time.perf_counter()
         # Designer needs full width; other views use centered max-w-7xl
         if _mobile_client:
@@ -2761,103 +2792,21 @@ async def index():
                 rebuild_thread_list()
             asyncio.create_task(_voice_bridge.submit_user_transcript(text))
 
-    _token_counter_state = {
-        "in_flight": False,
-        "key": None,
-        "last": None,
-        "scheduled_key": None,
-        "generation": 0,
-    }
-
-    def _render_token_counter(used: int, max_tokens: int) -> None:
-        pct = min(used / max_tokens, 1.0) if max_tokens else 0.0
-
-        def _fmt(val):
-            if val >= 1_000_000:
-                return f"{val / 1_000_000:.1f}M"
-            if val >= 1_000:
-                return f"{val / 1_000:.1f}K"
-            return str(val)
-
-        if p.token_label:
-            p.token_label.text = f"Context: {_fmt(used)} / {_fmt(max_tokens)} ({pct:.0%})"
-        if p.token_bar:
-            p.token_bar.value = pct
-
-    async def _refresh_token_counter_async(key, config, model_override) -> None:
-        started = time.perf_counter()
-        try:
-            used, max_tokens = await run.io_bound(
-                lambda: _get_token_usage_lazy(config, model_override=model_override)
-            )
-        except Exception:
-            logger.debug("Token counter refresh failed", exc_info=True)
-            return
-        finally:
-            _token_counter_state["in_flight"] = False
-
-        elapsed = time.perf_counter() - started
-        if elapsed >= 1.0:
-            logger.info("perf: token counter refresh took %.3fs", elapsed)
-        current_key = (
-            state.thread_id,
-            state.thread_model_override or "",
-            len(state.messages),
-        )
-        if key != current_key:
-            return
-        _token_counter_state["last"] = (used, max_tokens)
-        _render_token_counter(used, max_tokens)
-
-    async def _schedule_token_counter_async(key, config, model_override, generation: int) -> None:
-        await asyncio.sleep(0.75)
-        current_key = (
-            state.thread_id,
-            state.thread_model_override or "",
-            len(state.messages),
-        )
-        if generation != _token_counter_state["generation"] or key != current_key:
-            if _token_counter_state.get("scheduled_key") == key:
-                _token_counter_state["scheduled_key"] = None
-            return
-        if _token_counter_state["in_flight"]:
-            return
-        _token_counter_state["scheduled_key"] = None
-        _token_counter_state["in_flight"] = True
-        await _refresh_token_counter_async(key, config, model_override)
-
     def _update_token_counter() -> None:
-        if state.is_generating or (state.thread_id and state.thread_id in _active_generations):
-            return
-        config = {"configurable": {"thread_id": state.thread_id}} if state.thread_id else None
-        model_override = state.thread_model_override or None
-        key = (
-            state.thread_id,
-            state.thread_model_override or "",
-            len(state.messages),
-        )
-        if _token_counter_state["in_flight"]:
-            return
-        if _token_counter_state["key"] == key and _token_counter_state.get("last"):
-            last = _token_counter_state.get("last")
-            _render_token_counter(*last)
-            return
-        if _token_counter_state.get("scheduled_key") == key:
-            return
-        _token_counter_state["key"] = key
-        _token_counter_state["scheduled_key"] = key
-        _token_counter_state["generation"] += 1
-        generation = _token_counter_state["generation"]
-        safe_ui_task(
-            lambda: _schedule_token_counter_async(key, config, model_override, generation),
-            context="token counter refresh",
-        )
+        """Render only a validated persisted/event snapshot; never recount on a timer."""
+        usage = _load_active_context_projection()
+        if p.context_meter:
+            p.context_meter.update(
+                usage,
+                capacity_state=state.context_capacity_state,
+                effective_limit_tokens=state.context_capacity_effective_tokens,
+                has_history=context_history_present(state),
+            )
 
     _notification_timer = safe_timer(1.0, _poll_notifications)
     _voice_timer = safe_timer(0.3, _poll_voice)
     _agent_card_timer = safe_timer(1.0, _poll_agent_card_refresh)
-    _token_timer = safe_timer(5.0, _update_token_counter)
-    deactivate_on_disconnect(_notification_timer, _voice_timer, _agent_card_timer, _token_timer)
+    deactivate_on_disconnect(_notification_timer, _voice_timer, _agent_card_timer)
 
     # ── Build initial view ───────────────────────────────────────────────
     _rebuild_main()

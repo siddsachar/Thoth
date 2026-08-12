@@ -390,3 +390,59 @@ def test_engine_handles_cancellation_without_false_final_success() -> None:
     assert result.finalized is False
     assert result.error == "cancelled"
     assert [op for op, _payload in operations if op == "send_final"] == []
+
+
+def test_compaction_notice_is_separate_and_claimed_exactly_once(monkeypatch) -> None:
+    claims: set[int] = set()
+    completions: list[tuple[int, list[str]]] = []
+
+    def claim(event_id: int, channel: str):
+        if event_id in claims:
+            return None
+        claims.add(event_id)
+        assert channel == "fake"
+        return {
+            "display_copy": (
+                "Context compacted â€” Older conversation was summarized so this chat can continue. "
+                "Recent messages were preserved."
+            )
+        }
+
+    monkeypatch.setattr("row_bot.threads.claim_thread_event_delivery", claim)
+    monkeypatch.setattr(
+        "row_bot.threads.complete_thread_event_delivery",
+        lambda event_id, platform_refs=None, error="": completions.append(
+            (event_id, list(platform_refs or []))
+        ),
+    )
+
+    async def run_case():
+        first_transport = FakeTransport(max_units=500)
+        second_transport = FakeTransport(max_units=500)
+        payload = {
+            "event_id": 42,
+            "display_copy": "must be read from persisted event",
+        }
+        first = _consumer(first_transport, FakeClock())
+        second = _consumer(second_transport, FakeClock())
+        first_result = await first.consume_events(_events([
+            ("compaction_succeeded", payload),
+            ("token", "answer"),
+        ]))
+        second_result = await second.consume_events(_events([
+            ("compaction_succeeded", payload),
+            ("token", "resumed answer"),
+        ]))
+        return first_result, second_result, first_transport.operations, second_transport.operations
+
+    first_result, second_result, first_ops, second_ops = asyncio.run(run_case())
+
+    notice = (
+        "Context compacted â€” Older conversation was summarized so this chat can continue. "
+        "Recent messages were preserved."
+    )
+    assert first_result.final_text == "answer"
+    assert second_result.final_text == "resumed answer"
+    assert ("send_final", notice) in first_ops
+    assert ("send_final", notice) not in second_ops
+    assert completions == [(42, ["message-1"])]

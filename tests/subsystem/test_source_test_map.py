@@ -156,6 +156,29 @@ def test_prompt_context_change_selects_prompt_and_provider_regressions() -> None
     assert not selection.unmatched_files
 
 
+def test_context_compaction_crosses_ui_persistence_and_channel_streaming_ownership() -> None:
+    selection = select_tests_for_changes([
+        "src/row_bot/agent.py",
+        "src/row_bot/threads.py",
+        "src/row_bot/ui/chat_components.py",
+        "src/row_bot/ui/mobile_chat.py",
+        "src/row_bot/ui/streaming.py",
+        "src/row_bot/channels/streaming.py",
+    ])
+
+    assert "context_window_compaction" in selection.matched_rules
+    assert "tests/subsystem/agents/test_context_preparation.py" in selection.test_paths
+    assert "tests/subsystem/agents/test_context_compaction.py" in selection.test_paths
+    assert "tests/subsystem/agents/test_context_persistence.py" in selection.test_paths
+    assert "tests/test_agent_context.py" in selection.test_paths
+    assert "tests/test_agent_readiness.py" in selection.test_paths
+    assert "tests/test_provider_runtime.py" in selection.test_paths
+    assert "tests/test_context_meter_ui.py" in selection.test_paths
+    assert "tests/subsystem/channels/test_channel_streaming_engine.py" in selection.test_paths
+    assert "tests/subsystem/mobile" in selection.test_paths
+    assert not selection.unmatched_files
+
+
 def test_updater_change_selects_updater_and_installer_contracts() -> None:
     selection = select_tests_for_changes(["src/row_bot/updater.py"])
 

@@ -279,7 +279,6 @@ def test_agent_pre_model_trim_injects_policy_block_and_touches_only_selected(tmp
     )
 
     monkeypatch.setattr(agent, "get_context_size", lambda: 32_000)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr(agent, "_keep_browser_snapshots", lambda: 2)
     monkeypatch.setattr(agent, "is_background_workflow", lambda: False)
     monkeypatch.setattr(agent, "get_current_model", lambda: "gpt-4o")

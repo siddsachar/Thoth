@@ -104,6 +104,72 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
+def deliver_context_notices_sync(
+    notices: Iterable[dict[str, Any]],
+    *,
+    channel: str,
+    send_text: Callable[[str], Any],
+) -> None:
+    """Deliver claimed presentation notices exactly once for synchronous channels."""
+    from row_bot.threads import (
+        CONTEXT_COMPACTED_COPY,
+        claim_thread_event_delivery,
+        complete_thread_event_delivery,
+    )
+
+    for notice in notices:
+        event_id = int((notice or {}).get("event_id") or 0)
+        claimed = claim_thread_event_delivery(event_id, channel) if event_id else None
+        if not claimed:
+            continue
+        try:
+            result = send_text(str(claimed.get("display_copy") or CONTEXT_COMPACTED_COPY))
+            refs = result if isinstance(result, list) else []
+            complete_thread_event_delivery(event_id, platform_refs=[str(ref) for ref in refs])
+        except Exception as exc:
+            complete_thread_event_delivery(event_id, error=type(exc).__name__)
+            log.warning(
+                "Context notice delivery failed channel=%s event_id=%s error=%s",
+                channel,
+                event_id,
+                type(exc).__name__,
+            )
+
+
+async def deliver_context_notices_async(
+    notices: Iterable[dict[str, Any]],
+    *,
+    channel: str,
+    send_text: Callable[[str], Any],
+) -> None:
+    """Deliver claimed presentation notices exactly once for asynchronous channels."""
+    from row_bot.threads import (
+        CONTEXT_COMPACTED_COPY,
+        claim_thread_event_delivery,
+        complete_thread_event_delivery,
+    )
+
+    for notice in notices:
+        event_id = int((notice or {}).get("event_id") or 0)
+        claimed = claim_thread_event_delivery(event_id, channel) if event_id else None
+        if not claimed:
+            continue
+        try:
+            result = await _maybe_await(
+                send_text(str(claimed.get("display_copy") or CONTEXT_COMPACTED_COPY))
+            )
+            refs = result if isinstance(result, list) else []
+            complete_thread_event_delivery(event_id, platform_refs=[str(ref) for ref in refs])
+        except Exception as exc:
+            complete_thread_event_delivery(event_id, error=type(exc).__name__)
+            log.warning(
+                "Context notice delivery failed channel=%s event_id=%s error=%s",
+                channel,
+                event_id,
+                type(exc).__name__,
+            )
+
+
 class ChannelStreamConsumer:
     """Consume agent stream events and deliver platform-safe channel updates."""
 
@@ -123,6 +189,7 @@ class ChannelStreamConsumer:
         self.tool_reports: list[str] = []
         self.status_lines: list[str] = []
         self.interrupt_data: Any | None = None
+        self.context_notices: list[dict[str, Any]] = []
         self._handle: Any | None = None
         self._started_at = self._monotonic()
         self._last_update_at = 0.0
@@ -158,6 +225,7 @@ class ChannelStreamConsumer:
             )
             finalize_started = self._monotonic()
             result = await self._finalize(resolved_final)
+            await self._deliver_context_notices()
             duration_ms = (self._monotonic() - finalize_started) * 1000.0
             log.info(
                 "Channel stream finalize completed channel=%s transport=%s "
@@ -248,13 +316,54 @@ class ChannelStreamConsumer:
                 self.status_lines.append(f"{label} done")
         elif event_type == "summarizing":
             if not self.config.sparse_progress:
-                self.status_lines.append("Summarizing...")
+                self.status_lines.append("Compacting context...")
+        elif event_type == "compaction_started":
+            if not self.config.sparse_progress:
+                self.status_lines.append("Compacting context...")
+        elif event_type == "compaction_succeeded" and isinstance(payload, dict):
+            event_id = int(payload.get("event_id") or 0)
+            if event_id and not any(int(item.get("event_id") or 0) == event_id for item in self.context_notices):
+                self.context_notices.append({
+                    "event_id": event_id,
+                    "display_copy": str(payload.get("display_copy") or ""),
+                })
         elif event_type == "interrupt":
             self.interrupt_data = payload
         elif event_type == "error":
             self.answer_tokens.append(f"\nWarning: Error: {payload}")
         elif event_type == "done" and payload and not self.answer_tokens:
             self.answer_tokens.append(str(payload))
+
+    async def _deliver_context_notices(self) -> None:
+        """Send each persisted compaction notice once on the originating channel."""
+        if not self.context_notices:
+            return
+        from row_bot.threads import (
+            CONTEXT_COMPACTED_COPY,
+            claim_thread_event_delivery,
+            complete_thread_event_delivery,
+        )
+
+        for notice in self.context_notices:
+            event_id = int(notice.get("event_id") or 0)
+            claimed = claim_thread_event_delivery(event_id, self.config.channel)
+            if not claimed:
+                continue
+            copy = str(claimed.get("display_copy") or CONTEXT_COMPACTED_COPY)
+            try:
+                refs = await self._call_with_retry(self.transport.send_final, copy)
+                complete_thread_event_delivery(
+                    event_id,
+                    platform_refs=[str(ref) for ref in list(refs or [])],
+                )
+            except Exception as exc:
+                complete_thread_event_delivery(event_id, error=type(exc).__name__)
+                log.warning(
+                    "Context notice delivery failed channel=%s event_id=%s error=%s",
+                    self.config.channel,
+                    event_id,
+                    type(exc).__name__,
+                )
 
     def _tool_label(self, payload: Any) -> str:
         if isinstance(payload, dict):

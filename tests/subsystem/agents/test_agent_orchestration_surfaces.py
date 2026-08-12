@@ -682,7 +682,6 @@ def test_required_group_join_stays_in_one_streamed_parent_generation(
         yield "done", "The joined evidence supports the result."
 
     monkeypatch.setattr(agent, "get_agent_graph", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(agent, "_should_summarize", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         agent,
         "_new_agent_graph_input",

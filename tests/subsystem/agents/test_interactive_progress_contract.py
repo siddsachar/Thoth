@@ -22,7 +22,6 @@ def _quiet_prompt_dependencies(agent, monkeypatch) -> None:
         trace={},
     )
     monkeypatch.setattr(agent, "get_context_size", lambda *args, **kwargs: 200_000)
-    monkeypatch.setattr(agent, "trim_messages", lambda messages, **kwargs: list(messages))
     monkeypatch.setattr("row_bot.prompts.get_platform_context", lambda: "")
     monkeypatch.setattr("row_bot.self_knowledge.build_static_self_knowledge_block", lambda: "")
     monkeypatch.setattr("row_bot.self_knowledge.build_dynamic_self_knowledge_block", lambda: "")

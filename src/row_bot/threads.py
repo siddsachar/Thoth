@@ -2,11 +2,12 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 import logging
 import sqlite3
 import uuid
-import os
 import pathlib
 import json
 import time
 import gc
+import hashlib
+import threading
 from datetime import datetime, timedelta
 
 from row_bot.data_paths import get_row_bot_data_dir
@@ -30,6 +31,8 @@ _THREAD_META_COLUMNS = {
     "skills_override": "TEXT DEFAULT ''",
     "summary": "TEXT DEFAULT ''",
     "summary_msg_count": "INTEGER DEFAULT 0",
+    "summary_state_json": "TEXT NOT NULL DEFAULT ''",
+    "context_usage_json": "TEXT NOT NULL DEFAULT ''",
     "project_id": "TEXT DEFAULT ''",
     "thread_type": "TEXT DEFAULT ''",
     "developer_workspace_id": "TEXT DEFAULT ''",
@@ -74,6 +77,22 @@ def _init_thread_db(*, raise_on_error: bool = False):
                     "AND COALESCE(developer_workspace_id, '') != '' "
                     "AND COALESCE(thread_type, '') = 'code'"
                 )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS thread_events ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "thread_id TEXT NOT NULL, "
+                "event_type TEXT NOT NULL, "
+                "event_key TEXT NOT NULL UNIQUE, "
+                "payload_json TEXT NOT NULL DEFAULT '{}', "
+                "after_message_id TEXT NOT NULL DEFAULT '', "
+                "after_message_count INTEGER NOT NULL DEFAULT 0, "
+                "source_revision TEXT NOT NULL DEFAULT '', "
+                "created_at TEXT NOT NULL)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_thread_events_thread_order "
+                "ON thread_events(thread_id, id)"
+            )
             conn.commit()
         logger.debug("Thread database initialised at %s", DB_PATH)
     except Exception:
@@ -823,6 +842,10 @@ def _delete_thread(thread_id: str):
         logger.warning("Failed to clean up Agent Run state for thread %s", thread_id, exc_info=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute("DELETE FROM thread_meta WHERE thread_id = ?", (thread_id,))
+    try:
+        conn.execute("DELETE FROM thread_events WHERE thread_id = ?", (thread_id,))
+    except sqlite3.OperationalError:
+        pass
     # Purge LangGraph checkpoint data to prevent zombie threads
     # Tables are created by LangGraph at runtime — may not exist yet
     try:
@@ -832,12 +855,6 @@ def _delete_thread(thread_id: str):
         pass
     conn.commit()
     conn.close()
-    # Clear any cached summary for this thread
-    try:
-        from row_bot.agent import clear_summary_cache
-        clear_summary_cache(thread_id)
-    except Exception:
-        pass
     # Clean up media sidecar and non-persistent media files
     try:
         sidecar = _thread_ui_media_path(thread_id)
@@ -938,12 +955,6 @@ def purge_external_state(thread_id: str) -> None:
     try:
         from row_bot.tasks import stop_task
         stop_task(thread_id)
-    except Exception:
-        pass
-    # Agent summary cache
-    try:
-        from row_bot.agent import clear_summary_cache
-        clear_summary_cache(thread_id)
     except Exception:
         pass
     # Shell tool
@@ -1114,43 +1125,480 @@ def set_thread_skills_override(thread_id: str, skill_names: list[str] | None) ->
     conn.close()
 
 
-def save_thread_summary(thread_id: str, summary: str, msg_count: int) -> None:
-    """Persist the context summary for a thread to the database."""
-    _ensure_thread_db()
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "UPDATE thread_meta SET summary = ?, summary_msg_count = ? WHERE thread_id = ?",
-        (summary, msg_count, thread_id),
-    )
-    conn.commit()
-    conn.close()
+SUMMARY_STATE_SCHEMA_VERSION = 1
+CONTEXT_USAGE_SCHEMA_VERSION = 2
+_CONTEXT_USAGE_SAVE_LOCK = threading.Lock()
+CONTEXT_COMPACTED_COPY = (
+    "Context compacted — Older conversation was summarized so this chat can continue. "
+    "Recent messages were preserved."
+)
+CONTEXT_COMPACTION_FAILED_COPY = (
+    "Context compaction failed. Retry, choose a larger-context model, or adjust the context setting."
+)
 
 
-def load_thread_summary(thread_id: str) -> dict | None:
-    """Load the persisted summary for a thread, or None if none exists."""
+def _message_content_for_digest(message) -> object:
+    content = getattr(message, "content", "")
+    if isinstance(content, (str, int, float, bool)) or content is None:
+        return content
+    if isinstance(content, (list, dict)):
+        return content
+    return str(content)
+
+
+def context_boundary_digest(messages: list, boundary_message_count: int, mode: str) -> str:
+    """Hash the canonical mode-specific raw prefix represented by a summary."""
+    count = max(0, min(int(boundary_message_count or 0), len(messages)))
+    canonical: list[dict] = []
+    for message in messages[:count]:
+        role = str(getattr(message, "type", "") or "")
+        if mode == "chat_only" and role == "system":
+            continue
+        item: dict[str, object] = {"role": role}
+        if mode == "chat_only" and role == "tool":
+            item["tool_name"] = str(getattr(message, "name", "") or "tool")
+            item["tool_call_id"] = str(getattr(message, "tool_call_id", "") or "")
+        else:
+            item["content"] = _message_content_for_digest(message)
+            if role == "ai":
+                item["tool_calls"] = list(getattr(message, "tool_calls", None) or [])
+            elif role == "tool":
+                item["tool_name"] = str(getattr(message, "name", "") or "")
+                item["tool_call_id"] = str(getattr(message, "tool_call_id", "") or "")
+        canonical.append(item)
+    encoded = json.dumps(
+        canonical,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _latest_checkpoint_revision_conn(conn: sqlite3.Connection, thread_id: str) -> str:
+    try:
+        row = conn.execute(
+            "SELECT checkpoint_id FROM checkpoints "
+            "WHERE thread_id = ? AND COALESCE(checkpoint_ns, '') = '' "
+            "ORDER BY rowid DESC LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+        return str(row[0] or "") if row else ""
+    except sqlite3.OperationalError:
+        return ""
+
+
+def save_summary_state_cas(
+    thread_id: str,
+    state: dict,
+    *,
+    expected_revision: str,
+) -> bool:
+    """Persist validated rolling-summary state if the checkpoint is unchanged."""
     _ensure_thread_db()
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute(
-        "SELECT COALESCE(summary, ''), COALESCE(summary_msg_count, 0) "
-        "FROM thread_meta WHERE thread_id = ?",
-        (thread_id,),
-    ).fetchone()
-    conn.close()
+    payload = dict(state or {})
+    if int(payload.get("schema_version") or 0) != SUMMARY_STATE_SCHEMA_VERSION:
+        return False
+    summary = str(payload.get("summary") or "").strip()
+    mode = str(payload.get("mode") or "")
+    boundary_count = int(payload.get("boundary_message_count") or 0)
+    boundary_digest = str(payload.get("boundary_digest") or "")
+    if not summary or mode not in {"agent", "chat_only"} or boundary_count <= 0 or len(boundary_digest) != 64:
+        return False
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current_revision = _latest_checkpoint_revision_conn(conn, thread_id)
+        if current_revision != str(expected_revision or ""):
+            conn.rollback()
+            return False
+        existing_row = conn.execute(
+            "SELECT COALESCE(summary_state_json, '') FROM thread_meta WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        try:
+            existing_state = json.loads(existing_row[0]) if existing_row and existing_row[0] else {}
+        except (TypeError, json.JSONDecodeError):
+            existing_state = {}
+        if str(existing_state.get("source_revision") or "") == str(expected_revision or ""):
+            conn.rollback()
+            return False
+        conn.execute(
+            "UPDATE thread_meta SET summary_state_json = ?, summary = ?, summary_msg_count = ? "
+            "WHERE thread_id = ?",
+            (encoded, summary, boundary_count, thread_id),
+        )
+        conn.commit()
+    return True
+
+
+def load_validated_summary_state(
+    thread_id: str,
+    mode: str,
+    *,
+    messages: list | None = None,
+) -> dict | None:
+    """Load summary state only when its schema, mode, range, and digest validate."""
+    if not thread_id or mode not in {"agent", "chat_only"}:
+        return None
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(summary_state_json, '') FROM thread_meta WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
     if not row or not row[0]:
         return None
-    return {"summary": row[0], "msg_count": row[1]}
+    try:
+        state = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    if int(state.get("schema_version") or 0) != SUMMARY_STATE_SCHEMA_VERSION:
+        return None
+    if str(state.get("mode") or "") != mode or not str(state.get("summary") or "").strip():
+        return None
+    source_messages = list(messages) if messages is not None else get_latest_checkpoint_messages(thread_id)
+    count = int(state.get("boundary_message_count") or 0)
+    if count <= 0 or count > len(source_messages):
+        return None
+    expected = context_boundary_digest(source_messages, count, mode)
+    if expected != str(state.get("boundary_digest") or ""):
+        return None
+    return state
 
 
-def clear_thread_summary(thread_id: str) -> None:
-    """Clear the persisted summary for a thread."""
+def save_context_usage(thread_id: str, usage: dict) -> None:
+    """Persist a settled display snapshot; it is never request authority."""
+    if not thread_id:
+        return
     _ensure_thread_db()
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "UPDATE thread_meta SET summary = '', summary_msg_count = 0 WHERE thread_id = ?",
-        (thread_id,),
+    payload = dict(usage or {})
+    payload.setdefault("schema_version", CONTEXT_USAGE_SCHEMA_VERSION)
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE thread_meta SET context_usage_json = ? WHERE thread_id = ?",
+            (encoded, thread_id),
+        )
+        conn.commit()
+
+
+def save_context_usage_cas(thread_id: str, usage: dict) -> bool:
+    """Persist a settled snapshot only if it represents the current messages."""
+    if not thread_id:
+        return False
+    payload = dict(usage or {})
+    if (
+        int(payload.get("schema_version") or 0) != CONTEXT_USAGE_SCHEMA_VERSION
+        or str(payload.get("snapshot_kind") or "") != "settled"
+    ):
+        return False
+    mode = str(payload.get("mode") or "")
+    expected_digest = str(payload.get("checkpoint_message_digest") or "")
+    if mode not in {"agent", "chat_only"} or len(expected_digest) != 64:
+        return False
+    with _CONTEXT_USAGE_SAVE_LOCK:
+        current_messages = get_latest_checkpoint_messages(thread_id)
+        current_digest = context_boundary_digest(current_messages, len(current_messages), mode)
+        if current_digest != expected_digest:
+            return False
+        save_context_usage(thread_id, payload)
+    return True
+
+
+def load_context_usage(
+    thread_id: str,
+    *,
+    expected: dict | None = None,
+    allow_stale: bool = False,
+) -> dict | None:
+    """Load an identity-compatible snapshot and classify semantic freshness."""
+    if not thread_id:
+        return None
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(context_usage_json, '') FROM thread_meta WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        usage = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(usage, dict):
+        return None
+    schema_version = int(usage.get("schema_version") or 0)
+    if schema_version not in {1, CONTEXT_USAGE_SCHEMA_VERSION}:
+        return None
+    for key, value in dict(expected or {}).items():
+        if value is not None and usage.get(key) != value:
+            return None
+    if schema_version == CONTEXT_USAGE_SCHEMA_VERSION:
+        if str(usage.get("snapshot_kind") or "") != "settled":
+            return None
+        mode = str(usage.get("mode") or "")
+        saved_digest = str(usage.get("checkpoint_message_digest") or "")
+        if mode not in {"agent", "chat_only"} or len(saved_digest) != 64:
+            return None
+        current_messages = get_latest_checkpoint_messages(thread_id)
+        current_digest = context_boundary_digest(current_messages, len(current_messages), mode)
+        freshness = "current" if current_digest == saved_digest else "stale"
+    else:
+        saved_revision = str(usage.get("checkpoint_revision") or "")
+        current_revision = get_latest_checkpoint_revision(thread_id)
+        freshness = "current" if saved_revision and saved_revision == current_revision else "stale"
+    if freshness == "stale" and not allow_stale:
+        return None
+    if allow_stale:
+        usage = {**usage, "snapshot_freshness": freshness}
+    return usage
+
+
+def clear_context_usage(thread_id: str) -> None:
+    if not thread_id:
+        return
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE thread_meta SET context_usage_json = '' WHERE thread_id = ?",
+            (thread_id,),
+        )
+        conn.commit()
+
+
+def clear_all_context_usage() -> None:
+    """Clear every display-only context snapshot after a global policy change."""
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE thread_meta SET context_usage_json = ''")
+        conn.commit()
+
+
+def append_thread_event(
+    thread_id: str,
+    event_type: str,
+    event_key: str,
+    *,
+    after_message_id: str = "",
+    after_message_count: int = 0,
+    source_revision: str = "",
+    boundary_digest_prefix: str = "",
+) -> dict:
+    """Append one bounded presentation-only context event idempotently."""
+    if event_type not in {"context_compacted", "context_compaction_failed"}:
+        raise ValueError("unsupported thread event type")
+    display_copy = (
+        CONTEXT_COMPACTED_COPY
+        if event_type == "context_compacted"
+        else CONTEXT_COMPACTION_FAILED_COPY
     )
-    conn.commit()
-    conn.close()
+    payload = {
+        "schema_version": 1,
+        "display_copy": display_copy,
+        "severity": "info" if event_type == "context_compacted" else "warning",
+        "icon": "compress" if event_type == "context_compacted" else "warning",
+        "boundary_digest_prefix": str(boundary_digest_prefix or "")[:16],
+        "channel_delivery": {"state": "pending", "channel": "", "platform_refs": []},
+    }
+    created_at = datetime.now().isoformat()
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO thread_events "
+            "(thread_id, event_type, event_key, payload_json, after_message_id, "
+            "after_message_count, source_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                thread_id,
+                event_type,
+                str(event_key)[:240],
+                json.dumps(payload, sort_keys=True, ensure_ascii=False),
+                str(after_message_id or "")[:240],
+                max(0, int(after_message_count or 0)),
+                str(source_revision or "")[:240],
+                created_at,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id, thread_id, event_type, event_key, payload_json, after_message_id, "
+            "after_message_count, source_revision, created_at FROM thread_events WHERE event_key = ?",
+            (str(event_key)[:240],),
+        ).fetchone()
+        conn.commit()
+    return _thread_event_row(row) if row else {}
+
+
+def _thread_event_row(row) -> dict:
+    payload: dict = {}
+    try:
+        parsed = json.loads(row[4] or "{}")
+        payload = parsed if isinstance(parsed, dict) else {}
+    except (TypeError, json.JSONDecodeError):
+        pass
+    return {
+        "id": int(row[0]),
+        "thread_id": str(row[1]),
+        "event_type": str(row[2]),
+        "event_key": str(row[3]),
+        "payload": payload,
+        "after_message_id": str(row[5] or ""),
+        "after_message_count": int(row[6] or 0),
+        "source_revision": str(row[7] or ""),
+        "created_at": str(row[8] or ""),
+    }
+
+
+def list_thread_events(thread_id: str) -> list[dict]:
+    if not thread_id:
+        return []
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT id, thread_id, event_type, event_key, payload_json, after_message_id, "
+            "after_message_count, source_revision, created_at FROM thread_events "
+            "WHERE thread_id = ? ORDER BY id",
+            (thread_id,),
+        ).fetchall()
+    return [_thread_event_row(row) for row in rows]
+
+
+def merge_thread_events(ui_messages: list[dict], events: list[dict]) -> list[dict]:
+    """Merge presentation events into a UI transcript without model messages."""
+    merged = list(ui_messages)
+    existing_ids = {
+        int(message.get("event_id") or 0)
+        for message in merged
+        if isinstance(message, dict) and int(message.get("event_id") or 0)
+    }
+    for event in events:
+        event_id = int(event.get("id") or 0)
+        if event_id in existing_ids:
+            continue
+        payload = dict(event.get("payload") or {})
+        row = {
+            "role": "context_event",
+            "event_id": event_id,
+            "event_type": str(event.get("event_type") or ""),
+            "content": str(payload.get("display_copy") or ""),
+            "severity": str(payload.get("severity") or "info"),
+            "icon": str(payload.get("icon") or "compress"),
+            "timestamp": str(event.get("created_at") or "")[11:16],
+        }
+        anchor = str(event.get("after_message_id") or "")
+        fallback_count = max(0, int(event.get("after_message_count") or 0))
+        insert_at = min(fallback_count, len(merged)) if fallback_count else len(merged)
+        if anchor:
+            for index, message in enumerate(merged):
+                if str(message.get("checkpoint_message_id") or "") == anchor:
+                    insert_at = index + 1
+                    while insert_at < len(merged) and merged[insert_at].get("role") == "context_event":
+                        insert_at += 1
+                    break
+        merged.insert(insert_at, row)
+        existing_ids.add(event_id)
+    return merged
+
+
+def claim_thread_event_delivery(event_id: int, channel: str) -> dict | None:
+    """Atomically claim a context notice so reconnects cannot resend it."""
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT payload_json FROM thread_events WHERE id = ?",
+            (int(event_id),),
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return None
+        try:
+            payload = json.loads(row[0] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        delivery = dict(payload.get("channel_delivery") or {})
+        if str(delivery.get("state") or "pending") != "pending":
+            conn.rollback()
+            return None
+        delivery.update({"state": "claimed", "channel": str(channel or "channel"), "platform_refs": []})
+        payload["channel_delivery"] = delivery
+        conn.execute(
+            "UPDATE thread_events SET payload_json = ? WHERE id = ?",
+            (json.dumps(payload, sort_keys=True, ensure_ascii=False), int(event_id)),
+        )
+        conn.commit()
+    return payload
+
+
+def complete_thread_event_delivery(
+    event_id: int,
+    *,
+    platform_refs: list[str] | None = None,
+    error: str = "",
+) -> None:
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT payload_json FROM thread_events WHERE id = ?",
+            (int(event_id),),
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return
+        try:
+            payload = json.loads(row[0] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        delivery = dict(payload.get("channel_delivery") or {})
+        delivery["state"] = "failed" if error else "delivered"
+        delivery["platform_refs"] = [str(ref)[:240] for ref in list(platform_refs or [])[:8]]
+        if error:
+            delivery["error"] = str(error)[:240]
+        payload["channel_delivery"] = delivery
+        conn.execute(
+            "UPDATE thread_events SET payload_json = ? WHERE id = ?",
+            (json.dumps(payload, sort_keys=True, ensure_ascii=False), int(event_id)),
+        )
+        conn.commit()
+
+
+def copy_validated_summary_state(source_thread_id: str, target_thread_id: str) -> bool:
+    """Copy a valid summary for an identical checkpoint and clear usage cache."""
+    source_messages = get_latest_checkpoint_messages(source_thread_id)
+    state = None
+    for mode in ("agent", "chat_only"):
+        state = load_validated_summary_state(
+            source_thread_id,
+            mode,
+            messages=source_messages,
+        )
+        if state:
+            break
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE thread_meta SET summary_state_json = ?, summary = ?, "
+            "summary_msg_count = ?, context_usage_json = '' WHERE thread_id = ?",
+            (
+                json.dumps(state, sort_keys=True, ensure_ascii=False) if state else "",
+                str((state or {}).get("summary") or ""),
+                int((state or {}).get("boundary_message_count") or 0),
+                target_thread_id,
+            ),
+        )
+        conn.commit()
+    if not state:
+        return False
+    return bool(
+        load_validated_summary_state(
+            target_thread_id,
+            str(state.get("mode") or ""),
+        )
+    )
 
 
 class _ManagedSqliteConnection:

@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 AGENT_MODE_MIN_CONTEXT = 32_000
 CHAT_ONLY_MIN_CONTEXT = 16_384
 RuntimeMode = Literal["agent", "chat_only", "blocked"]
+CONTEXT_CAPACITY_ACTION = (
+    "Refresh the provider catalog, set an Advanced context override, "
+    "or choose a known-capacity model."
+)
 
 TRUSTED_AGENT_PROVIDERS = {
     "openai",
@@ -77,7 +81,9 @@ class AgentReadinessResult:
         if self.ready:
             return f"{self.model_id} via {self.provider_id} is Agent-ready."
         reasons = "; ".join(self.errors) or "Agent Mode requirements were not met."
-        return f"{self.model_id} via {self.provider_id} is not Agent-ready: {reasons}"
+        actions = " ".join(self.actions)
+        suffix = f" Next steps: {actions}" if actions else ""
+        return f"{self.model_id} via {self.provider_id} is not Agent-ready: {reasons}.{suffix}"
 
 
 class AgentCompatibilityError(ValueError):
@@ -108,7 +114,9 @@ class ChatReadinessResult:
         if self.ready:
             return f"{self.model_id} via {self.provider_id} is ready for Chat Only."
         reasons = "; ".join(self.errors) or "Chat Only requirements were not met."
-        return f"{self.model_id} via {self.provider_id} is not chat-ready: {reasons}"
+        actions = " ".join(self.actions)
+        suffix = f" Next steps: {actions}" if actions else ""
+        return f"{self.model_id} via {self.provider_id} is not chat-ready: {reasons}.{suffix}"
 
 
 @dataclass(frozen=True)
@@ -176,10 +184,16 @@ def evaluate_agent_readiness(
         context_policy = None
 
     if context_window is None:
-        context_window = _positive_int(getattr(context_policy, "effective_context", 0))
+        safe_limit = getattr(context_policy, "effective_limit_tokens", None)
+        context_window = _positive_int(
+            safe_limit if safe_limit is not None else getattr(context_policy, "effective_context", 0)
+        )
+    policy_warning = str(getattr(context_policy, "warning", "") or "")
+    if policy_warning:
+        warnings.append(policy_warning)
     if context_window is None:
         errors.append("context window could not be determined")
-        actions.append("Re-probe the endpoint or choose a model with provider context metadata.")
+        actions.append(CONTEXT_CAPACITY_ACTION)
     elif context_window < AGENT_MODE_MIN_CONTEXT:
         errors.append(
             f"context window is {context_window:,} tokens; Agent Mode requires at least 32,000 tokens"
@@ -356,6 +370,31 @@ def evaluate_agent_readiness(
                 from row_bot.providers.ollama import probe_ollama_tool_round_trip
 
                 probe = probe_ollama_tool_round_trip(resolved.runtime_model)
+                from row_bot.models import (
+                    get_context_policy,
+                    refresh_observed_local_context_after_load,
+                )
+
+                refresh_observed_local_context_after_load(resolved.runtime_model)
+                refreshed_policy = get_context_policy(resolved.selection_ref)
+                refreshed_limit = _positive_int(
+                    getattr(refreshed_policy, "effective_limit_tokens", None)
+                )
+                if refreshed_limit is not None:
+                    context_window = refreshed_limit
+                    refreshed_warning = str(getattr(refreshed_policy, "warning", "") or "")
+                    if refreshed_warning and refreshed_warning not in warnings:
+                        warnings.append(refreshed_warning)
+                    if context_window < AGENT_MODE_MIN_CONTEXT and not any(
+                        "Agent Mode requires" in error for error in errors
+                    ):
+                        errors.append(
+                            f"context window is {context_window:,} tokens; "
+                            "Agent Mode requires at least 32,000 tokens"
+                        )
+                        actions.append(
+                            "Increase the loaded Ollama allocation or choose a larger-context model."
+                        )
             except Exception as exc:
                 probe = {"ok": False, "tool_calling": None, "tool_round_trip": None, "error": str(exc)}
         if probe is not None:
@@ -458,10 +497,16 @@ def evaluate_chat_readiness(
         context_policy = None
 
     if context_window is None:
-        context_window = _positive_int(getattr(context_policy, "effective_context", 0))
+        safe_limit = getattr(context_policy, "effective_limit_tokens", None)
+        context_window = _positive_int(
+            safe_limit if safe_limit is not None else getattr(context_policy, "effective_context", 0)
+        )
+    policy_warning = str(getattr(context_policy, "warning", "") or "")
+    if policy_warning:
+        warnings.append(policy_warning)
     if context_window is None:
         errors.append("context window could not be determined")
-        actions.append("Re-probe the endpoint or choose a model with provider context metadata.")
+        actions.append(CONTEXT_CAPACITY_ACTION)
     elif context_window < CHAT_ONLY_MIN_CONTEXT:
         errors.append(
             f"context window is {context_window:,} tokens; Chat Only requires at least 16,384 tokens"
@@ -624,7 +669,13 @@ def evaluate_runtime_readiness(
                 timings=timings,
             )
         return ModelRuntimeReadiness(agent=agent, chat=chat, selected_mode="chat_only", selection_reason="Model can chat but is not Agent-ready.", timings=timings)
-    reason = chat.errors[0] if chat.errors else (agent.errors[0] if agent.errors else "No supported runtime is available.")
+    reason = (
+        chat.user_message()
+        if not chat.ready
+        else agent.user_message()
+        if not agent.ready
+        else "No supported runtime is available."
+    )
     return ModelRuntimeReadiness(agent=agent, chat=chat, selected_mode="blocked", selection_reason=reason, timings=timings)
 
 

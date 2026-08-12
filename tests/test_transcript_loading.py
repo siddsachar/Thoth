@@ -250,24 +250,6 @@ def test_get_latest_checkpoint_messages_reads_checkpointer_without_graph(monkeyp
     assert threads.get_latest_checkpoint_messages("thread-2") == raw_messages
 
 
-def test_get_token_usage_reads_checkpoint_without_agent_graph(tmp_path, monkeypatch):
-    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path / ".row-bot"))
-    from langchain_core.messages import HumanMessage
-    import row_bot.agent as agent
-    import row_bot.threads as threads
-
-    def _boom(*args, **kwargs):
-        raise AssertionError("get_agent_graph should not be used for token usage")
-
-    monkeypatch.setattr(agent, "get_agent_graph", _boom)
-    monkeypatch.setattr(threads, "get_latest_checkpoint_messages", lambda thread_id: [HumanMessage(content="hello")])
-
-    used, max_tokens = agent.get_token_usage({"configurable": {"thread_id": "thread-token"}}, model_override="model:ollama:qwen3:14b")
-
-    assert used > 0
-    assert max_tokens > 0
-
-
 def test_append_checkpoint_messages_uses_checkpointer_string_versions(monkeypatch):
     from langchain_core.messages import HumanMessage
     import row_bot.threads as threads

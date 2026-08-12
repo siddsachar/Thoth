@@ -20,7 +20,7 @@ from typing import Callable
 from row_bot.brand import APP_NATIVE_ENV
 from nicegui import events, run, ui
 
-from row_bot.ui.state import AppState, P, _active_generations
+from row_bot.ui.state import AppState, P, _active_generations, context_history_present
 from row_bot.ui.constants import ALLOWED_UPLOAD_SUFFIXES, welcome_message, EXAMPLE_PROMPTS
 from row_bot.ui.render import (
     agent_result_use_prompt,
@@ -30,6 +30,7 @@ from row_bot.ui.render import (
 )
 from row_bot.ui.performance import log_ui_perf
 from row_bot.ui.streaming import request_generation_stop
+from row_bot.ui.chat_components import create_context_meter
 from row_bot.ui.timer_utils import defer_ui
 from row_bot.ui.transcript import (
     TRANSCRIPT_CHUNK_TARGET_MS,
@@ -378,6 +379,22 @@ def build_chat(
         surface = await run.io_bound(_resolve_model_surface)
         if p.chat_shell_generation != _shell_generation:
             return
+        try:
+            from row_bot.models import get_context_policy
+            from row_bot.ui.chat_components import notify_context_policy_once
+
+            active_model = state.thread_model_override or get_current_model()
+            policy = await run.io_bound(lambda: get_context_policy(active_model))
+            notify_context_policy_once(state, policy)
+            if p.context_meter:
+                p.context_meter.update(
+                    state.context_usage,
+                    capacity_state=state.context_capacity_state,
+                    effective_limit_tokens=state.context_capacity_effective_tokens,
+                    has_history=context_history_present(state),
+                )
+        except Exception:
+            logger.debug("Could not render context capacity policy", exc_info=True)
         _render_model_banner(surface)
         if p.chat_scroll:
             p.chat_scroll.style(replace=surface["scroll_style"])
@@ -390,6 +407,13 @@ def build_chat(
         )
 
     def _refresh_model_surface() -> None:
+        if p.context_meter:
+            p.context_meter.update(
+                state.context_usage,
+                capacity_state=state.context_capacity_state,
+                effective_limit_tokens=state.context_capacity_effective_tokens,
+                has_history=context_history_present(state),
+            )
         surface = _model_surface_placeholder()
         _render_model_banner(surface)
         if p.chat_scroll:
@@ -1730,14 +1754,7 @@ def build_chat(
         except Exception:
             logger.debug("Smart Skills composer chips failed to render", exc_info=True)
 
-        # Context counter - absolute overlay, top-right
-        with ui.row().classes("items-center gap-1").style(
-            "position: absolute; top: 8px; right: 12px; z-index: 1; "
-            "pointer-events: none; opacity: 0.7;"
-        ):
-            with ui.column().classes("gap-0 items-end").style("min-width: 100px;"):
-                p.token_label = ui.label("Context: 0K / 32K (0%)").classes("text-xs text-grey-6")
-                p.token_bar = ui.linear_progress(value=0, show_value=False).style("height: 3px; width: 100px;")
+        create_context_meter(p, state)
 
         # Textarea
         p.chat_input = (

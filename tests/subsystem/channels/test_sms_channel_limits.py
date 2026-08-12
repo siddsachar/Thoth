@@ -80,3 +80,27 @@ def test_sms_pending_interrupt_rejects_unrecognized_text_without_agent_run(
 
     with sms._pending_lock:
         sms._pending_interrupts.clear()
+
+
+def test_sms_preserves_compaction_notice_as_separate_delivery(monkeypatch) -> None:
+    from row_bot.channels import sms
+    from row_bot.tools import registry as tool_registry
+
+    fake_agent = SimpleNamespace(
+        stream_agent=lambda *_args, **_kwargs: iter([
+            ("compaction_succeeded", {"event_id": 17, "display_copy": "Context compacted"}),
+            ("token", "answer"),
+            ("done", "answer"),
+        ])
+    )
+    monkeypatch.setattr(sms, "_agent_mod", lambda: fake_agent)
+    monkeypatch.setattr(tool_registry, "get_enabled_tools", lambda: [])
+
+    answer, interrupt, notices = sms._run_agent_sync(
+        "hello",
+        {"configurable": {"thread_id": "sms-thread"}},
+    )
+
+    assert answer == "answer"
+    assert interrupt is None
+    assert notices == [{"event_id": 17, "display_copy": "Context compacted"}]

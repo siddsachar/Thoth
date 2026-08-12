@@ -8,6 +8,7 @@ def test_default_local_llm_uses_capped_context(monkeypatch):
     monkeypatch.setattr(models, "_llm_instance", None)
     monkeypatch.setattr(models, "_current_model", "model:ollama:qwen3:14b")
     monkeypatch.setattr(models, "_num_ctx", 131_072)
+    monkeypatch.setattr(models, "_local_context_mode", "fixed")
     monkeypatch.setattr(models, "is_cloud_model", lambda model_name: False)
     monkeypatch.setattr(models, "get_model_max_context", lambda model_name=None: 32_768)
     monkeypatch.setattr(models, "_chat_ollama", lambda **kwargs: created.append(kwargs) or object())
@@ -26,6 +27,7 @@ def test_context_size_change_clears_override_llm_cache(monkeypatch):
     created = []
     models._override_llm_cache[("qwen3:14b", 32_768)] = object()
     monkeypatch.setattr(models, "_current_model", "model:ollama:qwen3:14b")
+    monkeypatch.setattr(models, "_local_context_mode", "fixed")
     monkeypatch.setattr(models, "is_cloud_model", lambda model_name: False)
     monkeypatch.setattr(models, "get_model_max_context", lambda model_name=None: None)
     monkeypatch.setattr(models, "_chat_ollama", lambda **kwargs: created.append(kwargs) or object())
