@@ -11,17 +11,29 @@ HTML = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
 CSS = (ROOT / "docs" / "site.css").read_text(encoding="utf-8")
 JS = (ROOT / "docs" / "site.js").read_text(encoding="utf-8")
 
-SITE_WINDOWS_URL = (
+INDEX_WINDOWS_URL = (
     "https://github.com/siddsachar/row-bot/releases/download/v4.6.0/"
     "Row-Bot-4.6.0-Windows-x64.exe"
 )
-SITE_MAC_URL = (
+INDEX_MAC_URL = (
     "https://github.com/siddsachar/row-bot/releases/download/v4.6.0/"
     "Row-Bot-4.6.0-macOS-arm64.dmg"
 )
-SITE_LINUX_COMMAND = (
+INDEX_LINUX_COMMAND = (
     "curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/"
     "installer/install-linux.sh | bash -s -- 4.6.0"
+)
+SITE_WINDOWS_URL = (
+    "https://github.com/siddsachar/row-bot/releases/download/v4.7.0/"
+    "Row-Bot-4.7.0-Windows-x64.exe"
+)
+SITE_MAC_URL = (
+    "https://github.com/siddsachar/row-bot/releases/download/v4.7.0/"
+    "Row-Bot-4.7.0-macOS-arm64.dmg"
+)
+SITE_LINUX_COMMAND = (
+    "curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/"
+    "installer/install-linux.sh | bash -s -- 4.7.0"
 )
 MARKETING_PAGES = ("index.html", "features.html", "architecture.html", "contact.html", "404.html")
 
@@ -116,11 +128,11 @@ def test_landing_page_fallbacks_and_links_are_complete() -> None:
     assert all(not link["href"].endswith((".exe", ".dmg")) for link in os_primary)
 
     hrefs = [link.get("href") for link in parser.links]
-    assert SITE_WINDOWS_URL in hrefs
-    assert SITE_MAC_URL in hrefs
+    assert INDEX_WINDOWS_URL in hrefs
+    assert INDEX_MAC_URL in hrefs
     assert "docs/getting-started/installation/" in hrefs
     linux_code = next(code for code in parser.codes if "data-linux-command" in code)
-    assert linux_code["text"] == SITE_LINUX_COMMAND
+    assert linux_code["text"] == INDEX_LINUX_COMMAND
     assert SITE_WINDOWS_URL in JS
     assert SITE_MAC_URL in JS
     assert SITE_LINUX_COMMAND in JS
@@ -250,10 +262,13 @@ def test_marketing_pages_share_analytics_and_download_conversion_contract() -> N
     assert "data-row-bot-google-tag" in JS
     assert "trackAdsConversion" in JS
 
+    cache_versions = {name: "4.7.0" for name in MARKETING_PAGES}
+    cache_versions["index.html"] = "4.6.0"
     for name in MARKETING_PAGES:
         content = (ROOT / "docs" / name).read_text(encoding="utf-8")
-        assert 'src="site.js?v=4.6.0"' in content, name
-        assert 'href="site.css?v=4.6.0-r1"' in content, name
+        version = cache_versions[name]
+        assert f'src="site.js?v={version}"' in content, name
+        assert f'href="site.css?v={version}-r1"' in content, name
         assert "googletagmanager.com/gtag/js" not in content, name
 
     parser = _parse()
@@ -261,7 +276,7 @@ def test_marketing_pages_share_analytics_and_download_conversion_contract() -> N
     assert download_links
     for link in download_links:
         platform = link["data-desktop-download"]
-        expected = SITE_WINDOWS_URL if platform == "windows" else SITE_MAC_URL
+        expected = INDEX_WINDOWS_URL if platform == "windows" else INDEX_MAC_URL
         assert link["href"] == expected
         assert link.get("data-placement") in {"platform_selector", "final_install", "mobile_handoff"}
 

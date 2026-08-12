@@ -2,7 +2,50 @@
 
 ---
 
-## Unreleased - Context Window Meter and Rolling Compaction
+## v4.7.0 - Progressive Capabilities, Context Management & Trusted Access
+
+This release builds on v4.6.0 with a prompt-efficiency, long-conversation,
+remote-access, and runtime-reliability pass. It discovers enabled external
+tools and task-specific skills only when they are relevant, meters the complete
+next model input and safely compacts older context, lets owners manage exact
+trusted browser addresses without weakening managed deployment policy, and
+hardens provider catalogs, OpenAI-compatible streams, chat traces, public
+documentation, and deterministic validation around those changes.
+
+### Progressive Tool And Skill Discovery
+
+- **Auto capability loading** - keeps core tools allowed by the active Agent
+  Profile directly available while enabled MCP, plugin, Custom Tool, and
+  channel capabilities remain searchable until a request needs them.
+- **Deterministic local search** - ranks authorized capability metadata across
+  names, aliases, sources, descriptions, tags, and parameter names without a
+  provider call, caps returned matches, and keeps stable ordering.
+- **Exact external invocation** - returns the effective target schema, validates
+  arguments again before dispatch, preserves the real integration identity in
+  live and reopened traces, and never turns search into authorization.
+- **Unchanged safety boundaries** - preserves profile filtering, tool
+  enablement, provider compatibility, approvals, prompt-injection handling,
+  execution budgets, cancellation, and workspace policy for discovered tools.
+- **Bounded capability manifests** - sanitizes untrusted catalog metadata,
+  omits instruction-like descriptions, rejects core, bridge, and ambiguous
+  external name collisions, and degrades oversized manifests without flooding
+  the model context.
+- **Progressive skill loading** - searches enabled manual and plugin skills,
+  activates the selected instructions for the current task, safely confines
+  optional UTF-8 references to the skill root, and displays one compact
+  **Using _skill_** receipt plus an active-skill chip.
+- **Durable task scope** - restores automatically selected skills when a task is
+  reopened, retains at most five automatic selections per task, treats a repeat
+  load as a no-op, and keeps pinned skills under their existing manual control.
+- **Parent and child isolation** - gives every child Agent its own skill state,
+  profile, tool allow-list, approval mode, workspace, and execution budget;
+  skill instructions cannot grant a denied tool or enable delegation.
+- **Tools settings and compatibility** - adds **Settings → Tools → Capability
+  loading**, makes **Auto-select external tools** the recommended mode, keeps
+  **Load all external tools** for eager compatibility, and moves the former
+  Search settings surface into Tools.
+
+### Context Window Meter And Rolling Compaction
 
 - The desktop composer now shows an event-driven estimate of the complete next
   model input, including system prompts, images, and bound tool schemas. Mobile
@@ -14,10 +57,147 @@
   becomes Auto (still requesting 32K, capped by native/observed Ollama capacity),
   and the historical provider 128K value becomes Auto. Because an old explicit
   128K selection cannot be distinguished from the former default, restore it via
-  **Settings â†’ Models â†’ Advanced context â†’ Provider context override** if needed.
+  **Settings → Models → Advanced context → Provider context override** if needed.
 - Successful compaction produces one durable presentation-only timeline notice
   and, for channel-originated turns, one separately claimed channel notice.
   Context events never enter model prompts, summaries, or token accounting.
+- **Capacity-aware policy** - resolves provider metadata, maintained limits,
+  local requested and observed Ollama allocations, and custom-endpoint
+  overrides; an unknown remote model uses a disclosed 128K application fallback
+  for metering and compaction authority rather than claiming provider metadata.
+- **Safe headroom** - reserves input space according to combined-window versus
+  input-only provider semantics and begins compaction at 75 percent of the
+  effective context limit.
+- **Recent-turn integrity** - compacts complete older user-led groups while
+  retaining at least two recent complete turns and intact tool-call/result
+  groups, and marks the rolling summary as untrusted historical reference data
+  subordinate to the newest raw user instruction.
+- **Durable concurrency and recovery** - validates checkpoint revisions and
+  boundary digests, saves summaries with compare-and-swap, accepts a valid
+  concurrent winner, bounds compactor input and output, honors stop requests,
+  and fails safely when sufficient context slack cannot be created.
+- **Overflow diagnostics** - remembers when a model exceeds its reported
+  capacity during the session and asks for a different model or reviewed
+  context override instead of repeatedly sending the same oversized input.
+
+### Trusted Remote Addresses And Invitations
+
+- **Durable trusted addresses** - lets an authenticated owner add one exact
+  HTTP or HTTPS origin in Remote Access settings, saves it in
+  `access_routes.json`, applies Host/origin admission immediately, and creates
+  an origin-bound invitation without a restart.
+- **Visible lifecycle controls** - lists saved addresses after restart, includes
+  them in the invitation route selector, and removes one only after confirmation;
+  new HTTP and WebSocket traffic through a removed address is rejected at once.
+- **Strict origin validation** - accepts an exact scheme, host, and optional
+  port while rejecting credentials, paths, queries, fragments, wildcards,
+  malformed ports, and non-HTTP(S) schemes.
+- **Managed deployment ownership** - shows `ROW_BOT_PUBLIC_ORIGINS` entries as
+  externally managed and makes add/remove controls read-only when
+  `ROW_BOT_ALLOWED_HOSTS` owns Host admission, so UI state cannot override
+  explicit operator policy.
+- **No implied network provisioning** - makes clear that trusting an address
+  does not perform DNS or reachability checks, provision TLS, configure a proxy
+  or firewall, or change Row-Bot's listen address; HTTP remains unencrypted.
+- **Restored custom routes** - repairs invitation creation for exact
+  operator-configured browser-facing origins and revalidates the route inventory
+  at creation time so stale or unavailable selections are refused.
+- **Assigned-interface discovery** - offers usable unicast addresses actually
+  assigned to the computer even when they are outside RFC-private ranges, while
+  excluding loopback, link-local, unspecified, and multicast addresses.
+- **Exposure-specific guidance** - gives non-private interface addresses a
+  stronger warning about possible external routing, firewalls, plaintext HTTP,
+  and the safer HTTPS or Tailscale alternatives.
+
+### Provider, Streaming And Chat Reliability
+
+- **Provider-scoped catalog credentials** - refreshes OpenAI, Ollama Cloud,
+  OpenRouter, Requesty, Anthropic, Google, xAI, MiniMax, OpenCode, and Atlas
+  Cloud catalogs through the provider auth store, so a key saved only in
+  Settings immediately populates provider-qualified model rows without a
+  legacy environment-key mirror.
+- **Long-response timeout policy** - gives OpenAI-compatible requests separate
+  10-second connect/pool, 120-second write, and 900-second read-inactivity
+  limits. `ROW_BOT_OPENAI_COMPATIBLE_READ_TIMEOUT` accepts a positive seconds
+  override and falls back safely when invalid.
+- **Safe pre-stream retry** - retries a timeout or remote-protocol failure once
+  only when no stream event has been emitted, never replays partial output, and
+  checks cancellation before retrying.
+- **Quieter tool traces** - makes collapsed live and reopened tool rows smaller,
+  lighter, and less visually dominant while preserving full result content and
+  success/failure state inside their expansions.
+
+### Public Website And Documentation
+
+- **Stable release alignment** - finishes the public 4.6.0 metadata, downloads,
+  Linux command, cache revisions, structured data, fallbacks, and cross-page
+  navigation that landed immediately after the 4.6.0 source tag.
+- **Workbench-first explanations** - updates the public docs and landing copy
+  around parent-led agents, durable documents, authenticated remote access,
+  Docker/VPS operation, compact presentation, and the complete models, tools,
+  memory, workflows, code, design, messaging, and voice surface.
+- **Clearer public imagery** - leads the documentation with the Knowledge
+  workspace, revision-tags screenshot assets, handles query strings in local
+  image validation, and keeps architecture diagrams full width.
+- **Public-site conversion contracts** - centralizes the marketing-page Google
+  tag bootstrap and measures desktop download, Linux install-view, and
+  installation-guide actions; this is public-website behavior, not Row-Bot
+  application telemetry.
+- **Progressive capability guide** - documents Auto and eager modes, tool and
+  skill discovery, chat receipts, parent/child boundaries, troubleshooting,
+  and the related Tools, Skills, extension, mobile, and request-lifecycle pages.
+- **Remote-access guide** - documents trusted-address persistence and removal,
+  exact-origin rules, assigned-interface warnings, externally managed settings,
+  and the DNS, TLS, proxy, firewall, and reachability responsibilities Row-Bot
+  deliberately does not assume.
+
+### Tests And Release Validation
+
+- **Capability-discovery coverage** - verifies ranking, collisions, manifests,
+  schema validation, approvals, cancellation, execution budgets, child
+  boundaries, persistence, transcripts, status, plugins, MCP, channels, mobile,
+  and public documentation.
+- **Context-management coverage** - verifies policy migration and resolution,
+  complete-input accounting, compaction boundaries, summary validation,
+  persistence, concurrency, failures, Agent and Chat Only parity, channels,
+  SMS, mobile, and the desktop meter.
+- **Remote-access coverage** - verifies route inventory, non-private interface
+  classification, invitation revalidation, trusted-address mutation, runtime
+  HTTP/WebSocket admission, managed-policy precedence, UI controls, and docs.
+- **Provider and chat regressions** - verifies timeout phases, retry/no-replay,
+  cancellation, provider-only credentials, catalog caching and qualification,
+  first-class providers, Settings dialogs, and live/reopened trace styling.
+- **Public-site contracts** - verifies fallbacks, internal links, versioned
+  images, responsive calls to action, architecture lightboxes, generated pages,
+  tag initialization, and download/install event payloads.
+
+### Breaking Changes And Caveats
+
+- Auto-select is the recommended external capability mode. Use **Settings →
+  Tools → Capability loading → Load all external tools** when an older provider
+  or integration requires every enabled external schema to be bound eagerly.
+- Context policy version 2 interprets the historical local 32K and provider
+  128K values as Auto because old settings did not distinguish defaults from
+  explicit choices. Restore a deliberate provider 128K cap in Advanced context
+  settings if required.
+- Rolling compaction uses the selected model/provider to summarize older
+  history. It does not create a new provider route, but cloud-selected tasks
+  send the bounded aged range to that cloud provider as part of normal model
+  use.
+- Every trusted remote address admits the same single Row-Bot owner after
+  invitation authentication. Add exact origins only when you control the route,
+  and remove them when they are no longer needed.
+- Direct HTTP remains unencrypted, and a non-private assigned interface may be
+  externally routable. Prefer private Tailscale HTTPS or an operator-managed
+  HTTPS reverse proxy outside a trusted LAN.
+- Trusting an HTTPS origin does not create DNS, certificates, proxy trust,
+  firewall rules, or a listener. Those remain explicit operator responsibilities.
+- The public marketing pages load Google tag services and record the listed
+  install/download interactions. The Row-Bot application itself adds no
+  first-party telemetry or hidden phone-home behavior.
+- The default OpenAI-compatible read-inactivity limit is now 900 seconds. Set a
+  reviewed positive `ROW_BOT_OPENAI_COMPATIBLE_READ_TIMEOUT` value if an
+  endpoint needs a different ceiling.
 
 ## v4.6.0 - Agent Orchestration, Remote Access & Docker Operations
 

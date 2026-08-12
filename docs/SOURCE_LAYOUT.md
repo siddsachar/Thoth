@@ -76,11 +76,12 @@ Remote-access implementation is intentionally separated by responsibility:
 
 The physical access database remains `mobile.db` so existing companion records
 can migrate in place. `access_routes.json` stores the durable local/LAN listen
-choice. `tailscale_serve_ownership.json` stores no bearer credential; it proves
-the exact private Serve route Row-Bot created so startup can apply only the
-matching loopback proxy policy and disable only an unchanged owned route. All
-three files are private local state under `ROW_BOT_DATA_DIR`; none belongs in
-source control, images, or test fixtures containing real user data.
+choice and owner-added trusted addresses. `tailscale_serve_ownership.json`
+stores no bearer credential; it proves the exact private Serve route Row-Bot
+created so startup can apply only the matching loopback proxy policy and
+disable only an unchanged owned route. All three files are private local state
+under `ROW_BOT_DATA_DIR`; none belongs in source control, images, or test
+fixtures containing real user data.
 
 Source-to-test ownership for these paths lives in
 `tests/helpers/source_test_map.py`. Focused coverage belongs in
@@ -108,13 +109,13 @@ for root files, runtime scripts, payload directories, and asset directories.
 Packaging tests in `tests/test_linux_support.py` and `tests/test_suite.py`
 assert those contracts.
 
-Because `src/row_bot` is recursive, the 4.5.0 Agent execution budget and
-settings modules, native Computer Use package and pinned runtime manifest,
-cache-only embedding fallback, access/server package, Remote Access UI, mobile
-companion, cancellation helpers, provider transports, and channel streaming
-modules require no per-file installer entries. Deployment examples under
-`deploy/` are source-distribution/operator artifacts rather than runtime Python
-packages. `tests/test_linux_support.py` keeps required runtime packages in the
+Because `src/row_bot` is recursive, context accounting and compaction,
+progressive capability and skill discovery, durable skill activation,
+access/runtime policy, native Computer Use, provider transports, channel
+streaming, the Remote Access UI, and the mobile companion require no per-file
+installer entries. Deployment examples under `deploy/` are
+source-distribution/operator artifacts rather than runtime Python packages.
+`tests/test_linux_support.py` keeps required runtime packages in the
 cross-platform payload inventory, while
 `tests/subsystem/installer/test_computer_use_package_data.py` verifies that the
 Computer Use JSON manifest survives both wheel and installer packaging.
