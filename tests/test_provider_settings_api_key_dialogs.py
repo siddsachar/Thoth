@@ -2,10 +2,13 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 import row_bot.api_keys as api_keys
 import row_bot.providers.auth_store as auth_store
 import row_bot.providers.config as provider_config
 import row_bot.providers.status as provider_status
+import row_bot.secret_store as secret_store
 from row_bot.providers.auth_store import get_provider_secret, provider_secret_status
 from row_bot.providers.catalog import PROVIDER_DEFINITIONS, list_provider_definitions
 from row_bot.providers.models import AuthMethod
@@ -122,6 +125,119 @@ def test_provider_api_key_save_replaces_legacy_local_key_and_clear_removes_provi
         auth_store._clear_session_secrets_for_tests()
         api_keys.delete_key("REQUESTY_API_KEY")
         _set_backend_for_tests(None)
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "env_var", "payload", "expected_url", "model_id"),
+    [
+        (
+            "openrouter",
+            "OPENROUTER_API_KEY",
+            {
+                "data": [{
+                    "id": "deepseek/deepseek-chat",
+                    "name": "DeepSeek Chat",
+                    "context_length": 128_000,
+                }],
+            },
+            "https://openrouter.ai/api/v1/models",
+            "deepseek/deepseek-chat",
+        ),
+        (
+            "google",
+            "GOOGLE_API_KEY",
+            {
+                "models": [{
+                    "name": "models/gemini-2.5-flash",
+                    "displayName": "Gemini 2.5 Flash",
+                    "inputTokenLimit": 1_048_576,
+                    "supportedGenerationMethods": ["generateContent"],
+                }],
+            },
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            "gemini-2.5-flash",
+        ),
+    ],
+)
+def test_provider_scoped_api_key_save_refreshes_live_catalog(
+    tmp_path,
+    monkeypatch,
+    provider_id,
+    env_var,
+    payload,
+    expected_url,
+    model_id,
+):
+    import httpx
+    import row_bot.models as models
+    from row_bot.providers.model_catalog import build_model_catalog_rows
+
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    monkeypatch.setattr(api_keys, "KEYS_PATH", tmp_path / "api_keys.json")
+    monkeypatch.setattr(api_keys, "_session_keys", {})
+    monkeypatch.setattr(auth_store, "_session_provider_secrets", {})
+    monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.delenv("ROW_BOT_SECRETS_DIR", raising=False)
+    monkeypatch.delenv("ROW_BOT_DEPLOYMENT_MODE", raising=False)
+    monkeypatch.setattr(provider_settings, "_clear_provider_runtime_cache", lambda: None)
+    monkeypatch.setattr(
+        "row_bot.providers.model_catalog._provider_status_by_id",
+        lambda: {provider_id: {"configured": True}},
+    )
+    original_backend = secret_store._backend_override
+    old_cache = dict(models._cloud_model_cache)
+    calls = []
+    test_key = "provider-only-test-key"
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    def _fake_get(url, **kwargs):
+        calls.append({
+            "url": url,
+            "headers": dict(kwargs.get("headers") or {}),
+            "params": dict(kwargs.get("params") or {}),
+        })
+        return _Response()
+
+    _set_backend_for_tests(_MemoryKeyring())
+    monkeypatch.setattr(httpx, "get", _fake_get)
+    try:
+        models._cloud_model_cache.clear()
+
+        status = provider_settings._save_provider_api_key_value(provider_id, test_key)
+
+        assert status["configured"] is True
+        assert api_keys.get_key(env_var) == ""
+
+        result = models.refresh_cloud_provider_models(provider_id)
+
+        assert result.status == "live"
+        assert result.effective_count == 1
+        assert calls[0]["url"] == expected_url
+        if provider_id == "google":
+            assert calls[0]["params"]["key"] == test_key
+        else:
+            assert calls[0]["headers"]["Authorization"] == f"Bearer {test_key}"
+        assert models._cloud_model_cache[model_id]["provider"] == provider_id
+
+        rows = build_model_catalog_rows(
+            cloud_cache=dict(models._cloud_model_cache),
+            ollama_rows=[],
+            quick_choices=[],
+        )
+        row = next(row for row in rows if row.provider_id == provider_id and row.model_id == model_id)
+        assert row.selection_ref == f"model:{provider_id}:{model_id}"
+    finally:
+        auth_store.delete_provider_secret(provider_id)
+        auth_store._clear_session_secrets_for_tests()
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(old_cache)
+        _set_backend_for_tests(original_backend)
 
 
 def test_provider_api_key_clear_preserves_environment_credentials(tmp_path, monkeypatch):

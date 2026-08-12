@@ -281,11 +281,11 @@ def test_global_refresh_uses_the_registered_provider_order(monkeypatch):
 def test_failed_openai_refresh_preserves_last_known_good_rows(monkeypatch):
     import httpx
 
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
 
     old_cache = dict(models._cloud_model_cache)
-    monkeypatch.setattr(api_keys, "get_key", lambda _name: "test-key")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "test-key" if provider_id == "openai" else "")
     monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")))
     try:
         models._cloud_model_cache.clear()
@@ -307,11 +307,11 @@ def test_failed_openai_refresh_preserves_last_known_good_rows(monkeypatch):
 def test_successful_openai_refresh_replaces_only_openai_rows(monkeypatch):
     import httpx
 
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
 
     old_cache = dict(models._cloud_model_cache)
-    monkeypatch.setattr(api_keys, "get_key", lambda _name: "test-key")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "test-key" if provider_id == "openai" else "")
     monkeypatch.setattr(
         httpx,
         "get",
