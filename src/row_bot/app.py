@@ -1274,6 +1274,9 @@ from row_bot.access.tailscale import (
 from row_bot.access.runtime_policy import RuntimeAccessPolicy
 from row_bot.mobile.routes import register_mobile_routes
 
+_access_route_store = AccessRouteConfigStore()
+_access_route_config = _access_route_store.load_or_default()
+_host_admission_managed_externally = "ROW_BOT_ALLOWED_HOSTS" in os.environ
 _access_config = AccessConfig.from_env()
 _access_config = augment_access_config_for_owned_tailscale(
     _access_config,
@@ -1281,8 +1284,8 @@ _access_config = augment_access_config_for_owned_tailscale(
     app_port=get_app_port(),
 )
 if (
-    "ROW_BOT_ALLOWED_HOSTS" not in os.environ
-    and AccessRouteConfigStore().load_or_default().lan_enabled
+    not _host_admission_managed_externally
+    and _access_route_config.lan_enabled
 ):
     from dataclasses import replace as _dataclass_replace
 
@@ -1295,7 +1298,14 @@ if (
         allowed_hosts=tuple(dict.fromkeys((*_access_config.allowed_hosts, *_lan_hosts))),
     )
 _access_registration = register_access_routes(app, config=_access_config)
-_runtime_access_policy = RuntimeAccessPolicy(_access_registration.config)
+_runtime_access_policy = RuntimeAccessPolicy(
+    _access_registration.config,
+    configured_origins=(
+        ()
+        if _host_admission_managed_externally
+        else _access_route_config.configured_origins
+    ),
+)
 from row_bot.tunnel import tunnel_manager as _managed_tunnel_manager
 
 _managed_tunnel_manager.set_managed_origin_registrar(_runtime_access_policy)
@@ -1608,7 +1618,13 @@ async def index():
         if _access_context is None or not _access_context.authenticated:
             ui.notify("Owner authentication is required.", type="warning")
             return
-        open_settings(state, p, initial_tab, mobile=_mobile_client)
+        open_settings(
+            state,
+            p,
+            initial_tab,
+            mobile=_mobile_client,
+            runtime_access_policy=_runtime_access_policy,
+        )
 
     def _open_export():
         open_export(state, p)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from ipaddress import ip_network
 import threading
-from typing import Mapping
+from typing import Iterable, Mapping
 from urllib.parse import urlsplit
 
 from row_bot.access.config import (
@@ -37,6 +37,7 @@ class RuntimeAccessPolicySnapshot:
 
     base_config: AccessConfig
     managed_origins: tuple[str, ...]
+    configured_origins: tuple[str, ...] = ()
     managed_route_configs: tuple[tuple[str, AccessConfig], ...] = ()
 
     def config_for_scope(self, scope: Mapping[str, object]) -> AccessConfig:
@@ -69,13 +70,20 @@ class RuntimeAccessPolicy:
     WebSocket admission can retain one coherent view per request.
     """
 
-    def __init__(self, base_config: AccessConfig) -> None:
+    def __init__(
+        self,
+        base_config: AccessConfig,
+        configured_origins: Iterable[object] = (),
+    ) -> None:
         if not isinstance(base_config, AccessConfig):
             raise TypeError("base_config must be an AccessConfig")
         self._base_config = base_config
+        self._configured_origins = _normalize_configured_origins(configured_origins)
         self._managed_origins: set[str] = set()
         self._lock = threading.RLock()
         self._snapshot = RuntimeAccessPolicySnapshot(base_config, ())
+        if self._configured_origins:
+            self._rebuild_snapshot_locked()
 
     @property
     def base_config(self) -> AccessConfig:
@@ -86,6 +94,20 @@ class RuntimeAccessPolicy:
 
         with self._lock:
             return self._snapshot
+
+    def set_configured_origins(
+        self,
+        origins: Iterable[object],
+    ) -> tuple[str, ...]:
+        """Replace durable exact origins and return their canonical forms."""
+
+        configured_origins = _normalize_configured_origins(origins)
+        with self._lock:
+            if configured_origins == self._configured_origins:
+                return configured_origins
+            self._configured_origins = configured_origins
+            self._rebuild_snapshot_locked()
+        return configured_origins
 
     def register_managed_origin(self, url: object) -> str:
         """Register one exact managed HTTPS origin and return its canonical form."""
@@ -118,9 +140,14 @@ class RuntimeAccessPolicy:
             self._rebuild_snapshot_locked()
 
     def _rebuild_snapshot_locked(self) -> None:
+        effective_base_config = self._effective_base_config_locked()
         managed_origins = tuple(sorted(self._managed_origins))
         if not managed_origins:
-            self._snapshot = RuntimeAccessPolicySnapshot(self._base_config, ())
+            self._snapshot = RuntimeAccessPolicySnapshot(
+                effective_base_config,
+                (),
+                configured_origins=self._configured_origins,
+            )
             return
 
         loopback_networks = tuple(
@@ -143,10 +170,47 @@ class RuntimeAccessPolicy:
             for authority in (canonical_host(urlsplit(origin).netloc),)
         )
         self._snapshot = RuntimeAccessPolicySnapshot(
-            self._base_config,
+            effective_base_config,
             managed_origins,
-            managed_route_configs,
+            configured_origins=self._configured_origins,
+            managed_route_configs=managed_route_configs,
         )
+
+    def _effective_base_config_locked(self) -> AccessConfig:
+        if not self._configured_origins:
+            return self._base_config
+        authorities = tuple(
+            canonical_host(urlsplit(origin).netloc)
+            for origin in self._configured_origins
+        )
+        return AccessConfig(
+            deployment_mode=self._base_config.deployment_mode,
+            trusted_proxy_cidrs=self._base_config.trusted_proxy_cidrs,
+            allowed_hosts=tuple(
+                dict.fromkeys((*self._base_config.allowed_hosts, *authorities))
+            ),
+            public_origins=tuple(
+                dict.fromkeys(
+                    (*self._base_config.public_origins, *self._configured_origins)
+                )
+            ),
+            untrusted_forwarded_action=self._base_config.untrusted_forwarded_action,
+        )
+
+
+def _normalize_configured_origins(
+    origins: Iterable[object],
+) -> tuple[str, ...]:
+    if isinstance(origins, (str, bytes)):
+        raise AccessConfigError("configured origins must be a collection")
+    normalized: list[str] = []
+    for value in origins:
+        origin = canonical_origin(value)
+        if "*" in urlsplit(origin).netloc:
+            raise AccessConfigError("configured origins must use an exact host")
+        if origin not in normalized:
+            normalized.append(origin)
+    return tuple(normalized)
 
 
 __all__ = [

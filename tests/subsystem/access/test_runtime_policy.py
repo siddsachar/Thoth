@@ -76,6 +76,50 @@ def test_register_and_unregister_exact_managed_origin_preserves_base() -> None:
     assert policy.snapshot().base_config is base
 
 
+def test_configured_origins_extend_only_the_effective_base_config() -> None:
+    base = _base_config()
+    configured_origin = "https://trusted.example:8443"
+    policy = RuntimeAccessPolicy(
+        base,
+        configured_origins=(" HTTPS://TRUSTED.EXAMPLE:8443/ ",),
+    )
+
+    snapshot = policy.snapshot()
+    effective = snapshot.base_config
+
+    assert snapshot.configured_origins == (configured_origin,)
+    assert effective is not base
+    assert effective.allowed_hosts == (
+        "localhost",
+        "operator.example",
+        "trusted.example:8443",
+    )
+    assert effective.public_origins == (OPERATOR_ORIGIN, configured_origin)
+    assert effective.trusted_proxy_cidrs == base.trusted_proxy_cidrs
+    assert effective.untrusted_forwarded_action is base.untrusted_forwarded_action
+    assert effective.host_allowed("trusted.example:8443") is True
+    assert effective.host_allowed("trusted.example:8444") is False
+    assert effective.origin_allowed(configured_origin) is True
+    assert base.allowed_hosts == ("localhost", "operator.example")
+    assert base.public_origins == (OPERATOR_ORIGIN,)
+
+    assert policy.set_configured_origins(()) == ()
+    assert policy.snapshot().base_config is base
+
+
+def test_invalid_configured_origin_does_not_replace_runtime_snapshot() -> None:
+    policy = RuntimeAccessPolicy(
+        _base_config(),
+        configured_origins=("https://trusted.example",),
+    )
+    previous = policy.snapshot()
+
+    with pytest.raises(AccessConfigError):
+        policy.set_configured_origins(("https://*.example",))
+
+    assert policy.snapshot() is previous
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -149,6 +193,38 @@ def test_managed_registration_does_not_expand_operator_managed_config() -> None:
     assert policy.snapshot().base_config is base
 
 
+def test_configured_origins_do_not_expand_managed_or_proxy_trust() -> None:
+    configured_origin = "https://trusted.example"
+    policy = RuntimeAccessPolicy(
+        _base_config(),
+        configured_origins=(configured_origin,),
+    )
+    policy.register_managed_origin(MANAGED_ORIGIN)
+    snapshot = policy.snapshot()
+
+    configured_scope = _scope(
+        client="127.0.0.1",
+        host="trusted.example",
+    )
+    configured_config = snapshot.config_for_scope(configured_scope)
+    managed_config = snapshot.config_for_scope(_scope(client="127.0.0.1"))
+
+    assert configured_config is snapshot.base_config
+    assert configured_config.origin_allowed(configured_origin)
+    assert {str(network) for network in configured_config.trusted_proxy_cidrs} == {
+        "10.0.0.2/32"
+    }
+    with pytest.raises(RequestContextError, match="untrusted_forwarding_headers"):
+        RequestContextResolver(configured_config).resolve_provenance(configured_scope)
+    assert managed_config.origin_allowed(MANAGED_ORIGIN)
+    assert managed_config.origin_allowed(configured_origin) is False
+    assert managed_config.host_allowed("trusted.example") is False
+    assert {str(network) for network in managed_config.trusted_proxy_cidrs} == {
+        "127.0.0.1/32",
+        "::1/128",
+    }
+
+
 def test_concurrent_registration_and_snapshot_views_remain_coherent() -> None:
     policy = RuntimeAccessPolicy(_base_config())
 
@@ -171,6 +247,26 @@ def test_concurrent_registration_and_snapshot_views_remain_coherent() -> None:
         final = policy.snapshot()
         if not final.managed_origins:
             assert final.base_config is policy.base_config
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(exercise, range(128)))
+
+
+def test_concurrent_configured_origin_replacement_remains_coherent() -> None:
+    policy = RuntimeAccessPolicy(_base_config())
+    configured_sets = (
+        ("https://first.example", "http://second.example:8080"),
+        ("https://third.example:8443",),
+    )
+
+    def exercise(index: int) -> None:
+        policy.set_configured_origins(configured_sets[index % 2])
+        snapshot = policy.snapshot()
+        assert snapshot.configured_origins in configured_sets
+        for origin in snapshot.configured_origins:
+            authority = urlsplit(origin).netloc
+            assert snapshot.base_config.host_allowed(authority)
+            assert snapshot.base_config.origin_allowed(origin)
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         list(executor.map(exercise, range(128)))

@@ -31,25 +31,114 @@ def test_route_config_defaults_local_and_saves_atomically(tmp_path) -> None:
     assert saved.lan_enabled is True
     assert store.load() == saved
     assert json.loads(path.read_text(encoding="utf-8")) == {
+        "configured_origins": [],
         "listen_mode": "local_network",
-        "version": 1,
+        "version": 2,
     }
     assert list(path.parent.glob(f".{path.name}.*.tmp")) == []
+
+
+def test_version_one_migrates_without_losing_listen_mode(tmp_path) -> None:
+    path = tmp_path / "access_routes.json"
+    path.write_text(
+        '{"listen_mode":"local_network","version":1}',
+        encoding="utf-8",
+    )
+
+    config = AccessRouteConfigStore(path).load()
+
+    assert config.version == 2
+    assert config.listen_mode is ListenMode.LOCAL_NETWORK
+    assert config.configured_origins == ()
+
+
+def test_version_two_round_trip_canonicalizes_and_deduplicates_origins(
+    tmp_path,
+) -> None:
+    path = tmp_path / "access_routes.json"
+    store = AccessRouteConfigStore(path)
+
+    store.save(
+        AccessRouteConfig(
+            listen_mode=ListenMode.LOCAL_NETWORK,
+            configured_origins=(
+                " HTTPS://ROW-BOT.EXAMPLE:443/ ",
+                "https://row-bot.example",
+                "http://row-bot.example:8080",
+            ),
+        )
+    )
+
+    loaded = store.load()
+    assert loaded.listen_mode is ListenMode.LOCAL_NETWORK
+    assert loaded.configured_origins == (
+        "https://row-bot.example",
+        "http://row-bot.example:8080",
+    )
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "configured_origins": [
+            "https://row-bot.example",
+            "http://row-bot.example:8080",
+        ],
+        "listen_mode": "local_network",
+        "version": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "",
+        "ftp://row-bot.example",
+        "https://owner:secret@row-bot.example",
+        "https://row-bot.example/path",
+        "https://row-bot.example?query=1",
+        "https://row-bot.example#fragment",
+        "https://*.row-bot.example",
+        "https://row-bot.example:not-a-port",
+    ],
+)
+def test_route_config_rejects_non_exact_origins(origin: str) -> None:
+    with pytest.raises(AccessRouteConfigError):
+        AccessRouteConfig(configured_origins=(origin,))
+
+
+def test_origin_mutations_and_listen_changes_preserve_each_other(tmp_path) -> None:
+    store = AccessRouteConfigStore(tmp_path / "access_routes.json")
+    store.set_listen_mode(ListenMode.LOCAL_NETWORK)
+
+    added = store.add_configured_origin("HTTPS://ROW-BOT.EXAMPLE:443/")
+    deduplicated = store.add_configured_origin("https://row-bot.example")
+    listen_changed = store.set_listen_mode(ListenMode.LOCAL_ONLY)
+    removed = store.remove_configured_origin("https://ROW-BOT.example/")
+
+    assert added.listen_mode is ListenMode.LOCAL_NETWORK
+    assert added.configured_origins == ("https://row-bot.example",)
+    assert deduplicated == added
+    assert listen_changed.listen_mode is ListenMode.LOCAL_ONLY
+    assert listen_changed.configured_origins == ("https://row-bot.example",)
+    assert removed.listen_mode is ListenMode.LOCAL_ONLY
+    assert removed.configured_origins == ()
+    assert store.load() == removed
 
 
 def test_failed_atomic_replace_preserves_previous_config(tmp_path, monkeypatch) -> None:
     path = tmp_path / "access_routes.json"
     store = AccessRouteConfigStore(path)
-    store.save(AccessRouteConfig(listen_mode=ListenMode.LOCAL_ONLY))
+    previous = AccessRouteConfig(
+        listen_mode=ListenMode.LOCAL_ONLY,
+        configured_origins=("https://existing.example",),
+    )
+    store.save(previous)
 
     def fail_replace(_source, _destination):
         raise OSError("injected replace failure")
 
     monkeypatch.setattr("row_bot.access.access_routes.os.replace", fail_replace)
     with pytest.raises(OSError, match="injected replace failure"):
-        store.save(AccessRouteConfig(listen_mode=ListenMode.LOCAL_NETWORK))
+        store.add_configured_origin("https://new.example")
 
-    assert store.load().listen_mode is ListenMode.LOCAL_ONLY
+    assert store.load() == previous
     assert list(tmp_path.glob(f".{path.name}.*.tmp")) == []
 
 

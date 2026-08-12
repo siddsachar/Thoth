@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import inspect
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 from nicegui import run, ui
 
@@ -22,7 +23,9 @@ from row_bot.access.access_routes import (
     apply_listen_mode,
     build_route_inventory,
 )
+from row_bot.access.config import AccessConfigError, canonical_origin
 from row_bot.access.models import SessionLifetime
+from row_bot.access.runtime_policy import RuntimeAccessPolicy
 from row_bot.access.service import AccessService, CreatedInvitation
 from row_bot.ui.access_context import current_access_context, require_ui_owner
 
@@ -44,8 +47,19 @@ TAILSCALE_DISABLE_RESTART_NOTICE = (
 )
 
 
+def _canonical_trusted_origin(value: object) -> str:
+    origin = canonical_origin(value)
+    if "*" in urlsplit(origin).netloc:
+        raise AccessConfigError("trusted origins must use an exact host")
+    return origin
+
+
 class StaleInvitationRouteError(ValueError):
     """Raised when a selected route is no longer eligible."""
+
+
+class ExternallyManagedAccessError(RuntimeError):
+    """Raised when deployment configuration owns Host admission."""
 
 
 @dataclass(slots=True)
@@ -59,6 +73,9 @@ class RemoteAccessActions:
     tailscale_controller: object | None = None
     route_inventory_provider: RouteInventoryProvider | None = None
     tailscale_status_sink: TailscaleStatusSink | None = None
+    runtime_access_policy: RuntimeAccessPolicy | None = None
+    environment_origins: tuple[str, ...] = ()
+    host_admission_managed_externally: bool = False
     authorizer: Authorize = require_ui_owner
     _controller_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -94,7 +111,7 @@ class RemoteAccessActions:
             access_route="settings",
         )
 
-    def create_custom_invitation(
+    def trust_origin_and_create_invitation(
         self,
         *,
         layout: str,
@@ -102,23 +119,58 @@ class RemoteAccessActions:
         lifetime: str,
     ) -> CreatedInvitation:
         self._require_admin()
+        if self.host_admission_managed_externally:
+            raise ExternallyManagedAccessError(
+                "Host admission is managed by ROW_BOT_ALLOWED_HOSTS."
+            )
         if layout not in {"desktop", "compact"}:
             raise ValueError("layout must be desktop or compact")
         normalized_lifetime = SessionLifetime(lifetime)
+        if normalized_lifetime is SessionLifetime.MIGRATED:
+            raise ValueError("lifetime must be trusted or temporary")
+        normalized_origin = _canonical_trusted_origin(origin)
+        config = self.route_store.add_configured_origin(normalized_origin)
+        if self.runtime_access_policy is not None:
+            self.runtime_access_policy.set_configured_origins(
+                config.configured_origins
+            )
         return self.service.create_invitation(
-            intended_origin=origin,
+            intended_origin=normalized_origin,
             session_lifetime=normalized_lifetime,
             next_path="/?mobile=1" if layout == "compact" else "/",
             created_by="settings_owner",
-            access_route="settings_custom",
+            access_route="settings_trusted_origin",
+        )
+
+    def remove_configured_origin(self, origin: str) -> bool:
+        self._require_admin()
+        if self.host_admission_managed_externally:
+            raise ExternallyManagedAccessError(
+                "Host admission is managed by ROW_BOT_ALLOWED_HOSTS."
+            )
+        normalized_origin = _canonical_trusted_origin(origin)
+        previous = self.route_store.load_or_default()
+        config = self.route_store.remove_configured_origin(normalized_origin)
+        if self.runtime_access_policy is not None:
+            self.runtime_access_policy.set_configured_origins(
+                config.configured_origins
+            )
+        return (
+            normalized_origin in previous.configured_origins
+            and normalized_origin not in config.configured_origins
         )
 
     def refresh_route_inventory(self) -> AccessRouteInventory:
         provider = self.route_inventory_provider
         if provider is None:
+            config = self.route_store.load_or_default()
             return build_route_inventory(
                 port=self.port,
-                config=self.route_store.load_or_default(),
+                config=config,
+                reverse_proxy_origins=(
+                    *config.configured_origins,
+                    *self.environment_origins,
+                ),
             )
         inventory = provider()
         if not isinstance(inventory, AccessRouteInventory):
@@ -282,6 +334,9 @@ def build_remote_access_settings_section(
     tailscale_verified_at: datetime | None = None,
     restart_child: RestartChild | None = None,
     tailscale_controller: object | None = None,
+    runtime_access_policy: RuntimeAccessPolicy | None = None,
+    environment_origins: tuple[str, ...] = (),
+    host_admission_managed_externally: bool = False,
     authorizer: Authorize = require_ui_owner,
     port: int = 8080,
     status_dot: Callable[[str, str, str | None], None] | None = None,
@@ -294,8 +349,17 @@ def build_remote_access_settings_section(
     inventory = route_inventory or build_route_inventory(
         port=port,
         config=route_config,
+        reverse_proxy_origins=(
+            *route_config.configured_origins,
+            *environment_origins,
+        ),
     )
-    selected_inventory_provider = route_inventory_provider or (lambda: inventory)
+    def static_inventory_provider() -> AccessRouteInventory:
+        return inventory
+
+    selected_inventory_provider = route_inventory_provider or (
+        static_inventory_provider if route_inventory is not None else None
+    )
     actions = RemoteAccessActions(
         service=selected_service,
         route_store=selected_store,
@@ -304,6 +368,11 @@ def build_remote_access_settings_section(
         tailscale_controller=tailscale_controller,
         route_inventory_provider=selected_inventory_provider,
         tailscale_status_sink=tailscale_status_sink,
+        runtime_access_policy=runtime_access_policy,
+        environment_origins=environment_origins,
+        host_admission_managed_externally=(
+            host_admission_managed_externally
+        ),
         authorizer=authorizer,
     )
 
@@ -541,35 +610,142 @@ def _invitation_dialog(
         ).props("unelevated no-caps color=primary")
 
         with ui.expansion(
-            "Use another configured address",
-            icon="travel_explore",
+            "Add another trusted address",
+            icon="add_link",
             value=False,
         ).classes("w-full"):
             custom_origin = (
                 ui.input(
-                    label="Browser-facing origin",
+                    label="Exact HTTP or HTTPS origin",
                     placeholder="https://row-bot.example.com",
                 )
                 .props("dense outlined")
                 .classes("w-full")
             )
             ui.label(
-                "This only creates an invitation for an address you have already "
-                "configured. It does not configure or verify Cloudflare, DNS, TLS, "
-                "proxy trust, firewall rules, or Row-Bot's listen address."
+                "Trusting an origin changes only Row-Bot Host/origin admission and "
+                "invitation routes. Row-Bot does not perform DNS lookup or configure "
+                "DNS, TLS, proxies, firewall rules, or reachability."
             ).classes("text-grey-6 text-xs")
+            ui.label(
+                "HTTP traffic is unencrypted. HTTPS still needs external DNS and TLS; "
+                "a terminating reverse proxy also needs the existing trusted-proxy "
+                "configuration."
+            ).classes("text-warning text-xs")
+            if actions.host_admission_managed_externally:
+                ui.label(
+                    "Host admission is managed externally by ROW_BOT_ALLOWED_HOSTS. "
+                    "Change the deployment configuration to add or remove addresses."
+                ).classes("text-warning text-xs")
+                custom_origin.disable()
 
-            def create_custom() -> None:
+            saved_origins_area = ui.column().classes("w-full gap-2")
+
+            def render_trusted_origins() -> None:
+                saved_origins_area.clear()
+                configured_origins = (
+                    actions.route_store.load_or_default().configured_origins
+                )
+                environment_origins = tuple(
+                    dict.fromkeys(actions.environment_origins)
+                )
+                with saved_origins_area:
+                    if configured_origins:
+                        ui.label("Saved trusted addresses").classes(
+                            "text-xs text-weight-medium"
+                        )
+                    for saved_origin in configured_origins:
+                        with ui.card().classes("w-full q-pa-sm"):
+                            with ui.row().classes(
+                                "items-center justify-between w-full no-wrap"
+                            ):
+                                ui.label(saved_origin).classes(
+                                    "text-primary text-xs"
+                                ).style("word-break: break-all;")
+
+                                def remove_handler(
+                                    origin: str = saved_origin,
+                                ) -> Callable[[], Any]:
+                                    async def remove() -> None:
+                                        confirmation = (
+                                            "Remove this trusted address? Current "
+                                            f"access through {origin} may stop immediately."
+                                        )
+                                        confirmed = await ui.run_javascript(
+                                            f"confirm({json.dumps(confirmation)})",
+                                            timeout=30,
+                                        )
+                                        if not confirmed:
+                                            return
+                                        try:
+                                            removed = actions.remove_configured_origin(
+                                                origin
+                                            )
+                                        except PermissionError:
+                                            ui.notify(
+                                                "Owner access is required.",
+                                                type="negative",
+                                            )
+                                            return
+                                        except ExternallyManagedAccessError as exc:
+                                            ui.notify(str(exc), type="warning")
+                                            return
+                                        except Exception:
+                                            ui.notify(
+                                                "The trusted address could not be removed.",
+                                                type="negative",
+                                            )
+                                            return
+                                        refresh_routes()
+                                        render_trusted_origins()
+                                        ui.notify(
+                                            "Trusted address removed."
+                                            if removed
+                                            else "Trusted address was already removed.",
+                                            type="positive" if removed else "info",
+                                        )
+
+                                    return remove
+
+                                remove_button = ui.button(
+                                    icon="delete_outline",
+                                    on_click=remove_handler(),
+                                ).props("flat dense round color=negative").tooltip(
+                                    "Remove trusted address"
+                                )
+                                if actions.host_admission_managed_externally:
+                                    remove_button.disable()
+                    if environment_origins:
+                        ui.label("Deployment-managed addresses").classes(
+                            "text-xs text-weight-medium"
+                        )
+                    for environment_origin in environment_origins:
+                        with ui.card().classes("w-full q-pa-sm"):
+                            with ui.row().classes(
+                                "items-center justify-between w-full no-wrap"
+                            ):
+                                ui.label(environment_origin).classes(
+                                    "text-primary text-xs"
+                                ).style("word-break: break-all;")
+                                ui.badge("Managed externally", color="grey").props(
+                                    "outline"
+                                )
+                    if not configured_origins and not environment_origins:
+                        ui.label("No additional trusted addresses saved.").classes(
+                            "text-grey-6 text-xs"
+                        )
+
+            def trust_and_create() -> None:
                 result.clear()
                 origin = str(custom_origin.value or "")
                 if not origin.strip():
                     ui.notify(
-                        "Enter a browser-facing origin before creating an invitation.",
+                        "Enter an exact HTTP or HTTPS origin.",
                         type="warning",
                     )
                     return
                 try:
-                    created = actions.create_custom_invitation(
+                    created = actions.trust_origin_and_create_invitation(
                         layout=str(layout.value),
                         origin=origin,
                         lifetime=str(lifetime.value),
@@ -577,24 +753,51 @@ def _invitation_dialog(
                 except PermissionError:
                     ui.notify("Owner access is required.", type="negative")
                     return
+                except ExternallyManagedAccessError as exc:
+                    ui.notify(str(exc), type="warning")
+                    return
                 except ValueError:
                     ui.notify(
-                        "Enter an exact HTTP or HTTPS origin, such as "
-                        "https://row-bot.example.com.",
+                        "Enter one exact HTTP or HTTPS origin without credentials, "
+                        "a path, query, fragment, or wildcard.",
                         type="warning",
                     )
                     return
+                except Exception:
+                    ui.notify(
+                        "The trusted address could not be saved; no invitation was "
+                        "created.",
+                        type="negative",
+                    )
+                    return
+                refresh_routes()
+                matching_route = next(
+                    (
+                        route
+                        for route in active_inventory.invitation_routes
+                        if route.origin == created.invitation.intended_origin
+                    ),
+                    None,
+                )
+                if matching_route is not None:
+                    route_select.value = matching_route.id
+                    route_select.update()
+                    refresh_route_help()
+                render_trusted_origins()
                 _render_created_invitation(
                     result,
                     created,
                     layout=str(layout.value),
                 )
 
-            ui.button(
-                "Create for configured address",
-                icon="link",
-                on_click=create_custom,
+            trust_button = ui.button(
+                "Trust address and create invitation",
+                icon="add_link",
+                on_click=trust_and_create,
             ).props("unelevated no-caps color=primary")
+            if actions.host_admission_managed_externally:
+                trust_button.disable()
+            render_trusted_origins()
 
     refresh_routes(inventory)
     return dialog, content, refresh_routes
@@ -613,7 +816,7 @@ def _route_help_state(
     if not inventory.invitation_routes:
         return (
             "No cross-device route is ready. Check Tailscale, enable Local network, "
-            "or configure an HTTPS address.",
+            "or add a trusted address.",
             False,
         )
     route = inventory.resolve_invitation_route(route_id)
@@ -1066,8 +1269,8 @@ def _devices_card(
 def _advanced_card(inventory: AccessRouteInventory, *, port: int) -> None:
     with ui.expansion("Advanced", icon="tune").classes("w-full"):
         ui.label(
-            "Expert connection details. Raw hosts, proxies, and public origins "
-            "are configured through the CLI or deployment configuration."
+            "Expert connection details. Managed hosts, proxy trust, and environment "
+            "origins remain owned by deployment configuration."
         ).classes("text-grey-6 text-xs")
         ui.label(f"Application port: {port}").classes("text-grey-6 text-xs")
         for route in inventory.routes:
@@ -1111,6 +1314,7 @@ def _copy_to_clipboard(value: str) -> None:
 
 
 __all__ = [
+    "ExternallyManagedAccessError",
     "RemoteAccessActions",
     "RouteInventoryProvider",
     "StaleInvitationRouteError",
