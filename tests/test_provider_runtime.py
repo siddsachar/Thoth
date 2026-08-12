@@ -799,12 +799,12 @@ def test_atlascloud_listed_among_configured_providers(monkeypatch):
 
 def test_minimax_model_facade_fetches_live_catalog_and_capabilities(monkeypatch):
     import httpx
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
     from row_bot.providers.capabilities import snapshot_supports_surface
 
     old_cache = dict(models._cloud_model_cache)
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "test-minimax-key" if key == "MINIMAX_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "test-minimax-key" if provider_id == "minimax" else "")
     calls = []
 
     class _Response:
@@ -879,11 +879,11 @@ def test_minimax_model_facade_fetches_live_catalog_and_capabilities(monkeypatch)
 
 def test_minimax_live_catalog_failure_preserves_existing_cache(monkeypatch):
     import httpx
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
 
     old_cache = dict(models._cloud_model_cache)
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "test-minimax-key" if key == "MINIMAX_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "test-minimax-key" if provider_id == "minimax" else "")
     monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: (_ for _ in ()).throw(httpx.TimeoutException("boom")))
     try:
         models._cloud_model_cache.clear()
@@ -904,12 +904,12 @@ def test_minimax_live_catalog_failure_preserves_existing_cache(monkeypatch):
 
 def test_minimax_live_catalog_does_not_rewrite_current_default(monkeypatch):
     import httpx
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
 
     old_cache = dict(models._cloud_model_cache)
     old_current = models._current_model
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "test-minimax-key" if key == "MINIMAX_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "test-minimax-key" if provider_id == "minimax" else "")
 
     class _Response:
         status_code = 200
@@ -947,9 +947,9 @@ def test_minimax_live_catalog_does_not_rewrite_current_default(monkeypatch):
 
 
 def test_ollama_cloud_model_facade_fetches_direct_catalog(monkeypatch):
-    import row_bot.api_keys as api_keys
     import httpx
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
 
     old_cache = dict(models._cloud_model_cache)
 
@@ -963,7 +963,7 @@ def test_ollama_cloud_model_facade_fetches_direct_catalog(monkeypatch):
         def json(self):
             return {"models": [{"name": "gpt-oss:120b-cloud"}]}
 
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "test-ollama-key" if key == "OLLAMA_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "test-ollama-key" if provider_id == "ollama_cloud" else "")
     monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: _Response())
     try:
         models._cloud_model_cache.clear()
@@ -987,8 +987,8 @@ def test_ollama_cloud_offload_model_facade_routes_to_local_ollama_provider():
 
 def test_atlascloud_model_facade_fetches_openai_compatible_catalog(monkeypatch):
     import httpx
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
 
     old_cache = dict(models._cloud_model_cache)
     captured = {}
@@ -1013,7 +1013,7 @@ def test_atlascloud_model_facade_fetches_openai_compatible_catalog(monkeypatch):
         captured["headers"] = dict(kwargs.get("headers") or {})
         return _Response()
 
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "test-atlas-key" if key == "ATLASCLOUD_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "test-atlas-key" if provider_id == "atlascloud" else "")
     monkeypatch.setattr(httpx, "get", _fake_get)
     try:
         models._cloud_model_cache.clear()
@@ -1036,11 +1036,11 @@ def test_atlascloud_model_facade_fetches_openai_compatible_catalog(monkeypatch):
 
 def test_atlascloud_live_catalog_failure_preserves_existing_cache(monkeypatch):
     import httpx
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
 
     old_cache = dict(models._cloud_model_cache)
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "test-atlas-key" if key == "ATLASCLOUD_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "test-atlas-key" if provider_id == "atlascloud" else "")
     monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: (_ for _ in ()).throw(httpx.TimeoutException("boom")))
     try:
         models._cloud_model_cache.clear()

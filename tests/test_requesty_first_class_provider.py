@@ -136,8 +136,8 @@ def test_validate_requesty_key_lists_models(monkeypatch):
 
 def test_requesty_model_facade_fetches_provider_qualified_catalog(monkeypatch):
     import httpx
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
     from row_bot.providers.capabilities import snapshot_supports_surface
 
     old_cache = dict(models._cloud_model_cache)
@@ -179,7 +179,7 @@ def test_requesty_model_facade_fetches_provider_qualified_catalog(monkeypatch):
         captured["headers"] = dict(kwargs.get("headers") or {})
         return _Response()
 
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "requesty-key" if key == "REQUESTY_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "requesty-key" if provider_id == "requesty" else "")
     monkeypatch.setattr(httpx, "get", _fake_get)
     try:
         models._cloud_model_cache.clear()
@@ -207,11 +207,11 @@ def test_requesty_model_facade_fetches_provider_qualified_catalog(monkeypatch):
 
 def test_requesty_live_catalog_failure_preserves_existing_cache(monkeypatch):
     import httpx
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
 
     old_cache = dict(models._cloud_model_cache)
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "requesty-key" if key == "REQUESTY_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "requesty-key" if provider_id == "requesty" else "")
     monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: (_ for _ in ()).throw(httpx.TimeoutException("boom")))
     try:
         models._cloud_model_cache.clear()

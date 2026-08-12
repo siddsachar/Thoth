@@ -1996,63 +1996,61 @@ def _fetch_cloud_models(provider: str) -> int:
     call from background threads.
     """
     import httpx
-    from row_bot.api_keys import get_key
+    from row_bot.providers.auth_store import get_provider_secret
     from row_bot.providers.capabilities import model_supports_surface
     from row_bot.providers.catalog import model_info_from_metadata, model_info_to_cache_entry
 
     if provider == "openai":
-        api_key = get_key("OPENAI_API_KEY")
+        api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         url = f"{OPENAI_BASE_URL}/models"
         headers = {"Authorization": f"Bearer {api_key}"}
     elif provider == "ollama_cloud":
-        api_key = get_key("OLLAMA_API_KEY")
+        api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         return _fetch_ollama_cloud_models(api_key)
     elif provider == "openrouter":
-        api_key = get_key("OPENROUTER_API_KEY")
+        api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         url = f"{OPENROUTER_BASE_URL}/models"
         headers = {"Authorization": f"Bearer {api_key}"}
     elif provider == "requesty":
-        api_key = get_key("REQUESTY_API_KEY")
+        api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         return _fetch_requesty_models(api_key)
     elif provider == "anthropic":
-        api_key = get_key("ANTHROPIC_API_KEY")
+        api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         return _fetch_anthropic_models(api_key)
     elif provider == "google":
-        api_key = get_key("GOOGLE_API_KEY")
+        api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         return _fetch_google_models(api_key)
     elif provider == "xai":
-        api_key = get_key("XAI_API_KEY")
+        api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         return _fetch_xai_models(api_key)
     elif provider == "xai_oauth":
         return _fetch_xai_oauth_models()
     elif provider == "minimax":
-        api_key = get_key("MINIMAX_API_KEY")
+        api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         return _fetch_minimax_models(api_key)
     elif provider in {"opencode_zen", "opencode_go"}:
-        from row_bot.providers.auth_store import get_provider_secret
-
         api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         return _fetch_opencode_models(provider)
     elif provider == "atlascloud":
-        api_key = get_key("ATLASCLOUD_API_KEY")
+        api_key = get_provider_secret(provider)
         if not api_key:
             return 0
         return _fetch_atlascloud_models(api_key)
@@ -2744,7 +2742,7 @@ def _fetch_opencode_models(provider_id: str) -> int:
     """Populate OpenCode models from live discovery using provider-qualified keys."""
     import httpx
 
-    from row_bot.api_keys import get_key
+    from row_bot.providers.auth_store import get_provider_secret
     from row_bot.providers.catalog import model_info_to_cache_entry
     from row_bot.providers.opencode import list_opencode_model_infos, opencode_models_url
 
@@ -2771,12 +2769,7 @@ def _fetch_opencode_models(provider_id: str) -> int:
         return None
 
     existing_rows = _provider_cloud_cache_entries(provider_id)
-    try:
-        from row_bot.providers.auth_store import provider_api_key_env
-        env_var = provider_api_key_env(provider_id)
-    except Exception:
-        env_var = ""
-    api_key = get_key(env_var) if env_var else ""
+    api_key = get_provider_secret(provider_id)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     model_ids: list[str] | None = None
     image_input_model_ids: set[str] | None = None

@@ -5,8 +5,8 @@ from pathlib import Path
 
 def test_atlascloud_live_fetch_uses_provider_qualified_keys_and_preserves_openrouter(monkeypatch):
     import httpx
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
 
     old_cache = dict(models._cloud_model_cache)
 
@@ -30,7 +30,7 @@ def test_atlascloud_live_fetch_uses_provider_qualified_keys_and_preserves_openro
                 ]
             }
 
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "atlas-key" if key == "ATLASCLOUD_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "atlas-key" if provider_id == "atlascloud" else "")
     monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: _Response())
     try:
         models._cloud_model_cache.clear()
@@ -98,8 +98,8 @@ def test_validate_atlascloud_key_lists_models(monkeypatch):
 
 def test_atlascloud_fetch_filters_media_generation_rows(monkeypatch):
     import httpx
-    import row_bot.api_keys as api_keys
     import row_bot.models as models
+    import row_bot.providers.auth_store as auth_store
     from row_bot.providers.capabilities import snapshot_supports_surface
 
     old_cache = dict(models._cloud_model_cache)
@@ -121,7 +121,7 @@ def test_atlascloud_fetch_filters_media_generation_rows(monkeypatch):
                 ]
             }
 
-    monkeypatch.setattr(api_keys, "get_key", lambda key: "atlas-key" if key == "ATLASCLOUD_API_KEY" else "")
+    monkeypatch.setattr(auth_store, "get_provider_secret", lambda provider_id: "atlas-key" if provider_id == "atlascloud" else "")
     monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: _Response())
     try:
         models._cloud_model_cache.clear()

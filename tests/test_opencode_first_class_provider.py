@@ -323,6 +323,7 @@ def test_followup_opencode_zen_vision_refs_appear_after_discovery_refresh_withou
                 ]
             }
 
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
     monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
     try:
         models._fetch_opencode_models("opencode_zen")
@@ -383,6 +384,7 @@ def test_followup_opencode_go_vision_ref_appears_after_discovery_refresh_without
                 ]
             }
 
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
     monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
     try:
         models._fetch_opencode_models("opencode_go")
@@ -414,6 +416,7 @@ def test_followup_opencode_live_input_modalities_override_static_vision_metadata
                 ]
             }
 
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
     monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
     try:
         models._fetch_opencode_models("opencode_go")
@@ -445,6 +448,7 @@ def test_phase3_opencode_models_appear_in_catalog_with_canonical_refs(monkeypatc
 def test_phase3_fetch_opencode_models_uses_provider_qualified_cache(monkeypatch):
     original = dict(models._cloud_model_cache)
     models._cloud_model_cache.clear()
+    captured = {}
 
     class _Resp:
         def raise_for_status(self):
@@ -460,11 +464,17 @@ def test_phase3_fetch_opencode_models_uses_provider_qualified_cache(monkeypatch)
                 ]
             }
 
-    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
+    def _fake_get(*args, **kwargs):
+        captured["headers"] = dict(kwargs.get("headers") or {})
+        return _Resp()
+
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
+    monkeypatch.setattr("httpx.get", _fake_get)
     try:
         count = models._fetch_opencode_models("opencode_go")
 
         assert count >= 3
+        assert captured["headers"]["Authorization"] == "Bearer opencode-key"
         assert "glm-5.1" not in models._cloud_model_cache
         assert models._cloud_model_cache["model:opencode_go:glm-5.1"]["provider"] == "opencode_go"
         assert models._cloud_model_cache["model:opencode_go:mimo-v2.5-pro"]["provider"] == "opencode_go"
@@ -486,6 +496,7 @@ def test_followup_opencode_discovery_omits_stale_models(monkeypatch):
         def json(self):
             return {"data": [{"id": "deepseek-v4-flash-free"}, {"id": "gpt-5.6"}, {"id": "deepseek-v3.2"}]}
 
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
     monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
     try:
         models._fetch_opencode_models("opencode_zen")
