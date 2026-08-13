@@ -23,6 +23,13 @@ class FakeTTS:
 
 def test_voice_catalog_filters_models_by_runtime_capability(monkeypatch):
     monkeypatch.setattr("row_bot.voice.openai_realtime.get_key", lambda name: "sk-test")
+    monkeypatch.setattr(
+        "row_bot.voice.provider_catalog.sensevoice_runtime_status",
+        lambda _path: SimpleNamespace(
+            ready=False,
+            reason="SenseVoice model data is not installed.",
+        ),
+    )
 
     catalog = build_voice_provider_catalog(
         voice_service=SimpleNamespace(whisper_size="base"),
@@ -39,6 +46,45 @@ def test_voice_catalog_filters_models_by_runtime_capability(monkeypatch):
         DEFAULT_REALTIME_MODEL: f"{DEFAULT_REALTIME_MODEL} (default)",
     }
     assert model_options_for_capability(catalog, "dictation", "openai_realtime") == {}
+    assert "local-funasr-sensevoice" in model_options_for_capability(
+        catalog, "talk", "local"
+    )
+    assert "local-funasr-sensevoice" in model_options_for_capability(
+        catalog, "dictation", "local"
+    )
+
+
+def test_voice_catalog_exposes_optional_local_funasr_when_installed(monkeypatch):
+    monkeypatch.setattr("row_bot.voice.openai_realtime.get_key", lambda name: "")
+    monkeypatch.setattr(
+        "row_bot.voice.provider_catalog.sensevoice_runtime_status",
+        lambda _path: SimpleNamespace(
+            ready=True,
+            reason="SenseVoice is installed locally and normal transcription stays offline.",
+        ),
+    )
+
+    catalog = build_voice_provider_catalog(
+        voice_service=SimpleNamespace(whisper_size="small"),
+        tts_service=FakeTTS(installed=False),
+    )
+
+    assert model_options_for_capability(catalog, "dictation", "local") == {
+        "local-whisper-small": "Local Whisper small",
+        "local-funasr-sensevoice": "SenseVoice Small",
+    }
+    assert model_options_for_capability(catalog, "talk", "local") == {
+        "local-whisper-small": "Local Whisper small",
+        "local-funasr-sensevoice": "SenseVoice Small",
+    }
+    local = next(provider for provider in catalog if provider.provider_id == "local")
+    funasr = next(
+        model
+        for model in local.dictation_models
+        if model.model_id == "local-funasr-sensevoice"
+    )
+    assert funasr.ready is True
+    assert "offline" in funasr.reason
 
 
 def test_voice_catalog_reports_openai_realtime_default_ready_with_key(monkeypatch):

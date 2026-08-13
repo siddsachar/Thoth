@@ -89,7 +89,7 @@ Download the latest installer from [GitHub Releases](https://github.com/siddsach
 | Designer Studio | Decks, documents, landing pages, app mockups, and storyboards with a sandboxed interactive runtime, templates, brand controls, critique and repair, AI image and video generation, chart insertion, Mermaid and Plotly rendering, shareable HTML, and export to PDF, HTML, PNG, and PPTX. |
 | Workflows | Scheduled runs, webhook triggers, task-completion triggers, step pipelines, conditions, approvals, subtasks, notification-only runs, concurrency groups, delivery defaults, profile-first workflow agents, promoted Agent-run workflows, per-workflow model/tool/skill/profile overrides, safety modes, run status, run history, upcoming runs, and a Workflow Console. |
 | Controlled self-evolution | Structured self-reflection, bounded change proposals, reviewable execution boundaries, persistence, Dream Cycle and memory integration, and Command Center/status visibility for improvement work that stays explicit and auditable. |
-| Channels and voice | Telegram, WhatsApp, Discord, Slack, SMS, and plugin-owned channels with platform-aware live streaming, typing and edit fallbacks, interactive approvals, durable child-agent and Goal Mode notices, media intake, voice transcription, document extraction, health checks, auto-generated send/photo/document tools, and optional tunnel support. SMS remains final-text-only. Realtime voice adds provider-backed voice sessions, action handling, speech/cue policy, and local faster-whisper STT plus Kokoro TTS options. |
+| Channels and voice | Telegram, WhatsApp, Discord, Slack, SMS, and plugin-owned channels with platform-aware live streaming, typing and edit fallbacks, interactive approvals, durable child-agent and Goal Mode notices, media intake, voice transcription, document extraction, health checks, auto-generated send/photo/document tools, and optional tunnel support. SMS remains final-text-only. Realtime voice adds provider-backed voice sessions, action handling, speech/cue policy, and local faster-whisper or FunASR/SenseVoice STT plus Kokoro TTS options. |
 | Platform and app | Native desktop app plus authenticated single-owner desktop and compact browser access; one-time invitations, durable revocable sessions, exact trusted-address add/remove controls, assigned-interface route discovery, route and device management, Tailscale Serve, browser-local voice, and strict HTTP/WebSocket origin gates; authenticated headless `serve` mode; official hardened Docker/VPS deployment and multi-architecture GHCR images; opt-in Computer Use setup, live takeover, and permission recovery on Windows and macOS; installable PWA support; tray integration on Windows and macOS; local browser-first Linux launch; Home status surfaces; recovery tools; verified auto-updates; and a searchable public user guide. |
 | Extensibility | Smart Skills, pinned skills, slash commands, Skills Hub browsing/import/search, automatic per-task discovery of enabled manual and plugin skills, Plugin System v2 for native tools, MCP-backed tools, bundled skills, and channels, sandboxed Plugin Center and marketplace, bundled skills and tool guides, Agent Profiles, child-agent tools, Goal Mode tools, external MCP clients over stdio, Streamable HTTP, and SSE, Custom Tools from repos or folders, hardened Custom Tool Builder setup, Claude Code Delegation through an approval-gated CLI worker, migration from selected Hermes/OpenClaw data, setup center, identity settings, and stability diagnostics. |
 
@@ -385,6 +385,14 @@ local Whisper transcription in Row-Bot, and returns local Kokoro audio to that
 same browser. Remote microphone capture requires HTTPS; plain LAN HTTP is not a
 secure browser context. Voice model downloads remain explicit and OpenAI
 Realtime voice remains a separate provider feature.
+
+SenseVoice installation is an explicit ~940 MB download from
+[ModelScope](https://modelscope.cn/models/iic/SenseVoiceSmall) under the model's
+Apache-2.0 license. ModelScope receives the download request and standard SDK
+user-agent; Row-Bot sends no audio, prompts, or usage data, and normal inference
+uses only the verified local snapshot with update checks disabled. SenseVoice is
+unavailable on Intel macOS because matching PyTorch/Torchaudio CPU wheels are not
+published for that runtime; local Whisper remains available.
 
 Back up the complete active `ROW_BOT_DATA_DIR` while Row-Bot is stopped, and
 protect that backup as private user data. It contains conversations,
@@ -779,4 +787,4 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 ## Acknowledgements
 
-Built with [NiceGUI](https://nicegui.io/), [LangGraph](https://langchain-ai.github.io/langgraph/), [LangChain](https://python.langchain.com/), [Ollama](https://ollama.com/), [FAISS](https://github.com/facebookresearch/faiss), [Cua Driver](https://github.com/trycua/cua), [Kokoro TTS](https://github.com/thewh1teagle/kokoro-onnx), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [HuggingFace](https://huggingface.co/), and [tiktoken](https://github.com/openai/tiktoken).
+Built with [NiceGUI](https://nicegui.io/), [LangGraph](https://langchain-ai.github.io/langgraph/), [LangChain](https://python.langchain.com/), [Ollama](https://ollama.com/), [FAISS](https://github.com/facebookresearch/faiss), [Cua Driver](https://github.com/trycua/cua), [Kokoro TTS](https://github.com/thewh1teagle/kokoro-onnx), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [FunASR/SenseVoice](https://github.com/modelscope/FunASR), [HuggingFace](https://huggingface.co/), and [tiktoken](https://github.com/openai/tiktoken).

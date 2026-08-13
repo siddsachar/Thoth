@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from row_bot.voice.local_provider import (
+    FUNASR_MODEL_LABEL,
+    sensevoice_runtime_status,
+)
 from row_bot.voice.openai_realtime import DEFAULT_REALTIME_MODEL, DEFAULT_REALTIME_VOICE, OpenAIRealtimeProvider
 
 
@@ -49,6 +53,9 @@ def build_voice_provider_catalog(
     tts_service=None,
 ) -> tuple[VoiceProviderCapability, ...]:
     local_whisper_size = str(getattr(voice_service, "whisper_size", "base") or "base")
+    local_funasr_status = sensevoice_runtime_status(
+        getattr(voice_service, "sensevoice_model_path", "")
+    )
     local_tts_ready = bool(tts_service.is_installed()) if tts_service is not None else False
     local_voice = str(getattr(tts_service, "voice", "af_heart") or "af_heart")
     local = VoiceProviderCapability(
@@ -66,6 +73,14 @@ def build_voice_provider_catalog(
                 is_default=True,
                 reason="Microphone transcription, then normal Row-Bot agent handling.",
             ),
+            VoiceModelOption(
+                model_id="local-funasr-sensevoice",
+                label=FUNASR_MODEL_LABEL,
+                provider_id="local",
+                capability="talk",
+                ready=local_funasr_status.ready,
+                reason=local_funasr_status.reason,
+            ),
         ),
         dictation_models=(
             VoiceModelOption(
@@ -75,6 +90,14 @@ def build_voice_provider_catalog(
                 capability="dictation",
                 is_default=True,
                 reason="Speech-to-text only; Send is still required.",
+            ),
+            VoiceModelOption(
+                model_id="local-funasr-sensevoice",
+                label=FUNASR_MODEL_LABEL,
+                provider_id="local",
+                capability="dictation",
+                ready=local_funasr_status.ready,
+                reason=local_funasr_status.reason,
             ),
         ),
         speech_output_models=(

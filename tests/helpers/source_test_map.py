@@ -163,6 +163,19 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
         "Provider and media runtime changes need fake-provider contracts plus focused provider regressions.",
     ),
     SourceTestRule(
+        "voice_runtime",
+        ("src/row_bot/voice/**",),
+        (
+            "tests/test_voice_sensevoice.py",
+            "tests/test_voice_providers.py",
+            "tests/test_voice_provider_catalog.py",
+            "tests/test_voice_coordinator.py",
+            "tests/test_voice_runtime.py",
+            "tests/test_browser_local_voice.py",
+        ),
+        "Voice runtime changes need offline model, provider selection, coordinator, settings, and browser-local regressions.",
+    ),
+    SourceTestRule(
         "tools_memory",
         ("src/row_bot/tools/memory_tool.py",),
         (
