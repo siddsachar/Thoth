@@ -1,125 +1,36 @@
-# Temporary OSV baseline created when dependency scanning was introduced.
+# Temporary OSV exceptions for packages that do not yet have a compatible fix.
 #
-# Keep these package/version-specific overrides narrow and time-bound. They let
-# the scanner block new vulnerable packages or version changes while existing
-# dependency cleanup is handled in focused follow-up work.
+# Keep these package/version-specific overrides narrow and time-bound. Fixed
+# dependencies should be upgraded instead of added to this file.
 
 [[PackageOverrides]]
-name = "pytest"
-version = "8.4.2"
+name = "setuptools"
+version = "81.0.0"
 ecosystem = "PyPI"
 vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "Test-only baseline while validating pytest 9.x compatibility."
+effectiveUntil = 2026-09-30
+reason = "Torch 2.11 requires setuptools<82; the fixed 83.x line cannot resolve until a matching supported Torch/Torchaudio CPU release is available."
 
 [[PackageOverrides]]
-name = "requests"
-version = "2.32.5"
+name = "torch"
+version = "2.11.0"
 ecosystem = "PyPI"
 vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "Runtime baseline from enabling OSV; upgrade once 2.33.x is resolvable with the app lock."
+effectiveUntil = 2026-09-30
+reason = "Torch 2.13 is fixed, but Torchaudio has no matching 2.13 release for the supported CPU platforms; 2.11 remains the newest matching pair."
 
 [[PackageOverrides]]
-name = "starlette"
-version = "0.50.0"
+name = "torch"
+version = "2.11.0+cpu"
 ecosystem = "PyPI"
 vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "Runtime baseline; FastAPI/NiceGUI currently resolve Starlette below the fixed 1.x line."
+effectiveUntil = 2026-09-30
+reason = "Torch 2.13 is fixed, but Torchaudio has no matching 2.13 release for the supported CPU platforms; 2.11 remains the newest matching pair."
 
 [[PackageOverrides]]
-name = "transformers"
-version = "4.57.6"
-ecosystem = "PyPI"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "Optional local-embeddings baseline; one advisory is unfixed and the other requires validating the 5.x release line."
-
-[[PackageOverrides]]
-name = "http-proxy-middleware"
-version = "2.0.9"
+name = "image-size"
+version = "2.0.2"
 ecosystem = "npm"
 vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "Docs-site transitive baseline pending dedicated docs dependency cleanup."
-
-[[PackageOverrides]]
-name = "js-yaml"
-version = "3.14.2"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "Docs-site transitive baseline pending dedicated docs dependency cleanup."
-
-[[PackageOverrides]]
-name = "serialize-javascript"
-version = "6.0.2"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "Docs-site transitive baseline pending dedicated docs dependency cleanup."
-
-[[PackageOverrides]]
-name = "uuid"
-version = "8.3.2"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "Docs-site transitive baseline pending dedicated docs dependency cleanup."
-
-[[PackageOverrides]]
-name = "@protobufjs/utf8"
-version = "1.1.0"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "WhatsApp bridge transitive baseline pending dedicated channel dependency cleanup."
-
-[[PackageOverrides]]
-name = "@whiskeysockets/baileys"
-version = "6.7.21"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "WhatsApp bridge dependency baseline pending compatibility validation of 6.7.22 or newer."
-
-[[PackageOverrides]]
-name = "axios"
-version = "1.15.0"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "WhatsApp bridge transitive baseline pending dedicated channel dependency cleanup."
-
-[[PackageOverrides]]
-name = "form-data"
-version = "4.0.5"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "WhatsApp bridge transitive baseline pending dedicated channel dependency cleanup."
-
-[[PackageOverrides]]
-name = "protobufjs"
-version = "6.8.8"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "WhatsApp bridge transitive baseline pending dedicated channel dependency cleanup."
-
-[[PackageOverrides]]
-name = "protobufjs"
-version = "7.5.5"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "WhatsApp bridge transitive baseline pending dedicated channel dependency cleanup."
-
-[[PackageOverrides]]
-name = "ws"
-version = "8.20.0"
-ecosystem = "npm"
-vulnerability.ignore = true
-effectiveUntil = 2026-07-31
-reason = "WhatsApp bridge transitive baseline pending dedicated channel dependency cleanup."
+effectiveUntil = 2026-09-30
+reason = "Docusaurus currently resolves image-size 2.0.2 and OSV lists no fixed release; usage is limited to the documentation build pipeline."
