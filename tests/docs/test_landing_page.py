@@ -11,18 +11,6 @@ HTML = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
 CSS = (ROOT / "docs" / "site.css").read_text(encoding="utf-8")
 JS = (ROOT / "docs" / "site.js").read_text(encoding="utf-8")
 
-INDEX_WINDOWS_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.6.0/"
-    "Row-Bot-4.6.0-Windows-x64.exe"
-)
-INDEX_MAC_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.6.0/"
-    "Row-Bot-4.6.0-macOS-arm64.dmg"
-)
-INDEX_LINUX_COMMAND = (
-    "curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/"
-    "installer/install-linux.sh | bash -s -- 4.6.0"
-)
 SITE_WINDOWS_URL = (
     "https://github.com/siddsachar/row-bot/releases/download/v4.7.0/"
     "Row-Bot-4.7.0-Windows-x64.exe"
@@ -79,6 +67,7 @@ def _parse() -> LandingPageParser:
 
 def test_landing_page_is_evergreen_and_current() -> None:
     assert "4.4.0" not in HTML
+    assert "4.6.0" not in HTML
     assert "4.4.0" not in JS
     assert "What’s new" not in HTML
     assert "What's new" not in HTML
@@ -91,8 +80,8 @@ def test_landing_page_is_evergreen_and_current() -> None:
     )
     assert json_ld_match
     metadata = json.loads(json_ld_match.group(1))
-    assert metadata["softwareVersion"] == "4.6.0"
-    assert metadata["downloadUrl"].endswith("/releases/tag/v4.6.0")
+    assert metadata["softwareVersion"] == "4.7.0"
+    assert metadata["downloadUrl"].endswith("/releases/tag/v4.7.0")
 
     parser = _parse()
     assert all(image.get("width") and image.get("height") for image in parser.images)
@@ -105,14 +94,16 @@ def test_landing_page_is_evergreen_and_current() -> None:
         "faq",
         "install",
     ]
-    assert "Row-Bot 4.6.0 available" in HTML
-    assert "Row-Bot &middot; v4.6.0 &middot; Apache 2.0" in HTML
-    assert 'src="img/screenshots/real-ui/home-knowledge.png?v=4.6.0"' in HTML
+    assert "Row-Bot 4.7.0 available" in HTML
+    assert "Row-Bot &middot; v4.7.0 &middot; Apache 2.0" in HTML
+    assert 'src="img/screenshots/real-ui/home-knowledge.png?v=4.7.0"' in HTML
     assert (
         "agents, models, tools, memory, documents, workflows, code, design, "
         "messaging, and voice"
     ) in HTML
     assert "Move across the workbench" in HTML
+    assert "A visible context meter and rolling compaction" in HTML
+    assert "external capabilities can be discovered only when needed" in HTML
     assert "PARENT-LED ORCHESTRATION" not in HTML
 
 
@@ -128,11 +119,11 @@ def test_landing_page_fallbacks_and_links_are_complete() -> None:
     assert all(not link["href"].endswith((".exe", ".dmg")) for link in os_primary)
 
     hrefs = [link.get("href") for link in parser.links]
-    assert INDEX_WINDOWS_URL in hrefs
-    assert INDEX_MAC_URL in hrefs
+    assert SITE_WINDOWS_URL in hrefs
+    assert SITE_MAC_URL in hrefs
     assert "docs/getting-started/installation/" in hrefs
     linux_code = next(code for code in parser.codes if "data-linux-command" in code)
-    assert linux_code["text"] == INDEX_LINUX_COMMAND
+    assert linux_code["text"] == SITE_LINUX_COMMAND
     assert SITE_WINDOWS_URL in JS
     assert SITE_MAC_URL in JS
     assert SITE_LINUX_COMMAND in JS
@@ -262,13 +253,10 @@ def test_marketing_pages_share_analytics_and_download_conversion_contract() -> N
     assert "data-row-bot-google-tag" in JS
     assert "trackAdsConversion" in JS
 
-    cache_versions = {name: "4.7.0" for name in MARKETING_PAGES}
-    cache_versions["index.html"] = "4.6.0"
     for name in MARKETING_PAGES:
         content = (ROOT / "docs" / name).read_text(encoding="utf-8")
-        version = cache_versions[name]
-        assert f'src="site.js?v={version}"' in content, name
-        assert f'href="site.css?v={version}-r1"' in content, name
+        assert 'src="site.js?v=4.7.0"' in content, name
+        assert 'href="site.css?v=4.7.0-r1"' in content, name
         assert "googletagmanager.com/gtag/js" not in content, name
 
     parser = _parse()
@@ -276,7 +264,7 @@ def test_marketing_pages_share_analytics_and_download_conversion_contract() -> N
     assert download_links
     for link in download_links:
         platform = link["data-desktop-download"]
-        expected = INDEX_WINDOWS_URL if platform == "windows" else INDEX_MAC_URL
+        expected = SITE_WINDOWS_URL if platform == "windows" else SITE_MAC_URL
         assert link["href"] == expected
         assert link.get("data-placement") in {"platform_selector", "final_install", "mobile_handoff"}
 
@@ -333,6 +321,11 @@ def test_features_inventory_is_evergreen_and_documented() -> None:
     assert "tag--new" not in features
     assert features.count('class="feature-chapter"') == 12
     assert features.count('class="chapter-links"') == 12
+    assert "provider-scoped saved credentials" in features
+    assert "estimates the complete next model input" in features
+    assert "deterministic local search" in features
+    assert "Save exact owner-controlled HTTP or HTTPS browser addresses" in features
+    assert "select up to five relevant enabled skills" in features
     assert "consent-gated third-party telemetry" in features
     assert "No first-party telemetry" in features
 
@@ -350,6 +343,9 @@ def test_architecture_contact_and_not_found_progressive_contracts() -> None:
     assert "event.key === 'Escape'" in JS
     assert "lightboxBackground.forEach" in JS
     assert "github.com/siddsachar/row-bot/blob/main/docs/ARCHITECTURE.md" in architecture
+    assert "conversations, documents, memory, workflows, and project assets" in architecture
+    assert "Complete next-input metering" in architecture
+    assert "exact trusted addresses" in architecture
 
     assert 'action="https://formspree.io/f/mwvagdzv"' in contact
     assert "Submitting sends these form fields to Formspree" in contact
