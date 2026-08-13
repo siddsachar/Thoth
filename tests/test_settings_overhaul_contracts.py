@@ -221,6 +221,10 @@ def test_voice_tab_exposes_only_explicit_sensevoice_installation() -> None:
     assert "await run.io_bound" in install_src
     assert "downloads {FUNASR_MODEL_APPROX_SIZE} from ModelScope" in install_src
     assert "verified local snapshot" in install_src
+    assert "if install_in_progress:" in install_src
+    assert "install_button.disable()" in install_src
+    assert "install_button.enable()" in install_src
+    assert "with client:" in install_src
 
 
 def test_voice_tab_uses_dependent_provider_selectors_and_realtime_controls():

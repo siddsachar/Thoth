@@ -6527,6 +6527,7 @@ def open_settings(
 def _render_sensevoice_install(voice_svc, reopen: Callable[[str], None]) -> None:
     from row_bot.voice.local_provider import FUNASR_MODEL_APPROX_SIZE, FUNASR_MODEL_URL
 
+    client = ui.context.client
     status = voice_svc.sensevoice_status()
     ui.label(
         f"SenseVoice installation downloads {FUNASR_MODEL_APPROX_SIZE} from ModelScope. "
@@ -6542,34 +6543,46 @@ def _render_sensevoice_install(voice_svc, reopen: Callable[[str], None]) -> None
     if status.state not in {"model_missing", "model_invalid"}:
         return
 
+    install_in_progress = False
+
     async def _install_sensevoice() -> None:
-        note = ui.notification(
-            "Downloading SenseVoice Small from ModelScope...",
-            type="ongoing",
-            spinner=True,
-            timeout=None,
-        )
+        nonlocal install_in_progress
+        if install_in_progress:
+            return
+        install_in_progress = True
+        install_button.disable()
+        with client:
+            note = ui.notification(
+                "Downloading SenseVoice Small from ModelScope...",
+                type="ongoing",
+                spinner=True,
+                timeout=None,
+            )
         try:
             await run.io_bound(voice_svc.install_sensevoice_model)
         except Exception as exc:
             logger.error("SenseVoice install failed", exc_info=True)
-            ui.notify(
-                f"SenseVoice install failed: {exc}",
-                type="negative",
-                close_button=True,
-            )
+            with client:
+                note.dismiss()
+                ui.notify(
+                    f"SenseVoice install failed: {exc}",
+                    type="negative",
+                    close_button=True,
+                )
+                install_button.enable()
+            install_in_progress = False
         else:
-            ui.notify("SenseVoice installed for offline use", type="positive")
-            reopen("Voice")
-        finally:
-            note.dismiss()
+            with client:
+                note.dismiss()
+                ui.notify("SenseVoice installed for offline use", type="positive")
+                reopen("Voice")
 
     action = (
         "Reinstall SenseVoice Small"
         if status.state == "model_invalid"
         else "Install SenseVoice Small"
     )
-    ui.button(
+    install_button = ui.button(
         action,
         icon="download",
         on_click=_install_sensevoice,
