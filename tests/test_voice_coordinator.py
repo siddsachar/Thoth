@@ -13,6 +13,7 @@ class FakeVoiceService:
         self.stopped = 0
         self.muted = 0
         self.unmuted = 0
+        self.stt_model = ""
 
     @property
     def is_running(self) -> bool:
@@ -54,6 +55,26 @@ def test_coordinator_starts_only_one_voice_mode_at_a_time():
     assert coordinator.mode == "dictate"
     assert service.stopped == 1
     assert service.started == 2
+
+
+def test_coordinator_applies_selected_local_stt_model(monkeypatch):
+    service = FakeVoiceService()
+    coordinator = VoiceSessionCoordinator(service)  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        "row_bot.voice.runtime.load_voice_runtime_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "talk_model": "local-whisper-small",
+                "dictation_model": "local-funasr-sensevoice",
+            },
+        )(),
+    )
+
+    coordinator.start_dictation()
+
+    assert service.stt_model == "local-funasr-sensevoice"
 
 
 def test_coordinator_ignores_stale_stop_and_stale_unmute_after_stop():
@@ -108,10 +129,14 @@ def test_coordinator_no_speech_timeout_only_while_listening():
     coordinator.no_speech_timeout_seconds = 10
 
     coordinator.start_talk()
-    assert coordinator.no_speech_timed_out(now=coordinator._last_activity_at + 11) is True
+    assert (
+        coordinator.no_speech_timed_out(now=coordinator._last_activity_at + 11) is True
+    )
 
     coordinator.mute()
-    assert coordinator.no_speech_timed_out(now=coordinator._last_activity_at + 99) is False
+    assert (
+        coordinator.no_speech_timed_out(now=coordinator._last_activity_at + 99) is False
+    )
 
 
 def test_coordinator_realtime_lifecycle_and_stale_events():
@@ -130,12 +155,25 @@ def test_coordinator_realtime_lifecycle_and_stale_events():
     coordinator.set_realtime_state("error", detail="old", session_id=session_id - 1)
     assert coordinator.state == "listening"
 
-    assert coordinator.record_realtime_transcript("hello", session_id=session_id, item_id="early") is None
+    assert (
+        coordinator.record_realtime_transcript(
+            "hello", session_id=session_id, item_id="early"
+        )
+        is None
+    )
     coordinator.record_realtime_speech_started(session_id=session_id)
     coordinator.record_realtime_speech_stopped(session_id=session_id)
     assert coordinator.state == "listening"
-    assert coordinator.record_realtime_transcript("hello there", session_id=session_id, item_id="item-1") == "hello there"
-    assert coordinator.record_realtime_transcript("stale", session_id=session_id - 1) is None
+    assert (
+        coordinator.record_realtime_transcript(
+            "hello there", session_id=session_id, item_id="item-1"
+        )
+        == "hello there"
+    )
+    assert (
+        coordinator.record_realtime_transcript("stale", session_id=session_id - 1)
+        is None
+    )
 
     coordinator.stop()
     assert coordinator.state == "stopped"
@@ -164,7 +202,9 @@ def test_coordinator_tracks_realtime_tool_output_and_barge_in_lifecycle():
     coordinator = VoiceSessionCoordinator(service)  # type: ignore[arg-type]
 
     session_id = coordinator.start_realtime_talk()
-    coordinator.queue_realtime_tool_call({"call_id": "call_1", "name": "row_bot_agent_consult", "request": "do work"})
+    coordinator.queue_realtime_tool_call(
+        {"call_id": "call_1", "name": "row_bot_agent_consult", "request": "do work"}
+    )
     assert coordinator.consume_realtime_tool_call() == {
         "call_id": "call_1",
         "name": "row_bot_agent_consult",
@@ -172,7 +212,9 @@ def test_coordinator_tracks_realtime_tool_output_and_barge_in_lifecycle():
     }
     assert coordinator.consume_realtime_tool_call() is None
 
-    coordinator.record_realtime_output_started(response_id="resp_1", output_item_id="item_1", session_id=session_id)
+    coordinator.record_realtime_output_started(
+        response_id="resp_1", output_item_id="item_1", session_id=session_id
+    )
     assert coordinator.state == "speaking"
     assert coordinator.diagnostic_snapshot()["playback_active"] is True
     assert coordinator.diagnostic_snapshot()["active_realtime_response_id"] == "resp_1"
@@ -192,9 +234,13 @@ def test_coordinator_resets_realtime_runtime_state_between_sessions():
     coordinator = VoiceSessionCoordinator(service)  # type: ignore[arg-type]
 
     first_session = coordinator.start_realtime_talk()
-    coordinator.queue_realtime_tool_call({"call_id": "call_1", "name": "row_bot_agent_consult", "request": "do work"})
+    coordinator.queue_realtime_tool_call(
+        {"call_id": "call_1", "name": "row_bot_agent_consult", "request": "do work"}
+    )
     coordinator.set_active_row_bot_generation("gen_1")
-    coordinator.record_realtime_output_started(response_id="resp_1", output_item_id="item_1", session_id=first_session)
+    coordinator.record_realtime_output_started(
+        response_id="resp_1", output_item_id="item_1", session_id=first_session
+    )
     coordinator.record_barge_in(reason="user_speech_started", session_id=first_session)
 
     second_session = coordinator.start_realtime_talk()
@@ -217,12 +263,17 @@ def test_coordinator_ignores_realtime_barge_in_without_active_output():
     session_id = coordinator.start_realtime_talk()
     coordinator.set_realtime_state("listening", session_id=session_id)
 
-    accepted = coordinator.record_barge_in(reason="connect_time_cancel", session_id=session_id)
+    accepted = coordinator.record_barge_in(
+        reason="connect_time_cancel", session_id=session_id
+    )
 
     assert accepted is False
     assert coordinator.state == "listening"
     assert coordinator.diagnostic_snapshot()["barge_in_reason"] == ""
-    assert any(event.name == "realtime_barge_in_ignored" for event in coordinator.drain_events())
+    assert any(
+        event.name == "realtime_barge_in_ignored"
+        for event in coordinator.drain_events()
+    )
 
 
 def test_coordinator_clears_active_generation_when_final_response_completes():
@@ -231,9 +282,13 @@ def test_coordinator_clears_active_generation_when_final_response_completes():
 
     session_id = coordinator.start_realtime_talk()
     coordinator.set_active_row_bot_generation("gen_1")
-    coordinator.record_realtime_output_started(response_id="resp_1", output_item_id="item_1", session_id=session_id)
+    coordinator.record_realtime_output_started(
+        response_id="resp_1", output_item_id="item_1", session_id=session_id
+    )
 
-    coordinator.record_realtime_output_done(session_id=session_id, clear_generation=True)
+    coordinator.record_realtime_output_done(
+        session_id=session_id, clear_generation=True
+    )
 
     snapshot = coordinator.diagnostic_snapshot()
     assert snapshot["active_row_bot_generation_id"] == ""
@@ -306,7 +361,12 @@ def test_coordinator_drops_realtime_transcript_without_speech_window():
 
     session_id = coordinator.start_realtime_talk()
 
-    assert coordinator.record_realtime_transcript("please inspect the repo", session_id=session_id, item_id="item-1") is None
+    assert (
+        coordinator.record_realtime_transcript(
+            "please inspect the repo", session_id=session_id, item_id="item-1"
+        )
+        is None
+    )
     assert any(
         event.name == "realtime_transcript_without_speech_window_ignored"
         for event in coordinator.drain_events()
@@ -337,10 +397,17 @@ def test_coordinator_drops_duplicate_realtime_transcript_item_ids():
     coordinator.record_realtime_speech_started(session_id=session_id)
     coordinator.record_realtime_speech_stopped(session_id=session_id)
 
-    assert coordinator.record_realtime_transcript("please inspect the repo", session_id=session_id, item_id="item-1")
+    assert coordinator.record_realtime_transcript(
+        "please inspect the repo", session_id=session_id, item_id="item-1"
+    )
     coordinator.record_realtime_speech_started(session_id=session_id)
     coordinator.record_realtime_speech_stopped(session_id=session_id)
-    assert coordinator.record_realtime_transcript("please inspect the repo", session_id=session_id, item_id="item-1") is None
+    assert (
+        coordinator.record_realtime_transcript(
+            "please inspect the repo", session_id=session_id, item_id="item-1"
+        )
+        is None
+    )
 
 
 def test_coordinator_drops_realtime_assistant_echo_and_short_fragments():
@@ -349,15 +416,27 @@ def test_coordinator_drops_realtime_assistant_echo_and_short_fragments():
 
     session_id = coordinator.start_realtime_talk()
     coordinator.record_assistant_output("The answer is visible in the app.")
-    coordinator.record_realtime_output_started(response_id="resp", output_item_id="out", session_id=session_id)
+    coordinator.record_realtime_output_started(
+        response_id="resp", output_item_id="out", session_id=session_id
+    )
     coordinator.record_realtime_speech_started(session_id=session_id)
     coordinator.record_realtime_speech_stopped(session_id=session_id)
 
-    assert coordinator.record_realtime_transcript("answer is visible", session_id=session_id, item_id="item-1") is None
+    assert (
+        coordinator.record_realtime_transcript(
+            "answer is visible", session_id=session_id, item_id="item-1"
+        )
+        is None
+    )
 
     coordinator.record_realtime_speech_started(session_id=session_id)
     coordinator.record_realtime_speech_stopped(session_id=session_id)
-    assert coordinator.record_realtime_transcript("ok", session_id=session_id, item_id="item-2") is None
+    assert (
+        coordinator.record_realtime_transcript(
+            "ok", session_id=session_id, item_id="item-2"
+        )
+        is None
+    )
 
 
 def test_coordinator_accepts_realtime_question_fragment_after_speech_window():
@@ -368,4 +447,9 @@ def test_coordinator_accepts_realtime_question_fragment_after_speech_window():
     coordinator.record_realtime_speech_started(session_id=session_id)
     coordinator.record_realtime_speech_stopped(session_id=session_id)
 
-    assert coordinator.record_realtime_transcript("why?", session_id=session_id, item_id="item-1") == "why?"
+    assert (
+        coordinator.record_realtime_transcript(
+            "why?", session_id=session_id, item_id="item-1"
+        )
+        == "why?"
+    )

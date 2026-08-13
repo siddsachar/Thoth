@@ -41,15 +41,15 @@ from row_bot.data_paths import get_row_bot_data_dir
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
-SAMPLE_RATE = 16_000        # 16 kHz — required by Whisper
-CHUNK_SAMPLES = 1280        # 80 ms at 16 kHz
+SAMPLE_RATE = 16_000  # 16 kHz — required by Whisper
+CHUNK_SAMPLES = 1280  # 80 ms at 16 kHz
 CHANNELS = 1
 
 # VAD / speech collection
-_PRE_SPEECH_CHUNKS = 8      # ~640 ms of audio kept before speech trigger
-_SILENCE_TIMEOUT_S = 1.5    # seconds of silence after last speech to stop recording
-_MAX_RECORDING_S = 30       # hard cap on a single utterance
-_MIN_SPEECH_CHUNKS = 5      # minimum chunks to count as real speech (~400 ms)
+_PRE_SPEECH_CHUNKS = 8  # ~640 ms of audio kept before speech trigger
+_SILENCE_TIMEOUT_S = 1.5  # seconds of silence after last speech to stop recording
+_MAX_RECORDING_S = 30  # hard cap on a single utterance
+_MIN_SPEECH_CHUNKS = 5  # minimum chunks to count as real speech (~400 ms)
 
 # Whisper
 _DEFAULT_WHISPER_SIZE = "small"
@@ -61,15 +61,16 @@ _UNMUTE_GRACE_S = 0.6
 _DATA_DIR = get_row_bot_data_dir()
 _VOICE_SETTINGS_FILE = _DATA_DIR / "voice_settings.json"
 _WHISPER_CACHE_DIR = Path(
-    os.environ.get("ROW_BOT_WHISPER_CACHE_DIR")
-    or (_DATA_DIR / "cache" / "whisper")
+    os.environ.get("ROW_BOT_WHISPER_CACHE_DIR") or (_DATA_DIR / "cache" / "whisper")
 )
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _load_voice_settings() -> dict:
     import json
+
     if _VOICE_SETTINGS_FILE.exists():
         try:
             return json.loads(_VOICE_SETTINGS_FILE.read_text())
@@ -80,11 +81,13 @@ def _load_voice_settings() -> dict:
 
 def _save_voice_settings(settings: dict) -> None:
     import json
+
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     _VOICE_SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
 
 
 # ── Voice Service ────────────────────────────────────────────────────────────
+
 
 class VoiceService:
     """Toggle-based voice input.
@@ -110,6 +113,7 @@ class VoiceService:
 
         # Whisper (lazy loaded)
         self._whisper_model = None
+        self._funasr_provider = None
 
         # Mic gating
         self._mute_event = threading.Event()
@@ -118,6 +122,7 @@ class VoiceService:
         # Settings
         settings = _load_voice_settings()
         self._whisper_size: str = settings.get("whisper_model", _DEFAULT_WHISPER_SIZE)
+        self._stt_model: str = f"local-whisper-{self._whisper_size}"
 
     # ── Properties ───────────────────────────────────────────────────────
 
@@ -151,7 +156,17 @@ class VoiceService:
     def whisper_size(self, value: str) -> None:
         self._whisper_size = value
         self._whisper_model = None
-        s = _load_voice_settings(); s["whisper_model"] = value; _save_voice_settings(s)
+        s = _load_voice_settings()
+        s["whisper_model"] = value
+        _save_voice_settings(s)
+
+    @property
+    def stt_model(self) -> str:
+        return self._stt_model
+
+    @stt_model.setter
+    def stt_model(self, value: str) -> None:
+        self._stt_model = str(value or f"local-whisper-{self._whisper_size}")
 
     # ── Model loading ────────────────────────────────────────────────────
 
@@ -183,16 +198,38 @@ class VoiceService:
         """Explicitly download and load the selected Whisper model."""
         self._ensure_whisper(allow_download=True)
 
+    def _ensure_funasr(self):
+        if self._funasr_provider is None:
+            from row_bot.voice.local_provider import LocalFunASRProvider
+
+            self._funasr_provider = LocalFunASRProvider()
+        self._funasr_provider._ensure_model()
+
+    def _ensure_selected_stt_model(self) -> None:
+        if self._stt_model == "local-funasr-sensevoice":
+            self._ensure_funasr()
+            return
+        self._ensure_whisper()
+
+    def _transcribe_pcm_bytes(self, audio_bytes: bytes) -> str:
+        if self._stt_model == "local-funasr-sensevoice":
+            if self._funasr_provider is None:
+                from row_bot.voice.local_provider import LocalFunASRProvider
+
+                self._funasr_provider = LocalFunASRProvider()
+            return self._funasr_provider.transcribe_bytes(audio_bytes)
+        return self.transcribe_pcm16(audio_bytes, allow_download=True)
+
     # ── Pipeline ─────────────────────────────────────────────────────────
 
     def _run(self) -> None:
         import sounddevice as sd
 
         try:
-            self._ensure_whisper()
+            self._ensure_selected_stt_model()
         except Exception as exc:
-            self.status_queue.put(f"Whisper init failed: {exc}")
-            logger.error("Whisper init failed: %s", exc)
+            self.status_queue.put(f"Speech-to-text init failed: {exc}")
+            logger.error("Speech-to-text init failed: %s", exc)
             self._set_state("stopped")
             return
 
@@ -208,8 +245,10 @@ class VoiceService:
 
         try:
             stream = sd.InputStream(
-                samplerate=SAMPLE_RATE, channels=CHANNELS,
-                dtype="int16", blocksize=CHUNK_SAMPLES,
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="int16",
+                blocksize=CHUNK_SAMPLES,
             )
             stream.start()
         except Exception as exc:
@@ -229,7 +268,6 @@ class VoiceService:
 
         try:
             while not self._stop_event.is_set():
-
                 # ── Muted (TTS speaking) ─────────────────────────────
                 if self._mute_event.is_set():
                     if self._state != "muted":
@@ -277,7 +315,10 @@ class VoiceService:
                         elapsed = time.monotonic() - speech_start
                         silence_s = silence_counter * (CHUNK_SAMPLES / SAMPLE_RATE)
 
-                        if silence_s >= _SILENCE_TIMEOUT_S or elapsed >= _MAX_RECORDING_S:
+                        if (
+                            silence_s >= _SILENCE_TIMEOUT_S
+                            or elapsed >= _MAX_RECORDING_S
+                        ):
                             if len(speech_chunks) < _MIN_SPEECH_CHUNKS:
                                 speech_chunks = []
                                 silence_counter = 0
@@ -287,12 +328,8 @@ class VoiceService:
                                 self.status_queue.put("⏳ Processing…")
 
                                 pcm = np.concatenate(speech_chunks)
-                                f32 = pcm.astype(np.float32) / 32768.0
                                 try:
-                                    segs, _ = self._whisper_model.transcribe(
-                                        f32, beam_size=5, language="en", vad_filter=True,
-                                    )
-                                    text = " ".join(s.text.strip() for s in segs).strip()
+                                    text = self._transcribe_pcm_bytes(pcm.tobytes())
                                 except Exception as exc:
                                     logger.error("Transcription error: %s", exc)
                                     text = ""
@@ -337,7 +374,9 @@ class VoiceService:
             self._mute_event.clear()
             self._unmute_event.clear()
             self._thread = threading.Thread(
-                target=self._run, daemon=True, name="row-bot-voice",
+                target=self._run,
+                daemon=True,
+                name="row-bot-voice",
             )
             self._thread.start()
 
@@ -367,7 +406,7 @@ class VoiceService:
 
     def transcribe_bytes(self, audio_bytes: bytes) -> str:
         """One-shot transcription of raw PCM bytes."""
-        return self.transcribe_pcm16(audio_bytes, allow_download=True)
+        return self._transcribe_pcm_bytes(audio_bytes)
 
     def transcribe_pcm16(
         self,
@@ -379,7 +418,10 @@ class VoiceService:
         self._ensure_whisper(allow_download=allow_download)
         f32 = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         segs, _ = self._whisper_model.transcribe(
-            f32, beam_size=5, language="en", vad_filter=True,
+            f32,
+            beam_size=5,
+            language="en",
+            vad_filter=True,
         )
         return " ".join(s.text.strip() for s in segs).strip()
 

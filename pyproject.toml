@@ -69,6 +69,9 @@ dependencies = [
 voice = [
   "sounddevice>=0.5,<1.0",
   "faster-whisper>=1.1,<2.0",
+  "funasr>=1.3.22,<2.0",
+  "torch>=2.7,<3.0",
+  "torchaudio>=2.7,<3.0",
   "kokoro-onnx>=0.4,<1.0",
 ]
 designer = [
@@ -122,6 +125,8 @@ media = [
 all = [
   "sounddevice>=0.5,<1.0",
   "faster-whisper>=1.1,<2.0",
+  "funasr>=1.3.22,<2.0",
+  "torchaudio>=2.7,<3.0",
   "kokoro-onnx>=0.4,<1.0",
   "fpdf2>=2.8,<3.0",
   "python-pptx>=1.0,<2.0",
@@ -194,3 +199,4 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }
