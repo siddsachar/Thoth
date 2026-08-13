@@ -213,9 +213,7 @@ class VoiceSessionCoordinator:
     def record_assistant_output(self, text: str) -> None:
         self.output_activity.record_output(text)
 
-    def set_realtime_state(
-        self, state: str, *, detail: str = "", session_id: int | None = None
-    ) -> None:
+    def set_realtime_state(self, state: str, *, detail: str = "", session_id: int | None = None) -> None:
         if session_id is not None and session_id != self._session_id:
             self._emit("stale_realtime_event_ignored", detail=str(session_id))
             return
@@ -239,18 +237,13 @@ class VoiceSessionCoordinator:
 
     def queue_realtime_tool_call(self, call: dict[str, object]) -> None:
         if self.queued_realtime_tool_call:
-            self._emit(
-                "realtime_tool_call_replaced",
-                detail=self.queued_realtime_tool_call["name"],
-            )
+            self._emit("realtime_tool_call_replaced", detail=self.queued_realtime_tool_call["name"])
         self.queued_realtime_tool_call = {
             "call_id": str(call.get("call_id") or ""),
             "name": str(call.get("name") or ""),
             "request": str(call.get("request") or ""),
         }
-        self._emit(
-            "realtime_tool_call_queued", detail=self.queued_realtime_tool_call["name"]
-        )
+        self._emit("realtime_tool_call_queued", detail=self.queued_realtime_tool_call["name"])
 
     def consume_realtime_tool_call(self) -> dict[str, str] | None:
         call = self.queued_realtime_tool_call
@@ -260,22 +253,14 @@ class VoiceSessionCoordinator:
     def set_active_row_bot_generation(self, generation_id: str) -> None:
         self.active_row_bot_generation_id = str(generation_id or "")
         self.mark_realtime_latency("row_bot_consult_started")
-        self._emit(
-            "realtime_row_bot_generation_active",
-            detail=self.active_row_bot_generation_id,
-        )
+        self._emit("realtime_row_bot_generation_active", detail=self.active_row_bot_generation_id)
 
     def clear_active_row_bot_generation(self, *, generation_id: str = "") -> None:
         if generation_id and generation_id != self.active_row_bot_generation_id:
-            self._emit(
-                "stale_row_bot_generation_clear_ignored", detail=str(generation_id)
-            )
+            self._emit("stale_row_bot_generation_clear_ignored", detail=str(generation_id))
             return
         if self.active_row_bot_generation_id:
-            self._emit(
-                "realtime_row_bot_generation_finished",
-                detail=self.active_row_bot_generation_id,
-            )
+            self._emit("realtime_row_bot_generation_finished", detail=self.active_row_bot_generation_id)
         self.active_row_bot_generation_id = ""
 
     def record_realtime_output_started(
@@ -288,12 +273,8 @@ class VoiceSessionCoordinator:
         if session_id is not None and session_id != self._session_id:
             self._emit("stale_realtime_output_ignored", detail=str(session_id))
             return
-        self.active_realtime_response_id = str(
-            response_id or self.active_realtime_response_id or ""
-        )
-        self.active_realtime_output_item_id = str(
-            output_item_id or self.active_realtime_output_item_id or ""
-        )
+        self.active_realtime_response_id = str(response_id or self.active_realtime_response_id or "")
+        self.active_realtime_output_item_id = str(output_item_id or self.active_realtime_output_item_id or "")
         self.playback_active = True
         self.mark_realtime_latency("first_assistant_audio")
         self.set_realtime_state("speaking", session_id=session_id)
@@ -320,21 +301,13 @@ class VoiceSessionCoordinator:
         if session_id is not None and session_id != self._session_id:
             self._emit("stale_realtime_barge_in_ignored", detail=str(session_id))
             return False
-        if (
-            not self.playback_active
-            and not self.active_realtime_response_id
-            and not self.active_realtime_output_item_id
-        ):
-            self._emit(
-                "realtime_barge_in_ignored", detail=str(reason or "no_active_output")
-            )
+        if not self.playback_active and not self.active_realtime_response_id and not self.active_realtime_output_item_id:
+            self._emit("realtime_barge_in_ignored", detail=str(reason or "no_active_output"))
             return False
         self.barge_in_reason = str(reason or "")
         self.playback_active = False
         self.mark_realtime_latency("barge_in")
-        self.set_realtime_state(
-            "interrupted", detail=self.barge_in_reason, session_id=session_id
-        )
+        self.set_realtime_state("interrupted", detail=self.barge_in_reason, session_id=session_id)
         return True
 
     def record_realtime_speech_started(self, *, session_id: int | None = None) -> None:
@@ -346,10 +319,7 @@ class VoiceSessionCoordinator:
         self._realtime_speech_window_id += 1
         self.mark_realtime_latency("speech_started")
         self.set_realtime_state("user_speaking", session_id=session_id)
-        self._emit(
-            "realtime_speech_window_started",
-            detail=str(self._realtime_speech_window_id),
-        )
+        self._emit("realtime_speech_window_started", detail=str(self._realtime_speech_window_id))
 
     def record_realtime_speech_stopped(self, *, session_id: int | None = None) -> None:
         if session_id is not None and session_id != self._session_id:
@@ -359,13 +329,8 @@ class VoiceSessionCoordinator:
             return
         self._realtime_completed_speech_window_id = self._realtime_speech_window_id
         self.mark_realtime_latency("speech_stopped")
-        self.set_realtime_state(
-            "listening", detail="speech_stopped", session_id=session_id
-        )
-        self._emit(
-            "realtime_speech_window_stopped",
-            detail=str(self._realtime_completed_speech_window_id),
-        )
+        self.set_realtime_state("listening", detail="speech_stopped", session_id=session_id)
+        self._emit("realtime_speech_window_stopped", detail=str(self._realtime_completed_speech_window_id))
 
     def record_realtime_transcript(
         self,
@@ -383,29 +348,19 @@ class VoiceSessionCoordinator:
         if clean_item_id and clean_item_id in self._realtime_transcript_item_ids:
             self._emit("duplicate_realtime_transcript_ignored", detail=clean_item_id)
             return None
-        if (
-            self._realtime_completed_speech_window_id
-            <= self._realtime_last_transcript_window_id
-        ):
-            self._emit(
-                "realtime_transcript_without_speech_window_ignored",
-                detail=clean_item_id,
-            )
+        if self._realtime_completed_speech_window_id <= self._realtime_last_transcript_window_id:
+            self._emit("realtime_transcript_without_speech_window_ignored", detail=clean_item_id)
             return None
         if text and self._should_drop_transcript(text, drop_fragments=True):
             self._emit("transcript_dropped", detail=text)
             if clean_item_id:
                 self._realtime_transcript_item_ids.append(clean_item_id)
-            self._realtime_last_transcript_window_id = (
-                self._realtime_completed_speech_window_id
-            )
+            self._realtime_last_transcript_window_id = self._realtime_completed_speech_window_id
             return None
         if text:
             if clean_item_id:
                 self._realtime_transcript_item_ids.append(clean_item_id)
-            self._realtime_last_transcript_window_id = (
-                self._realtime_completed_speech_window_id
-            )
+            self._realtime_last_transcript_window_id = self._realtime_completed_speech_window_id
             self._last_activity_at = time.monotonic()
             self._emit("transcript_final", detail=text)
             return text
@@ -437,38 +392,18 @@ class VoiceSessionCoordinator:
 
         pairs = {
             "speech_stop_to_thinking_ui": delta("speech_stopped", "thinking_ui"),
-            "speech_stop_to_transcript_final": delta(
-                "speech_stopped", "transcript_final"
-            ),
-            "speech_stop_to_function_call_ready": delta(
-                "speech_stopped", "function_call_ready"
-            ),
-            "speech_stop_to_forced_consult": delta(
-                "speech_stopped", "forced_consult_started"
-            ),
-            "speech_stop_to_row_bot_start": delta(
-                "speech_stopped", "row_bot_consult_started"
-            ),
+            "speech_stop_to_transcript_final": delta("speech_stopped", "transcript_final"),
+            "speech_stop_to_function_call_ready": delta("speech_stopped", "function_call_ready"),
+            "speech_stop_to_forced_consult": delta("speech_stopped", "forced_consult_started"),
+            "speech_stop_to_row_bot_start": delta("speech_stopped", "row_bot_consult_started"),
             "speech_stop_to_first_token": delta("speech_stopped", "first_token"),
-            "speech_stop_to_first_speakable_chunk": delta(
-                "speech_stopped", "first_speakable_chunk"
-            ),
-            "speech_stop_to_first_spoken_row_bot": delta(
-                "speech_stopped", "first_substantive_audio_requested"
-            ),
-            "transcript_final_to_forced_consult": delta(
-                "transcript_final", "forced_consult_started"
-            ),
+            "speech_stop_to_first_speakable_chunk": delta("speech_stopped", "first_speakable_chunk"),
+            "speech_stop_to_first_spoken_row_bot": delta("speech_stopped", "first_substantive_audio_requested"),
+            "transcript_final_to_forced_consult": delta("transcript_final", "forced_consult_started"),
             "consult_to_first_token": delta("row_bot_consult_started", "first_token"),
-            "first_token_to_first_speakable_chunk": delta(
-                "first_token", "first_speakable_chunk"
-            ),
-            "first_speakable_chunk_to_provider_response_create": delta(
-                "first_speakable_chunk", "provider_response_create"
-            ),
-            "provider_response_create_to_first_audio": delta(
-                "provider_response_create", "first_assistant_audio"
-            ),
+            "first_token_to_first_speakable_chunk": delta("first_token", "first_speakable_chunk"),
+            "first_speakable_chunk_to_provider_response_create": delta("first_speakable_chunk", "provider_response_create"),
+            "provider_response_create_to_first_audio": delta("provider_response_create", "first_assistant_audio"),
         }
         return {key: value for key, value in pairs.items() if value is not None}
 
@@ -478,9 +413,7 @@ class VoiceSessionCoordinator:
         current = time.monotonic() if now is None else now
         return (current - self._last_activity_at) >= self.no_speech_timeout_seconds
 
-    def _should_drop_transcript(
-        self, text: str, *, drop_fragments: bool = False
-    ) -> bool:
+    def _should_drop_transcript(self, text: str, *, drop_fragments: bool = False) -> bool:
         normalized = _normalize_transcript(text)
         if normalized in PHANTOM_TRANSCRIPTS:
             return True
@@ -504,14 +437,12 @@ class VoiceSessionCoordinator:
             self._realtime_latency_marks = {}
 
     def _emit(self, name: str, *, detail: str = "") -> None:
-        self._events.append(
-            VoiceCoordinatorEvent(
-                session_id=self._session_id,
-                name=name,
-                mode=self.mode,
-                detail=detail,
-            )
-        )
+        self._events.append(VoiceCoordinatorEvent(
+            session_id=self._session_id,
+            name=name,
+            mode=self.mode,
+            detail=detail,
+        ))
 
 
 PHANTOM_TRANSCRIPTS = {

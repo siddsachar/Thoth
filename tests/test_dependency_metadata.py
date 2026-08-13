@@ -45,6 +45,7 @@ HIGH_RISK_DIRECT_DEPENDENCIES = {
     "langgraph",
     "langgraph-checkpoint-sqlite",
     "mcp",
+    "modelscope",
     "nicegui",
     "numpy",
     "openai",
@@ -57,6 +58,7 @@ HIGH_RISK_DIRECT_DEPENDENCIES = {
     "slack-bolt",
     "tokenizers",
     "torch",
+    "torchaudio",
     "transformers",
     "twilio",
 }
@@ -115,27 +117,47 @@ def test_required_extras_exist_and_all_extra_covers_them():
 
 def test_voice_extra_includes_funasr_runtime_dependencies():
     voice = _load_pyproject()["project"]["optional-dependencies"]["voice"]
-    voice_names = {_dependency_name(dep) for dep in voice}
+    voice_dependencies = {_dependency_name(dep): dep for dep in voice}
 
-    assert {"funasr", "torch", "torchaudio"} <= voice_names
+    assert {"funasr", "modelscope", "torch", "torchaudio"} <= set(
+        voice_dependencies
+    )
+    assert voice_dependencies["torch"].split(";", 1)[0].strip() == "torch==2.11.0"
+    assert (
+        voice_dependencies["torchaudio"].split(";", 1)[0].strip()
+        == "torchaudio==2.11.0"
+    )
+    for name in ("funasr", "modelscope", "torch", "torchaudio"):
+        assert "platform_machine != 'x86_64'" in voice_dependencies[name]
+
+
+def test_locked_torch_and_torchaudio_versions_match_exactly():
+    with (ROOT / "uv.lock").open("rb") as handle:
+        packages = tomllib.load(handle)["package"]
+
+    def _locked_versions(name: str) -> set[str]:
+        return {
+            str(package["version"]).split("+", 1)[0]
+            for package in packages
+            if package["name"] == name
+        }
+
+    assert _locked_versions("torch") == {"2.11.0"}
+    assert _locked_versions("torchaudio") == {"2.11.0"}
 
 
 def test_high_risk_direct_dependencies_have_upper_bounds_or_pins():
     dependency_map = _direct_dependency_map(_load_pyproject())
 
     missing = sorted(HIGH_RISK_DIRECT_DEPENDENCIES - set(dependency_map))
-    assert not missing, (
-        f"high-risk dependencies missing from project metadata: {missing}"
-    )
+    assert not missing, f"high-risk dependencies missing from project metadata: {missing}"
 
     unbounded = sorted(
         name
         for name in HIGH_RISK_DIRECT_DEPENDENCIES
         if not _has_upper_bound_or_pin(dependency_map[name])
     )
-    assert not unbounded, (
-        f"high-risk dependencies missing upper bounds or pins: {unbounded}"
-    )
+    assert not unbounded, f"high-risk dependencies missing upper bounds or pins: {unbounded}"
 
 
 def test_macos_appkit_dependencies_are_direct_and_darwin_scoped():
@@ -159,9 +181,7 @@ def test_lockfile_and_generated_requirements_are_committed():
 
 
 def test_dependabot_uses_uv_for_python_updates():
-    dependabot = yaml.safe_load(
-        (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
-    )
+    dependabot = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text(encoding="utf-8"))
     updates = dependabot["updates"]
     ecosystems = {entry["package-ecosystem"]: entry for entry in updates}
 
@@ -188,9 +208,7 @@ def test_ci_security_and_installer_dependency_hooks_are_wired():
     mac_build = (ROOT / "installer/build_mac_app.sh").read_text(encoding="utf-8")
     linux_build = (ROOT / "installer/build_linux_app.sh").read_text(encoding="utf-8")
     legacy_deps = (ROOT / "installer/install_deps.bat").read_text(encoding="utf-8")
-    windows_installer = (ROOT / "installer/row_bot_setup.iss").read_text(
-        encoding="utf-8"
-    )
+    windows_installer = (ROOT / "installer/row_bot_setup.iss").read_text(encoding="utf-8")
 
     assert "uv sync --locked --all-extras --group test" in ci
     assert "uv sync --locked --all-extras --group test" in release
@@ -198,9 +216,7 @@ def test_ci_security_and_installer_dependency_hooks_are_wired():
     assert lock_check.is_file()
     assert ".github/dependabot.yml" in lock_check.read_text(encoding="utf-8")
     assert "uv lock --check" in lock_check.read_text(encoding="utf-8")
-    assert "export_locked_requirements.py --check" in lock_check.read_text(
-        encoding="utf-8"
-    )
+    assert "export_locked_requirements.py --check" in lock_check.read_text(encoding="utf-8")
     assert osv.is_file()
     assert "uv.lock" in osv.read_text(encoding="utf-8")
     assert "OSV" in osv.read_text(encoding="utf-8")
@@ -230,6 +246,16 @@ def test_runtime_verifier_presence_checks_pystray_on_headless_linux(monkeypatch)
     verifier._verify_module("pystray")
 
 
+def test_runtime_verifier_voice_group_covers_supported_funasr_stack():
+    import scripts.verify_runtime_dependencies as verifier
+
+    expected = {"funasr", "modelscope", "torch", "torchaudio"}
+    if verifier.FUNASR_VOICE_MODULES:
+        assert expected <= set(verifier.GROUPS["voice"])
+    else:
+        assert expected.isdisjoint(verifier.GROUPS["voice"])
+
+
 def test_runtime_verifier_checks_appkit_modules_on_macos(monkeypatch):
     import importlib
 
@@ -242,14 +268,32 @@ def test_runtime_verifier_checks_appkit_modules_on_macos(monkeypatch):
     monkeypatch.setattr(
         verifier.importlib,
         "import_module",
-        lambda module: (
-            imported.append(module) or SimpleNamespace()
-            if module in {"AppKit", "Foundation", "objc", "PyObjCTools.AppHelper"}
-            else original_import_module(module)
-        ),
+        lambda module: imported.append(module) or SimpleNamespace()
+        if module in {"AppKit", "Foundation", "objc", "PyObjCTools.AppHelper"}
+        else original_import_module(module),
     )
 
     for module in ("AppKit", "Foundation", "objc", "PyObjCTools.AppHelper"):
         verifier._verify_module(module)
 
     assert imported == ["AppKit", "Foundation", "objc", "PyObjCTools.AppHelper"]
+
+def test_runtime_verifier_reports_missing_and_broken_funasr_imports(
+    monkeypatch,
+    capsys,
+):
+    import scripts.verify_runtime_dependencies as verifier
+
+    monkeypatch.setitem(verifier.GROUPS, "voice", ("funasr", "torchaudio"))
+
+    def _verify(module: str) -> None:
+        if module == "funasr":
+            raise ModuleNotFoundError("No module named 'funasr'")
+        raise RuntimeError("torchaudio native library failed to load")
+
+    monkeypatch.setattr(verifier, "_verify_module", _verify)
+
+    assert verifier.main(["voice"]) == 1
+    error = capsys.readouterr().err
+    assert "voice:funasr: ModuleNotFoundError" in error
+    assert "voice:torchaudio: RuntimeError" in error

@@ -53,9 +53,24 @@ def test_local_whisper_provider_wraps_existing_voice_service():
     assert service.audio == b"audio"
 
 
-def test_local_funasr_provider_transcribes_raw_pcm_bytes():
+def test_local_funasr_provider_transcribes_raw_pcm_bytes(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "row_bot.voice.local_provider.sensevoice_platform_support", lambda: (True, "")
+    )
+    monkeypatch.setattr(
+        "row_bot.voice.local_provider.missing_funasr_packages", lambda: ()
+    )
+    model_path = tmp_path / "snapshot"
+    model_path.mkdir()
+    (model_path / "config.yaml").write_text("model: SenseVoiceSmall\n")
+    (model_path / "model.pt").write_bytes(b"weights")
     model = FakeFunASRModel()
-    provider = LocalFunASRProvider(model_factory=lambda **kwargs: model)
+    provider = LocalFunASRProvider(
+        model_path=model_path,
+        cache_dir=tmp_path,
+        model_factory=lambda **kwargs: model,
+        postprocessor=lambda _text: "sensevoice text",
+    )
 
     text = provider.transcribe_bytes(b"\x00\x00\x01\x00")
 

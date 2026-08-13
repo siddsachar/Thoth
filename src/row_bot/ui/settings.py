@@ -5593,19 +5593,19 @@ def open_settings(
             with ui.column().classes("w-full gap-1"):
                 local_statuses = local_voice_provider_statuses(voice_svc, tts)
                 _voice_model_summary_row(
-                    local_statuses[0].display_name,
-                    f"Dictation and local Talk transcription - current size: {voice_svc.whisper_size}",
-                    local_statuses[0].reason,
-                    ready=local_statuses[0].ready,
-                    provider_label="Local",
+                    local_statuses[0].display_name, f"Dictation and local Talk transcription - current size: {voice_svc.whisper_size}",
+                    local_statuses[0].reason, ready=local_statuses[0].ready, provider_label="Local",
                 )
                 _voice_model_summary_row(
-                    local_statuses[1].display_name,
-                    f"Speech output - current voice: {VOICE_CATALOG.get(tts.voice, tts.voice)}",
-                    local_statuses[1].reason,
-                    ready=local_statuses[1].ready,
-                    provider_label="Local",
+                    local_statuses[1].display_name, "Talk and Dictation multilingual transcription",
+                    local_statuses[1].reason, ready=local_statuses[1].ready, provider_label="Local",
                 )
+                _voice_model_summary_row(
+                    local_statuses[2].display_name, f"Speech output - current voice: {VOICE_CATALOG.get(tts.voice, tts.voice)}",
+                    local_statuses[2].reason, ready=local_statuses[2].ready, provider_label="Local",
+                )
+
+                _render_sensevoice_install(voice_svc, _reopen)
                 for provider in voice_catalog:
                     if provider.provider_id == "local":
                         continue
@@ -6522,3 +6522,55 @@ def open_settings(
         initial_tab=_initial_name,
     )
     defer_ui(lambda: _schedule_settings_tab(_initial_name), delay=0.05)
+
+
+def _render_sensevoice_install(voice_svc, reopen: Callable[[str], None]) -> None:
+    from row_bot.voice.local_provider import FUNASR_MODEL_APPROX_SIZE, FUNASR_MODEL_URL
+
+    status = voice_svc.sensevoice_status()
+    ui.label(
+        f"SenseVoice installation downloads {FUNASR_MODEL_APPROX_SIZE} from ModelScope. "
+        "ModelScope receives the download request and standard SDK user-agent; Row-Bot "
+        "sends no audio, prompts, or usage data. After installation, transcription uses "
+        "only the verified local snapshot."
+    ).classes("text-grey-6 text-xs")
+    ui.link(
+        "SenseVoice Small model and Apache-2.0 license",
+        FUNASR_MODEL_URL,
+        new_tab=True,
+    ).classes("text-xs")
+    if status.state not in {"model_missing", "model_invalid"}:
+        return
+
+    async def _install_sensevoice() -> None:
+        note = ui.notification(
+            "Downloading SenseVoice Small from ModelScope...",
+            type="ongoing",
+            spinner=True,
+            timeout=None,
+        )
+        try:
+            await run.io_bound(voice_svc.install_sensevoice_model)
+        except Exception as exc:
+            logger.error("SenseVoice install failed", exc_info=True)
+            ui.notify(
+                f"SenseVoice install failed: {exc}",
+                type="negative",
+                close_button=True,
+            )
+        else:
+            ui.notify("SenseVoice installed for offline use", type="positive")
+            reopen("Voice")
+        finally:
+            note.dismiss()
+
+    action = (
+        "Reinstall SenseVoice Small"
+        if status.state == "model_invalid"
+        else "Install SenseVoice Small"
+    )
+    ui.button(
+        action,
+        icon="download",
+        on_click=_install_sensevoice,
+    ).classes("w-full").props("no-caps")

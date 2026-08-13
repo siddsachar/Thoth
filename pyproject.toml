@@ -69,9 +69,10 @@ dependencies = [
 voice = [
   "sounddevice>=0.5,<1.0",
   "faster-whisper>=1.1,<2.0",
-  "funasr>=1.3.22,<2.0",
-  "torch>=2.7,<3.0",
-  "torchaudio>=2.7,<3.0",
+  "funasr>=1.3.22,<2.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+  "modelscope>=1.38,<2.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+  "torch==2.11.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+  "torchaudio==2.11.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
   "kokoro-onnx>=0.4,<1.0",
 ]
 designer = [
@@ -125,8 +126,9 @@ media = [
 all = [
   "sounddevice>=0.5,<1.0",
   "faster-whisper>=1.1,<2.0",
-  "funasr>=1.3.22,<2.0",
-  "torchaudio>=2.7,<3.0",
+  "funasr>=1.3.22,<2.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+  "modelscope>=1.38,<2.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+  "torchaudio==2.11.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
   "kokoro-onnx>=0.4,<1.0",
   "fpdf2>=2.8,<3.0",
   "python-pptx>=1.0,<2.0",
@@ -149,7 +151,7 @@ all = [
   "transformers>=4.56,<5.0",
   "tokenizers>=0.22,<1.0",
   "einops>=0.8,<1.0",
-  "torch>=2.7,<3.0",
+  "torch==2.11.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
   "langchain-huggingface>=1.0,<2.0",
   "opencv-python>=4.10,<5.0",
   "mss>=9.0,<11.0",

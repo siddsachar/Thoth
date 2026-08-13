@@ -4,15 +4,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from row_bot.voice.local_provider import (
-    DEFAULT_FUNASR_MODEL,
     FUNASR_MODEL_LABEL,
-    is_funasr_available,
+    sensevoice_runtime_status,
 )
-from row_bot.voice.openai_realtime import (
-    DEFAULT_REALTIME_MODEL,
-    DEFAULT_REALTIME_VOICE,
-    OpenAIRealtimeProvider,
-)
+from row_bot.voice.openai_realtime import DEFAULT_REALTIME_MODEL, DEFAULT_REALTIME_VOICE, OpenAIRealtimeProvider
 
 
 VoiceCapability = Literal["talk", "dictation", "speech_output"]
@@ -58,15 +53,10 @@ def build_voice_provider_catalog(
     tts_service=None,
 ) -> tuple[VoiceProviderCapability, ...]:
     local_whisper_size = str(getattr(voice_service, "whisper_size", "base") or "base")
-    local_funasr_ready = is_funasr_available()
-    local_funasr_reason = (
-        f"Local FunASR transcription with {DEFAULT_FUNASR_MODEL}."
-        if local_funasr_ready
-        else "Install the voice extra with FunASR to use local SenseVoice transcription."
+    local_funasr_status = sensevoice_runtime_status(
+        getattr(voice_service, "sensevoice_model_path", "")
     )
-    local_tts_ready = (
-        bool(tts_service.is_installed()) if tts_service is not None else False
-    )
+    local_tts_ready = bool(tts_service.is_installed()) if tts_service is not None else False
     local_voice = str(getattr(tts_service, "voice", "af_heart") or "af_heart")
     local = VoiceProviderCapability(
         provider_id="local",
@@ -88,8 +78,8 @@ def build_voice_provider_catalog(
                 label=FUNASR_MODEL_LABEL,
                 provider_id="local",
                 capability="talk",
-                ready=local_funasr_ready,
-                reason=local_funasr_reason,
+                ready=local_funasr_status.ready,
+                reason=local_funasr_status.reason,
             ),
         ),
         dictation_models=(
@@ -106,8 +96,8 @@ def build_voice_provider_catalog(
                 label=FUNASR_MODEL_LABEL,
                 provider_id="local",
                 capability="dictation",
-                ready=local_funasr_ready,
-                reason=local_funasr_reason,
+                ready=local_funasr_status.ready,
+                reason=local_funasr_status.reason,
             ),
         ),
         speech_output_models=(
@@ -118,9 +108,7 @@ def build_voice_provider_catalog(
                 capability="speech_output",
                 is_default=True,
                 ready=local_tts_ready,
-                reason="Installed locally."
-                if local_tts_ready
-                else "Install Kokoro to use local speech output.",
+                reason="Installed locally." if local_tts_ready else "Install Kokoro to use local speech output.",
             ),
         ),
         default_talk_model=f"local-whisper-{local_whisper_size}",
@@ -171,9 +159,7 @@ def model_options_for_capability(
 ) -> dict[str, str]:
     for provider in catalog:
         if provider.provider_id == provider_id:
-            return {
-                model.model_id: model.label for model in provider.models_for(capability)
-            }
+            return {model.model_id: model.label for model in provider.models_for(capability)}
     return {}
 
 

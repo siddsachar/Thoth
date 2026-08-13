@@ -211,6 +211,18 @@ def test_voice_tab_owns_voice_models_not_credentials():
     assert "model_options_for_capability" in voice_src
 
 
+def test_voice_tab_exposes_only_explicit_sensevoice_installation() -> None:
+    voice_src = _function_source("_build_voice_tab")
+    install_src = _function_source("_render_sensevoice_install")
+
+    assert "_render_sensevoice_install(voice_svc, _reopen)" in voice_src
+    assert "voice_svc.sensevoice_status()" in install_src
+    assert "voice_svc.install_sensevoice_model" in install_src
+    assert "await run.io_bound" in install_src
+    assert "downloads {FUNASR_MODEL_APPROX_SIZE} from ModelScope" in install_src
+    assert "verified local snapshot" in install_src
+
+
 def test_voice_tab_uses_dependent_provider_selectors_and_realtime_controls():
     voice_src = _function_source("_build_voice_tab")
 

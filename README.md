@@ -386,6 +386,14 @@ same browser. Remote microphone capture requires HTTPS; plain LAN HTTP is not a
 secure browser context. Voice model downloads remain explicit and OpenAI
 Realtime voice remains a separate provider feature.
 
+SenseVoice installation is an explicit ~940 MB download from
+[ModelScope](https://modelscope.cn/models/iic/SenseVoiceSmall) under the model's
+Apache-2.0 license. ModelScope receives the download request and standard SDK
+user-agent; Row-Bot sends no audio, prompts, or usage data, and normal inference
+uses only the verified local snapshot with update checks disabled. SenseVoice is
+unavailable on Intel macOS because matching PyTorch/Torchaudio CPU wheels are not
+published for that runtime; local Whisper remains available.
+
 Back up the complete active `ROW_BOT_DATA_DIR` while Row-Bot is stopped, and
 protect that backup as private user data. It contains conversations,
 configuration, instance identity, invitations, devices, and sessions. OS

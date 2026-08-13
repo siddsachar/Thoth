@@ -24,7 +24,11 @@ class FakeTTS:
 def test_voice_catalog_filters_models_by_runtime_capability(monkeypatch):
     monkeypatch.setattr("row_bot.voice.openai_realtime.get_key", lambda name: "sk-test")
     monkeypatch.setattr(
-        "row_bot.voice.provider_catalog.is_funasr_available", lambda: False
+        "row_bot.voice.provider_catalog.sensevoice_runtime_status",
+        lambda _path: SimpleNamespace(
+            ready=False,
+            reason="SenseVoice model data is not installed.",
+        ),
     )
 
     catalog = build_voice_provider_catalog(
@@ -37,19 +41,27 @@ def test_voice_catalog_filters_models_by_runtime_capability(monkeypatch):
         "openai_realtime": "OpenAI Realtime",
     }
     assert provider_options_for_capability(catalog, "dictation") == {"local": "Local"}
-    assert provider_options_for_capability(catalog, "speech_output") == {
-        "local": "Local"
-    }
+    assert provider_options_for_capability(catalog, "speech_output") == {"local": "Local"}
     assert model_options_for_capability(catalog, "talk", "openai_realtime") == {
         DEFAULT_REALTIME_MODEL: f"{DEFAULT_REALTIME_MODEL} (default)",
     }
     assert model_options_for_capability(catalog, "dictation", "openai_realtime") == {}
+    assert "local-funasr-sensevoice" in model_options_for_capability(
+        catalog, "talk", "local"
+    )
+    assert "local-funasr-sensevoice" in model_options_for_capability(
+        catalog, "dictation", "local"
+    )
 
 
 def test_voice_catalog_exposes_optional_local_funasr_when_installed(monkeypatch):
     monkeypatch.setattr("row_bot.voice.openai_realtime.get_key", lambda name: "")
     monkeypatch.setattr(
-        "row_bot.voice.provider_catalog.is_funasr_available", lambda: True
+        "row_bot.voice.provider_catalog.sensevoice_runtime_status",
+        lambda _path: SimpleNamespace(
+            ready=True,
+            reason="SenseVoice is installed locally and normal transcription stays offline.",
+        ),
     )
 
     catalog = build_voice_provider_catalog(
@@ -61,6 +73,10 @@ def test_voice_catalog_exposes_optional_local_funasr_when_installed(monkeypatch)
         "local-whisper-small": "Local Whisper small",
         "local-funasr-sensevoice": "SenseVoice Small",
     }
+    assert model_options_for_capability(catalog, "talk", "local") == {
+        "local-whisper-small": "Local Whisper small",
+        "local-funasr-sensevoice": "SenseVoice Small",
+    }
     local = next(provider for provider in catalog if provider.provider_id == "local")
     funasr = next(
         model
@@ -68,7 +84,7 @@ def test_voice_catalog_exposes_optional_local_funasr_when_installed(monkeypatch)
         if model.model_id == "local-funasr-sensevoice"
     )
     assert funasr.ready is True
-    assert "iic/SenseVoiceSmall" in funasr.reason
+    assert "offline" in funasr.reason
 
 
 def test_voice_catalog_reports_openai_realtime_default_ready_with_key(monkeypatch):
@@ -78,17 +94,12 @@ def test_voice_catalog_reports_openai_realtime_default_ready_with_key(monkeypatc
         voice_service=SimpleNamespace(whisper_size="small"),
         tts_service=FakeTTS(installed=False),
     )
-    openai = next(
-        provider for provider in catalog if provider.provider_id == "openai_realtime"
-    )
+    openai = next(provider for provider in catalog if provider.provider_id == "openai_realtime")
 
     assert openai.ready is True
     assert openai.default_talk_model == DEFAULT_REALTIME_MODEL
     assert openai.talk_models[0].ready is True
-    assert (
-        selected_or_default_model(catalog, "talk", "openai_realtime", "missing")
-        == DEFAULT_REALTIME_MODEL
-    )
+    assert selected_or_default_model(catalog, "talk", "openai_realtime", "missing") == DEFAULT_REALTIME_MODEL
 
 
 def test_voice_catalog_marks_openai_realtime_setup_when_key_missing(monkeypatch):
@@ -98,9 +109,7 @@ def test_voice_catalog_marks_openai_realtime_setup_when_key_missing(monkeypatch)
         voice_service=SimpleNamespace(whisper_size="base"),
         tts_service=FakeTTS(installed=True),
     )
-    openai = next(
-        provider for provider in catalog if provider.provider_id == "openai_realtime"
-    )
+    openai = next(provider for provider in catalog if provider.provider_id == "openai_realtime")
 
     assert openai.ready is False
     assert openai.talk_models[0].ready is False
