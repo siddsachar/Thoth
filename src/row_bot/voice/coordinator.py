@@ -117,9 +117,23 @@ class VoiceSessionCoordinator:
         self.realtime_state = "stopped"
         self._active = True
         self._emit("session_started")
+        self._apply_selected_local_stt_model(mode)
         self.voice_service.start()
         self._last_activity_at = time.monotonic()
         return self._session_id
+
+    def _apply_selected_local_stt_model(self, mode: VoiceMode) -> None:
+        try:
+            from row_bot.voice.runtime import load_voice_runtime_settings
+
+            settings = load_voice_runtime_settings()
+            selected_model = (
+                settings.dictation_model if mode == "dictate" else settings.talk_model
+            )
+            if selected_model:
+                self.voice_service.stt_model = selected_model
+        except Exception:
+            return
 
     def stop(self, *, session_id: int | None = None) -> None:
         if session_id is not None and session_id != self._session_id:

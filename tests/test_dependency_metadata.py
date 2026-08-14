@@ -26,6 +26,7 @@ HIGH_RISK_DIRECT_DEPENDENCIES = {
     "discord-py",
     "faiss-cpu",
     "faster-whisper",
+    "funasr",
     "google-genai",
     "huggingface-hub",
     "kokoro-onnx",
@@ -44,6 +45,7 @@ HIGH_RISK_DIRECT_DEPENDENCIES = {
     "langgraph",
     "langgraph-checkpoint-sqlite",
     "mcp",
+    "modelscope",
     "nicegui",
     "numpy",
     "openai",
@@ -56,6 +58,7 @@ HIGH_RISK_DIRECT_DEPENDENCIES = {
     "slack-bolt",
     "tokenizers",
     "torch",
+    "torchaudio",
     "transformers",
     "twilio",
 }
@@ -110,6 +113,37 @@ def test_required_extras_exist_and_all_extra_covers_them():
     for extra in REQUIRED_EXTRAS - {"all"}:
         extra_names = {_dependency_name(dep) for dep in optional[extra]}
         assert extra_names <= all_names, f"{extra} dependencies missing from all extra"
+
+
+def test_voice_extra_includes_funasr_runtime_dependencies():
+    voice = _load_pyproject()["project"]["optional-dependencies"]["voice"]
+    voice_dependencies = {_dependency_name(dep): dep for dep in voice}
+
+    assert {"funasr", "modelscope", "torch", "torchaudio"} <= set(
+        voice_dependencies
+    )
+    assert voice_dependencies["torch"].split(";", 1)[0].strip() == "torch==2.11.0"
+    assert (
+        voice_dependencies["torchaudio"].split(";", 1)[0].strip()
+        == "torchaudio==2.11.0"
+    )
+    for name in ("funasr", "modelscope", "torch", "torchaudio"):
+        assert "platform_machine != 'x86_64'" in voice_dependencies[name]
+
+
+def test_locked_torch_and_torchaudio_versions_match_exactly():
+    with (ROOT / "uv.lock").open("rb") as handle:
+        packages = tomllib.load(handle)["package"]
+
+    def _locked_versions(name: str) -> set[str]:
+        return {
+            str(package["version"]).split("+", 1)[0]
+            for package in packages
+            if package["name"] == name
+        }
+
+    assert _locked_versions("torch") == {"2.11.0"}
+    assert _locked_versions("torchaudio") == {"2.11.0"}
 
 
 def test_high_risk_direct_dependencies_have_upper_bounds_or_pins():
@@ -212,6 +246,16 @@ def test_runtime_verifier_presence_checks_pystray_on_headless_linux(monkeypatch)
     verifier._verify_module("pystray")
 
 
+def test_runtime_verifier_voice_group_covers_supported_funasr_stack():
+    import scripts.verify_runtime_dependencies as verifier
+
+    expected = {"funasr", "modelscope", "torch", "torchaudio"}
+    if verifier.FUNASR_VOICE_MODULES:
+        assert expected <= set(verifier.GROUPS["voice"])
+    else:
+        assert expected.isdisjoint(verifier.GROUPS["voice"])
+
+
 def test_runtime_verifier_checks_appkit_modules_on_macos(monkeypatch):
     import importlib
 
@@ -233,3 +277,23 @@ def test_runtime_verifier_checks_appkit_modules_on_macos(monkeypatch):
         verifier._verify_module(module)
 
     assert imported == ["AppKit", "Foundation", "objc", "PyObjCTools.AppHelper"]
+
+def test_runtime_verifier_reports_missing_and_broken_funasr_imports(
+    monkeypatch,
+    capsys,
+):
+    import scripts.verify_runtime_dependencies as verifier
+
+    monkeypatch.setitem(verifier.GROUPS, "voice", ("funasr", "torchaudio"))
+
+    def _verify(module: str) -> None:
+        if module == "funasr":
+            raise ModuleNotFoundError("No module named 'funasr'")
+        raise RuntimeError("torchaudio native library failed to load")
+
+    monkeypatch.setattr(verifier, "_verify_module", _verify)
+
+    assert verifier.main(["voice"]) == 1
+    error = capsys.readouterr().err
+    assert "voice:funasr: ModuleNotFoundError" in error
+    assert "voice:torchaudio: RuntimeError" in error

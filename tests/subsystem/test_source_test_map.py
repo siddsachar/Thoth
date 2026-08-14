@@ -43,6 +43,22 @@ def test_selected_provider_sources_select_focused_legacy_regressions() -> None:
     assert "tests/test_provider_catalog.py" in selection.test_paths
 
 
+def test_voice_runtime_change_selects_offline_and_provider_regressions() -> None:
+    selection = select_tests_for_changes(
+        [
+            "src/row_bot/voice/local_provider.py",
+            "src/row_bot/voice/provider_catalog.py",
+        ]
+    )
+
+    assert "voice_runtime" in selection.matched_rules
+    assert "tests/test_voice_sensevoice.py" in selection.test_paths
+    assert "tests/test_voice_providers.py" in selection.test_paths
+    assert "tests/test_voice_provider_catalog.py" in selection.test_paths
+    assert "tests/test_voice_coordinator.py" in selection.test_paths
+    assert not selection.unmatched_files
+
+
 def test_agent_profile_workflow_sources_select_profile_and_workflow_regressions() -> None:
     selection = select_tests_for_changes(
         [

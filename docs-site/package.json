@@ -25,6 +25,10 @@
     "pagefind": "^1.5.2",
     "typescript": "^5.8.3"
   },
+  "overrides": {
+    "serialize-javascript": "7.0.5",
+    "uuid": "11.1.1"
+  },
   "browserslist": {
     "production": [
       ">0.5%",

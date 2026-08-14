@@ -110,6 +110,7 @@ class VoiceService:
 
         # Whisper (lazy loaded)
         self._whisper_model = None
+        self._funasr_provider = None
 
         # Mic gating
         self._mute_event = threading.Event()
@@ -118,6 +119,10 @@ class VoiceService:
         # Settings
         settings = _load_voice_settings()
         self._whisper_size: str = settings.get("whisper_model", _DEFAULT_WHISPER_SIZE)
+        self._sensevoice_model_path: str = str(
+            settings.get("sensevoice_model_path") or ""
+        )
+        self._stt_model: str = f"local-whisper-{self._whisper_size}"
 
     # ── Properties ───────────────────────────────────────────────────────
 
@@ -153,6 +158,18 @@ class VoiceService:
         self._whisper_model = None
         s = _load_voice_settings(); s["whisper_model"] = value; _save_voice_settings(s)
 
+    @property
+    def stt_model(self) -> str:
+        return self._stt_model
+
+    @stt_model.setter
+    def stt_model(self, value: str) -> None:
+        self._stt_model = str(value or f"local-whisper-{self._whisper_size}")
+
+    @property
+    def sensevoice_model_path(self) -> str:
+        return self._sensevoice_model_path
+
     # ── Model loading ────────────────────────────────────────────────────
 
     def _ensure_whisper(self, *, allow_download: bool = True):
@@ -183,16 +200,58 @@ class VoiceService:
         """Explicitly download and load the selected Whisper model."""
         self._ensure_whisper(allow_download=True)
 
+    def sensevoice_status(self):
+        from row_bot.voice.local_provider import LocalFunASRProvider
+
+        return LocalFunASRProvider(
+            model_path=self._sensevoice_model_path,
+        ).runtime_status()
+
+    def install_sensevoice_model(self) -> Path:
+        """Explicitly download SenseVoice and persist its verified local path."""
+        from row_bot.voice.local_provider import install_sensevoice_model
+
+        model_path = install_sensevoice_model()
+        settings = _load_voice_settings()
+        settings["sensevoice_model_path"] = str(model_path)
+        _save_voice_settings(settings)
+        self._sensevoice_model_path = str(model_path)
+        self._funasr_provider = None
+        return model_path
+
+    def _get_funasr_provider(self):
+        if self._funasr_provider is None:
+            from row_bot.voice.local_provider import LocalFunASRProvider
+
+            self._funasr_provider = LocalFunASRProvider(
+                model_path=self._sensevoice_model_path,
+            )
+        return self._funasr_provider
+
+    def _ensure_funasr(self):
+        self._get_funasr_provider().ensure_model()
+
+    def _ensure_selected_stt_model(self) -> None:
+        if self._stt_model == "local-funasr-sensevoice":
+            self._ensure_funasr()
+            return
+        self._ensure_whisper()
+
+    def _transcribe_pcm_bytes(self, audio_bytes: bytes) -> str:
+        if self._stt_model == "local-funasr-sensevoice":
+            return self._get_funasr_provider().transcribe_bytes(audio_bytes)
+        return self.transcribe_pcm16(audio_bytes, allow_download=True)
+
     # ── Pipeline ─────────────────────────────────────────────────────────
 
     def _run(self) -> None:
         import sounddevice as sd
 
         try:
-            self._ensure_whisper()
+            self._ensure_selected_stt_model()
         except Exception as exc:
-            self.status_queue.put(f"Whisper init failed: {exc}")
-            logger.error("Whisper init failed: %s", exc)
+            self.status_queue.put(f"Speech-to-text init failed: {exc}")
+            logger.error("Speech-to-text init failed: %s", exc)
             self._set_state("stopped")
             return
 
@@ -287,12 +346,8 @@ class VoiceService:
                                 self.status_queue.put("⏳ Processing…")
 
                                 pcm = np.concatenate(speech_chunks)
-                                f32 = pcm.astype(np.float32) / 32768.0
                                 try:
-                                    segs, _ = self._whisper_model.transcribe(
-                                        f32, beam_size=5, language="en", vad_filter=True,
-                                    )
-                                    text = " ".join(s.text.strip() for s in segs).strip()
+                                    text = self._transcribe_pcm_bytes(pcm.tobytes())
                                 except Exception as exc:
                                     logger.error("Transcription error: %s", exc)
                                     text = ""
@@ -367,7 +422,7 @@ class VoiceService:
 
     def transcribe_bytes(self, audio_bytes: bytes) -> str:
         """One-shot transcription of raw PCM bytes."""
-        return self.transcribe_pcm16(audio_bytes, allow_download=True)
+        return self._transcribe_pcm_bytes(audio_bytes)
 
     def transcribe_pcm16(
         self,

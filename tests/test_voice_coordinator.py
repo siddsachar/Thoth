@@ -56,6 +56,46 @@ def test_coordinator_starts_only_one_voice_mode_at_a_time():
     assert service.started == 2
 
 
+def test_coordinator_applies_selected_local_stt_model(monkeypatch):
+    service = FakeVoiceService()
+    coordinator = VoiceSessionCoordinator(service)  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        "row_bot.voice.runtime.load_voice_runtime_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "talk_model": "local-whisper-small",
+                "dictation_model": "local-funasr-sensevoice",
+            },
+        )(),
+    )
+
+    coordinator.start_dictation()
+
+    assert service.stt_model == "local-funasr-sensevoice"
+
+
+def test_coordinator_applies_selected_local_stt_model_to_talk(monkeypatch):
+    service = FakeVoiceService()
+    coordinator = VoiceSessionCoordinator(service)  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        "row_bot.voice.runtime.load_voice_runtime_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "talk_model": "local-funasr-sensevoice",
+                "dictation_model": "local-whisper-small",
+            },
+        )(),
+    )
+
+    coordinator.start_talk()
+
+    assert service.stt_model == "local-funasr-sensevoice"
+
+
 def test_coordinator_ignores_stale_stop_and_stale_unmute_after_stop():
     service = FakeVoiceService()
     coordinator = VoiceSessionCoordinator(service)  # type: ignore[arg-type]

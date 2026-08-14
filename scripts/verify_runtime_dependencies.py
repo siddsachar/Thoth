@@ -16,6 +16,16 @@ MACOS_APPKIT_MODULES = (
     "PyObjCTools.AppHelper",
 ) if platform.system() == "Darwin" else ()
 
+FUNASR_VOICE_MODULES = () if (
+    platform.system() == "Darwin"
+    and platform.machine().lower() in {"amd64", "x86_64"}
+) else (
+    "funasr",
+    "modelscope",
+    "torch",
+    "torchaudio",
+)
+
 GROUPS = {
     "core": (
         "nicegui",
@@ -68,6 +78,7 @@ GROUPS = {
         "sounddevice",
         "faster_whisper",
         "kokoro_onnx",
+        *FUNASR_VOICE_MODULES,
     ),
     "designer": (
         "fpdf",
