@@ -29,6 +29,7 @@ import time
 from typing import Any
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ReactionTypeEmoji
+from telegram.error import InvalidToken, NetworkError
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -101,6 +102,7 @@ _pending_task_approvals: dict[int, dict] = {}  # {message_id: {resume_token, tas
 _pending_skill_choices: dict[str, dict] = {}  # {token: {thread_id, action, choices}}
 _pending_lock = threading.Lock()  # Guards both _pending_interrupts and _pending_task_approvals
 _PENDING_TTL_SECONDS = 3600  # 1 hour — entries older than this are cleaned up
+_INITIALIZE_RETRY_DELAY_SECONDS = 1
 
 
 def _cleanup_stale_pending() -> None:
@@ -2084,6 +2086,36 @@ async def _handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # ──────────────────────────────────────────────────────────────────────
 # Lifecycle: start / stop the polling bot
 # ──────────────────────────────────────────────────────────────────────
+async def _cleanup_failed_start(application: Application) -> None:
+    """Best-effort cleanup for a partially started Telegram application."""
+    updater = application.updater
+    cleanup_steps = (
+        ("updater stop", updater.stop if updater and updater.running else None),
+        ("application stop", application.stop if application.running else None),
+        ("application shutdown", application.shutdown),
+        ("bot shutdown", application.bot.shutdown),
+    )
+    for step, operation in cleanup_steps:
+        if operation is None:
+            continue
+        try:
+            await operation()
+        except Exception as exc:
+            log.warning(
+                "Telegram startup cleanup failed during %s (%s)",
+                step,
+                type(exc).__name__,
+            )
+
+
+async def _register_bot_commands(application: Application) -> None:
+    """Register Telegram commands without affecting the live polling bot."""
+    try:
+        await application.bot.set_my_commands(BOT_COMMANDS)
+    except Exception as exc:
+        log.warning("Could not register bot commands (%s)", type(exc).__name__)
+
+
 async def start_bot() -> bool:
     """Initialise and start the Telegram bot (long polling).
 
@@ -2127,19 +2159,46 @@ async def start_bot() -> bool:
     _app.add_handler(MessageHandler(filters.Document.ALL, _handle_document))
     _app.add_handler(CallbackQueryHandler(_handle_callback))
 
-    # Register commands with BotFather for autocomplete
-    try:
-        await _app.bot.set_my_commands(BOT_COMMANDS)
-    except Exception as exc:
-        log.warning("Could not register bot commands: %s", exc)
-
     # Initialise and start polling
-    await _app.initialize()
-    await _app.start()
-    await _app.updater.start_polling(drop_pending_updates=True)
+    try:
+        for attempt in range(2):
+            try:
+                await _app.initialize()
+                break
+            except NetworkError as exc:
+                if attempt == 1:
+                    raise
+                log.warning(
+                    "Telegram initialization failed (%s); retrying once in one second",
+                    type(exc).__name__,
+                )
+                await asyncio.sleep(_INITIALIZE_RETRY_DELAY_SECONDS)
+        await _app.start()
+        await _app.updater.start_polling(
+            drop_pending_updates=True,
+            bootstrap_retries=1,
+        )
+    except InvalidToken:
+        await _cleanup_failed_start(_app)
+        _app = None
+        _running = False
+        _bot_loop = None
+        raise RuntimeError(
+            "Telegram rejected the configured bot token; update it in Settings."
+        ) from None
+    except Exception:
+        await _cleanup_failed_start(_app)
+        _app = None
+        _running = False
+        _bot_loop = None
+        raise
 
     _bot_loop = asyncio.get_running_loop()
     _running = True
+    asyncio.create_task(
+        _register_bot_commands(_app),
+        name="telegram-register-commands",
+    )
 
     # Periodic cleanup of stale pending dicts (every 10 minutes)
     async def _periodic_cleanup():

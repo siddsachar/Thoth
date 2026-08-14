@@ -5877,7 +5877,7 @@ def open_settings(
                     else:
                         ui.notify(f"⚠️ Could not start {ch.display_name}", type="warning")
                 except Exception as exc:
-                    ui.notify(f"Error starting {ch.display_name}: {exc}", type="negative")
+                    _report_manual_channel_start_failure(ch, exc)
                 _update_channel_status(status_container, ch)
                 _refresh_header()
                 # Keep expansion open so QR code / status is visible
@@ -6587,3 +6587,13 @@ def _render_sensevoice_install(voice_svc, reopen: Callable[[str], None]) -> None
         icon="download",
         on_click=_install_sensevoice,
     ).classes("w-full").props("no-caps")
+
+
+def _report_manual_channel_start_failure(channel: Any, exc: Exception) -> None:
+    """Log a credential-safe diagnostic and preserve the existing notification."""
+    logger.warning(
+        "Manual channel start failed: channel=%s error_type=%s",
+        channel.name,
+        type(exc).__name__,
+    )
+    ui.notify(f"Error starting {channel.display_name}: {exc}", type="negative")

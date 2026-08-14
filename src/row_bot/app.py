@@ -977,11 +977,12 @@ async def _run_startup_sequence():
         _main_app_tunnel = _main_app_tunnel[0] is True
         _ch_config.set("tunnel", "tunnel_main_app", _main_app_tunnel)
     if _main_app_tunnel is True:
+        _set("🌐 Starting remote access tunnel…")
         try:
             from row_bot.tunnel import tunnel_manager
             with _startup_phase("main_app_tunnel_autostart"):
                 if tunnel_manager.is_available():
-                    tunnel_manager.start_tunnel(_APP_PORT, label="main_app")
+                    await asyncio.to_thread(tunnel_manager.start_tunnel, _APP_PORT, label="main_app")
                     _safe_console_print(f"[startup] ✅ Main-app tunnel auto-started on port {_APP_PORT}")
                 else:
                     _status_code, status_detail = tunnel_manager.status()
@@ -1522,9 +1523,7 @@ async def index():
           const poll = async () => {
             try {
               const response = await fetch('/readyz', {cache: 'no-store'});
-              if (!response.ok) return;
-              const state = await response.json();
-              if (state && state.ready) {
+              if (response.ok) {
                 window.location.reload();
               }
             } catch (_) {}

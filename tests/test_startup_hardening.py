@@ -193,6 +193,43 @@ def test_startup_speed_imports_are_lazy_source_contract():
     assert "def create_react_agent" in agent_src
 
 
+def test_startup_splash_uses_readyz_http_status_source_contract():
+    app_src = Path("src/row_bot/app.py").read_text(encoding="utf-8")
+
+    assert "fetch('/readyz', {cache: 'no-store'})" in app_src
+    assert "if (response.ok)" in app_src
+    assert "state.ready" not in app_src
+    assert "await response.json()" not in app_src
+
+
+def test_main_app_tunnel_startup_is_offloaded_source_contract():
+    app_src = Path("src/row_bot/app.py").read_text(encoding="utf-8")
+
+    status = '_set("🌐 Starting remote access tunnel…")'
+    offloaded_start = (
+        'await asyncio.to_thread(tunnel_manager.start_tunnel, _APP_PORT, label="main_app")'
+    )
+    assert status in app_src
+    assert offloaded_start in app_src
+    assert app_src.index(status) < app_src.index(offloaded_start)
+
+
+def test_manual_channel_start_logs_safe_diagnostic_source_contract():
+    settings_src = Path("src/row_bot/ui/settings.py").read_text(encoding="utf-8")
+    start_handler = settings_src.split("async def _start_ch", 1)[1].split(
+        "async def _stop_ch", 1
+    )[0]
+    diagnostic = settings_src.split(
+        "def _report_manual_channel_start_failure", 1
+    )[1]
+
+    assert "_report_manual_channel_start_failure(ch, exc)" in start_handler
+    assert "Manual channel start failed: channel=%s error_type=%s" in diagnostic
+    assert "channel.name," in diagnostic
+    assert "type(exc).__name__," in diagnostic
+    assert "logger.exception" not in diagnostic
+
+
 def test_channel_adapters_do_not_import_agent_at_module_import_time():
     for path in [
         Path("src/row_bot/channels/telegram.py"),
