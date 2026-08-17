@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -127,6 +128,106 @@ def test_delegate_work_uses_runner_and_returns_public_run(tmp_path, monkeypatch)
     assert payload["run"]["workspace"]["id"] == "dev_parent"
     assert "agent_wait(orchestration_id=" in payload["next_action"]
     assert "continue useful independent work" in payload["next_action"].lower()
+
+
+def test_delegate_work_persists_initial_parent_continuation(tmp_path, monkeypatch):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(
+        agent_tool,
+        "_runtime_context",
+        lambda: {
+            "thread_id": "parent-thread",
+            "generation_id": "parent-generation",
+            "root_objective": "Coordinate the child results.",
+            "model_override": "provider:model",
+            "approval_mode": "block",
+            "runtime_surface": "normal_chat",
+            "enabled_tool_names": ["agents", "shell"],
+        },
+    )
+
+    def fake_spawn(objective, **kwargs):
+        return {
+            "id": "continuation-run",
+            "kind": "subagent",
+            "status": "queued",
+            "parent_thread_id": kwargs["parent_thread_id"],
+        }
+
+    monkeypatch.setattr(agent_tool.agent_runner, "spawn_agent_run", fake_spawn)
+
+    payload = json.loads(
+        agent_tool._delegate_work(
+            objective="Complete one part.",
+            wait=False,
+            config={
+                "configurable": {
+                    "thread_id": "parent-thread",
+                    "generation_id": "parent-generation",
+                    "runtime_channel": "local",
+                    "__pregel_send": object(),
+                }
+            },
+        )
+    )
+
+    import row_bot.agent_orchestrator as orchestrator
+
+    orchestration = orchestrator.get_orchestration(payload["orchestration"]["id"])
+    continuation = orchestration["continuation_state_json"]
+    configurable = continuation["config"]["configurable"]
+    assert continuation["enabled_tool_names"] == ["agents", "shell"]
+    assert configurable["thread_id"] == "parent-thread"
+    assert configurable["generation_id"] == "parent-generation"
+    assert configurable["runtime_channel"] == "local"
+    assert "__pregel_send" not in configurable
+    assert "finalization_ready" not in continuation
+
+
+def test_checkpoint_repair_closes_only_orphaned_tool_calls() -> None:
+    from langchain_core.messages import AIMessage, ToolMessage
+    from row_bot.agent import repair_orphaned_tool_calls
+
+    messages = [
+        AIMessage(
+            content="Starting tools",
+            tool_calls=[
+                {"name": "run_command", "args": {}, "id": "answered"},
+                {"name": "run_command", "args": {}, "id": "orphaned"},
+            ],
+        ),
+        ToolMessage(
+            content="completed",
+            name="run_command",
+            tool_call_id="answered",
+        ),
+    ]
+
+    class FakeGraph:
+        def __init__(self):
+            self.updates = []
+
+        def get_state(self, _config):
+            return SimpleNamespace(values={"messages": messages})
+
+        def update_state(self, _config, values):
+            self.updates.append(values)
+
+    graph = FakeGraph()
+    repaired = repair_orphaned_tool_calls(
+        [],
+        {"configurable": {"thread_id": "parent"}},
+        agent_graph=graph,
+        orphan_message="[Interrupted; not retried]",
+        marker_message="[Recovered]",
+    )
+
+    assert repaired == 1
+    patched_tools = graph.updates[0]["messages"]
+    assert [message.tool_call_id for message in patched_tools] == ["orphaned"]
+    assert patched_tools[0].content == "[Interrupted; not retried]"
+    assert graph.updates[1]["messages"][0].content == "[Recovered]"
 
 
 def test_optional_background_child_is_still_a_durable_member(
