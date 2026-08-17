@@ -206,6 +206,14 @@ class _DelegateWorkInput(BaseModel):
         default="",
         description="Optional Developer workspace id to use. Omit to inherit the current thread workspace.",
     )
+    developer_workspace_path: str = Field(
+        default="",
+        description=(
+            "Optional existing local folder to register and assign only to this child Agent. "
+            "Use distinct folder paths for independent parallel writers. Mutually exclusive "
+            "with developer_workspace_id."
+        ),
+    )
     use_worktree: bool = Field(
         default=False,
         description="Run the child in its own local git Worktree when a git-backed Developer workspace is available.",
@@ -322,6 +330,7 @@ def _delegate_work(
     model: str = "",
     parent_thread_id: str = "",
     developer_workspace_id: str = "",
+    developer_workspace_path: str = "",
     use_worktree: bool = False,
     workspace_mode: str = "",
     parent_run_id: str = "",
@@ -338,6 +347,26 @@ def _delegate_work(
     # top-level chat calls have no active run id and retain the explicit value.
     parent_run_id = str(runtime.get("agent_run_id") or parent_run_id or "")
     enabled_tool_names = list(runtime.get("enabled_tool_names") or ())
+    workspace_path = str(developer_workspace_path or "").strip()
+    if str(developer_workspace_id or "").strip() and workspace_path:
+        return _json_response({
+            "ok": False,
+            "message": (
+                "developer_workspace_id and developer_workspace_path are mutually exclusive."
+            ),
+            "run": {},
+        })
+    if workspace_path:
+        try:
+            from row_bot.developer.storage import add_or_update_local_workspace
+
+            developer_workspace_id = add_or_update_local_workspace(workspace_path).id
+        except Exception as exc:
+            return _json_response({
+                "ok": False,
+                "message": str(exc),
+                "run": {},
+            })
     parent_model_ref = str(runtime.get("model_override") or "").strip()
     if not parent_model_ref:
         try:

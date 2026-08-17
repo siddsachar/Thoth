@@ -18,6 +18,7 @@ def _fresh_agent_tool_modules(tmp_path, monkeypatch):
         "row_bot.agent_runs",
         "row_bot.agent_context",
         "row_bot.agent_runner",
+        "row_bot.developer.storage",
         "row_bot.tools.agent_tool",
     ):
         sys.modules.pop(name, None)
@@ -163,6 +164,97 @@ def test_optional_background_child_is_still_a_durable_member(
     assert calls["kwargs"]["orchestration_required"] is False
 
 
+def test_delegate_work_registers_workspace_path_and_forwards_id(tmp_path, monkeypatch):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    workspace_folder = tmp_path / "independent-child"
+    workspace_folder.mkdir()
+    calls = {}
+
+    def fake_spawn(objective, **kwargs):
+        calls["objective"] = objective
+        calls["kwargs"] = kwargs
+        return {
+            "id": "folder-run",
+            "kind": "subagent",
+            "status": "completed",
+            "workspace_id": kwargs["developer_workspace_id"],
+            "workspace_mode": "single_writer",
+        }
+
+    monkeypatch.setattr(agent_tool.agent_runner, "spawn_agent_run", fake_spawn)
+
+    payload = json.loads(agent_tool._delegate_work(
+        objective="Write into the assigned folder.",
+        developer_workspace_path=str(workspace_folder),
+        wait=True,
+    ))
+
+    from row_bot.developer.storage import get_workspace
+
+    workspace_id = calls["kwargs"]["developer_workspace_id"]
+    workspace = get_workspace(workspace_id)
+    assert payload["ok"] is True
+    assert workspace is not None
+    assert workspace.path == str(workspace_folder.resolve())
+    assert payload["run"]["workspace"]["id"] == workspace_id
+    assert calls["kwargs"]["use_worktree"] is False
+
+
+def test_delegate_work_rejects_conflicting_workspace_inputs_without_spawning(
+    tmp_path,
+    monkeypatch,
+):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    workspace_folder = tmp_path / "conflicting-child"
+    workspace_folder.mkdir()
+    calls = {"count": 0}
+
+    def fake_spawn(objective, **kwargs):
+        calls["count"] += 1
+        return {}
+
+    monkeypatch.setattr(agent_tool.agent_runner, "spawn_agent_run", fake_spawn)
+
+    payload = json.loads(agent_tool._delegate_work(
+        objective="Do not start.",
+        developer_workspace_id="dev-existing",
+        developer_workspace_path=str(workspace_folder),
+        wait=True,
+    ))
+
+    assert payload["ok"] is False
+    assert "mutually exclusive" in payload["message"]
+    assert payload["run"] == {}
+    assert calls["count"] == 0
+
+
+def test_delegate_work_rejects_missing_workspace_path_without_spawning(
+    tmp_path,
+    monkeypatch,
+):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    missing_folder = tmp_path / "missing-child"
+    calls = {"count": 0}
+
+    def fake_spawn(objective, **kwargs):
+        calls["count"] += 1
+        return {}
+
+    monkeypatch.setattr(agent_tool.agent_runner, "spawn_agent_run", fake_spawn)
+
+    payload = json.loads(agent_tool._delegate_work(
+        objective="Do not start.",
+        developer_workspace_path=str(missing_folder),
+        wait=True,
+    ))
+
+    assert payload["ok"] is False
+    assert payload["message"] == f"Workspace folder does not exist: {missing_folder}"
+    assert payload["run"] == {}
+    assert calls["count"] == 0
+    assert missing_folder.exists() is False
+
+
 def test_delegate_work_resolves_optional_model_to_canonical_ref(tmp_path, monkeypatch):
     selection = _isolated_model_choices(tmp_path, monkeypatch)
     selection.add_quick_choice_for_model(
@@ -290,6 +382,10 @@ def test_agents_guide_mentions_pinned_model_resolution() -> None:
     assert "before finalizing" in guide
     assert "later wave" in guide
     assert "do not loop on `agent_status`" in guide
+    assert "developer_workspace_path" in guide
+    assert "distinct" in guide
+    assert "changing shell cwd alone does not change agent workspace locking" in guide
+    assert "same folder still serialize" in guide
 
 
 def test_delegate_work_schema_is_async_first() -> None:
@@ -302,7 +398,13 @@ def test_delegate_work_schema_is_async_first() -> None:
     worktree_description = str(
         _DelegateWorkInput.model_fields["use_worktree"].description or ""
     ).lower()
+    workspace_path_description = str(
+        _DelegateWorkInput.model_fields["developer_workspace_path"].description or ""
+    ).lower()
     assert "local git worktree" in worktree_description
+    assert "existing local folder" in workspace_path_description
+    assert "distinct folder paths" in workspace_path_description
+    assert "mutually exclusive" in workspace_path_description
     context_description = str(
         _DelegateWorkInput.model_fields["context"].description or ""
     ).lower()
