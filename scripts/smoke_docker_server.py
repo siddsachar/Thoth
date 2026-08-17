@@ -28,6 +28,11 @@ from urllib.parse import parse_qs, urlsplit
 SMOKE_LABEL = "io.row-bot.docker-server-smoke"
 KIND_LABEL = "io.row-bot.docker-server-smoke.kind"
 DEFAULT_STARTUP_TIMEOUT = 120.0
+DEFAULT_HTTP_TIMEOUT = 15.0
+TRANSIENT_GET_RETRY_SECONDS = 15.0
+READINESS_STABLE_SAMPLES = 2
+DIAGNOSTIC_LOG_LINES = 100
+DIAGNOSTIC_LOG_CHARS = 8_000
 STOP_GRACE_SECONDS = 45
 
 
@@ -134,6 +139,7 @@ class HttpTransport(Protocol):
         *,
         headers: Mapping[str, str] | None = None,
         json_body: Mapping[str, object] | None = None,
+        timeout: float | None = None,
     ) -> HttpResult: ...
 
     def cookie_values(self) -> tuple[str, ...]: ...
@@ -147,7 +153,10 @@ class _NoRedirect(request.HTTPRedirectHandler):
 class UrllibHttpTransport:
     """Small cookie-aware HTTP adapter with redirects exposed to assertions."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, default_timeout: float = DEFAULT_HTTP_TIMEOUT) -> None:
+        if default_timeout <= 0:
+            raise ValueError("HTTP timeout must be positive")
+        self.default_timeout = default_timeout
         self._cookies = http.cookiejar.CookieJar()
         self._opener = request.build_opener(
             request.HTTPCookieProcessor(self._cookies),
@@ -161,6 +170,7 @@ class UrllibHttpTransport:
         *,
         headers: Mapping[str, str] | None = None,
         json_body: Mapping[str, object] | None = None,
+        timeout: float | None = None,
     ) -> HttpResult:
         data = None
         request_headers = dict(headers or {})
@@ -174,18 +184,24 @@ class UrllibHttpTransport:
             headers=request_headers,
             method=method.upper(),
         )
+        request_timeout = self.default_timeout if timeout is None else timeout
         try:
-            response = self._opener.open(outbound, timeout=5)
-        except error.HTTPError as exc:
-            response = exc
+            try:
+                response = self._opener.open(outbound, timeout=request_timeout)
+            except error.HTTPError as exc:
+                response = exc
+            with response:
+                return HttpResult(
+                    status=int(response.status),
+                    headers=tuple(response.headers.items()),
+                    body=response.read(),
+                )
         except (error.URLError, TimeoutError, OSError) as exc:
-            raise SmokeError("Docker server HTTP request did not complete") from exc
-        with response:
-            return HttpResult(
-                status=int(response.status),
-                headers=tuple(response.headers.items()),
-                body=response.read(),
-            )
+            path = urlsplit(url).path or "/"
+            raise SmokeError(
+                f"Docker server HTTP {method.upper()} {path} did not complete "
+                f"({type(exc).__name__})"
+            ) from exc
 
     def cookie_values(self) -> tuple[str, ...]:
         return tuple(cookie.value for cookie in self._cookies)
@@ -275,12 +291,23 @@ def assert_secrets_absent(text: str, secret_values: Sequence[str]) -> None:
         raise SmokeError("A raw invitation or session credential appeared in output")
 
 
+def redact_secret_values(text: str, secret_values: Sequence[str]) -> str:
+    """Redact exact smoke-owned credentials before emitting bounded diagnostics."""
+
+    redacted = text
+    for value in secret_values:
+        if value:
+            redacted = redacted.replace(value, "<redacted>")
+    return redacted
+
+
 class DockerServerSmoke:
     def __init__(
         self,
         *,
         image: str,
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
+        request_timeout: float = DEFAULT_HTTP_TIMEOUT,
         runner: Runner | None = None,
         http: HttpTransport | None = None,
         suffix: str | None = None,
@@ -292,10 +319,13 @@ class DockerServerSmoke:
             raise ValueError("--image must not be empty")
         if startup_timeout <= 0:
             raise ValueError("--startup-timeout must be positive")
+        if request_timeout <= 0:
+            raise ValueError("--request-timeout must be positive")
         self.image = selected_image
         self.startup_timeout = startup_timeout
         self.runner = runner or SubprocessRunner()
-        self.http = http or UrllibHttpTransport()
+        self.http = http or UrllibHttpTransport(default_timeout=request_timeout)
+        self.request_timeout = request_timeout
         self.suffix = suffix or secrets.token_hex(8)
         if not re.fullmatch(r"[a-z0-9]{8,64}", self.suffix):
             raise ValueError("smoke suffix must be 8-64 lowercase letters or digits")
@@ -408,19 +438,63 @@ class DockerServerSmoke:
         )
         return f"http://127.0.0.1:{parse_docker_port(result.stdout)}"
 
+    def _send_http(
+        self,
+        method: str,
+        origin: str,
+        path: str,
+        *,
+        stage: str,
+        headers: Mapping[str, str] | None = None,
+        json_body: Mapping[str, object] | None = None,
+        retry_transient: bool = False,
+    ) -> HttpResult:
+        normalized_method = method.upper()
+        if retry_transient and normalized_method != "GET":
+            raise ValueError("transient HTTP retries are limited to GET requests")
+        deadline = (
+            self._monotonic() + TRANSIENT_GET_RETRY_SECONDS
+            if retry_transient
+            else 0.0
+        )
+        while True:
+            try:
+                return self.http.send(
+                    normalized_method,
+                    origin + path,
+                    headers=headers,
+                    json_body=json_body,
+                    timeout=self.request_timeout,
+                )
+            except SmokeError as exc:
+                if not retry_transient or self._monotonic() >= deadline:
+                    raise SmokeError(f"{stage} failed: {exc}") from exc
+                self._sleep(0.5)
+
     def _wait_ready(self, origin: str) -> None:
         deadline = self._monotonic() + self.startup_timeout
         last_statuses: tuple[int | None, int | None] = (None, None)
+        stable_samples = 0
         while self._monotonic() < deadline:
             statuses: list[int | None] = []
             for path in ("/healthz", "/readyz"):
                 try:
-                    statuses.append(self.http.send("GET", origin + path).status)
+                    statuses.append(
+                        self.http.send(
+                            "GET",
+                            origin + path,
+                            timeout=min(self.request_timeout, 5.0),
+                        ).status
+                    )
                 except SmokeError:
                     statuses.append(None)
             last_statuses = (statuses[0], statuses[1])
             if last_statuses == (200, 200):
-                return
+                stable_samples += 1
+                if stable_samples >= READINESS_STABLE_SAMPLES:
+                    return
+            else:
+                stable_samples = 0
             self._sleep(0.5)
         raise SmokeError(
             "Docker server did not become healthy and ready before the startup timeout "
@@ -455,7 +529,13 @@ else:
             raise SmokeError("Container command returned invalid JSON") from exc
 
     def _assert_session(self, origin: str, expected_session_id: str) -> None:
-        response = self.http.send("GET", origin + "/api/access/session")
+        response = self._send_http(
+            "GET",
+            origin,
+            "/api/access/session",
+            stage="authenticated session check",
+            retry_transient=True,
+        )
         if response.status != 200:
             raise SmokeError("Authenticated session endpoint did not return HTTP 200")
         assert_secrets_absent(response.text, self._secrets)
@@ -464,7 +544,13 @@ else:
             raise SmokeError("Persisted owner session is not authenticated")
         if payload.get("session_id") != expected_session_id:
             raise SmokeError("Authenticated session identity changed across recreation")
-        root = self.http.send("GET", origin + "/")
+        root = self._send_http(
+            "GET",
+            origin,
+            "/",
+            stage="authenticated owner UI check",
+            retry_transient=True,
+        )
         if root.status != 200:
             raise SmokeError("Authenticated owner UI did not return HTTP 200")
         assert_secrets_absent(root.text, self._secrets)
@@ -560,9 +646,11 @@ print(json.dumps({'configured': bool(value), 'digest': hashlib.sha256(value.enco
 
     def _refresh(self, origin: str, session_id: str) -> None:
         self._move_expiry_into_renewal_window(session_id)
-        response = self.http.send(
+        response = self._send_http(
             "POST",
-            origin + "/api/access/session/refresh",
+            origin,
+            "/api/access/session/refresh",
+            stage="trusted-session refresh",
             headers={"Origin": origin, "Accept": "application/json"},
             json_body={},
         )
@@ -593,6 +681,60 @@ print(json.dumps({'configured': bool(value), 'digest': hashlib.sha256(value.enco
         self._capture_logs()
         assert_secrets_absent("\n".join(self._logs), self._secrets)
 
+    def _safe_container_state(self) -> dict[str, object]:
+        result = self.runner.run(
+            ("docker", "container", "inspect", self.container_name),
+            check=False,
+        )
+        if result.returncode != 0:
+            return {"status": "inspect_failed"}
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return {"status": "inspect_invalid_json"}
+        if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
+            return {"status": "inspect_invalid_payload"}
+        container = payload[0]
+        state = container.get("State") if isinstance(container.get("State"), dict) else {}
+        safe_state = {
+            key: state.get(key)
+            for key in ("Status", "Running", "Restarting", "OOMKilled", "Dead", "ExitCode")
+            if key in state
+        }
+        safe_state["RestartCount"] = container.get("RestartCount")
+        error_detail = str(state.get("Error") or "")
+        if error_detail:
+            safe_state["Error"] = error_detail[:300]
+        return safe_state
+
+    def _emit_failure_diagnostics(self) -> None:
+        if not self._inspect_exists("container", self.container_name):
+            print("docker smoke diagnostics: owned container was not present", file=sys.stderr)
+            return
+        state = self._safe_container_state()
+        print(
+            "docker smoke diagnostics: container_state="
+            + json.dumps(state, sort_keys=True, separators=(",", ":")),
+            file=sys.stderr,
+        )
+        result = self.runner.run(
+            (
+                "docker",
+                "logs",
+                "--tail",
+                str(DIAGNOSTIC_LOG_LINES),
+                self.container_name,
+            ),
+            check=False,
+        )
+        combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        redacted = redact_secret_values(combined, self._secrets)
+        assert_secrets_absent(redacted, self._secrets)
+        bounded = redacted[-DIAGNOSTIC_LOG_CHARS:].strip()
+        if bounded:
+            print("docker smoke diagnostics: bounded container log tail follows", file=sys.stderr)
+            print(bounded, file=sys.stderr)
+
     def run(self) -> None:
         self._reject_collisions()
         with tempfile.TemporaryDirectory(prefix=f"row-bot-smoke-secrets-{self.suffix}-") as secret_directory:
@@ -604,7 +746,13 @@ print(json.dumps({'configured': bool(value), 'digest': hashlib.sha256(value.enco
                 self._exec_runtime_contract()
                 self._wait_ready(origin)
 
-                neutral = self.http.send("GET", origin + "/")
+                neutral = self._send_http(
+                    "GET",
+                    origin,
+                    "/",
+                    stage="unauthenticated root check",
+                    retry_transient=True,
+                )
                 if neutral.status != 303 or neutral.header("Location") != "/connect?next=%2F":
                     raise SmokeError("Unauthenticated root did not use the neutral connection flow")
 
@@ -644,9 +792,11 @@ print(json.dumps({'configured': bool(value), 'digest': hashlib.sha256(value.enco
                 invitation_token = invitation_values[0]
                 self._secrets.append(invitation_token)
 
-                claim = self.http.send(
+                claim = self._send_http(
                     "POST",
-                    origin + "/api/access/invitations/claim",
+                    origin,
+                    "/api/access/invitations/claim",
+                    stage="invitation claim",
                     headers={"Origin": origin, "Accept": "application/json"},
                     json_body={
                         "invitation": invitation_token,
@@ -681,6 +831,16 @@ print(json.dumps({'configured': bool(value), 'digest': hashlib.sha256(value.enco
                 self._assert_persistent_provider_secret(secret_digest)
                 self._verify_no_log_leak()
                 self._verify_graceful_stop()
+            except Exception:
+                try:
+                    self._emit_failure_diagnostics()
+                except Exception as diagnostic_exc:
+                    print(
+                        "docker smoke diagnostics unavailable "
+                        f"({type(diagnostic_exc).__name__})",
+                        file=sys.stderr,
+                    )
+                raise
             finally:
                 self.cleanup()
 
@@ -696,6 +856,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_STARTUP_TIMEOUT,
         help=f"Seconds to wait for health and readiness (default: {DEFAULT_STARTUP_TIMEOUT:g})",
     )
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=DEFAULT_HTTP_TIMEOUT,
+        help=f"Seconds allowed for one functional HTTP request (default: {DEFAULT_HTTP_TIMEOUT:g})",
+    )
     return parser
 
 
@@ -705,6 +871,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         DockerServerSmoke(
             image=args.image,
             startup_timeout=args.startup_timeout,
+            request_timeout=args.request_timeout,
         ).run()
     except (SmokeError, subprocess.SubprocessError, OSError, ValueError) as exc:
         print(f"docker server smoke failed: {exc}", file=sys.stderr)

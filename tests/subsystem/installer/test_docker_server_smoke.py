@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from typing import Mapping, Sequence
 
@@ -76,10 +77,36 @@ class AlwaysUnavailableHttp:
         *,
         headers: Mapping[str, str] | None = None,
         json_body: Mapping[str, object] | None = None,
+        timeout: float | None = None,
     ) -> smoke.HttpResult:
-        del headers, json_body
+        del headers, json_body, timeout
         self.calls.append((method, url))
         return smoke.HttpResult(503, (), b"not ready")
+
+    def cookie_values(self) -> tuple[str, ...]:
+        return ()
+
+
+class SequenceHttp:
+    def __init__(self, results):
+        self.results = list(results)
+        self.calls: list[tuple[str, str, float | None]] = []
+
+    def send(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        json_body: Mapping[str, object] | None = None,
+        timeout: float | None = None,
+    ) -> smoke.HttpResult:
+        del headers, json_body
+        self.calls.append((method, url, timeout))
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     def cookie_values(self) -> tuple[str, ...]:
         return ()
@@ -240,6 +267,148 @@ def test_readiness_timeout_uses_fake_http_and_clock_without_docker() -> None:
         ("GET", "http://127.0.0.1:49152/readyz"),
     ]
     assert sleeps == [0.5, 0.5]
+
+
+def test_readiness_requires_two_consecutive_healthy_samples() -> None:
+    http = SequenceHttp([smoke.HttpResult(200, (), b"ok") for _ in range(4)])
+    ticks = iter((0.0, 0.0, 0.5))
+    sleeps: list[float] = []
+    subject = smoke.DockerServerSmoke(
+        image="row-bot:test",
+        runner=FakeResourceRunner(),
+        http=http,
+        suffix="deadbeef",
+        monotonic=lambda: next(ticks),
+        sleep=sleeps.append,
+    )
+
+    subject._wait_ready("http://127.0.0.1:49152")
+
+    assert [call[:2] for call in http.calls] == [
+        ("GET", "http://127.0.0.1:49152/healthz"),
+        ("GET", "http://127.0.0.1:49152/readyz"),
+        ("GET", "http://127.0.0.1:49152/healthz"),
+        ("GET", "http://127.0.0.1:49152/readyz"),
+    ]
+    assert sleeps == [0.5]
+
+
+def test_transient_get_is_retried_with_functional_timeout() -> None:
+    http = SequenceHttp([
+        smoke.SmokeError("connection reset"),
+        smoke.HttpResult(200, (), b"ok"),
+    ])
+    ticks = iter((0.0, 0.25))
+    sleeps: list[float] = []
+    subject = smoke.DockerServerSmoke(
+        image="row-bot:test",
+        request_timeout=17.0,
+        runner=FakeResourceRunner(),
+        http=http,
+        suffix="deadbeef",
+        monotonic=lambda: next(ticks),
+        sleep=sleeps.append,
+    )
+
+    result = subject._send_http(
+        "GET",
+        "http://127.0.0.1:49152",
+        "/api/access/session",
+        stage="session check",
+        retry_transient=True,
+    )
+
+    assert result.status == 200
+    assert http.calls == [
+        ("GET", "http://127.0.0.1:49152/api/access/session", 17.0),
+        ("GET", "http://127.0.0.1:49152/api/access/session", 17.0),
+    ]
+    assert sleeps == [0.5]
+
+
+def test_post_transport_failure_is_not_replayed() -> None:
+    http = SequenceHttp([smoke.SmokeError("connection reset")])
+    subject = smoke.DockerServerSmoke(
+        image="row-bot:test",
+        runner=FakeResourceRunner(),
+        http=http,
+        suffix="deadbeef",
+    )
+
+    with pytest.raises(smoke.SmokeError, match="invitation claim failed"):
+        subject._send_http(
+            "POST",
+            "http://127.0.0.1:49152",
+            "/api/access/invitations/claim",
+            stage="invitation claim",
+        )
+
+    assert len(http.calls) == 1
+
+
+def test_transport_failure_reports_method_path_and_exception(monkeypatch) -> None:
+    transport = smoke.UrllibHttpTransport(default_timeout=19.0)
+    captured: dict[str, float] = {}
+
+    def fail(_request, *, timeout):
+        captured["timeout"] = timeout
+        raise smoke.error.URLError("runner connection failed")
+
+    monkeypatch.setattr(transport._opener, "open", fail)
+
+    with pytest.raises(
+        smoke.SmokeError,
+        match=r"HTTP GET /api/access/session did not complete \(URLError\)",
+    ):
+        transport.send("GET", "http://127.0.0.1:49152/api/access/session?ignored=1")
+
+    assert captured["timeout"] == 19.0
+
+
+def test_failure_diagnostics_are_bounded_and_redact_smoke_secrets(capsys) -> None:
+    suffix = "deadbeef"
+    container = f"row-bot-smoke-{suffix}"
+
+    class DiagnosticRunner(FakeResourceRunner):
+        def run(self, args, **kwargs):
+            command = tuple(args)
+            if command[:3] == ("docker", "container", "inspect") and "--format" not in command:
+                payload = [{
+                    "State": {
+                        "Status": "restarting",
+                        "Running": True,
+                        "Restarting": True,
+                        "OOMKilled": False,
+                        "Dead": False,
+                        "ExitCode": 1,
+                    },
+                    "RestartCount": 2,
+                }]
+                return smoke.CommandResult(command, 0, stdout=json.dumps(payload))
+            if command[1] == "logs":
+                return smoke.CommandResult(
+                    command,
+                    0,
+                    stdout="ordinary log\nsecret=smoke-owned-secret\n",
+                )
+            return super().run(command, **kwargs)
+
+    runner = DiagnosticRunner(containers={container: suffix})
+    subject = smoke.DockerServerSmoke(
+        image="row-bot:test",
+        runner=runner,
+        suffix=suffix,
+    )
+    subject._secrets.append("smoke-owned-secret")
+
+    subject._emit_failure_diagnostics()
+
+    stderr = capsys.readouterr().err
+    assert '"RestartCount":2' in stderr
+    assert '"Status":"restarting"' in stderr
+    assert "ordinary log" in stderr
+    assert "<redacted>" in stderr
+    assert "smoke-owned-secret" not in stderr
 
 
 def test_secret_detection_never_echoes_the_secret() -> None:
