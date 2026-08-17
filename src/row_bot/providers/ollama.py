@@ -50,6 +50,14 @@ def is_ollama_tool_capable(model_id: str) -> bool:
     return normalize_ollama_family(model_id) in TOOL_CAPABLE_FAMILIES
 
 
+def _native_ollama_tool_capability(metadata: dict[str, Any]) -> bool | None:
+    capabilities = metadata.get("capabilities")
+    if not isinstance(capabilities, (list, tuple, set, frozenset)):
+        return None
+    normalized = {str(value).strip().lower() for value in capabilities}
+    return "tools" in normalized
+
+
 def is_ollama_reasoning_model(model_id: str) -> bool:
     raw = str(model_id or "").strip().lower()
     family = normalize_ollama_family(raw)
@@ -181,7 +189,13 @@ def ollama_model_info(
     source: str = "ollama_catalog",
 ) -> ModelInfo:
     metadata = dict(metadata or {})
-    metadata.setdefault("tool_calling", is_ollama_tool_capable(model_id))
+    if not isinstance(metadata.get("tool_calling"), bool):
+        native_tool_capability = _native_ollama_tool_capability(metadata)
+        metadata["tool_calling"] = (
+            native_tool_capability
+            if native_tool_capability is not None
+            else is_ollama_tool_capable(model_id)
+        )
     metadata.setdefault("vision", is_ollama_vision_capable(model_id) or _metadata_suggests_vision(metadata))
     if not is_ollama_chat_candidate(model_id):
         metadata.setdefault("embedding", True)

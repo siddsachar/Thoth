@@ -302,6 +302,42 @@ def test_ollama_provider_definition_and_model_capabilities():
     assert model_supports_surface(vision_info, "vision") is True
 
 
+def test_ollama_native_capabilities_mark_unknown_family_as_tool_capable():
+    info = ollama_model_info(
+        "qwen3.8:27b",
+        installed=True,
+        metadata={"capabilities": ["completion", "vision", "tools", "thinking"]},
+    )
+
+    assert info.tool_calling is True
+    assert "tool_calling" in info.capabilities
+
+
+def test_ollama_native_capabilities_override_tool_capable_family_fallback():
+    info = ollama_model_info(
+        "qwen3:14b",
+        installed=True,
+        metadata={"capabilities": ["completion", "thinking"]},
+    )
+
+    assert info.tool_calling is False
+    assert "tool_calling" not in info.capabilities
+
+
+def test_ollama_explicit_tool_calling_boolean_precedes_native_capabilities():
+    explicitly_disabled = ollama_model_info(
+        "qwen3:14b",
+        metadata={"tool_calling": False, "capabilities": ["completion", "tools"]},
+    )
+    explicitly_enabled = ollama_model_info(
+        "future-family:latest",
+        metadata={"tool_calling": True, "capabilities": ["completion"]},
+    )
+
+    assert explicitly_disabled.tool_calling is False
+    assert explicitly_enabled.tool_calling is True
+
+
 def test_ollama_catalog_uses_daemon_reported_vision_capabilities_for_unknown_family():
     model_id = "qwen3.6:35b-a3b-mtp-q4_K_M"
 

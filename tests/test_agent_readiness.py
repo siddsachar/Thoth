@@ -1,6 +1,7 @@
 import row_bot.providers.config as provider_config
 from row_bot.providers.custom import custom_provider_id, save_custom_endpoint
 from row_bot.providers.models import TransportMode
+from row_bot.providers.ollama import ollama_model_info
 from row_bot.providers.readiness import (
     AGENT_MODE_MIN_CONTEXT,
     CHAT_ONLY_MIN_CONTEXT,
@@ -361,6 +362,34 @@ def test_ollama_probe_can_promote_catalog_unknown_model_to_agent(monkeypatch):
     assert result.ready is True
     assert result.tool_calling_source == "ollama_probe"
     assert result.capability_source == "probe"
+
+
+def test_ollama_native_tool_metadata_is_agent_ready_without_probe(monkeypatch):
+    import row_bot.providers.ollama as ollama
+
+    model_info = ollama_model_info(
+        "qwen3.8:27b",
+        installed=True,
+        context_window=65_536,
+        metadata={"capabilities": ["completion", "vision", "tools", "thinking"]},
+    )
+    monkeypatch.setattr(
+        ollama,
+        "probe_ollama_tool_round_trip",
+        lambda model_id: (_ for _ in ()).throw(AssertionError("unexpected live Ollama probe")),
+    )
+
+    result = evaluate_runtime_readiness(
+        "model:ollama:qwen3.8:27b",
+        capability_snapshot=model_info.capability_snapshot(),
+        status={"configured": True},
+        context_window_override=65_536,
+    )
+
+    assert result.agent.ready is True
+    assert result.agent.tool_calling is True
+    assert result.agent.tool_calling_source == "ollama_catalog_hint"
+    assert result.selected_mode == "agent"
 
 
 def test_ollama_readiness_rechecks_observed_loaded_context(monkeypatch):
