@@ -32,7 +32,12 @@ implementation, or follow-up work. The original parent remains responsible for
 joining required results and answering, while durable checkpoints preserve
 approvals, steering, retries, stops, and recovery. Checkpoint-safe work budgets
 and application-wide delegation limits keep long or repetitive runs bounded and
-visible.
+visible. Parallel writers can be assigned to distinct existing local folders as
+separate Developer workspaces; folder-scoped locks let those children work
+concurrently while preserving one writer at a time inside any shared folder.
+If an app restart interrupts delegation or owned shell work, Row-Bot closes
+unanswered tool calls without replaying them and resumes the saved parent when
+its required child results are ready.
 
 Recommended Auto capability loading keeps permitted core tools directly
 available and searches enabled MCP, plugin, Custom Tool, and channel
@@ -81,11 +86,11 @@ Download the latest installer from [GitHub Releases](https://github.com/siddsach
 
 | Area | Details |
 |------|---------|
-| Agent orchestration | LangGraph ReAct agent, Goal Mode, Agent Profiles, Profile Library, automatic parent-led child-agent orchestration, required and detached work, dependency ordering, multi-wave live joins, ordered steering and approvals, transient retry, explicit restart recovery, compact Agent groups and cards, exactly-once completion, checkpoint-safe work budgets, repeated-action protection, configurable nesting/concurrency/active-time limits, profile/tool allowlists, promoted Agent-run workflows, generation-scoped cancellation, complete-input context metering, capacity-aware rolling compaction, and per-thread, per-workflow, per-profile, and per-Developer model overrides. |
-| Models and providers | Provider-qualified model selection, readiness routing, chat-only fallback for non-tool models, chat/agent/vision/image/video capability labels, custom endpoint profiles and probes, provider-scoped credential-backed live catalog discovery with last-known-good preservation, xAI Grok OAuth, ChatGPT / Codex and Claude Subscription providers, OpenCode providers, provider-scoped tool-schema compatibility, phased OpenAI-compatible timeouts with safe pre-stream retry, prompt-cache diagnostics, and background model cache. |
+| Agent orchestration | LangGraph ReAct agent, Goal Mode, Agent Profiles, Profile Library, automatic parent-led child-agent orchestration, required and detached work, dependency ordering, multi-wave live joins, ordered steering and approvals, transient retry, folder-scoped parallel writers, orphan-only checkpoint repair, explicit parent restart recovery, compact Agent groups and cards, exactly-once completion, checkpoint-safe work budgets, repeated-action protection, configurable nesting/concurrency/active-time limits, profile/tool allowlists, promoted Agent-run workflows, generation-scoped cancellation, complete-input context metering, capacity-aware rolling compaction, and per-thread, per-workflow, per-profile, and per-Developer model overrides. |
+| Models and providers | Provider-qualified model selection, readiness routing, chat-only fallback for non-tool models, chat/agent/vision/image/video capability labels, native Ollama tool-capability detection with maintained-family fallback, custom endpoint profiles and probes, provider-scoped credential-backed live catalog discovery with last-known-good preservation, xAI Grok OAuth, ChatGPT / Codex and Claude Subscription providers, OpenCode providers, provider-scoped tool-schema compatibility, phased OpenAI-compatible timeouts with safe pre-stream retry, prompt-cache diagnostics, and background model cache. |
 | Memory and knowledge | Personal knowledge graph, 10 entity types, 67 typed relations, bounded semantic/lexical/graph recall, a disclosed checked-by-default local embedding setup download, cache-only normal recall, explicit repair, fast lexical/graph fallback, durable bounded document batches, streamed upload hashing and deduplication, atomic sharded vectors, resumable extraction, queue controls and health repair, audit and review states, recall traces, graph visualization, Obsidian-compatible wiki export with source provenance, Dream Cycle refinement, duplicate merging, stale-confidence decay, relationship inference, self-knowledge, insights, and conversation search. |
 | Tools | 30+ core tool modules for web search, DuckDuckGo, Wikipedia, arXiv, YouTube transcripts, URL reading, documents, wiki vault, Gmail, Google Calendar, filesystem, shell, visible browser automation, opt-in native Computer Use, workflows, Goal Mode, child-agent delegation, tracker, channels, X, image generation/editing, video generation, MCP, Developer Studio, Designer Studio, Custom Tool Builder, status, calculator, Wolfram Alpha, weather, vision, memory, system info, and charts. Recommended Auto loading keeps core profile tools direct and searches enabled external MCP, plugin, Custom Tool, and channel schemas on demand; eager compatibility mode remains available. File tools read PDF, CSV, Excel, JSON, JSONL, TSV, and image files, with schema, stats, previews, and PDF export where supported. |
-| Developer Studio | Local Git workspace linking and cloning, code threads, per-thread and child-agent worktrees, repo inspector, file tree, diffs, todos, tests, branch, commit, push and PR prep, approval modes, and optional Docker Sandbox with a shadow workspace and explicit import back into the real repo. Docker Sandbox intentionally fails closed inside the official Row-Bot server container instead of nesting or falling back silently. |
+| Developer Studio | Local Git workspace linking and cloning, code threads, explicit existing-folder assignment for child Agents, folder-scoped writer locks, per-thread and child-agent worktrees, repo inspector, file tree, diffs, todos, tests, branch, commit, push and PR prep, approval modes, and optional Docker Sandbox with a shadow workspace and explicit import back into the real repo. Docker Sandbox intentionally fails closed inside the official Row-Bot server container instead of nesting or falling back silently. |
 | Designer Studio | Decks, documents, landing pages, app mockups, and storyboards with a sandboxed interactive runtime, templates, brand controls, critique and repair, AI image and video generation, chart insertion, Mermaid and Plotly rendering, shareable HTML, and export to PDF, HTML, PNG, and PPTX. |
 | Workflows | Scheduled runs, webhook triggers, task-completion triggers, step pipelines, conditions, approvals, subtasks, notification-only runs, concurrency groups, delivery defaults, profile-first workflow agents, promoted Agent-run workflows, per-workflow model/tool/skill/profile overrides, safety modes, run status, run history, upcoming runs, and a Workflow Console. |
 | Controlled self-evolution | Structured self-reflection, bounded change proposals, reviewable execution boundaries, persistence, Dream Cycle and memory integration, and Command Center/status visibility for improvement work that stays explicit and auditable. |
@@ -126,7 +131,7 @@ curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/i
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.7.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.7.1
 ```
 
 The installer downloads the release tarball, verifies its SHA256 from the GitHub release manifest, installs under `~/.local/share/row-bot`, creates `~/.local/bin/row-bot`, and stores user data in `~/.row-bot`. The default Linux build opens in your system browser. Native window and tray support are available when the required GTK, Qt, and AppIndicator libraries are installed.
@@ -151,7 +156,7 @@ arm64. From the repository root, pin the release and start the hardened
 loopback-only Compose profile:
 
 ```bash
-export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.7.0
+export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.7.1
 docker compose -f deploy/docker/compose.yaml up --detach
 docker compose -f deploy/docker/compose.yaml ps
 ```
@@ -197,6 +202,11 @@ progress and blockers stay visible, choose an Agent Profile for the role you
 want, and let the parent orchestrate child agents when subtasks can run
 separately under tighter tool and approval boundaries. Required children join
 the same live parent turn; detached children can continue without blocking it.
+When independent children need to write in parallel, give each one a distinct
+existing local folder as its Developer workspace. Changing only a shell working
+directory does not partition writer ownership, and children assigned to the
+same folder still serialize. Use child worktrees when the task instead needs
+Git-backed branch isolation.
 
 Capability loading defaults to the recommended Auto mode. Core tools permitted
 by the active Agent Profile stay directly available; enabled external tools and
@@ -381,10 +391,11 @@ firewall policy, log review, and recovery procedures; Row-Bot does not modify
 the host firewall.
 
 Remote browser voice captures the requesting browser's microphone, performs
-local Whisper transcription in Row-Bot, and returns local Kokoro audio to that
-same browser. Remote microphone capture requires HTTPS; plain LAN HTTP is not a
-secure browser context. Voice model downloads remain explicit and OpenAI
-Realtime voice remains a separate provider feature.
+transcription in Row-Bot with the selected local STT engine (Whisper by default,
+or SenseVoice after its explicit installation), and returns local Kokoro audio
+to that same browser. Remote microphone capture requires HTTPS; plain LAN HTTP
+is not a secure browser context. Voice model downloads remain explicit and
+OpenAI Realtime voice remains a separate provider feature.
 
 SenseVoice installation is an explicit ~940 MB download from
 [ModelScope](https://modelscope.cn/models/iic/SenseVoiceSmall) under the model's
@@ -424,6 +435,12 @@ Live catalog refreshes resolve credentials through the same provider-scoped
 auth store used by Settings. A key saved in the provider dialog can therefore
 refresh its catalog and populate provider-qualified rows immediately without a
 duplicate legacy environment-key entry.
+
+For local Ollama models, Row-Bot uses the daemon's native capability metadata
+when it is available. A new model family that advertises `tools` can therefore
+enter Agent mode without waiting for a maintained family-list update or an
+unnecessary live probe, while a model whose native metadata omits `tools` is not
+promoted merely because its name resembles a historically tool-capable family.
 
 | Service | Key or setup | Used for |
 |---------|--------------|----------|
@@ -531,6 +548,9 @@ Safety controls are built into the tool layer:
 - Child-agent approval requests are surfaced in the parent thread and durable
   channel/mobile approval surfaces instead of waiting invisibly in a background
   run.
+- Write-capable child Agents retain one writer per assigned workspace. Distinct
+  registered folders may run concurrently; a shared folder stays serialized,
+  and changing a shell CWD does not bypass the workspace lock.
 - Stop propagates through the active generation to stalled provider responses,
   shell and Developer subprocesses, MCP and browser waits, voice turns, and
   generation-linked child agents without cancelling unrelated runs.
@@ -573,8 +593,9 @@ with runtime-managed exact origins and full/compact browser shells,
 authenticated server mode, progressive capability catalogs and bridges, one
 complete-input context preparation and rolling-compaction pipeline, separate
 browser and native Computer Use engines, shared channel streaming, Designer
-Studio, Developer Studio worktrees, provider runtime and cancellation, Plugin
-System v2/MCP boundaries, and safety controls.
+Studio, Developer Studio worktrees and folder-scoped child writers, provider
+runtime and bounded subprocess cancellation, interrupted-parent checkpoint
+repair, Plugin System v2/MCP boundaries, and safety controls.
 
 Explore the visual architecture gallery: [docs/architecture.html](docs/architecture.html)
 
@@ -614,9 +635,10 @@ Review the Docusaurus docs source and local preview instructions:
 |-------|---------|-------------|
 | Local model runtime | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.12+ for source installs; 8 GB RAM for 8B models; about 5 GB disk for the app and one small model; internet for install and model download. | 16 to 32 GB RAM for 14B to 30B models; NVIDIA GPU with 8+ GB VRAM or Apple Silicon for much faster inference; 20+ GB disk for multiple or larger models. |
 | Provider/custom models only | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.12+ for source installs; 4 GB RAM; about 1 GB disk; internet for provider inference. | No GPU required. Use this path if you do not want local model downloads. |
+| Optional SenseVoice STT | Windows, Linux, or Apple Silicon macOS; the voice runtime; internet for the explicit approximately 940 MB ModelScope snapshot download plus space for the matching CPU PyTorch/Torchaudio stack. | Optional and off until installed from Voice settings. Normal transcription is local and cache-only afterwards. Intel macOS is unsupported; local Whisper remains available. |
 | Computer Use beta | Windows 10/11 x86-64 or ARM64, or macOS 12+ on Intel/Apple Silicon; interactive local UI; internet for the explicit Cua Driver install or repair; Accessibility and Screen Recording permission on macOS. | Optional and off by default. Browser automation remains preferred for websites; Linux and unattended/background use are not supported. |
 | Developer Sandbox | Docker Desktop or a compatible Docker/Podman runtime. | Optional. Developer Studio also works with local execution in the selected repo. |
-| Docker / headless server | Docker Engine with Compose v2 on an amd64 or arm64 Linux host; enough persistent storage for `/data`, the encryption-key volume, documents, models, and backups. | Pin `ghcr.io/siddsachar/row-bot:4.7.0`, keep the default loopback publication, and use Tailscale or an operator-managed HTTPS proxy for remote reachability. |
+| Docker / headless server | Docker Engine with Compose v2 on an amd64 or arm64 Linux host; enough persistent storage for `/data`, the encryption-key volume, documents, models, and backups. | Pin `ghcr.io/siddsachar/row-bot:4.7.1`, keep the default loopback publication, and use Tailscale or an operator-managed HTTPS proxy for remote reachability. |
 | Public docs site | Node.js 20+ and npm. | Optional. Used only for local Docusaurus docs preview and generated-docs validation. |
 
 Your default Brain model is set by the setup wizard. If you choose the local path, Row-Bot uses one of the models already exposed by your local runtime; 14B-class models are recommended for stronger agent/tool behavior, while smaller 8B-class models are better for 8 GB machines. Hosted and custom endpoint setups can skip local model downloads entirely.
@@ -686,7 +708,7 @@ uv sync --locked --all-extras --group test
 uv run python scripts/verify_runtime_dependencies.py all
 ```
 
-Supported optional extras are `voice`, `designer`, `browser`, `channels`, `mcp`, `developer`, `local-embeddings`, and `media`. Development and packaged app builds use `all`; lightweight source installs can choose only the extras they need.
+Supported optional extras are `voice`, `designer`, `browser`, `channels`, `mcp`, `developer`, `local-embeddings`, and `media`. Development and packaged app builds use `all`; lightweight source installs can choose only the extras they need. The `voice` and `all` extras include the platform-supported FunASR, ModelScope, and matching CPU PyTorch/Torchaudio runtime, but the SenseVoice model snapshot is still downloaded only through the explicit Voice settings action.
 
 Recovery helpers:
 
@@ -739,6 +761,12 @@ metadata. Search does not contact an embedding or model provider. When rolling
 compaction is needed, Row-Bot uses the task's selected model to summarize a
 bounded older conversation range; a cloud-selected task therefore sends that
 range to the already selected cloud provider as part of normal model use.
+
+Installing SenseVoice is a separate explicit network action to ModelScope and
+discloses the model size, license, and SDK request before it begins. Row-Bot
+persists only a verified contained snapshot, disables FunASR update checks, and
+sends no audio, prompts, or usage data during installation or normal offline
+transcription.
 
 Developer Studio only touches repos you link, clone, or explicitly allocate as
 worktrees. Local execution runs in that repo or worktree. Docker Sandbox runs

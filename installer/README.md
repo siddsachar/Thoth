@@ -40,7 +40,7 @@ manifest, and then runs the tarball's bundled `install.sh`. For a pinned
 version, pass it as an argument:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.7.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.7.1
 ```
 
 The bootstrapper installs published GitHub Release assets. It is not a way to
@@ -53,23 +53,23 @@ tarball instead of a native app bundle:
 
 ```bash
 ./installer/build_linux_app.sh
-./installer/build_linux_app.sh 4.7.0
+./installer/build_linux_app.sh 4.7.1
 ```
 
 From a source checkout, this root-level wrapper is also supported for support
 snippets and maintainer hotfixes:
 
 ```bash
-bash build_linux_app.sh 4.7.0
+bash build_linux_app.sh 4.7.1
 ```
 
 To test an unreleased Linux fix locally, build the tarball from the checkout and
 install the tarball it produced:
 
 ```bash
-bash installer/build_linux_app.sh 4.7.0
-tar -xzf dist/Row-Bot-4.7.0-Linux-*.tar.gz
-cd Row-Bot-4.7.0-Linux-*
+bash installer/build_linux_app.sh 4.7.1
+tar -xzf dist/Row-Bot-4.7.1-Linux-*.tar.gz
+cd Row-Bot-4.7.1-Linux-*
 ./install.sh
 ~/.local/bin/row-bot
 ```
@@ -140,7 +140,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 | Bundled in .exe | Downloaded or created outside install |
 |----------------|--------------------------------------|
 | Python 3.13 embeddable runtime | Ollama installer is optional for local models |
-| App source code, authenticated access/server package, Remote Access UI, automatic Agent orchestration, Agent Profiles, Goal Mode, checkpointed Agent budgets and settings, child-agent runner, generation cancellation, durable document ingestion and sharded retrieval, Computer Use integration and pinned manifest, cache-only embedding fallback, responsive mobile owner UI, channel streaming, tools, providers, plugins, MCP client, migration wizard, UI, Designer, Developer Studio, bundled skills/tool guides, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use |
+| App source code, authenticated access/server package, Remote Access UI, automatic Agent orchestration, Agent Profiles, Goal Mode, checkpointed Agent budgets and settings, child-agent runner, generation cancellation, local Whisper and SenseVoice runtimes, durable document ingestion and sharded retrieval, Computer Use integration and pinned manifest, cache-only embedding fallback, responsive mobile owner UI, channel streaming, tools, providers, plugins, MCP client, migration wizard, UI, Designer, Developer Studio, bundled skills/tool guides, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use; SenseVoice Small is an explicit approximately 940 MB ModelScope download |
 | Python packages from locked `requirements.txt` export | Playwright Chromium is bundled during build when available, otherwise installed on first browser use |
 | Computer Use policy, private client, installer metadata, and platform checks | Pinned Cua Driver 0.7.1 is downloaded only after disclosure and explicit user consent |
 
@@ -165,7 +165,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 This will:
 1. Download Python 3.13 embeddable package (~15 MB)
 2. Download `get-pip.py` (~2.5 MB)
-3. Compile everything into `dist\Row-Bot-4.7.0-Windows-x64.exe`
+3. Compile everything into `dist\Row-Bot-4.7.1-Windows-x64.exe`
 
 ### Options
 
@@ -204,7 +204,7 @@ C:\Program Files\Row-Bot\            # Installation directory
     â”œâ”€â”€ threads.py                  # Thread/conversation persistence
     â”œâ”€â”€ api_keys.py                 # API key management
     â”œâ”€â”€ secret_store.py             # OS credential-store wrapper
-    â”œâ”€â”€ voice.py                    # Speech-to-text (toggle-based, CPU Whisper)
+    â”œâ”€â”€ voice/                      # Local Whisper/SenseVoice and provider voice coordination
     â”œâ”€â”€ tts.py                      # Text-to-speech (Kokoro TTS)
     â”œâ”€â”€ startup_diagnostics.py      # Optional native dependency startup probes
     â”œâ”€â”€ vision.py                   # Camera/screen capture
@@ -274,7 +274,7 @@ C:\Program Files\Row-Bot\            # Installation directory
 â”œâ”€â”€ model_settings.json             # Selected model & context size
 â”œâ”€â”€ tts_settings.json               # Selected TTS voice
 â”œâ”€â”€ vision_settings.json            # Vision model & camera selection
-â”œâ”€â”€ voice_settings.json             # Whisper model size preference
+â”œâ”€â”€ voice_settings.json             # Talk, Dictate, local STT, and speech-output preferences
 â”œâ”€â”€ processed_files.json            # Tracked indexed documents
 â”œâ”€â”€ tasks.db                        # Task definitions, schedules, run history & delivery config
 â”œâ”€â”€ channels_config.json            # Channel settings
@@ -292,6 +292,7 @@ C:\Program Files\Row-Bot\            # Installation directory
 â”œâ”€â”€ calendar/                       # Calendar OAuth tokens
 â”œâ”€â”€ browser_profile/                # Playwright persistent browser profile
 â”œâ”€â”€ wiki/                           # Obsidian-compatible markdown vault export
+â”œâ”€â”€ cache/sensevoice/               # Explicitly installed verified SenseVoice snapshot
 â””â”€â”€ kokoro/                         # Kokoro TTS model & voice data (auto-downloaded)
 ```
 
@@ -313,7 +314,7 @@ The app payload includes `pyproject.toml`, `uv.lock`, and generated `requirement
 
 ## End-User Experience
 
-1. Run `Row-Bot-4.7.0-Windows-x64.exe`
+1. Run `Row-Bot-4.7.1-Windows-x64.exe`
 2. Follow the wizard â€” the app payload is already bundled; optional model/runtime assets download only when a feature needs them
 3. Launch Row-Bot from Start Menu or Desktop shortcut
 4. The system tray icon appears; the app opens on the first available local port, normally `http://localhost:8080`
@@ -323,7 +324,7 @@ The app payload includes `pyproject.toml`, `uv.lock`, and generated `requirement
 
 - **CPU-only PyTorch**: `pyproject.toml` maps `torch` to the PyTorch CPU index and the generated `requirements.txt` preserves that installer policy. Users with NVIDIA GPUs can upgrade to CUDA torch after install.
 - **Ollama is optional**: Row-Bot works with API-key provider models (OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, Atlas Cloud, Requesty, and Ollama Cloud), ChatGPT / Codex subscription models after in-app ChatGPT sign-in, xAI Grok OAuth after in-app Grok sign-in, and Claude Subscription models after Row-Bot-owned Claude OAuth or setup-token import. Installed local Ollama chat models appear in Settings -> Models even when their family is newer than Row-Bot's curated capability lists; Vision stays conservative and requires known Vision metadata/families.
-- **Agent orchestration**: the packaged app includes Agent Profiles, Goal Mode, child-agent delegation, profile/tool allowlists, profile-first workflow agents, Agent-run workflow promotion, checkpointed work-round budgets, repeat-stall protection, and application-wide nesting, concurrency, and timeout settings. These records live in Row-Bot's local data directory alongside workflow state.
+- **Agent orchestration**: the packaged app includes Agent Profiles, Goal Mode, child-agent delegation to existing local folders, profile/tool allowlists, profile-first workflow agents, Agent-run workflow promotion, checkpointed parent continuation and recovery, folder-scoped writer locks, work-round budgets, repeat-stall protection, and application-wide nesting, concurrency, and timeout settings. These records live in Row-Bot's local data directory alongside workflow state.
 - **Durable document ingestion**: uploads are staged under configured per-file,
   batch, and total-byte limits, then processed by a lease-backed SQLite queue.
   Parsed sources, resumable extraction checkpoints, per-document vector shards,
@@ -365,6 +366,7 @@ The app payload includes `pyproject.toml`, `uv.lock`, and generated `requirement
   [`../deploy/docker/README.md`](../deploy/docker/README.md) before building or
   exposing a server image.
 - **Cancellation and channel streaming**: provider cancellation transports, subprocess cancellation, shared channel streaming/finalization, interactive approvals, and durable channel notification modules are part of the recursive runtime payload.
+- **Optional SenseVoice STT**: packaged voice dependencies include the CPU FunASR/PyTorch runtime, but the SenseVoice Small model is not bundled. Installation from Voice settings is an explicit approximately 940 MB ModelScope download; Row-Bot verifies the local snapshot, disables update checks during inference, and never downloads it during startup or ordinary transcription. Intel macOS is unsupported and continues to use local Whisper.
 - **Developer Studio**: the packaged app includes the Developer workspace UI, repo-scoped tools, Git helpers, durable worktree allocation, optional Docker shadow sandbox, and Custom Tool builder. Docker and GitHub CLI are optional external tools; when missing, the UI reports clear setup guidance instead of blocking normal chat.
 - **Plugin System v2**: the packaged app includes Plugin Center, marketplace install/update flows, manifest validation, native tools, plugin-packaged MCP tools, bundled plugin skills, plugin-owned channels, and plugin templates. Plugins install disabled by default and must pass review/configuration before contributing runtime tools or channels.
 - **Model picker behavior**: Settings -> Models pickers show pinned catalog Quick Choices plus the current default. Pin Brain or Vision catalog rows before expecting them in the everyday pickers; ChatGPT / Codex, Claude Subscription, xAI Grok OAuth, and Atlas Cloud Vision pins keep their provider-specific image-input capability metadata during refresh. Atlas Cloud image-generation and video-generation catalog rows are intentionally not exposed as chat, agent, or Vision models in this phase, and Grok Imagine rows stay scoped to Image and Video surfaces.

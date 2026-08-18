@@ -16,12 +16,16 @@ Voice and Buddy make Row-Bot feel less like a text box and more like a desktop c
 - **Dictate** turns speech into composer text so you can review it before sending.
 - **Talk** submits spoken input more directly for conversation.
 - **Read-aloud** speaks assistant responses when enabled.
-- **Local voice** uses local speech components where available.
+- **Local voice** uses Whisper by default, or the optional SenseVoice Small engine after you install it explicitly.
 - **Realtime voice** uses a compatible provider for lower-latency spoken conversation.
 
 ## Choosing A Mode
 
-Use Dictate when accuracy and review matter. Use Talk when you want a faster hands-light conversation. Use local voice when privacy and offline-style behavior matter. Use realtime voice when latency matters and you accept internet access, provider requirements, and provider cost.
+Use Dictate when accuracy and review matter. Use Talk when you want a faster hands-light conversation. Use local voice when privacy and offline-style behavior matter. Whisper remains the default local transcription engine. SenseVoice is an optional alternative on Windows, Linux, and Apple Silicon macOS; Intel macOS continues to use Whisper. Use realtime voice when latency matters and you accept internet access, provider requirements, and provider cost.
+
+## Optional SenseVoice Setup
+
+Open Settings -> Voice, choose **Local FunASR / SenseVoice**, and use the install action shown for **SenseVoice Small**. Installation is an explicit approximately 940 MB download from ModelScope. Row-Bot verifies the contained snapshot before saving it under the active data directory, and normal transcription then uses that local snapshot with update checks disabled. Startup, readiness checks, and ordinary transcription never download or repair the model automatically.
 
 ## Devices And Diagnostics
 
@@ -40,11 +44,13 @@ Select the microphone and output device in Settings -> Voice. Run diagnostics wh
 
 ## Privacy And Safety
 
-Voice input can become chat text. Realtime voice and provider-backed speech may send audio or transcript data to the selected provider. Buddy preferences and assets are local, but custom generation may call a configured media provider.
+Voice input can become chat text. Realtime voice and provider-backed speech may send audio or transcript data to the selected provider. Installing SenseVoice contacts ModelScope for the requested model and standard SDK metadata, but Row-Bot does not send audio, prompts, or usage data; inference stays local after installation. Buddy preferences and assets are local, but custom generation may call a configured media provider.
 
 ## Troubleshooting
 
 - If Dictate records nothing, check microphone selection and permissions.
 - If Talk sends too quickly, use Dictate instead.
+- If SenseVoice reports missing packages, install the `voice` extra for a source checkout or repair the packaged app. If its snapshot is missing or incomplete, reinstall it from Voice settings.
+- If SenseVoice is unavailable on Intel macOS, select local Whisper instead.
 - If realtime voice is unavailable, check Providers and Voice Models.
 - If Buddy does not appear, check Buddy enable switches and overlay state.

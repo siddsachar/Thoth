@@ -17,7 +17,7 @@ The default Compose topology publishes only `127.0.0.1:8080`, runs the applicati
 - Enough disk for the full image plus the `/data` volume. Models, managed runtimes, browser outputs, and caches can grow after explicit use; Row-Bot does not promise one fixed capacity figure.
 - For public VPS access: Linux, Docker Compose 2.24.4 or newer, DNS you control, and a host-managed HTTPS proxy or Tailscale installation.
 
-Release images are built from tagged source in GitHub Actions with the locked dependency set. Native amd64 and arm64 jobs run the isolated authenticated-container smoke before the release manifest is created, and the registry exposes a digest for immutable pins.
+Release images are built from tagged source in GitHub Actions with the locked dependency set. Native amd64 and arm64 jobs run the isolated authenticated-container smoke before the release manifest is created, and the registry exposes a digest for immutable pins. The smoke uses bounded request timeouts and requires two consecutive readiness samples; it retries only safe GET probes, never repeats a state-changing POST, and limits failure output to redacted container state and log tails.
 
 ## Download A Release-Pinned Compose File
 
