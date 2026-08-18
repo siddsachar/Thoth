@@ -189,7 +189,7 @@ function evaluateTrackedClick(selector, dataset, href) {
 const downloadTracking = evaluateTrackedClick(
     '[data-desktop-download]',
     {desktopDownload: 'windows', placement: 'final_install'},
-    'https://github.com/siddsachar/row-bot/releases/download/v4.7.0/Row-Bot-4.7.0-Windows-x64.exe',
+    'https://github.com/siddsachar/row-bot/releases/download/v4.7.1/Row-Bot-4.7.1-Windows-x64.exe',
 );
 assert.deepEqual(downloadTracking.events[0], [
     'event',

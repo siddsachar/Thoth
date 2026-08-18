@@ -176,11 +176,11 @@ Never mount the host Docker socket merely to satisfy a tool or MCP server.
 
 ## Voice From A Remote Browser
 
-Local browser voice uses the requesting browser's microphone and speaker. The browser sends bounded audio to Row-Bot for local Whisper transcription; Row-Bot returns local Kokoro audio to that same browser. A headless server or container does not need access to the host microphone or speakers.
+Local browser voice uses the requesting browser's microphone and speaker. The browser sends bounded audio to Row-Bot for transcription with the selected local STT engine: Whisper by default, or SenseVoice after its explicit installation. Row-Bot returns local Kokoro audio to that same browser. A headless server or container does not need access to the host microphone or speakers.
 
 Browsers permit microphone capture on `localhost` or in a secure HTTPS context. Plain HTTP on a remote LAN address is insufficient. Use Tailscale HTTPS or a correctly configured HTTPS reverse proxy for remote dictation or talk.
 
-Whisper and Kokoro model installation remains an explicit owner action and can use several gigabytes of persistent cache. OpenAI Realtime voice is a separate provider/network feature; local browser voice does not silently fall back to it.
+Whisper, SenseVoice, and Kokoro model installation remains an explicit owner action and can use several gigabytes of persistent cache. SenseVoice alone is an approximately 940 MB ModelScope download and is unavailable on Intel macOS. OpenAI Realtime voice is a separate provider/network feature; local browser voice does not silently fall back to it.
 
 ## Offline Access Management And Recovery
 

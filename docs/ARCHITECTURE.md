@@ -82,11 +82,11 @@ Only conversations bounded and recoverable.
 - **Runtime readiness routing** — before building the graph, selected models are evaluated for context headroom, provider capability metadata, tool support, and surface requirements; full agent mode, chat-only mode, and blocked states are explicit outcomes rather than accidental provider failures
 - **Chat-only runtime** — models that are useful for normal conversation but cannot reliably accept tool schemas use a compact tool-free prompt, a shaped transcript without full tool bodies, and the normal streaming/persistence path
 - **Profile- and skill-aware prompting** — Agent Profiles, pinned/manual skills, per-thread/per-workflow overrides, progressively selected task skills, and tool guides are resolved before prompt assembly so the agent receives only the relevant operating instructions for the current surface
-- **Parent-led orchestration** — parent agents can delegate focused work to durable required or detached child runs with profile snapshots, context summaries, dependencies, tool allowlists, wait/stop/status controls, and ordered parent events; required results rejoin the same authoritative parent turn instead of becoming disconnected summaries
+- **Parent-led orchestration** — parent agents can delegate focused work to durable required or detached child runs with profile snapshots, context summaries, dependencies, tool allowlists, explicit local-folder or worktree assignments, wait/stop/status controls, and ordered parent events; required results rejoin the same authoritative parent turn instead of becoming disconnected summaries
 - **Provider transcript normalization** — model-facing histories are checked for duplicate tool-call IDs, orphan tool results, invalid tool calls, empty assistant turns, and unsafe reasoning/tool artifacts before replay to custom or hosted providers
 - **Centralized prompts plus self-knowledge injection** — base prompt templates live in `prompts.py`, while `self_knowledge.py` injects a dynamic identity line, capability manifest, and live runtime state so Row-Bot can describe itself accurately without stale hard-coded copy
 - **Event-driven context meter** — the desktop composer shows the estimated complete next input, effective capacity, and automatic compaction threshold; persisted usage restores after reopen, while compact/mobile layouts keep the narrow composer and render only durable compaction notices
-- **Generation-scoped stop & error recovery** — each active generation owns a cancellation scope that closes registered provider responses, terminates registered subprocesses, wakes queued state, and stops only generation-linked child runs; checkpointed model-iteration budgets and no-progress detection wind down long or repetitive tool loops; orphaned tool calls are repaired; provider/API errors are surfaced as persistent red toasts and saved to the conversation checkpoint so they survive thread refresh
+- **Generation-scoped stop & error recovery** — each active generation owns a cancellation scope that closes registered provider responses, terminates registered subprocesses, wakes queued state, and stops only generation-linked child runs; checkpointed model-iteration budgets and no-progress detection wind down long or repetitive tool loops; orphaned tool calls are repaired without replay, including interrupted-parent recovery after restart; provider/API errors are surfaced as persistent red toasts and saved to the conversation checkpoint so they survive thread refresh
 - **Workflow cancellation** — running background workflows can be stopped from the chat header, activity panel, or workflow card; cancellation is checked between every LangGraph node for clean shutdown
 - **Displaced tool-call auto-repair** — if context trimming displaces tool-call/response pairs, the agent automatically detects and repairs the ordering before the next LLM call; orphaned tool calls trigger an automatic retry
 - **Grouped tool traces** — repeated tool calls of the same type are grouped into quiet compact expandable rows, keeping long research, browser, and Developer runs readable while preserving individual results and real discovered-integration labels
@@ -178,7 +178,7 @@ the user stopped while allowing blocked I/O to be interrupted immediately.
 - **Scope lifecycle** — `request_generation_stop()` marks the active generation stopped, sets its stop event, cancels its scope, detaches or wakes queued UI state, and leaves unrelated generations and child runs untouched
 - **Provider response closure** — `providers/transports/cancellable_http.py`, `anthropic_cancellable.py`, and `openrouter_cancellable.py` register in-flight sync/async responses for closure across direct OpenAI, Anthropic, xAI, MiniMax, OpenRouter, OpenCode, and compatible runtime construction paths
 - **Custom transport propagation** — Codex, Claude Subscription, Ollama Cloud, xAI OAuth Responses, and shared OpenAI-compatible transports register their request/stream handles with the same scope
-- **Cancellable subprocesses** — `process_cancellation.py` starts process groups, captures output, enforces timeouts, and terminates the group when the generation scope is cancelled; shell and Developer commands return an explicit stopped result instead of remaining blocked
+- **Cancellable subprocesses** — `process_cancellation.py` starts process groups, captures stdout/stderr into temporary files, enforces timeouts, and terminates the group when the generation scope is cancelled; file-backed capture lets the directly launched process define completion even when a deliberately detached descendant inherits output handles, and shell/Developer commands return explicit stopped or timed-out results without an unbounded second drain
 - **Tool integration** — browser and Computer Use actions, MCP probes/tool calls, shell sessions, Developer runtime processes, and voice-agent turns check or register with the current scope at their blocking boundaries
 - **Child-run ownership** — generation-linked async child runs are tracked separately from older or independently started child work, so Stop terminates only the runs created for that generation
 - **Cancellation-safe finalization** — UI and channel delivery paths distinguish cancellation from successful final output, clean partial previews, avoid false completion persistence, and retain durable state needed for a later user turn
@@ -241,6 +241,11 @@ single authoritative final answer.
 - **Checkpoint binding** — suspension records the parent checkpoint id,
   namespace, output metadata, selected model, approval mode, and active
   Developer/Designer resource identity before the foreground generation exits
+- **Initial continuation snapshot** — the first asynchronous `delegate_work`
+  call stores a whitelist of durable parent config, enabled tools, model,
+  approval, workspace/project, channel, and voice fields before ToolNode
+  returns; internal Pregel callbacks and other non-serializable graph state are
+  excluded
 - **Approval continuity** — parent and child approvals persist independently;
   a decision resumes the original checkpoint, and handled approval payloads are
   not reused for later interrupts
@@ -262,9 +267,15 @@ single authoritative final answer.
 - **Restart repair** — startup repair materializes any already-recorded child
   terminal events, marks unsafe in-flight work interrupted, and waits for an
   explicit resume instead of invoking providers during recovery
+- **Parent checkpoint repair** — explicit resume reconstructs the recorded
+  parent config, closes only unanswered tool calls with an interrupted marker,
+  never replays the abandoned call, and refuses recovery if the checkpoint
+  cannot be repaired safely
 - **Resume revalidation** — explicit resume checks agents, model readiness,
   workspace/worktree state, and the exact Designer project binding before
-  requeueing only interrupted required work
+  requeueing only interrupted required work; if required children are already
+  terminal, it wakes the original parent even for an older v2 row whose initial
+  continuation snapshot is empty
 - **Bounded result packet** — ordered member results and worktree references are
   capped before parent synthesis, preserving useful handoff context without
   allowing unbounded child output into the prompt
@@ -300,14 +311,14 @@ into an unbounded autonomous system.
 - **Durable run store** — `agent_runs.py` stores child-agent runs with parent thread id, parent run/message ids, orchestration membership, objective, display name, profile id/snapshot, context summary, enabled tools, model override, skills/tools overrides, approval mode, status, status message, summary, and event history
 - **Runner lifecycle** — `agent_runner.py` queues, starts, waits for, stops, and finalizes child runs while preserving terminal states and recent events for parent inspection and returning orchestration members through the durable parent inbox
 - **Capacity and timeout policy** — child runs queue against snapshotted per-parent/global concurrency limits, enforce configured nesting depth, and can use an opt-in active-execution timeout that excludes queue time
-- **Delegation tools** — `tools/agent_tool.py` exposes `delegate_work`, `agent_status`, `agent_wait`, `agent_stop`, `agent_profiles`, `agent_profile_save`, `agent_message`, and `agent_promote`; delegation can mark work required or detached and attach same-orchestration dependencies
+- **Delegation tools** — `tools/agent_tool.py` exposes `delegate_work`, `agent_status`, `agent_wait`, `agent_stop`, `agent_profiles`, `agent_profile_save`, `agent_message`, and `agent_promote`; delegation can mark work required or detached, attach same-orchestration dependencies, or register one existing `developer_workspace_path` for the child, mutually exclusive with a saved workspace id
 - **Parent visibility** — parent agents can inspect one run, list child runs for the current thread, join a required group, wait for a result, or record steering for queued/non-terminal work; compact group/member cards and lifecycle state survive checkpoint reloads and queued parent turns
 - **Parent-thread approvals** — child-agent approval requests are serialized through `approval_messages.py` and `agent_run_messages.py`, appended once to the parent thread, and refreshed through run-state keys so background work cannot wait invisibly
 - **Approval explanations** — approval cards prefer a bounded, redacted model-supplied reason while preserving the raw command/action payload for the real safety decision; shell and Developer tools accept a dedicated `approval_reason` field
 - **Terminal channel notices** — async child completions can enqueue a compact once-only notice for the originating channel; failed delivery remains pending and is reconciled when channels auto-start again
 - **Promotion paths** — completed child runs can be promoted into a new Agent Profile or a disabled manual workflow; both paths are approval-gated and leave artifacts reviewable before reuse
 - **Tool allowlists** — profile and delegation tool allowlists flow into agent graph construction; plugin and MCP tools honor the allowlist so a child agent can run with a narrower tool surface than the parent
-- **Write-lock safeguards** — active-run queue and write-lock tests prevent child agents from silently colliding with parent or sibling work when a profile/workspace requires single-writer behavior
+- **Workspace-keyed write locks** — write-capable children assigned to the same Developer workspace still serialize, while children assigned to distinct registered local folders receive distinct lock keys and may run concurrently; changing only the shell CWD never bypasses workspace ownership
 - **Status diagnostics** — Row-Bot Status can report agent/profile/run state, making delegated work visible to diagnostics and support flows rather than trapping it in transient UI state
 - **Budget diagnostics** — run rows expose safe used/maximum model-iteration counts and terminal reasons, while active settings and dispatcher capacity remain queryable without exposing prompts or tool arguments
 - **Durable activity projection** — `get_thread_orchestration_activity()` derives blocking, approval, retry, detached, interrupted, stopped, and terminal state for sidebar, mobile, Agent drawer, Buddy, and streaming surfaces from persisted state rather than UI-local timers
@@ -517,6 +528,11 @@ Claude Subscription's Settings card includes a runtime diagnostic that exercises
 - **OpenCode provider runtime** — OpenCode-compatible providers are represented as first-class provider/runtime entries with auth, catalog, selection, and readiness coverage instead of being treated as generic custom endpoints
 - **Capacity-aware context management** — complete-input accounting and rolling compaction use native/catalog/observed capacity when available, preserve recent complete turns and tool groups, and treat an unknown remote model's 128K value as disclosed application authority rather than provider metadata
 - **Local catalog accuracy** — installed Ollama chat models remain visible even when their family is newer than Row-Bot's curated tool/vision heuristics, while embedding-like local models are kept out of chat choices and Vision support is only inferred from known metadata/families
+- **Native Ollama tool metadata** — `providers/ollama.py` gives an explicit
+  `tool_calling` boolean first priority, otherwise consumes the daemon's
+  `capabilities` list when present and treats `tools` as authoritative positive
+  or negative evidence; curated family detection is used only when native
+  metadata is absent
 - **Ollama Cloud paths** — direct Ollama Cloud API keys and local daemon `:cloud` models are represented separately while sharing catalog normalization and display metadata; direct API errors are normalized into user-facing provider messages
 - **Tool-support validation** — unsupported or uncertain local/custom models are warned about, can be probed with a real tool round-trip, and route to agent, chat-only, or blocked mode based on the result
 - **Custom endpoint compatibility profiles** — OpenAI-compatible endpoints can use oMLX, LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, SGLang, or generic profiles to normalize message content, tool history, unsupported parameters, streaming behavior, and request-time context settings
@@ -536,7 +552,7 @@ Embeddings are configured separately from chat models so users can choose the pr
 - **`embedding_config.py`** — persists the selected embedding provider, model, dimension metadata, and privacy-related settings
 - **`embedding_providers.py`** — normalizes local and cloud embedding backends behind one interface used by document search, memory recall, and graph/vector rebuilds
 - **Local choices** — Qwen3 0.6B, Nomic Embed Text v1.5, and Mixedbread Embed Large v1 are explicit local-cache choices; Mixedbread is the reviewed default
-- **Cache-only normal runtime** — local provider construction resolves a cached Hugging Face snapshot and passes local-only loading flags, so recall, indexing, status checks, startup, and normal background work cannot trigger a surprise download
+- **Cache-only normal runtime** — local provider construction resolves a cached Hugging Face snapshot with the same GGUF, ONNX, and OpenVINO ignore filters used by explicit download and passes local-only loading flags, so recall, indexing, status checks, startup, and normal background work cannot trigger a surprise download or select a differently shaped snapshot
 - **Explicit download/repair** — only the Settings download or repair action permits a remote snapshot fetch; status probes distinguish cached, missing, loading, failed, and ready states without starting a network call
 - **Shared asynchronous load** — concurrent recall callers share one background provider build; the first caller receives one bounded grace wait, later callers reuse the same state, and a completed load becomes available without rebuilding
 - **Failure cache and fallback contract** — missing, failed, and timeout conditions raise structured `LocalEmbeddingUnavailable` codes, fail fast on later callers, and let memory/document/workflow retrieval continue through bounded non-semantic paths
@@ -550,11 +566,31 @@ Embeddings are configured separately from chat models so users can choose the pr
 
 ## Voice Input & Text-to-Speech
 
-Row-Bot has two voice paths: a local STT/TTS loop for privacy-first dictation and playback, and a realtime voice runtime for lower-latency conversational sessions with provider-backed events and action handling.
+Row-Bot has two voice paths: a local STT/TTS loop for privacy-first dictation
+and playback, and a realtime voice runtime for lower-latency conversational
+sessions with provider-backed events and action handling. Local Talk and
+Dictation can use faster-whisper or the explicitly installed FunASR/SenseVoice
+runtime; browser-local remote voice continues to use its cache-only Whisper
+path.
 
 - **Toggle-based voice** — simple manual toggle to start and stop listening, no wake word required
 - **Classic local pipeline** — stopped -> listening -> transcribing -> muted state transitions keep manual speech input explicit and gate the microphone during playback
-- **Local speech-to-text** — transcription via faster-whisper (tiny/base/small/medium), CPU-only int8 quantization, no cloud APIs required
+- **Local speech-to-text choices** — faster-whisper (tiny/base/small/medium,
+  CPU-only int8) remains the default, while SenseVoice Small can be selected
+  independently for Talk and Dictation and is applied by `VoiceCoordinator`
+  before the local microphone service starts
+- **Explicit SenseVoice installation** — `voice/local_provider.py` exposes
+  package, platform, model-missing, model-invalid, and ready states without
+  importing heavy modules or downloading during probes; only the guarded Voice
+  settings action requests the approximately 940 MB ModelScope snapshot
+- **Contained offline inference** — only a complete snapshot containing the
+  required config and model files under `cache/sensevoice` is accepted and
+  persisted in `voice_settings.json`; FunASR receives the verified local path,
+  `device="cpu"`, and `disable_update=True`
+- **Platform and disclosure boundary** — Intel macOS remains on Whisper because
+  matching CPU PyTorch/Torchaudio wheels are unavailable. The UI discloses the
+  ModelScope request, SDK user-agent, size, and Apache-2.0 model license before
+  install; audio, prompts, and usage data are never sent
 - **Neural TTS** — high-quality text-to-speech via Kokoro, fully offline
 - **10 voice options** — US and British English, male and female variants
 - **Streaming TTS** — responses are spoken sentence-by-sentence as they stream in
@@ -581,6 +617,9 @@ Row-Bot has two voice paths: a local STT/TTS loop for privacy-first dictation an
 - **Inline terminal panel** — command output appears in a collapsible terminal panel in the chat UI with clear and history controls
 - **History persistence** — shell history is saved per thread in `~/.row-bot/shell_history.json`
 - **Stop propagation** — shell execution uses `process_cancellation.py`, so cancelling the owning generation terminates the command process group and returns a stopped result without losing persistent-session bookkeeping
+- **Detached-child completion** — stdout/stderr use file-backed capture so a
+  background process intentionally launched by the direct shell command cannot
+  hold the command's pipes or session lock open after the launcher process exits
 
 ---
 
@@ -801,6 +840,14 @@ Developer Studio is Row-Bot's code-workspace subsystem. It is not a full IDE; it
 
 - **`developer/` package** — owns workspace storage, Git helpers, worktree allocation, runtime profiles, approval policy, sandbox state, tool context, todos, change ledger, inspector snapshots, GitHub helpers, and UI
 - **Explicit repo linking** — users open an existing local repo or clone into a folder they choose. Row-Bot stores a workspace link and metadata, not a copy of the repo in app data
+- **Child folder registration** — `delegate_work(developer_workspace_path=...)`
+  can register one existing local folder and assign its resulting Developer
+  workspace id only to that child; missing folders and simultaneous id/path
+  inputs fail before a run is created
+- **Folder-scoped writer ownership** — Agent Run write locks key on the assigned
+  Developer workspace, so distinct folders permit independent parallel writers
+  while the same folder retains one writer and a shell CWD change has no effect
+  on the lock boundary
 - **Code threads** — Developer conversations are tagged as code threads and reopen directly into Developer Studio with the associated workspace context
 - **Developer worktrees** — `developer/worktrees.py` allocates durable Git worktrees for threads, child-agent runs, and workflow runs, tracking owner kind/id, project workspace, worktree workspace, branch name, base branch/commit, cleanup state, metadata, and failure preservation in `tasks.db`
 - **Worktree seeding** — worktrees can start from the current staged/unstaged/untracked state or from the last commit; seed application uses binary Git patches and safe untracked-file copying while requiring a real repository root
@@ -966,7 +1013,7 @@ around that channel.
 
 ### Bundled Channels
 
-- **Telegram** — full agent access, native draft streaming in supported private chats with edit fallback, UTF-16-aware message splitting, voice transcription, photo analysis, document extraction, emoji reactions, inline approval buttons, `/model` support, and HTML-safe formatting
+- **Telegram** — full agent access, native draft streaming in supported private chats with edit fallback, UTF-16-aware message splitting, voice transcription, photo analysis, document extraction, emoji reactions, inline approval buttons, `/model` support, and HTML-safe formatting; startup retries one transient initialization failure, gives polling one bootstrap retry, cleans partial application state, treats invalid tokens as actionable non-retryable errors, and registers the command menu after polling so a menu failure cannot stop the bot
 - **WhatsApp** — Baileys bridge with QR pairing, inbound/outbound media, rich YouTube previews, Markdown-to-WhatsApp formatting, edit streaming, typing updates, split finals, and approval resume
 - **Discord** — DM-based edit streaming with typing keepalive, message splitting, fresh-send fallback, reactions, interactive approval buttons, slash-command integration, and media support
 - **Slack** — Socket Mode adapter with native stream APIs when supported, edit fallback, bounded retry-after handling, DM threading, Block Kit approvals, reactions, and file uploads
@@ -993,6 +1040,9 @@ A provider-agnostic tunnel layer exposes local webhook ports to the internet whe
 - **`TunnelManager` singleton** — manages tunnel lifecycle, per-port allocation, cleanup, and status reporting
 - **Automatic use by channels** — channels that need a public callback request a tunnel on start and release it on shutdown
 - **Optional app tunneling** — the main Row-Bot UI can be exposed intentionally through a registered managed origin; public ngrok URLs terminate at the authenticated access middleware rather than bypassing owner sessions
+- **Responsive auto-start** — startup reports a visible tunnel stage and moves
+  the blocking main-app tunnel start onto a worker thread so slow provider setup
+  cannot stall the NiceGUI event loop
 - **Runtime-policy registration** — a tunnel provider must register its exact origin before exposure and unregister it on stop; invalid URLs, missing runtime policy, or registration failure close the new tunnel and fail without broadening access
 - **Tailscale separation** — Tailscale Serve is managed by `access/tailscale.py` as an owner-reviewed private route, not as a generic tunnel provider; only an exact Row-Bot-owned Serve route can augment allowed host/origin/proxy policy
 - **Settings UI** — tunnel provider, auth token, and active-tunnel status live in the System settings surface
@@ -1333,6 +1383,9 @@ modifying the core codebase.
 - **System tray** — `launcher.py` exposes open and quit controls plus running-state feedback on Windows and macOS; Linux defaults to no tray and can opt into `--tray` when AppIndicator/desktop support is available
 - **Native macOS tray host** — packaged macOS builds include `installer/macos/RowBotTrayHost.m`, a small native status-item host that keeps tray content visible and avoids fragile cross-platform tray fallbacks
 - **Splash screen** — Tk-based loading splash during startup; Tk failures are logged to launcher diagnostics, and the visible console fallback is opt-in for debugging instead of appearing during normal Windows launches
+- **Browser splash readiness** — the temporary NiceGUI startup surface polls
+  the `/readyz` HTTP status contract and reloads on success without depending on
+  a JSON body that the public readiness route does not promise
 - **Startup diagnostics** — `startup_diagnostics.py` runs early in `app.py` and probes fragile optional native packages. Missing optional packages are ignored; installed-but-broken packages such as TorchCodec are logged with recovery steps and patched out of optional Transformers availability checks where safe.
 - **First-launch setup wizard** — starts with model/provider choice, then migration and setup-center steps for Local, Providers, Custom/Self-hosted, memory/docs, workflows, Agent/Profile surfaces, Designer, Developer, channels, voice, and related setup without touching config files by hand
 - **Self-contained installers** — Windows and macOS releases bundle dependencies for one-click setup; Linux uses a one-line bootstrapper that verifies and installs the self-contained XDG tarball into user-owned paths
@@ -1492,8 +1545,12 @@ private or HTTPS route in front.
   restore, pull-first upgrade, digest/version rollback, session recovery,
   Developer limits, and deliberate volume removal
 - **Owned-resource smoke runner** — `scripts/smoke_docker_server.py` runs a
-  prebuilt image on a random loopback port, redacts failures, never pulls/builds,
-  refuses name collisions, and removes only its exact labeled container/volume
+  prebuilt image on a random loopback port, never pulls/builds, refuses name
+  collisions, and removes only its exact labeled container/volume; it requires
+  two stable health/readiness samples, gives functional requests bounded
+  configurable deadlines, retries transient transport failure only for GET,
+  never replays POST access/session mutations, and emits bounded redacted
+  container state/log diagnostics on failure
 - **Container CI** — `.github/workflows/container.yml` verifies native amd64 and
   arm64 images on relevant pull requests; release jobs validate tag/version/commit
   identity and smoke before GHCR login/push, then publish a multi-architecture
@@ -1616,8 +1673,12 @@ Row-Bot includes a stability layer for the kinds of failures that are hard to ca
 - **Settings diagnostics** — model settings collection/render phases log timings and memory snapshots, while cached model catalogs and short-lived provider-status caches keep large provider refreshes and OAuth health checks off the critical UI path
 - **UI performance helpers** — `ui/performance.py` provides render generation tokens, timed UI sections, slow-section logging, and safe UI callback/task wrappers used by Settings, Knowledge, chat, and graph surfaces
 - **Startup sequencing** — startup status covers cached model catalog load, workflow scheduler, deferred orchestration/Agent Run repair, document supervisor recovery, MCP, plugins, channel migration/autostart, registered tunnel startup, and knowledge graph load without invoking providers during recovery
+- **Channel and tunnel degradation** — Telegram partial starts are cleaned before
+  retry or user action, command-menu registration cannot take polling offline,
+  manual channel failures log only channel identity and exception type, and
+  registered main-app tunnel auto-start runs off the UI event loop
 - **Clean shutdown** — app shutdown attempts ordered channel, tunnel, MCP, scheduler, and process cleanup to reduce locked logs and lingering child processes
-- **Cancellation diagnostics** — provider response closure, subprocess termination, cancelled MCP futures, channel preview cleanup, and generation-linked child-stop behavior emit scoped diagnostics rather than being misreported as successful completion
+- **Cancellation diagnostics** — provider response closure, subprocess termination and file-backed partial output, cancelled MCP futures, channel preview cleanup, and generation-linked child-stop behavior emit scoped diagnostics rather than being misreported as successful completion
 - **Computer Use diagnostics** — readiness codes, pinned-runtime verification, permission recovery, private-client shutdown, target invalidation, and lease cleanup are logged without typed values, screenshot bytes, or raw action arguments
 - **Task database diagnostics** — Home, Command Center, and Row-Bot Status can report workflow/agent/goal schema state, repair results, and launcher recovery guidance when workflow storage is missing or corrupt
 - **Access diagnostics** — `row-bot access doctor`, request rejection logs, route-policy snapshots, Tailscale ownership checks, and session/device health remain display-safe and never serialize invitations, cookies, tokens, or credential values
@@ -1712,16 +1773,16 @@ Runtime code is packaged under `src/row_bot`. The paths below are package-relati
 | **`brand.py`** + **`runtime_paths.py`** | Row-Bot product identity, public naming constants, runtime path detection, and packaged/source checkout path helpers |
 | **`buddy/`** + **`ui/buddy.py`** | Buddy companion event bus, behavior brain, config, asset validation, Hatch generation, in-app docked/undocked presence, and optional desktop overlay helpers |
 | **`designer/`** | Designer Studio subsystem: gallery, editor, tooling, storage, exports, presentation mode, publishing, and asset hydration |
-| **`developer/`** | Developer Studio subsystem: workspace links, Git helpers, durable worktree allocation, approval policy, Docker/local runtime, sandbox state, inspector snapshots, todos, file tree, diffs, GitHub helpers, Custom Tool internals, and UI |
+| **`developer/`** | Developer Studio subsystem: workspace links and child-folder registration, folder-scoped writer ownership, Git helpers, durable worktree allocation, approval policy, Docker/local runtime, sandbox state, inspector snapshots, todos, file tree, diffs, GitHub helpers, Custom Tool internals, and UI |
 | **`ui/chat_components.py`** | Shared chat input, upload, message-area, active-skill chip, and desktop context-meter components reused by main chat, Designer Studio, and Developer Studio |
 | **`ui/chat_composer_extras.py`** | Shared slash palette, skill picker, skill chips, and composer-level Smart Skills controls reused across chat surfaces |
-| **`agent.py`** | LangGraph ReAct agent, prompt assembly, Agent Profile injection, authorized progressive tool/skill snapshot construction, tool allowlist handling, complete-input preparation/accounting, rolling compaction, checkpointed budget hooks/finalization, runtime readiness routing, chat-only execution, provider transcript normalization, streaming/context events, interrupt handling, cache clearing, and background execution integration |
+| **`agent.py`** | LangGraph ReAct agent, prompt assembly, Agent Profile injection, authorized progressive tool/skill snapshot construction, tool allowlist handling, complete-input preparation/accounting, rolling compaction, checkpointed budget hooks/finalization and orphan-only repair, runtime readiness routing, chat-only execution, provider transcript normalization, streaming/context events, interrupt handling, cache clearing, and background execution integration |
 | **`agent_budget.py`** + **`agent_settings.py`** | Checkpoint-safe model-iteration budgets, no-progress digests, exactly-once terminal finalization, validated application-wide work/delegation limits, and atomic `agent_settings.json` persistence |
 | **`agent_profiles.py`** + **`agent_context.py`** + **`agent_tool_catalog.py`** | Built-in/user Agent Profile registry, profile persistence, profile context assembly, policy blocks, profile search/selection helpers, and tool catalog metadata for scoped delegation |
-| **`agent_orchestrator.py`** | Versioned parent-led orchestration, required/detached members, dependencies/waves, ordered thread events, group joins, parent leases/checkpoints, approval/steering resume, transient retry, stop, exactly-once finalization/delivery, activity projections, and restart repair |
-| **`agent_runner.py`** + **`agent_runs.py`** + **`agent_run_messages.py`** | Durable Agent Run FIFO/capacity queue, child-agent nesting/active-time lifecycle, orchestration membership, settings snapshots and model-iteration progress, parent-thread lifecycle/approval/completion messages, run events, parent/child edges, generation-linked stop/wait/resume state, write locks, stale-run recovery, and shared Agent Run/orchestration tables in `tasks.db` |
+| **`agent_orchestrator.py`** | Versioned parent-led orchestration, required/detached members, dependencies/waves, ordered thread events, group joins, initial parent continuation snapshots, parent leases/checkpoints, approval/steering resume, orphan-only parent repair, transient retry, stop, exactly-once finalization/delivery, activity projections, and restart repair |
+| **`agent_runner.py`** + **`agent_runs.py`** + **`agent_run_messages.py`** | Durable Agent Run FIFO/capacity queue, child-agent nesting/active-time lifecycle, orchestration membership, settings snapshots and model-iteration progress, parent-thread lifecycle/approval/completion messages, run events, parent/child edges, generation-linked stop/wait/resume state, workspace-keyed write locks, stale-run recovery, and shared Agent Run/orchestration tables in `tasks.db` |
 | **`approval_messages.py`** | Normalized approval payloads, model-reason preference, redaction/truncation, compact channel/mobile rendering, and display-safe source labels |
-| **`cancellation.py`** + **`process_cancellation.py`** | Generation-scoped cleanup registration, provider/tool/browser/Computer Use/process Stop propagation, process-group termination, timeout handling, and cancellation results |
+| **`cancellation.py`** + **`process_cancellation.py`** | Generation-scoped cleanup registration, provider/tool/browser/Computer Use/process Stop propagation, process-group termination, file-backed output capture for detached descendants, bounded timeout handling, and cancellation results |
 | **`goals.py`** | Thread-scoped Goal Mode state, goal commands, progress/evidence/blocker tracking, continuation prompts, verifier decisions, and synchronization with Agent Run status |
 | **`approval_policy.py`** + **`tools/approval_gate.py`** | Unified approval modes and tool-level approval gate helpers for chat, Developer, workflows, channels, and promoted tools |
 | **`threads.py`** | SQLite-backed thread metadata, LangGraph checkpoint wiring, checkpoint transcript helpers, revision-validated rolling-summary and context-usage persistence, presentation-only thread events and channel claims, per-thread media storage, model/profile overrides, and cleanup hooks for chat-created agent/goal/skill state |
@@ -1736,11 +1797,11 @@ Runtime code is packaged under `src/row_bot`. The paths below are package-relati
 | **`document_extraction.py`** | Resumable rolling-map/hierarchical-reduce document extraction, persisted intermediate summaries, cancellation, provider-failure isolation, and idempotent graph/wiki/document finalization |
 | **`models.py`** | Local model compatibility facades, versioned Auto/fixed context policy and migration, native/requested/observed/fallback capacity resolution, usable-input and compaction thresholds, Quick Choices, provider detection, xAI OAuth catalog bridge, model factories, and legacy model APIs |
 | **`prompt_context.py`** + **`prompt_cache.py`** | Prompt section assembly, stable/ephemeral section inventory, direct-Anthropic prompt-cache marker gating, stable fingerprint reporting, and provider cache usage normalization |
-| **`providers/`** | Provider-scoped auth/secret resolution, normalized model catalogs, provider-isolated last-known-good catalog refresh, capability resolution, Gemini tool-schema compatibility, Atlas Cloud, Requesty, Claude Subscription, xAI Grok OAuth, xAI media/catalog helpers, provider-qualified resolution, readiness evaluation, custom endpoint profiles/probes, cancellable runtime construction, phased OpenAI-compatible timeout/pre-stream retry, and display-safe provider status |
-| **`embedding_config.py`** + **`embedding_providers.py`** | Embedding provider selection, strict cache-only local loading, explicit download/repair, shared asynchronous provider state, structured recall fallback, local/cloud backends, vector metadata, and stale-index detection |
+| **`providers/`** | Provider-scoped auth/secret resolution, normalized model catalogs, provider-isolated last-known-good catalog refresh, native Ollama capability precedence, capability resolution, Gemini tool-schema compatibility, Atlas Cloud, Requesty, Claude Subscription, xAI Grok OAuth, xAI media/catalog helpers, provider-qualified resolution, readiness evaluation, custom endpoint profiles/probes, cancellable runtime construction, phased OpenAI-compatible timeout/pre-stream retry, and display-safe provider status |
+| **`embedding_config.py`** + **`embedding_providers.py`** | Embedding provider selection, strict cache-only local loading with download-matching snapshot filters, explicit download/repair, shared asynchronous provider state, structured recall fallback, local/cloud backends, vector metadata, and stale-index detection |
 | **`documents.py`** | Document loading/chunking facade, bounded shard build/publication, retrieval compatibility, document records, source retirement, per-document cleanup, and vector reset/rebuild |
-| **`voice.py`** | Classic faster-whisper-based speech input pipeline and voice-state management |
-| **`voice/`** | Realtime voice runtime, provider contracts, OpenAI realtime client, browser-local capture/decoding/transcription/session output, local-provider scaffolding, action dispatch, agent bridge, cue policy, speech policy, and output coordination |
+| **`voice/__init__.py`** | Classic local microphone state machine, faster-whisper and selected SenseVoice dispatch, explicit local model loading, and persisted local voice settings |
+| **`voice/`** | Realtime voice runtime, provider contracts and catalog, OpenAI realtime client, browser-local Whisper capture/decoding/transcription/session output, verified FunASR/SenseVoice installation and CPU provider, action dispatch, agent bridge, cue policy, speech policy, and output coordination |
 | **`tts.py`** | Kokoro text-to-speech integration, voice catalog, and streaming playback |
 | **`vision.py`** | Camera capture, screen capture, and workspace image analysis via local or provider vision models |
 | **`computer_use/`** + **`tools/computer_use_tool.py`** + **`ui/computer_use.py`** + **`ui/live_control.py`** | Pinned Cua manifest/private client, disclosure/install/readiness, action policy, exclusive target-window service, native application tool, macOS permission recovery, and ephemeral live-control UI |
@@ -1775,7 +1836,7 @@ Runtime code is packaged under `src/row_bot`. The paths below are package-relati
 | **`mcp_client/`** | External Model Context Protocol client plus shared managed-runtime primitives: config, runtime sessions, marketplace search, requirements, safety classification, diagnostics, result normalization, and wrappers that enter progressive or eager external loading; private Cua transport remains outside the external MCP registry |
 | **`migration/`** | Hermes/OpenClaw migration models, redaction, source detection, dry-run planning, realistic fixtures, guarded apply/report generation, and migration tests |
 | **`deploy/docker/`** + **`deploy/reverse-proxy/`** + **`deploy/systemd/`** | Official hardened server image, Compose release/source/VPS/secret variants, persistent credential-key initialization, Caddy proxy, systemd lifecycle, and operator runbook |
-| **`.github/workflows/container.yml`** + **`scripts/smoke_docker_server.py`** | Native amd64/arm64 image verification, release identity checks, owned-resource smoke testing, GHCR version/latest manifest publication, and secret-safe failure handling |
+| **`.github/workflows/container.yml`** + **`scripts/smoke_docker_server.py`** | Native amd64/arm64 image verification, release identity checks, owned-resource smoke testing with stable readiness, functional deadlines, GET-only transient retry and bounded redacted diagnostics, GHCR version/latest manifest publication, and secret-safe failure handling |
 | **`docs-site/`** + **`docs-content/`** + **`scripts/docs/`** | Public docs source, canonical operations guides, coverage metadata, generated MDX/control references, isolated real UI screenshot capture, validation/review, LLM text generation, Pagefind search build, and deterministic GitHub Pages synchronization |
 | **`static/`** | Bundled frontend assets such as Mermaid, graph/visualization helpers, and Buddy runtime/motion assets |
 | **`version.py`** | Single source of truth for the current Row-Bot version, located at `src/row_bot/version.py` |
@@ -1811,6 +1872,9 @@ All user data is stored under `~/.row-bot/` (or `%USERPROFILE%\\.row-bot\\` on W
 ├── model_catalog_cache.json        # Background-refreshed provider/local-runtime model catalog rows and refresh diagnostics
 ├── context_catalog_cache.json      # Cached context-window metadata used before live provider refresh
 ├── embedding_config.json           # Active embedding provider/model settings
+├── voice_settings.json             # Local Whisper selection and verified SenseVoice snapshot path
+├── cache/
+│   └── sensevoice/                 # Explicitly downloaded and verified local SenseVoice snapshots
 ├── document_ingestion/
 │   ├── jobs.db                     # Durable document batches/jobs, leases, progress, content records, and resumable map/reduce summaries
 │   ├── staging/                    # Bounded in-progress upload files
@@ -1897,10 +1961,10 @@ Most open-source AI assistants are still **developer tools disguised as products
 | **Remote access** | Provider-hosted account and cloud relay | Direct connection to your running Row-Bot desktop/server through local, Tailscale, SSH, assigned-interface, or exact trusted HTTP(S) routes, protected by one-time invitations, revocable owner sessions, runtime-updated exact-origin gates, and local auth storage |
 | **Cost** | Subscription or provider billing | Free with local models; provider/custom usage is upstream API billing, self-hosted infrastructure, or ChatGPT / Claude / xAI Grok subscription access only when you opt in |
 | **Memory** | Limited, opaque, provider-controlled | Personal knowledge graph with entities, relations, bounded recall, audit/review states, visualization, wiki export, and background refinement |
-| **Agent orchestration** | One assistant persona with limited delegation visibility | Goal Mode, Agent Profiles, one authoritative parent with required/detached children, dependencies, live multi-wave joins, steering, approvals, retry/recovery, exactly-once finals, checkpoint-safe budgets, configurable capacity limits, and promoted Agent-run workflows stay local and reviewable |
+| **Agent orchestration** | One assistant persona with limited delegation visibility | Goal Mode, Agent Profiles, one authoritative parent with required/detached children, dependencies, live multi-wave joins, folder-scoped parallel writers, steering, approvals, orphan-only parent repair, retry/recovery, exactly-once finals, checkpoint-safe budgets, configurable capacity limits, and promoted Agent-run workflows stay local and reviewable |
 | **Tools** | Limited app integrations and provider-defined plug-ins | 30+ directly bound core tools plus locally searched enabled MCP, plugin, Custom Tool, channel, and skill catalogs under unchanged profile/approval/workspace boundaries; eager compatibility remains available |
 | **Customization** | Pick a model and maybe a custom instruction | Swap provider-qualified models per thread, profile, workflow, child-agent run, or Developer workspace, configure name and personality, choose Auto/eager external capability loading, pin or progressively load task skills, build workflows, install Skills Hub packages, create Custom Tools, and use controlled self-evolution proposals |
-| **Voice** | Usually cloud-processed | Local faster-whisper STT plus Kokoro TTS, with a separate realtime voice runtime for provider-backed conversational sessions |
+| **Voice** | Usually cloud-processed | Local faster-whisper or explicitly installed offline FunASR/SenseVoice STT plus Kokoro TTS, with a separate realtime voice runtime for provider-backed conversational sessions |
 | **Availability** | Internet required | Local models work offline; hosted providers and custom endpoints are optional |
 
 > **Bottom line:** cloud assistants rent you access to someone else's system. Row-Bot gives you **personal AI sovereignty** — local durable state, provider choice when you want it, and all of your long-lived data under your own control.
@@ -1913,12 +1977,12 @@ Most open-source AI assistants are still **developer tools disguised as products
 |---|---|---|
 | **Getting started** | One-click installers and GUI-first setup on Windows and macOS, plus one-line Linux install with browser-first launch | CLI-oriented install flow and heavier terminal expectations |
 | **Model routing** | Local-first data with local, hosted, OpenCode, OpenRouter, Atlas Cloud, xAI Grok OAuth, ChatGPT / Codex, Claude Subscription, Ollama Cloud, provider-scoped live catalogs, explicit context capacity, chat-only fallbacks, and phased OpenAI-compatible transport limits in one GUI | More cloud-first in typical setups |
-| **Agent orchestration** | Goal Mode, Agent Profiles, durable parent-led required/detached child groups, dependencies, live joins, steering, approvals, retry/recovery, checkpoint-safe limits, profile/tool allowlists, and Agent-run workflow promotion | Different orchestration model with less desktop-first profile/goal visibility |
+| **Agent orchestration** | Goal Mode, Agent Profiles, durable parent-led required/detached child groups, dependencies, live joins, folder-scoped writer locks, steering, approvals, orphan-only checkpoint repair, retry/recovery, checkpoint-safe limits, profile/tool allowlists, and Agent-run workflow promotion | Different orchestration model with less desktop-first profile/goal visibility |
 | **Memory** | Typed personal knowledge graph with bounded recall, audit/review states, visualization, wiki export, and structured relations | Simpler text-centric memory patterns |
 | **Knowledge refinement** | 5-phase Dream Cycle with merge, enrich, decay, infer, and insight passes | Experimental dreaming-style memory promotion flows |
 | **Document intelligence** | Bounded durable uploads, content dedup, atomic sharded retrieval, resumable extraction, queue recovery/controls, and structured graph provenance | Strong workspace tools but less graph-centric document knowledge modeling |
 | **Designer / Canvas** | Designer Studio for decks, one-pagers, reports, published links, plus inline Mermaid and Plotly rendering | A2UI-style interactive workspace focus |
-| **Developer / Code** | Developer Studio for Git workspaces with code threads, approval modes, file tree, todos, diffs, tests, GitHub/PR prep, and optional Docker shadow sandbox | Developer-heavy CLI and terminal-first workflows |
+| **Developer / Code** | Developer Studio for Git workspaces with code threads, explicit child-folder assignment, folder-scoped parallel writer ownership, approval modes, file tree, todos, diffs, tests, GitHub/PR prep, worktrees, and optional Docker shadow sandbox | Developer-heavy CLI and terminal-first workflows |
 | **Tools** | 30+ core tools plus Agent/Goal tools, Developer-native tools, opt-in native Computer Use, Skills Hub, Custom Tool Builder, promoted Custom Tools, and auto-generated channel tools, with local progressive discovery for enabled MCP/plugin/Custom Tool/channel capabilities and per-task skills | Broad built-in toolset with different emphasis |
 | **Messaging channels** | 5 bundled channels with platform-aware live streaming/edit fallback, media handling, interactive/text approvals, durable terminal notices, and a sidebar monitor | Wider channel catalog and gateway focus |
 | **Autonomous workflows** | Step-based workflows with approvals, conditions, triggers, concurrency groups, safety modes, Agent Profile overrides, and promotion from completed Agent Runs | Strong channel routing and automation, different orchestration model |

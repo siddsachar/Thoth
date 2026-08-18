@@ -17,6 +17,8 @@ Developer Studio is Row-Bot's code workspace. Use it when you want Row-Bot to un
 
 Open Home -> Developer. Choose an existing folder, connect a repository already on your machine, or clone a repository into a local workspace.
 
+The Agents tool can also assign a child directly to an existing local folder. Row-Bot validates the path and registers it as that child's Developer workspace; a folder assignment and a pre-existing workspace ID are alternative ways to select the workspace, not settings to combine.
+
 ## End-To-End Workflow
 
 1. Open or clone a project.
@@ -38,6 +40,10 @@ Open Home -> Developer. Choose an existing folder, connect a repository already 
 - **Command controls** run detected or requested commands through approval policy.
 - **Change review** summarizes edits and lets you inspect before accepting next steps.
 
+## Parallel Child Workspaces
+
+Writer ownership follows the resolved workspace folder. Children working in distinct folders or worktrees can edit concurrently, while writers aimed at the same folder are serialized to prevent overlapping changes. Changing only a shell working directory does not create an independent write boundary. Use a separate worktree or folder when two children genuinely need parallel write access.
+
 ## Sandbox Modes
 
 Local mode lets Row-Bot operate in the selected workspace with your configured file and command permissions. Docker Sandbox mode, when available on a host installation, isolates command execution in a container and requires an import step before changes affect the real workspace. It requires a supported host Docker runtime and can differ from your local environment.
@@ -51,6 +57,7 @@ For a host installation, start with Local mode on a disposable branch. Use Docke
 ## Troubleshooting
 
 - If Developer tools are unavailable, open a Developer workspace first.
+- If an Agent folder assignment is rejected, confirm that the directory already exists and pass either that folder or an existing workspace ID, not both.
 - If commands are missing, inspect detected commands or ask Row-Bot to identify the project tooling.
 - If a command asks for approval, read the exact command and workspace before approving.
 - If Docker sandbox import is offered, review the patch before importing it into the real project.

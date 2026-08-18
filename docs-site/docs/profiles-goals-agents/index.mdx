@@ -40,7 +40,11 @@ A goal is useful when work needs more than one turn. State the objective and an 
 
 Parent agents coordinate. Child agents handle bounded subtasks. Open an agent row to review its prompt, profile, model, status, result, evidence, and thread. A completed child result is evidence for the parent, not automatic permission to write files, send messages, commit code, or publish.
 
-If a run appears stuck, inspect its last update before stopping it. If several agents edit the same resource, narrow their ownership or run them sequentially. Keep consequential final actions with the parent and a human approval point.
+For coding work, a parent can assign a child to an existing local folder. Row-Bot registers that folder as the child's Developer workspace and applies writer ownership to the resolved folder, not merely the process working directory. Children assigned to distinct folders or worktrees can write in parallel; writers targeting the same folder wait and run serially.
+
+If a run appears stuck, inspect its last update before stopping it. If several agents edit the same resource, give them distinct folders or worktrees, narrow their ownership, or run them sequentially. Keep consequential final actions with the parent and a human approval point.
+
+Row-Bot saves the parent's first continuation checkpoint when asynchronous delegation begins. If a child process outlives its launching shell or the app restarts, resume repairs only genuinely unanswered tool calls with an interruption marker, then wakes the parent from durable child results. It does not replay previously executed work. If a checkpoint cannot be repaired safely, the run remains stopped for review.
 
 Repeated model-and-tool states are detected before a run can loop indefinitely. The fourth identical no-progress state is blocked; a fifth ends the run cleanly with a durable reason. Reaching a configured work limit also finalizes the run instead of leaving it marked as active.
 

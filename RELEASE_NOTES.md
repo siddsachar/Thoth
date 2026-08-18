@@ -2,6 +2,175 @@
 
 ---
 
+## v4.7.1 - Agent Recovery, Local Voice Options & Runtime Reliability
+
+This patch release builds on v4.7.0 with focused agent-orchestration,
+local-voice, channel-startup, model-readiness, memory-cache, and release-
+validation fixes. It lets parallel child Agents work in explicitly assigned
+local folders, restores interrupted parents safely after detached shell work,
+adds an explicit offline SenseVoice transcription option, makes Telegram and
+remote-access startup degrade cleanly, trusts Ollama's native tool-capability
+metadata, and hardens Docker smoke diagnostics without weakening local-first,
+approval, or credential boundaries.
+
+### Agent Workspaces, Shell Completion And Restart Recovery
+
+- **Folder-scoped child workspaces** - adds `developer_workspace_path` to
+  `delegate_work`, registers an existing local folder as the child's Developer
+  workspace, rejects missing paths and conflicting workspace-id/path inputs,
+  and keeps the assignment scoped to that child run.
+- **Independent parallel writers** - keys write ownership to each assigned
+  Developer workspace so child Agents in distinct folders can edit
+  concurrently while children assigned to the same folder still serialize.
+- **Durable first-delegation state** - records the original parent's safe
+  configurable runtime fields, enabled tools, model, approval mode, and
+  delivery context when asynchronous orchestration begins, excluding
+  non-serializable internal graph callbacks.
+- **Checkpoint-safe parent repair** - closes only unanswered tool calls after
+  an app restart, marks them as interrupted rather than replaying them, and
+  resumes the original parent from its saved checkpoint when retained required
+  child results are ready.
+- **Legacy recovery compatibility** - can wake and complete an interrupted v2
+  parent whose children already finished even when older orchestration rows do
+  not contain the newly persisted continuation snapshot.
+- **Detached-process completion** - captures owned subprocess output in
+  temporary files so a deliberately detached descendant cannot keep inherited
+  stdout or stderr pipes open and indefinitely block its parent Agent or shell
+  workspace lock.
+- **Bounded cancellation and timeout drain** - preserves partial output and
+  cancellation status, terminates the owned process tree, and avoids a second
+  unbounded `communicate()` wait after timeout.
+
+### Optional Local SenseVoice Transcription
+
+- **FunASR / SenseVoice choice** - adds SenseVoice Small as a selectable local
+  speech-to-text model for Talk and Dictation alongside faster-whisper, with
+  the selected local model applied consistently when either voice mode starts.
+- **Explicit installation only** - keeps readiness checks, startup, and normal
+  transcription cache-only; the approximately 940 MB ModelScope snapshot is
+  downloaded only from the Voice settings action.
+- **Verified offline snapshot** - accepts only a complete model inside
+  Row-Bot's SenseVoice cache, persists the verified path across restarts, runs
+  CPU inference against that local path, and disables FunASR update checks.
+- **Recoverable status and setup** - distinguishes unsupported platforms,
+  missing packages, missing model data, and invalid snapshots; exposes clear
+  install or reinstall guidance without making the model appear ready early.
+- **Transparent network boundary** - discloses the ModelScope download, model
+  size, license, and SDK user-agent before installation; no audio, prompts, or
+  usage data are sent, and regular transcription remains offline.
+- **Platform guard** - keeps SenseVoice unavailable on Intel macOS, where the
+  matching CPU PyTorch and Torchaudio wheels are not published, while leaving
+  local Whisper available.
+
+### Telegram, Tunnel And Startup Resilience
+
+- **Retryable Telegram initialization** - retries one transient Telegram
+  network failure and gives polling one bootstrap retry without looping on an
+  invalid token.
+- **Clean failed-start recovery** - shuts down every partially initialized
+  Telegram component best-effort, clears global lifecycle state, surfaces a
+  safe actionable invalid-token error, and permits a fresh start afterwards.
+- **Non-blocking command registration** - starts polling before registering
+  the BotFather command menu so a registration failure cannot take a working
+  bot offline.
+- **Responsive tunnel auto-start** - shows an explicit startup stage and moves
+  main-app tunnel creation off the UI event loop so slow tunnel setup does not
+  freeze the startup experience.
+- **Reliable splash completion** - treats the `/readyz` HTTP success status as
+  the readiness contract instead of requiring a JSON body that the public
+  readiness boundary does not promise.
+- **Credential-safe channel diagnostics** - records only the channel name and
+  exception type for manual start failures while preserving the existing
+  user-facing error notification.
+
+### Ollama Readiness And Docker Release Validation
+
+- **Native Ollama capabilities** - consumes the daemon-reported
+  `capabilities` list when available, allowing new or unknown model families
+  that advertise `tools` to enter Agent mode without an unnecessary live
+  round-trip probe.
+- **Authoritative negative detection** - does not mark a familiar family as
+  tool-capable when Ollama explicitly omits `tools`; an explicit boolean
+  capability remains highest priority and the maintained family table remains
+  the fallback only when native metadata is absent.
+- **Stable container readiness** - requires two consecutive successful
+  `/healthz` and `/readyz` samples and gives every functional Docker smoke
+  request a configurable timeout.
+- **Safe transient HTTP retry** - retries short-lived transport failures only
+  for idempotent GET checks after restarts or recreation and never replays
+  invitation claims, refreshes, or other POST operations.
+- **Actionable secret-safe failures** - reports the failed stage, HTTP method,
+  path, and exception type, then emits bounded container state and log-tail
+  diagnostics with exact smoke-owned invitation, session, and encryption
+  values redacted.
+
+### Memory, Dependencies And Public Documentation
+
+- **Consistent embedding snapshots** - applies the same GGUF, ONNX, and
+  OpenVINO ignore filters during cache-only local-embedding lookup as during
+  explicit download, preventing a valid cached snapshot from being
+  misidentified or resolved differently.
+- **Voice runtime dependency verification** - adds FunASR, ModelScope,
+  matching CPU PyTorch/Torchaudio packages, lockfile coverage, installer export
+  coverage, and platform-aware import verification to the voice and all extras.
+- **Security dependency cleanup** - updates the Python, documentation-site,
+  and WhatsApp bridge resolutions, upgrades the supported arXiv,
+  Hugging Face/Transformers, and pytest lines, pins vulnerable documentation
+  transitive packages where compatible, and narrows OSV exceptions to the
+  remaining reviewed packages without compatible fixes.
+- **4.7 public-site alignment** - updates the post-tag landing, Features, and
+  Architecture pages and their contracts to the v4.7.0 downloads, metadata,
+  cache revisions, progressive capability loading, context management, and
+  trusted-address descriptions.
+- **README voice disclosure** - documents the SenseVoice option, explicit
+  ModelScope download, offline inference boundary, Intel macOS limitation, and
+  FunASR acknowledgement.
+- **4.7.1 release documentation** - updates the full README and architecture
+  reference, public Voice, Remote Access, Agents, Developer, Channels, Ollama,
+  and Docker guides, generated reference/search artifacts, installer build
+  notes, marketing support pages, and release-version metadata while leaving
+  the separately staged landing `index.html` unchanged.
+
+### Tests And Release Validation
+
+- **Agent recovery coverage** - verifies folder registration, invalid workspace
+  inputs, independent writer locks, first-delegation snapshots, orphan-only
+  checkpoint repair, terminal-child parent wakeup, detached descendants,
+  bounded timeout cleanup, cancellation output, and shell lock release.
+- **Voice coverage** - verifies no-download startup and transcription,
+  explicit snapshot installation, persisted and contained model paths,
+  incomplete-cache recovery, package/platform status, catalog readiness,
+  Talk/Dictation selection, dependency metadata, and settings disclosures.
+- **Telegram lifecycle coverage** - verifies one-retry success, exhausted
+  network cleanup, invalid-token handling, non-fatal command registration, and
+  a clean restart after partial initialization failure.
+- **Provider and Docker coverage** - verifies Ollama native positive, negative,
+  and explicit-override precedence plus Docker readiness stability, GET-only
+  retries, POST no-replay, functional request deadlines, bounded diagnostics,
+  and credential redaction.
+- **Documentation contracts** - verifies the staged v4.7.1 support-page
+  downloads and metadata alongside the unchanged v4.7.0 landing page,
+  evergreen feature inventory, generated references, architecture copy,
+  internal links, responsive fallbacks, and analytics boundaries.
+
+### Breaking Changes And Caveats
+
+- No application data migration or public CLI break is introduced by v4.7.1.
+- SenseVoice requires an explicit approximately 940 MB ModelScope download and
+  is not supported on Intel macOS. Local Whisper remains the default and the
+  fallback local transcription path.
+- Separate `developer_workspace_path` folders permit independent child writer
+  locks; changing only a shell working directory does not. Existing folders
+  are registered, never created implicitly, and the same folder still permits
+  only one child writer at a time.
+- A detached command is considered complete when the directly launched process
+  exits. Row-Bot does not adopt or later cancel an intentionally detached
+  descendant that has left the owned process group.
+- Docker smoke transport retries remain deliberately limited to GET requests;
+  non-idempotent access and session operations fail without replay.
+- The remaining temporary OSV exceptions cover only reviewed dependency
+  versions without a compatible fixed line and expire on September 30, 2026.
+
 ## v4.7.0 - Progressive Capabilities, Context Management & Trusted Access
 
 This release builds on v4.6.0 with a prompt-efficiency, long-conversation,

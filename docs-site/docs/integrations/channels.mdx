@@ -40,6 +40,8 @@ When work starts from a channel and a child agent asks for approval, Row-Bot sen
 
 ## Troubleshooting
 
-- If a channel cannot start, check required fields and tunnel state.
+- If Telegram encounters one transient network failure during initialization, Row-Bot cleans up the partial runtime and retries once. Persistent network failures remain stopped with an actionable diagnostic; invalid bot tokens are not retried.
+- If Telegram starts but its command menu cannot be registered, polling remains available and the menu failure is logged as non-fatal.
+- If a channel cannot start, check required fields and tunnel state. Automatic tunnel startup runs outside the UI event loop, so a slow tunnel helper should report status without freezing app startup.
 - If inbound messages fail, verify webhook URLs and platform permissions.
 - If the wrong person has access, revoke them from Paired Users.

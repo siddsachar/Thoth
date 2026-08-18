@@ -20,7 +20,8 @@ Open **Settings**, then choose **Voice** from the left tab list.
 - Talk settings decide whether spoken input submits directly to Row-Bot.
 - Dictate settings decide whether speech is inserted into the composer for review before sending.
 - Read-aloud settings control spoken assistant responses.
-- Local voice controls use local speech components where available.
+- Local voice controls choose Whisper, the default local STT engine, or the optional FunASR/SenseVoice engine for Talk and Dictate.
+- SenseVoice readiness shows whether the platform, packaged runtime, and verified local model snapshot are ready. Its install action is always explicit.
 - Realtime voice controls use provider-backed low-latency voice models.
 - Device controls select microphone and output devices.
 - Voice Models shows runtime defaults and provider voice models.
@@ -30,16 +31,17 @@ Open **Settings**, then choose **Voice** from the left tab list.
 
 1. Use Dictate first if you want to review text before sending.
 2. Use Talk when you want hands-light conversation and are comfortable with immediate submission.
-3. Choose local voice for privacy and offline-style behavior when supported.
-4. Choose realtime voice when latency matters and you accept provider requirements, cost, and internet use.
+3. Choose local Whisper for the default local path, or install and select SenseVoice Small when you want the optional FunASR engine.
+4. Treat the SenseVoice install as a deliberate approximately 940 MB ModelScope download. After verification, normal transcription stays local and cache-only.
+5. Choose realtime voice when latency matters and you accept provider requirements, cost, and internet use.
 
 ## What Is Saved
 
-Voice preferences are global. Transcribed text belongs to the active thread once submitted. Provider-backed voice can send audio or transcript data to the selected provider.
+Voice preferences are global. Transcribed text belongs to the active thread once submitted. The verified SenseVoice snapshot is stored under the active Row-Bot data directory. Provider-backed voice can send audio or transcript data to the selected provider.
 
 ## Privacy And Safety
 
-Review credential, account, channel, provider, or tool settings before enabling features that can contact outside services. Local-only features stay on your machine until you ask Row-Bot to use a provider, account, channel, MCP server, plugin, or tool that sends data elsewhere.
+Review credential, account, channel, provider, or tool settings before enabling features that can contact outside services. Local-only features stay on your machine until you ask Row-Bot to use a provider, account, channel, MCP server, plugin, or tool that sends data elsewhere. The explicit SenseVoice install contacts ModelScope for the model download; it does not send audio, prompts, or usage data, and ordinary inference does not check for updates.
 
 ## Control-Level Reference
 
@@ -48,5 +50,7 @@ The [generated Settings Controls reference](/docs/reference/generated/settings-c
 ## Troubleshooting
 
 - If the microphone is silent, check the selected input device and browser/app permissions.
+- If SenseVoice is missing or invalid, use its install or reinstall action in Voice settings. Source installs also require the `voice` extra.
+- SenseVoice is unavailable on Intel macOS because the required CPU PyTorch and Torchaudio wheels are not published for that runtime; use local Whisper there.
 - If realtime voice is unavailable, configure a compatible provider in Providers.
 - If Talk submits too quickly, use Dictate mode instead.
