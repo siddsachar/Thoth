@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,7 @@ def _fresh_agent_tool_modules(tmp_path, monkeypatch):
         "row_bot.agent_runs",
         "row_bot.agent_context",
         "row_bot.agent_runner",
+        "row_bot.developer.storage",
         "row_bot.tools.agent_tool",
     ):
         sys.modules.pop(name, None)
@@ -128,6 +130,106 @@ def test_delegate_work_uses_runner_and_returns_public_run(tmp_path, monkeypatch)
     assert "continue useful independent work" in payload["next_action"].lower()
 
 
+def test_delegate_work_persists_initial_parent_continuation(tmp_path, monkeypatch):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(
+        agent_tool,
+        "_runtime_context",
+        lambda: {
+            "thread_id": "parent-thread",
+            "generation_id": "parent-generation",
+            "root_objective": "Coordinate the child results.",
+            "model_override": "provider:model",
+            "approval_mode": "block",
+            "runtime_surface": "normal_chat",
+            "enabled_tool_names": ["agents", "shell"],
+        },
+    )
+
+    def fake_spawn(objective, **kwargs):
+        return {
+            "id": "continuation-run",
+            "kind": "subagent",
+            "status": "queued",
+            "parent_thread_id": kwargs["parent_thread_id"],
+        }
+
+    monkeypatch.setattr(agent_tool.agent_runner, "spawn_agent_run", fake_spawn)
+
+    payload = json.loads(
+        agent_tool._delegate_work(
+            objective="Complete one part.",
+            wait=False,
+            config={
+                "configurable": {
+                    "thread_id": "parent-thread",
+                    "generation_id": "parent-generation",
+                    "runtime_channel": "local",
+                    "__pregel_send": object(),
+                }
+            },
+        )
+    )
+
+    import row_bot.agent_orchestrator as orchestrator
+
+    orchestration = orchestrator.get_orchestration(payload["orchestration"]["id"])
+    continuation = orchestration["continuation_state_json"]
+    configurable = continuation["config"]["configurable"]
+    assert continuation["enabled_tool_names"] == ["agents", "shell"]
+    assert configurable["thread_id"] == "parent-thread"
+    assert configurable["generation_id"] == "parent-generation"
+    assert configurable["runtime_channel"] == "local"
+    assert "__pregel_send" not in configurable
+    assert "finalization_ready" not in continuation
+
+
+def test_checkpoint_repair_closes_only_orphaned_tool_calls() -> None:
+    from langchain_core.messages import AIMessage, ToolMessage
+    from row_bot.agent import repair_orphaned_tool_calls
+
+    messages = [
+        AIMessage(
+            content="Starting tools",
+            tool_calls=[
+                {"name": "run_command", "args": {}, "id": "answered"},
+                {"name": "run_command", "args": {}, "id": "orphaned"},
+            ],
+        ),
+        ToolMessage(
+            content="completed",
+            name="run_command",
+            tool_call_id="answered",
+        ),
+    ]
+
+    class FakeGraph:
+        def __init__(self):
+            self.updates = []
+
+        def get_state(self, _config):
+            return SimpleNamespace(values={"messages": messages})
+
+        def update_state(self, _config, values):
+            self.updates.append(values)
+
+    graph = FakeGraph()
+    repaired = repair_orphaned_tool_calls(
+        [],
+        {"configurable": {"thread_id": "parent"}},
+        agent_graph=graph,
+        orphan_message="[Interrupted; not retried]",
+        marker_message="[Recovered]",
+    )
+
+    assert repaired == 1
+    patched_tools = graph.updates[0]["messages"]
+    assert [message.tool_call_id for message in patched_tools] == ["orphaned"]
+    assert patched_tools[0].content == "[Interrupted; not retried]"
+    assert graph.updates[1]["messages"][0].content == "[Recovered]"
+
+
 def test_optional_background_child_is_still_a_durable_member(
     tmp_path,
     monkeypatch,
@@ -161,6 +263,97 @@ def test_optional_background_child_is_still_a_durable_member(
     assert payload["orchestration"]["required"] is False
     assert calls["kwargs"]["orchestration_id"] == payload["orchestration"]["id"]
     assert calls["kwargs"]["orchestration_required"] is False
+
+
+def test_delegate_work_registers_workspace_path_and_forwards_id(tmp_path, monkeypatch):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    workspace_folder = tmp_path / "independent-child"
+    workspace_folder.mkdir()
+    calls = {}
+
+    def fake_spawn(objective, **kwargs):
+        calls["objective"] = objective
+        calls["kwargs"] = kwargs
+        return {
+            "id": "folder-run",
+            "kind": "subagent",
+            "status": "completed",
+            "workspace_id": kwargs["developer_workspace_id"],
+            "workspace_mode": "single_writer",
+        }
+
+    monkeypatch.setattr(agent_tool.agent_runner, "spawn_agent_run", fake_spawn)
+
+    payload = json.loads(agent_tool._delegate_work(
+        objective="Write into the assigned folder.",
+        developer_workspace_path=str(workspace_folder),
+        wait=True,
+    ))
+
+    from row_bot.developer.storage import get_workspace
+
+    workspace_id = calls["kwargs"]["developer_workspace_id"]
+    workspace = get_workspace(workspace_id)
+    assert payload["ok"] is True
+    assert workspace is not None
+    assert workspace.path == str(workspace_folder.resolve())
+    assert payload["run"]["workspace"]["id"] == workspace_id
+    assert calls["kwargs"]["use_worktree"] is False
+
+
+def test_delegate_work_rejects_conflicting_workspace_inputs_without_spawning(
+    tmp_path,
+    monkeypatch,
+):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    workspace_folder = tmp_path / "conflicting-child"
+    workspace_folder.mkdir()
+    calls = {"count": 0}
+
+    def fake_spawn(objective, **kwargs):
+        calls["count"] += 1
+        return {}
+
+    monkeypatch.setattr(agent_tool.agent_runner, "spawn_agent_run", fake_spawn)
+
+    payload = json.loads(agent_tool._delegate_work(
+        objective="Do not start.",
+        developer_workspace_id="dev-existing",
+        developer_workspace_path=str(workspace_folder),
+        wait=True,
+    ))
+
+    assert payload["ok"] is False
+    assert "mutually exclusive" in payload["message"]
+    assert payload["run"] == {}
+    assert calls["count"] == 0
+
+
+def test_delegate_work_rejects_missing_workspace_path_without_spawning(
+    tmp_path,
+    monkeypatch,
+):
+    agent_tool, _agent_runs = _fresh_agent_tool_modules(tmp_path, monkeypatch)
+    missing_folder = tmp_path / "missing-child"
+    calls = {"count": 0}
+
+    def fake_spawn(objective, **kwargs):
+        calls["count"] += 1
+        return {}
+
+    monkeypatch.setattr(agent_tool.agent_runner, "spawn_agent_run", fake_spawn)
+
+    payload = json.loads(agent_tool._delegate_work(
+        objective="Do not start.",
+        developer_workspace_path=str(missing_folder),
+        wait=True,
+    ))
+
+    assert payload["ok"] is False
+    assert payload["message"] == f"Workspace folder does not exist: {missing_folder}"
+    assert payload["run"] == {}
+    assert calls["count"] == 0
+    assert missing_folder.exists() is False
 
 
 def test_delegate_work_resolves_optional_model_to_canonical_ref(tmp_path, monkeypatch):
@@ -290,6 +483,10 @@ def test_agents_guide_mentions_pinned_model_resolution() -> None:
     assert "before finalizing" in guide
     assert "later wave" in guide
     assert "do not loop on `agent_status`" in guide
+    assert "developer_workspace_path" in guide
+    assert "distinct" in guide
+    assert "changing shell cwd alone does not change agent workspace locking" in guide
+    assert "same folder still serialize" in guide
 
 
 def test_delegate_work_schema_is_async_first() -> None:
@@ -302,7 +499,13 @@ def test_delegate_work_schema_is_async_first() -> None:
     worktree_description = str(
         _DelegateWorkInput.model_fields["use_worktree"].description or ""
     ).lower()
+    workspace_path_description = str(
+        _DelegateWorkInput.model_fields["developer_workspace_path"].description or ""
+    ).lower()
     assert "local git worktree" in worktree_description
+    assert "existing local folder" in workspace_path_description
+    assert "distinct folder paths" in workspace_path_description
+    assert "mutually exclusive" in workspace_path_description
     context_description = str(
         _DelegateWorkInput.model_fields["context"].description or ""
     ).lower()

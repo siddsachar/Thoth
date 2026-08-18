@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import threading
 
 from row_bot.cancellation import CancellationScope, use_cancellation_scope
@@ -40,6 +41,40 @@ class _FakeProcess:
         self.terminated.set()
 
 
+class _ExitedDirectProcess:
+    pid = 2345
+    returncode = 0
+
+    def __init__(self, stdout, stderr) -> None:
+        stdout.write(b"direct stdout")
+        stderr.write(b"direct stderr")
+        self.communicate_calls: list[float | None] = []
+
+    def communicate(self, timeout=None):
+        self.communicate_calls.append(timeout)
+        return None, None
+
+    def poll(self):
+        return self.returncode
+
+
+class _ExitedAtTimeoutProcess:
+    pid = 3456
+    returncode = 0
+
+    def __init__(self) -> None:
+        self.communicate_calls: list[float | None] = []
+
+    def communicate(self, timeout=None):
+        self.communicate_calls.append(timeout)
+        if timeout is None:
+            raise AssertionError("subprocess cleanup must never communicate without a timeout")
+        raise subprocess.TimeoutExpired(["fake"], timeout=timeout)
+
+    def poll(self):
+        return self.returncode
+
+
 def test_run_cancellable_subprocess_terminates_process_when_scope_is_cancelled(monkeypatch) -> None:
     import row_bot.process_cancellation as process_cancellation
 
@@ -67,3 +102,44 @@ def test_run_cancellable_subprocess_terminates_process_when_scope_is_cancelled(m
     assert result_holder[0].returncode == 130
     assert result_holder[0].stdout == "partial stdout"
     assert result_holder[0].stderr == "partial stderr"
+
+
+def test_run_cancellable_subprocess_does_not_wait_for_descendant_pipe_eof(
+    monkeypatch,
+) -> None:
+    import row_bot.process_cancellation as process_cancellation
+
+    captured = {}
+
+    def fake_popen(*_args, **kwargs):
+        captured.update(kwargs)
+        return _ExitedDirectProcess(kwargs["stdout"], kwargs["stderr"])
+
+    monkeypatch.setattr(process_cancellation.subprocess, "Popen", fake_popen)
+
+    result = run_cancellable_subprocess(["fake"], cwd=".", timeout=30)
+
+    assert captured["stdout"] is not subprocess.PIPE
+    assert captured["stderr"] is not subprocess.PIPE
+    assert result.returncode == 0
+    assert result.stdout == "direct stdout"
+    assert result.stderr == "direct stderr"
+
+
+def test_run_cancellable_subprocess_timeout_has_no_unbounded_second_drain(
+    monkeypatch,
+) -> None:
+    import row_bot.process_cancellation as process_cancellation
+
+    fake = _ExitedAtTimeoutProcess()
+    monkeypatch.setattr(
+        process_cancellation.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: fake,
+    )
+
+    result = run_cancellable_subprocess(["fake"], cwd=".", timeout=7)
+
+    assert result.timed_out is True
+    assert result.returncode == 124
+    assert fake.communicate_calls == [7]

@@ -17,6 +17,7 @@ def _fresh_lock_modules(tmp_path, monkeypatch):
         "row_bot.agent_runs",
         "row_bot.agent_context",
         "row_bot.agent_runner",
+        "row_bot.developer.storage",
     ):
         sys.modules.pop(name, None)
 
@@ -97,6 +98,64 @@ def test_write_capable_agents_queue_until_lock_released(tmp_path, monkeypatch):
     assert agent_runs.list_agent_write_locks() == []
     assert first_final["write_lock_key"] == f"thread:{parent_thread_id}"
     assert second_final["write_lock_key"] == f"thread:{parent_thread_id}"
+
+
+def test_distinct_developer_workspaces_allow_concurrent_writers(tmp_path, monkeypatch):
+    threads, agent_runs, agent_runner = _fresh_lock_modules(tmp_path, monkeypatch)
+    parent_thread_id = threads.create_thread("Parent")
+    first_started = threading.Event()
+    second_started = threading.Event()
+    both_started = threading.Event()
+    release_children = threading.Event()
+
+    def fake_invoke(prompt, enabled_tool_names, config, *, stop_event):
+        started = first_started if "First workspace writer" in prompt else second_started
+        started.set()
+        if first_started.is_set() and second_started.is_set():
+            both_started.set()
+        assert both_started.wait(timeout=2.0)
+        assert release_children.wait(timeout=2.0)
+        return "done"
+
+    monkeypatch.setattr(agent_runner, "_invoke_agent", fake_invoke)
+
+    first = agent_runner.spawn_agent_run(
+        "First workspace writer",
+        parent_thread_id=parent_thread_id,
+        profile="worker",
+        developer_workspace_id="dev-first-folder",
+        enabled_tool_names=[],
+        wait=False,
+    )
+    second = agent_runner.spawn_agent_run(
+        "Second workspace writer",
+        parent_thread_id=parent_thread_id,
+        profile="worker",
+        developer_workspace_id="dev-second-folder",
+        enabled_tool_names=[],
+        wait=False,
+    )
+
+    assert both_started.wait(timeout=1.0)
+    first_running = agent_runs.get_agent_run(first["id"])
+    second_running = agent_runs.get_agent_run(second["id"])
+    assert first_running["status"] == "running"
+    assert second_running["status"] == "running"
+    assert first_running["write_lock_key"] == "developer:dev-first-folder"
+    assert second_running["write_lock_key"] == "developer:dev-second-folder"
+    assert first_running["write_lock_key"] != second_running["write_lock_key"]
+    assert {lock["lock_key"] for lock in agent_runs.list_agent_write_locks()} == {
+        "developer:dev-first-folder",
+        "developer:dev-second-folder",
+    }
+
+    release_children.set()
+    first_final = agent_runner.wait_for_agent_run(first["id"], timeout=2.0)
+    second_final = agent_runner.wait_for_agent_run(second["id"], timeout=2.0)
+
+    assert first_final["status"] == "completed"
+    assert second_final["status"] == "completed"
+    assert agent_runs.list_agent_write_locks() == []
 
 
 def test_queued_parent_message_is_applied_before_agent_starts(tmp_path, monkeypatch):

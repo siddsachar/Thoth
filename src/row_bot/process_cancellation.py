@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass
 from typing import Any, Sequence
@@ -45,56 +46,83 @@ def run_cancellable_subprocess(
             cancelled=True,
         )
 
-    popen_kwargs: dict[str, Any] = {
-        "cwd": cwd,
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.PIPE,
-        "text": text,
-        "shell": False,
-    }
-    if encoding is not None:
-        popen_kwargs["encoding"] = encoding
-    if errors is not None:
-        popen_kwargs["errors"] = errors
-    if os.name == "nt":
-        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    else:
-        popen_kwargs["start_new_session"] = True
+    # Capture to files rather than pipes. A deliberately detached descendant
+    # can inherit its parent's stdout/stderr handles; with PIPE, communicate()
+    # then waits for descendant EOF even after the process we launched exits.
+    # File-backed capture keeps the lifecycle boundary on the direct process.
+    with tempfile.TemporaryFile(mode="w+b") as stdout_capture, tempfile.TemporaryFile(
+        mode="w+b"
+    ) as stderr_capture:
+        popen_kwargs: dict[str, Any] = {
+            "cwd": cwd,
+            "stdout": stdout_capture,
+            "stderr": stderr_capture,
+            "text": text,
+            "shell": False,
+        }
+        if encoding is not None:
+            popen_kwargs["encoding"] = encoding
+        if errors is not None:
+            popen_kwargs["errors"] = errors
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            )
+        else:
+            popen_kwargs["start_new_session"] = True
 
-    proc = subprocess.Popen(list(args), **popen_kwargs)
-    unregister = None
-    if scope is not None:
-        unregister = scope.register(
-            lambda: request_process_stop(proc),
-            "subprocess.terminate",
-        )
+        proc = subprocess.Popen(list(args), **popen_kwargs)
+        unregister = None
+        if scope is not None:
+            unregister = scope.register(
+                lambda: request_process_stop(proc),
+                "subprocess.terminate",
+            )
 
-    try:
+        communicated_stdout: Any = None
+        communicated_stderr: Any = None
+        timed_out = False
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _stop_process_tree_sync(proc)
-            stdout, stderr = proc.communicate()
+            try:
+                communicated_stdout, communicated_stderr = proc.communicate(
+                    timeout=timeout
+                )
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _stop_process_tree_sync(proc)
+        finally:
+            if unregister is not None:
+                unregister()
+
+        stdout = _read_capture(
+            stdout_capture,
+            fallback=communicated_stdout,
+            encoding=encoding,
+            errors=errors,
+        )
+        stderr = _read_capture(
+            stderr_capture,
+            fallback=communicated_stderr,
+            encoding=encoding,
+            errors=errors,
+        )
+        cancelled = bool(scope is not None and scope.is_cancelled())
+        if timed_out:
             return ProcessRunResult(
                 args=args,
                 returncode=124,
-                stdout=_coerce_text(stdout),
-                stderr=_coerce_text(stderr),
+                stdout=stdout,
+                stderr=stderr,
                 timed_out=True,
-                cancelled=bool(scope is not None and scope.is_cancelled()),
+                cancelled=cancelled,
             )
-    finally:
-        if unregister is not None:
-            unregister()
-
-    cancelled = bool(scope is not None and scope.is_cancelled())
-    return ProcessRunResult(
-        args=args,
-        returncode=130 if cancelled else int(proc.returncode or 0),
-        stdout=_coerce_text(stdout),
-        stderr=_coerce_text(stderr),
-        cancelled=cancelled,
-    )
+        return ProcessRunResult(
+            args=args,
+            returncode=130 if cancelled else int(proc.returncode or 0),
+            stdout=stdout,
+            stderr=stderr,
+            cancelled=cancelled,
+        )
 
 
 def request_process_stop(proc: subprocess.Popen, *, kill_after: float = 0.75) -> None:
@@ -172,3 +200,26 @@ def _coerce_text(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return str(value)
+
+
+def _read_capture(
+    capture: Any,
+    *,
+    fallback: Any = None,
+    encoding: str | None = None,
+    errors: str | None = None,
+) -> str:
+    """Read the output available when the direct subprocess finished."""
+
+    try:
+        capture.flush()
+        capture.seek(0)
+        value = capture.read()
+    except Exception:
+        logger.debug("Could not read subprocess output capture", exc_info=True)
+        value = None
+    if value in {None, b"", ""}:
+        value = fallback
+    if isinstance(value, bytes):
+        return value.decode(encoding or "utf-8", errors=errors or "replace")
+    return _coerce_text(value)

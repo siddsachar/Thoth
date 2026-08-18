@@ -5258,14 +5258,16 @@ def _tool_support_error(message: str) -> bool:
 
 def repair_orphaned_tool_calls(enabled_tool_names: list[str] | None = None,
                                config: dict | None = None,
-                               *, agent_graph=None) -> None:
+                               *, agent_graph=None,
+                               orphan_message: str = "[Cancelled by user]",
+                               marker_message: str = "\u23f9\ufe0f *[Stopped]*") -> int | None:
     """Patch the checkpoint so every AIMessage tool_call has a ToolMessage.
 
     Called after stop-generation to prevent
     ``INVALID_CHAT_HISTORY`` errors on the next query.
     """
     if config is None:
-        return
+        return 0
     try:
         agent = agent_graph
         if agent is None:
@@ -5277,13 +5279,13 @@ def repair_orphaned_tool_calls(enabled_tool_names: list[str] | None = None,
                     "repair_orphaned_tool_calls skipped: could not build graph for active model: %s",
                     exc,
                 )
-                return
+                return None
         state = agent.get_state(config)
         if not state or not state.values:
-            return
+            return 0
         msgs = state.values.get("messages", [])
         if not msgs:
-            return
+            return 0
 
         # Collect IDs of existing ToolMessages
         answered = {m.tool_call_id for m in msgs if m.type == "tool"}
@@ -5294,7 +5296,7 @@ def repair_orphaned_tool_calls(enabled_tool_names: list[str] | None = None,
             for tc in getattr(m, "tool_calls", []):
                 if tc.get("id") and tc["id"] not in answered:
                     patches.append(ToolMessage(
-                        content="[Cancelled by user]",
+                        content=str(orphan_message or "[Tool call did not complete]"),
                         name=tc["name"],
                         tool_call_id=tc["id"],
                     ))
@@ -5306,13 +5308,15 @@ def repair_orphaned_tool_calls(enabled_tool_names: list[str] | None = None,
             agent.update_state(config, {"messages": patches})
             # Add a visible stop marker so the conversation reloads correctly
             agent.update_state(config, {"messages": [
-                AIMessage(content="\u23f9\ufe0f *[Stopped]*")
+                AIMessage(content=str(marker_message or "\u23f9\ufe0f *[Stopped]*"))
             ]})
             logger.warning("repair_orphaned_tool_calls: checkpoint patched successfully")
         else:
             logger.debug("repair_orphaned_tool_calls: no orphaned tool_calls in %d messages", len(msgs))
+        return len(patches)
     except Exception:
         logger.warning("repair_orphaned_tool_calls failed", exc_info=True)
+        return None
 
 
 def resume_stream_agent(enabled_tool_names: list[str], config: dict, approved: bool,

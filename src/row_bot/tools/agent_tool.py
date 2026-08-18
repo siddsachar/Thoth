@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import uuid
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, model_validator
 
@@ -38,6 +40,73 @@ def _runtime_context() -> dict[str, Any]:
         return get_active_runtime_context()
     except Exception:
         return {}
+
+
+_PARENT_CONFIGURABLE_KEYS = {
+    "agent_profile_id",
+    "agent_profile_snapshot",
+    "approval_mode",
+    "channel_streaming",
+    "designer_project_id",
+    "developer_context",
+    "developer_workspace_id",
+    "external_discovery_active",
+    "generation_id",
+    "model_override",
+    "plugin_id",
+    "project_workspace_id",
+    "root_objective",
+    "runtime_channel",
+    "runtime_mode",
+    "runtime_surface",
+    "thread_id",
+    "tool_allowlist",
+    "voice_mode",
+    "voice_transport",
+}
+
+
+def _initial_parent_continuation(
+    *,
+    config: RunnableConfig | None,
+    runtime: dict[str, Any],
+    parent_thread_id: str,
+    generation_id: str,
+    root_objective: str,
+    model_ref: str,
+    enabled_tool_names: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Snapshot only durable parent config, excluding ToolNode internals."""
+
+    raw_configurable = (config or {}).get("configurable") or {}
+    configurable = {
+        key: copy.deepcopy(value)
+        for key, value in raw_configurable.items()
+        if key in _PARENT_CONFIGURABLE_KEYS
+    }
+    configurable.update({
+        "thread_id": parent_thread_id,
+        "generation_id": generation_id,
+        "root_objective": root_objective,
+        "model_override": model_ref,
+        "approval_mode": str(runtime.get("approval_mode") or ""),
+        "runtime_surface": str(runtime.get("runtime_surface") or "chat"),
+    })
+    continuation = {
+        "config": {"configurable": configurable},
+        "enabled_tool_names": [
+            str(name) for name in enabled_tool_names if str(name or "").strip()
+        ],
+    }
+    delivery = {
+        "runtime_surface": str(configurable.get("runtime_surface") or ""),
+        "runtime_channel": str(configurable.get("runtime_channel") or ""),
+        "plugin_id": str(configurable.get("plugin_id") or ""),
+        "channel_streaming": bool(configurable.get("channel_streaming")),
+        "voice_mode": bool(configurable.get("voice_mode")),
+        "voice_transport": str(configurable.get("voice_transport") or ""),
+    }
+    return continuation, delivery
 
 
 def _public_run(run: dict[str, Any] | None) -> dict[str, Any]:
@@ -206,6 +275,14 @@ class _DelegateWorkInput(BaseModel):
         default="",
         description="Optional Developer workspace id to use. Omit to inherit the current thread workspace.",
     )
+    developer_workspace_path: str = Field(
+        default="",
+        description=(
+            "Optional existing local folder to register and assign only to this child Agent. "
+            "Use distinct folder paths for independent parallel writers. Mutually exclusive "
+            "with developer_workspace_id."
+        ),
+    )
     use_worktree: bool = Field(
         default=False,
         description="Run the child in its own local git Worktree when a git-backed Developer workspace is available.",
@@ -322,6 +399,7 @@ def _delegate_work(
     model: str = "",
     parent_thread_id: str = "",
     developer_workspace_id: str = "",
+    developer_workspace_path: str = "",
     use_worktree: bool = False,
     workspace_mode: str = "",
     parent_run_id: str = "",
@@ -331,6 +409,7 @@ def _delegate_work(
     required: bool = True,
     orchestration_id: str = "",
     depends_on: list[str] | None = None,
+    config: RunnableConfig = None,
 ) -> str:
     runtime = _runtime_context()
     parent_thread_id = parent_thread_id or str(runtime.get("thread_id") or "")
@@ -338,6 +417,26 @@ def _delegate_work(
     # top-level chat calls have no active run id and retain the explicit value.
     parent_run_id = str(runtime.get("agent_run_id") or parent_run_id or "")
     enabled_tool_names = list(runtime.get("enabled_tool_names") or ())
+    workspace_path = str(developer_workspace_path or "").strip()
+    if str(developer_workspace_id or "").strip() and workspace_path:
+        return _json_response({
+            "ok": False,
+            "message": (
+                "developer_workspace_id and developer_workspace_path are mutually exclusive."
+            ),
+            "run": {},
+        })
+    if workspace_path:
+        try:
+            from row_bot.developer.storage import add_or_update_local_workspace
+
+            developer_workspace_id = add_or_update_local_workspace(workspace_path).id
+        except Exception as exc:
+            return _json_response({
+                "ok": False,
+                "message": str(exc),
+                "run": {},
+            })
     parent_model_ref = str(runtime.get("model_override") or "").strip()
     if not parent_model_ref:
         try:
@@ -394,6 +493,15 @@ def _delegate_work(
                     else:
                         generation_id = f"implicit-{uuid.uuid4().hex[:12]}"
                 if not orchestration:
+                    continuation_state, delivery_context = _initial_parent_continuation(
+                        config=config,
+                        runtime=runtime,
+                        parent_thread_id=parent_thread_id,
+                        generation_id=generation_id,
+                        root_objective=root_objective,
+                        model_ref=parent_model_ref,
+                        enabled_tool_names=enabled_tool_names,
+                    )
                     orchestration = create_or_get_orchestration(
                         parent_thread_id=parent_thread_id,
                         parent_generation_id=generation_id,
@@ -402,6 +510,8 @@ def _delegate_work(
                         model_ref=parent_model_ref,
                         approval_mode=str(runtime.get("approval_mode") or ""),
                         runtime_surface=str(runtime.get("runtime_surface") or "chat"),
+                        continuation_state=continuation_state,
+                        delivery_context=delivery_context,
                         orchestration_version=2,
                     )
             orchestration_id = str(orchestration["id"])

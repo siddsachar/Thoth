@@ -327,6 +327,10 @@ def test_v2_recovery_keeps_inbox_and_resumes_original_parent_only_on_request(
         "row_bot.providers.readiness.ensure_agent_ready",
         lambda _model: object(),
     )
+    monkeypatch.setattr(
+        "row_bot.agent.repair_orphaned_tool_calls",
+        lambda *_args, **_kwargs: 0,
+    )
     monkeypatch.setattr(orchestrator, "_schedule_parent_runner", schedule_parent)
     orchestrator.resume_orchestration(orchestration["id"])
     final = orchestrator.wait_for_parent(orchestration["id"], timeout=2)
@@ -334,3 +338,87 @@ def test_v2_recovery_keeps_inbox_and_resumes_original_parent_only_on_request(
     assert final["status"] == "completed"
     assert calls == ["parent"]
     assert orchestrator.pending_thread_events(orchestration["id"]) == []
+
+
+def test_v2_foreground_recovery_resumes_terminal_children_with_empty_continuation(
+    tmp_path,
+    monkeypatch,
+):
+    agent_runs, orchestrator = _fresh_modules(tmp_path, monkeypatch)
+    orchestration = orchestrator.create_or_get_orchestration(
+        parent_thread_id="foreground-parent",
+        parent_generation_id="foreground-generation",
+        root_objective="Finish from three retained child results.",
+        model_ref="provider:model",
+        approval_mode="block",
+        runtime_surface="normal_chat",
+        orchestration_version=2,
+    )
+    child_ids = ["first-completed", "second-completed", "third-completed"]
+    for child_id in child_ids:
+        child = agent_runs.create_agent_run(
+            run_id=child_id,
+            status="completed",
+            parent_thread_id="foreground-parent",
+            prompt=f"Complete {child_id}",
+            summary=f"Retained result from {child_id}",
+            model_override="provider:model",
+        )
+        orchestrator.register_member(
+            orchestration["id"],
+            child["id"],
+            required=True,
+        )
+        orchestrator.record_thread_event(
+            orchestration["id"],
+            kind="child_terminal",
+            content=child["summary"],
+            run_id=child["id"],
+            source_event_id=f"run:{child['id']}:terminal:completed",
+            payload={"status": "completed", "summary": child["summary"]},
+            request_wake=False,
+        )
+
+    assert orchestrator.get_orchestration(orchestration["id"])[
+        "continuation_state_json"
+    ] == {}
+    repaired = orchestrator.repair_interrupted_orchestrations_batch(limit=10)
+    assert repaired["processed"] == 1
+
+    calls: list[str] = []
+
+    def fake_checkpoint_repair(enabled_tools, config, **kwargs):
+        calls.append("repair")
+        assert enabled_tools == []
+        configurable = config["configurable"]
+        assert configurable["thread_id"] == "foreground-parent"
+        assert configurable["generation_id"] == "foreground-generation"
+        assert "app restart" in kwargs["orphan_message"]
+        return 3
+
+    import row_bot.agent as agent
+
+    monkeypatch.setattr(agent, "repair_orphaned_tool_calls", fake_checkpoint_repair)
+    monkeypatch.setattr("row_bot.tools.registry.is_enabled", lambda name: name == "agents")
+    monkeypatch.setattr(
+        "row_bot.providers.readiness.ensure_agent_ready",
+        lambda _model: object(),
+    )
+    orchestrator.set_test_executors(
+        parent=lambda *_args: calls.append("parent") or "Final retained result",
+        retry=lambda *_args: calls.append("retry") or {},
+        delivery=lambda *_args: True,
+    )
+
+    resumed = orchestrator.resume_orchestration(orchestration["id"])
+    final = orchestrator.wait_for_parent(orchestration["id"], timeout=2)
+
+    assert resumed["status"] in {"waiting_children", "completed"}
+    assert final["status"] == "completed"
+    assert calls == ["repair", "parent"]
+    assert orchestrator.pending_thread_events(orchestration["id"]) == []
+    assert [agent_runs.get_agent_run(run_id)["status"] for run_id in child_ids] == [
+        "completed",
+        "completed",
+        "completed",
+    ]

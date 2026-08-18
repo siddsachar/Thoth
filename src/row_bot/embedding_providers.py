@@ -301,6 +301,7 @@ def _require_cached_snapshot(model_key: str) -> pathlib.Path:
         snapshot_download(
             repo_id=str(LOCAL_MODELS[model_key]["model"]),
             local_files_only=True,
+            ignore_patterns=list(_LOCAL_MODEL_DOWNLOAD_IGNORE_PATTERNS),
         )
     )
 

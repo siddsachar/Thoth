@@ -392,6 +392,7 @@ def create_or_get_orchestration(
     runtime_surface: str,
     parent_run_id: str = "",
     settings_snapshot: Mapping[str, Any] | None = None,
+    continuation_state: Mapping[str, Any] | None = None,
     delivery_context: Mapping[str, Any] | None = None,
     orchestration_version: int = 1,
 ) -> dict[str, Any]:
@@ -433,7 +434,7 @@ def create_or_get_orchestration(
                 "settings_snapshot_json, orchestration_version, parent_state, "
                 "created_at, updated_at, completed_at, "
                 "error_message) VALUES (?, ?, ?, ?, ?, 'planning', ?, ?, ?, 0, 0, "
-                "0, '{}', ?, ?, ?, ?, ?, ?, '', '')",
+                "0, ?, ?, ?, ?, ?, ?, ?, '', '')",
                 (
                     orchestration_id,
                     parent_thread_id,
@@ -443,6 +444,7 @@ def create_or_get_orchestration(
                     model_ref,
                     str(approval_mode or ""),
                     str(runtime_surface or "chat"),
+                    _json_text(dict(continuation_state or {})),
                     _json_text(dict(delivery_context or {})),
                     _json_text(snapshot),
                     version,
@@ -3930,6 +3932,51 @@ def _validate_resume(orchestration: Mapping[str, Any]) -> None:
             )
 
 
+def _repair_interrupted_parent_checkpoint(
+    orchestration: Mapping[str, Any],
+) -> None:
+    """Close abandoned tool calls before the original parent runs again."""
+
+    if not _is_unified_parent(orchestration):
+        return
+    continuation = orchestration.get("continuation_state_json") or {}
+    saved_config = continuation.get("config")
+    config = copy.deepcopy(saved_config) if isinstance(saved_config, dict) else {
+        "configurable": {}
+    }
+    configurable = config.setdefault("configurable", {})
+    configurable.update({
+        "thread_id": str(orchestration.get("parent_thread_id") or ""),
+        "generation_id": str(orchestration.get("parent_generation_id") or ""),
+        "root_objective": str(orchestration.get("root_objective") or ""),
+        "model_override": str(orchestration.get("model_ref") or ""),
+        "approval_mode": str(orchestration.get("approval_mode") or ""),
+        "runtime_surface": str(
+            orchestration.get("runtime_surface") or "normal_chat"
+        ),
+    })
+    _bind_recorded_parent_resources(orchestration, config)
+    enabled_tools = [
+        str(name)
+        for name in continuation.get("enabled_tool_names") or []
+        if str(name or "").strip()
+    ]
+    from row_bot.agent import repair_orphaned_tool_calls
+
+    repaired = repair_orphaned_tool_calls(
+        enabled_tools,
+        config,
+        orphan_message=(
+            "[Interrupted by app restart; this tool call was not retried]"
+        ),
+        marker_message="\u23f9\ufe0f *[Interrupted by app restart]*",
+    )
+    if repaired is None:
+        raise OrchestrationError(
+            "The interrupted parent checkpoint could not be repaired safely."
+        )
+
+
 def resume_orchestration(orchestration_id: str) -> dict[str, Any]:
     """Explicitly resume only unfinished required members after revalidation."""
 
@@ -3939,6 +3986,7 @@ def resume_orchestration(orchestration_id: str) -> dict[str, Any]:
     if orchestration["status"] != "interrupted":
         raise OrchestrationError("Only an interrupted orchestration can be resumed.")
     _validate_resume(orchestration)
+    _repair_interrupted_parent_checkpoint(orchestration)
     interrupted = [
         member
         for member in list_members(orchestration_id, include_runs=False)
@@ -3959,9 +4007,10 @@ def resume_orchestration(orchestration_id: str) -> dict[str, Any]:
     current = get_orchestration(orchestration_id) or orchestration
     continuation = current.get("continuation_state_json") or {}
     if _is_unified_parent(current):
+        wake_ready = _parent_wake_ready(orchestration_id)
         target_status = (
             "waiting_children"
-            if continuation.get("finalization_ready")
+            if continuation.get("finalization_ready") or wake_ready
             else "running"
         )
         conn = _conn()
@@ -3975,9 +4024,7 @@ def resume_orchestration(orchestration_id: str) -> dict[str, Any]:
             conn.commit()
         finally:
             conn.close()
-        if continuation.get("finalization_ready") and _parent_wake_ready(
-            orchestration_id
-        ):
+        if wake_ready:
             request_parent_wake(orchestration_id)
         return orchestration_overview(orchestration_id)
     if continuation.get("finalization_ready"):

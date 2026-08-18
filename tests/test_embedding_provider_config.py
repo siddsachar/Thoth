@@ -581,6 +581,7 @@ def test_download_is_explicit_and_status_probe_is_cache_only(monkeypatch, tmp_pa
     embedding_providers.download_local_embedding_model("mxbai-large-v1", repair=True)
 
     assert calls[0]["local_files_only"] is True
+    assert set(calls[0]["ignore_patterns"]) == {"gguf/*", "onnx/*", "openvino/*"}
     assert calls[1]["local_files_only"] is False
     assert calls[1]["force_download"] is True
     assert set(calls[1]["ignore_patterns"]) == {"gguf/*", "onnx/*", "openvino/*"}
