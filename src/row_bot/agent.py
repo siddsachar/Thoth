@@ -2549,11 +2549,18 @@ def _compaction_lock(thread_id: str) -> threading.Lock:
 def _choose_compaction_boundary(inputs: PreparationInputs, previous_state: dict | None) -> int:
     groups = _user_led_groups(inputs.raw_messages)
     previous_boundary = int((previous_state or {}).get("boundary_message_count") or 0)
-    if len(groups) < 3:
-        raise ContextCompactionError("At least two complete recent user turns must remain intact.")
+    if len(groups) < 2:
+        raise ContextCompactionError("No complete conversation range is available to compact.")
+    newest_group_boundary = groups[-1][0]
+    if len(groups) == 2:
+        if newest_group_boundary <= previous_boundary:
+            raise ContextCompactionError("No new complete conversation range is available to compact.")
+        return newest_group_boundary
     two_group_boundary = groups[-2][0]
     if two_group_boundary <= previous_boundary:
-        raise ContextCompactionError("No new complete conversation range is available to compact.")
+        if newest_group_boundary <= previous_boundary:
+            raise ContextCompactionError("No new complete conversation range is available to compact.")
+        return newest_group_boundary
     boundary = two_group_boundary
     desired = int((getattr(inputs.policy, "usable_input_tokens", None) or 0) * 0.25)
     for protected_group_count in range(3, len(groups)):
@@ -2753,6 +2760,45 @@ def _prepare_with_compaction(inputs: PreparationInputs) -> PreparedModelInput:
                 rebuilt.usage.estimated_input_tokens >= compact_at
                 or rebuilt.usage.estimated_input_tokens >= usable
             ):
+                groups = _user_led_groups(inputs.raw_messages)
+                fallback_boundary = groups[-1][0] if groups else 0
+                if fallback_boundary > boundary:
+                    compactable = _count_prepared_tokens(
+                        list(inputs.raw_messages[:fallback_boundary]),
+                        (),
+                    )
+                    fallback_summary = _summarize_aged_range(
+                        inputs,
+                        previous_state=next_state,
+                        boundary=fallback_boundary,
+                        compactable_tokens=compactable,
+                    )
+                    if stop_event and stop_event.is_set():
+                        raise TaskStoppedError("Stopped during context compaction.")
+                    boundary = fallback_boundary
+                    summary = fallback_summary
+                    boundary_digest = context_boundary_digest(
+                        list(inputs.raw_messages),
+                        boundary,
+                        inputs.mode,
+                    )
+                    next_state = {
+                        **next_state,
+                        "boundary_message_count": boundary,
+                        "boundary_digest": boundary_digest,
+                        "summary": summary,
+                        "created_at": _context_datetime.now().isoformat(),
+                    }
+                    rebuilt = _prepare_model_input(
+                        inputs.raw_messages,
+                        inputs,
+                        next_state,
+                        mode=inputs.mode,
+                    )
+            if (
+                rebuilt.usage.estimated_input_tokens >= compact_at
+                or rebuilt.usage.estimated_input_tokens >= usable
+            ):
                 raise ContextCompactionError("Compaction did not create enough safe input slack.")
             if not thread_id or not save_summary_state_cas(
                 thread_id,
@@ -2795,7 +2841,8 @@ def _prepare_with_compaction(inputs: PreparationInputs) -> PreparedModelInput:
         except Exception as exc:
             _COMPACTION_FAILURES.add(failure_key)
             reason = str(exc)[:240] or type(exc).__name__
-            logger.warning("Context compaction failed: %s", type(exc).__name__)
+            log_reason = reason if isinstance(exc, ContextCompactionError) else type(exc).__name__
+            logger.warning("Context compaction failed: %s", log_reason)
             failed = PreparedModelInput(
                 messages=prepared.messages,
                 usage=ContextUsage(**{**prepared.usage.to_dict(), "status": "failed"}),
