@@ -142,6 +142,36 @@ def _group_weight_count(messages, tools=(), **_kwargs) -> int:
     return total
 
 
+def _adaptive_group_count(messages, tools=(), **_kwargs) -> int:
+    total = len(tools) * 50
+    for message in messages:
+        content = str(getattr(message, "content", "") or "")
+        if isinstance(message, SystemMessage):
+            continue
+        if "FIRST-LARGE-SUMMARY" in content:
+            total += 3_000
+        elif "HISTORICAL_CONTEXT" in content or "SECOND-SMALL-SUMMARY" in content:
+            total += 100
+        elif "OVERSIZED-CURRENT" in content:
+            total += 5_000
+        elif "LARGE-TAIL" in content:
+            total += 1_000
+        elif "ROLE=" in content:
+            total += 200
+        else:
+            total += 500
+    return total
+
+
+def _previous_summary(boundary: int) -> dict:
+    return {
+        "schema_version": 1,
+        "mode": "agent",
+        "boundary_message_count": boundary,
+        "summary": _structured_summary(),
+    }
+
+
 def test_successful_compaction_preserves_two_atomic_groups_and_emits_one_event(monkeypatch):
     raw = []
     for index in range(5):
@@ -188,6 +218,219 @@ def test_successful_compaction_preserves_two_atomic_groups_and_emits_one_event(m
     successes = [payload for kind, payload in emitted if kind == "compaction_succeeded"]
     assert len(successes) == 1
     assert successes[0]["event_id"] == 9
+
+
+@pytest.mark.parametrize(
+    ("group_count", "previous_boundary", "expected_boundary"),
+    (
+        (2, 0, 2),
+        (4, 4, 6),
+    ),
+)
+def test_compaction_boundary_can_preserve_only_the_newest_group_when_required(
+    group_count,
+    previous_boundary,
+    expected_boundary,
+):
+    raw = []
+    for index in range(group_count):
+        raw.extend((HumanMessage(content=f"user-{index}"), AIMessage(content=f"answer-{index}")))
+
+    previous = _previous_summary(previous_boundary) if previous_boundary else None
+
+    assert agent._choose_compaction_boundary(_inputs(raw), previous) == expected_boundary
+
+
+def test_existing_summary_with_oversized_two_group_tail_ages_preceding_atomic_group(monkeypatch):
+    tool_call = {"id": "call-2", "name": "lookup", "args": {"q": "atomic"}}
+    raw = [
+        HumanMessage(content="user-0"),
+        AIMessage(content="answer-0"),
+        HumanMessage(content="user-1"),
+        AIMessage(content="answer-1"),
+        HumanMessage(content="user-2 LARGE-TAIL"),
+        AIMessage(content="LARGE-TAIL", tool_calls=[tool_call]),
+        ToolMessage(content="tool-result-2 LARGE-TAIL", name="lookup", tool_call_id="call-2"),
+        AIMessage(content="answer-2 LARGE-TAIL"),
+        HumanMessage(content="user-3-current LARGE-TAIL"),
+    ]
+    inputs = _inputs(raw)
+    previous = _previous_summary(4)
+    summaries = []
+    saved = []
+    emitted = []
+
+    def fake_invoke(_inputs, *, prior_summary, transcript, output_tokens):
+        summaries.append((prior_summary, transcript, output_tokens))
+        return _structured_summary()
+
+    agent._COMPACTION_FAILURES.clear()
+    monkeypatch.setattr(agent, "count_tokens_approximately", _adaptive_group_count)
+    monkeypatch.setattr(agent, "_validated_summary_for_inputs", lambda _inputs: previous)
+    monkeypatch.setattr(agent, "_invoke_compaction_model", fake_invoke)
+    monkeypatch.setattr(agent, "_emit_context_event", lambda kind, payload: emitted.append((kind, payload)))
+    monkeypatch.setattr(agent, "_persist_context_usage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        agent,
+        "_record_compaction_event",
+        lambda *args, **kwargs: {"id": 10, "payload": {"display_copy": "Context compacted"}},
+    )
+    monkeypatch.setattr("row_bot.threads.context_boundary_digest", lambda *args, **kwargs: "b" * 64)
+    monkeypatch.setattr(
+        "row_bot.threads.save_summary_state_cas",
+        lambda thread_id, state, expected_revision: saved.append(dict(state)) or True,
+    )
+    thread_id = "thread-existing-summary"
+    token = agent._current_thread_id_var.set(thread_id)
+    try:
+        prepared = agent._prepare_with_compaction(inputs)
+    finally:
+        agent._current_thread_id_var.reset(token)
+
+    assert len(summaries) == 1
+    assert summaries[0][0] == previous["summary"]
+    assert "user-2" in summaries[0][1]
+    assert "call-2" in summaries[0][1]
+    assert "tool-result-2" in summaries[0][1]
+    assert "answer-2" in summaries[0][1]
+    assert "user-3-current" not in summaries[0][1]
+    assert prepared.usage.estimated_input_tokens < inputs.policy.compact_at_tokens
+    assert prepared.usage.estimated_input_tokens < inputs.policy.usable_input_tokens
+    assert isinstance(prepared.messages[-1], HumanMessage)
+    assert prepared.messages[-1].content == "user-3-current LARGE-TAIL"
+    assert len(saved) == 1
+    assert saved[0]["boundary_message_count"] == 8
+    assert [kind for kind, _payload in emitted].count("compaction_succeeded") == 1
+    assert all(kind != "compaction_failed" for kind, _payload in emitted)
+    assert (thread_id, inputs.checkpoint_revision) not in agent._COMPACTION_FAILURES
+
+
+def test_exact_rebuild_falls_back_once_and_persists_only_final_summary(monkeypatch):
+    raw = []
+    for index in range(5):
+        raw.extend((HumanMessage(content=f"user-{index}"), AIMessage(content=f"answer-{index}")))
+    inputs = _inputs(raw)
+    first_summary = _structured_summary() + "\nFIRST-LARGE-SUMMARY"
+    final_summary = _structured_summary() + "\nSECOND-SMALL-SUMMARY"
+    summaries = []
+    saved = []
+    emitted = []
+
+    def fake_invoke(_inputs, *, prior_summary, transcript, output_tokens):
+        summaries.append((prior_summary, transcript, output_tokens))
+        return first_summary if len(summaries) == 1 else final_summary
+
+    agent._COMPACTION_FAILURES.clear()
+    monkeypatch.setattr(agent, "count_tokens_approximately", _adaptive_group_count)
+    monkeypatch.setattr(agent, "_validated_summary_for_inputs", lambda _inputs: None)
+    monkeypatch.setattr(agent, "_invoke_compaction_model", fake_invoke)
+    monkeypatch.setattr(agent, "_emit_context_event", lambda kind, payload: emitted.append((kind, payload)))
+    monkeypatch.setattr(agent, "_persist_context_usage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agent, "_record_compaction_event", lambda *args, **kwargs: {"id": 11, "payload": {}})
+    monkeypatch.setattr("row_bot.threads.context_boundary_digest", lambda *args, **kwargs: "c" * 64)
+    monkeypatch.setattr(
+        "row_bot.threads.save_summary_state_cas",
+        lambda thread_id, state, expected_revision: saved.append(dict(state)) or True,
+    )
+    thread_id = "thread-exact-fallback"
+    token = agent._current_thread_id_var.set(thread_id)
+    try:
+        prepared = agent._prepare_with_compaction(inputs)
+    finally:
+        agent._current_thread_id_var.reset(token)
+
+    assert len(summaries) == 2
+    assert summaries[0][0] == ""
+    assert summaries[1][0] == first_summary
+    assert "user-3" in summaries[1][1]
+    assert "answer-3" in summaries[1][1]
+    assert "user-4" not in summaries[1][1]
+    assert prepared.usage.estimated_input_tokens < inputs.policy.compact_at_tokens
+    assert prepared.usage.estimated_input_tokens < inputs.policy.usable_input_tokens
+    assert [message.content for message in prepared.messages[-2:]] == ["user-4", "answer-4"]
+    assert len(saved) == 1
+    assert saved[0]["boundary_message_count"] == 8
+    assert saved[0]["summary"] == final_summary
+    assert [kind for kind, _payload in emitted].count("compaction_succeeded") == 1
+    assert all(kind != "compaction_failed" for kind, _payload in emitted)
+    assert (thread_id, inputs.checkpoint_revision) not in agent._COMPACTION_FAILURES
+
+
+def test_current_group_too_large_fails_after_one_fallback_without_persisting(monkeypatch):
+    raw = [
+        HumanMessage(content="user-0"),
+        AIMessage(content="answer-0"),
+        HumanMessage(content="user-1"),
+        AIMessage(content="answer-1"),
+        HumanMessage(content="OVERSIZED-CURRENT"),
+    ]
+    inputs = _inputs(raw)
+    summaries = []
+    saved = []
+    emitted = []
+
+    def fake_invoke(_inputs, *, prior_summary, transcript, output_tokens):
+        summaries.append((prior_summary, transcript, output_tokens))
+        return _structured_summary()
+
+    agent._COMPACTION_FAILURES.clear()
+    monkeypatch.setattr(agent, "count_tokens_approximately", _adaptive_group_count)
+    monkeypatch.setattr(agent, "_validated_summary_for_inputs", lambda _inputs: None)
+    monkeypatch.setattr(agent, "_invoke_compaction_model", fake_invoke)
+    monkeypatch.setattr(agent, "_emit_context_event", lambda kind, payload: emitted.append((kind, payload)))
+    monkeypatch.setattr(agent, "_persist_context_usage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agent, "_record_compaction_event", lambda *args, **kwargs: {"id": 12, "payload": {}})
+    monkeypatch.setattr("row_bot.threads.context_boundary_digest", lambda *args, **kwargs: "d" * 64)
+    monkeypatch.setattr(
+        "row_bot.threads.save_summary_state_cas",
+        lambda thread_id, state, expected_revision: saved.append(dict(state)) or True,
+    )
+    thread_id = "thread-oversized-current"
+    token = agent._current_thread_id_var.set(thread_id)
+    try:
+        with pytest.raises(agent.ContextCompactionError, match="larger-context model"):
+            agent._prepare_with_compaction(inputs)
+    finally:
+        agent._current_thread_id_var.reset(token)
+
+    assert len(summaries) == 2
+    assert saved == []
+    assert [kind for kind, _payload in emitted].count("compaction_failed") == 1
+    assert (thread_id, inputs.checkpoint_revision) in agent._COMPACTION_FAILURES
+
+
+def test_compaction_failure_logging_includes_only_known_bounded_reason(monkeypatch, caplog):
+    inputs = _inputs([HumanMessage(content="current")])
+    monkeypatch.setattr(agent, "count_tokens_approximately", lambda *args, **kwargs: 4_100)
+    monkeypatch.setattr(agent, "_validated_summary_for_inputs", lambda _inputs: None)
+    monkeypatch.setattr(agent, "_emit_context_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agent, "_persist_context_usage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agent, "_record_compaction_event", lambda *args, **kwargs: {})
+    caplog.set_level("WARNING", logger="row_bot.agent")
+
+    agent._COMPACTION_FAILURES.clear()
+    monkeypatch.setattr(
+        agent,
+        "_choose_compaction_boundary",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            agent.ContextCompactionError("No complete group can be aged safely.")
+        ),
+    )
+    agent._prepare_with_compaction(inputs)
+
+    assert "Context compaction failed: No complete group can be aged safely." in caplog.text
+
+    caplog.clear()
+    agent._COMPACTION_FAILURES.clear()
+    monkeypatch.setattr(
+        agent,
+        "_choose_compaction_boundary",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("PRIVATE TRANSCRIPT TEXT")),
+    )
+    agent._prepare_with_compaction(inputs)
+
+    assert "Context compaction failed: RuntimeError" in caplog.text
+    assert "PRIVATE TRANSCRIPT TEXT" not in caplog.text
 
 
 def test_rolling_summary_covers_exact_new_middle_range(monkeypatch):
