@@ -27,6 +27,7 @@ class ChatXAIOAuthResponses(BaseChatModel):
     base_url: str = Field(default_factory=xai_auth.xai_oauth_base_url)
     timeout: float = 120.0
     http_client: Any | None = None
+    reasoning_plan: Any | None = None
 
     @property
     def _llm_type(self) -> str:
@@ -128,6 +129,10 @@ class ChatXAIOAuthResponses(BaseChatModel):
             body["stop"] = list(stop)
         if "reasoning" in kwargs and kwargs["reasoning"] is not None:
             body["reasoning"] = kwargs["reasoning"]
+        if self.reasoning_plan is not None and not self.reasoning_plan.is_default:
+            selection = self.reasoning_plan.selection
+            if selection.kind == "effort":
+                body["reasoning"] = {"effort": selection.effort}
         return body
 
     def _iter_response_events(self, body: dict[str, Any]) -> Iterator[dict[str, Any]]:

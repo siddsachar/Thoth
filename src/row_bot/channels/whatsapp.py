@@ -481,6 +481,7 @@ def _run_agent_sync(user_text: str, config: dict,
     enabled = [t.name for t in tool_registry.get_enabled_tools()]
     full_answer: list[str] = []
     tool_reports: list[str] = []
+    reasoning_notices: list[str] = []
     interrupt_data: dict | None = None
     used_vision = False
     used_image_gen = False
@@ -505,6 +506,8 @@ def _run_agent_sync(user_text: str, config: dict,
                 used_video_gen = True
         elif event_type == "interrupt":
             interrupt_data = payload
+        elif event_type == "reasoning_fallback":
+            reasoning_notices.append(str((payload or {}).get("message") or "Provider default reasoning was used."))
         elif event_type == "error":
             full_answer.append(f"⚠️ Error: {payload}")
         elif event_type == "done":
@@ -516,7 +519,7 @@ def _run_agent_sync(user_text: str, config: dict,
 
     from row_bot.channels.agent_output import assemble_agent_answer
 
-    answer = assemble_agent_answer("".join(full_answer), tool_reports)
+    answer = assemble_agent_answer("".join(full_answer), tool_reports, reasoning_notices)
 
     captured_images: list[bytes] = []
     captured_video_paths: list[str] = []
@@ -551,6 +554,7 @@ def _resume_agent_sync(
     enabled = [t.name for t in tool_registry.get_enabled_tools()]
     full_answer: list[str] = []
     tool_reports: list[str] = []
+    reasoning_notices: list[str] = []
     interrupt_data: dict | None = None
     used_vision = False
     used_image_gen = False
@@ -577,6 +581,8 @@ def _resume_agent_sync(
                 used_video_gen = True
         elif event_type == "interrupt":
             interrupt_data = payload
+        elif event_type == "reasoning_fallback":
+            reasoning_notices.append(str((payload or {}).get("message") or "Provider default reasoning was used."))
         elif event_type == "error":
             full_answer.append(f"⚠️ Error: {payload}")
         elif event_type == "done":
@@ -588,7 +594,7 @@ def _resume_agent_sync(
 
     from row_bot.channels.agent_output import assemble_agent_answer
 
-    answer = assemble_agent_answer("".join(full_answer), tool_reports)
+    answer = assemble_agent_answer("".join(full_answer), tool_reports, reasoning_notices)
 
     captured_images: list[bytes] = []
     captured_video_paths: list[str] = []

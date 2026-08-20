@@ -2,6 +2,7 @@ import copy
 from dataclasses import asdict, dataclass
 from datetime import datetime as _context_datetime
 import hashlib
+import inspect
 import json
 import math
 import threading
@@ -115,6 +116,16 @@ apply_keys()
 def _provider_uses_anthropic_messages(provider_id: str | None, model_id: str | None = None) -> bool:
     if not provider_id:
         return False
+    normalized_provider = str(provider_id).strip().lower()
+    normalized_model = str(model_id or "").strip().lower()
+    if normalized_provider == "openrouter":
+        return normalized_model.startswith("anthropic/claude-")
+    if normalized_provider == "requesty":
+        return normalized_model.startswith((
+            "anthropic/claude-",
+            "bedrock/claude-",
+            "vertex/claude-",
+        ))
     if provider_id in {"opencode_zen", "opencode_go"} and model_id:
         try:
             from row_bot.providers.models import TransportMode
@@ -952,6 +963,17 @@ def _is_context_overflow_error(exc: object) -> bool:
         "too many tokens",
         "input token limit",
     ))
+
+
+def _is_reasoning_validation_error_text(value: object) -> bool:
+    text = str(value or "").lower()
+    has_validation_status = any(
+        marker in text
+        for marker in ("http 400", "http 422", "status code: 400", "status code: 422")
+    )
+    return has_validation_status and any(
+        marker in text for marker in ("reasoning", "thinking", "effort", "budget")
+    )
 
 
 def _is_transient_stream_disconnect(exc_str: str) -> bool:
@@ -1958,14 +1980,11 @@ def _collect_agent_complete_input(state: dict) -> dict:
         except Exception:
             _model_id = str(_cur or "")
         if _provider_uses_anthropic_messages(_provider_id, _model_id):
-            _sys = [m for m in trimmed if isinstance(m, SystemMessage)]
-            _rest = [m for m in trimmed if not isinstance(m, SystemMessage)]
-            trimmed = _sys + _rest
-
             # ── Anthropic prompt caching ─────────────────────────────
             # Only direct Anthropic API receives cache_control, and only on
             # stable system context. Conversation history is never marked.
             if _provider_id != "anthropic":
+                trimmed = _consolidate_system_messages(trimmed)
                 return {
                     "llm_input_messages": _normalize_provider_facing_messages(
                         trimmed,
@@ -1974,6 +1993,9 @@ def _collect_agent_complete_input(state: dict) -> dict:
                     ),
                     "execution_budget": budget,
                 }
+            _sys = [m for m in trimmed if isinstance(m, SystemMessage)]
+            _rest = [m for m in trimmed if not isinstance(m, SystemMessage)]
+            trimmed = _sys + _rest
             trimmed, _cache_marker_result = apply_anthropic_system_cache_marker(
                 trimmed,
                 provider_id=_provider_id,
@@ -3886,7 +3908,15 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
         model_label = get_current_model()
 
     readiness = _ensure_agent_mode_ready(model_label)
-    llm = get_llm_for(model_label) if use_override else get_llm()
+    from row_bot.providers.reasoning import canonical_reasoning_model_ref, request_plan_for
+
+    canonical_model_ref = canonical_reasoning_model_ref(readiness.provider_id, readiness.runtime_model)
+    reasoning_plan = request_plan_for(get_current_thread_id(), canonical_model_ref)
+    llm = _get_llm_for_reasoning_plan(
+        model_label,
+        reasoning_plan,
+        use_override=use_override,
+    )
 
     is_background = _background_workflow_var.get()
     approval_mode = get_approval_mode()
@@ -3968,6 +3998,7 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
         f"model:{model_label}",
         f"provider:{readiness.provider_id}",
         f"runtime:{readiness.runtime_model}",
+        f"{reasoning_plan.fingerprint}",
         f"ready:{readiness.capability_source}:{readiness.confidence}",
         f"bg:{is_background}",
         f"approval:{approval_mode}",
@@ -4798,12 +4829,27 @@ def _build_chat_only_messages(thread_id: str, user_input: str, *, context_window
     ).messages
 
 
-def _chat_only_llm(model_label: str):
+def _chat_only_llm(model_label: str, *, thread_id: str = ""):
     from row_bot.providers.resolution import resolve_provider_config
+    from row_bot.providers.reasoning import request_plan_for
     from row_bot.providers.runtime import create_chat_model
 
     resolved = resolve_provider_config(model_label, allow_legacy_local=True)
-    return create_chat_model(resolved.runtime_model, resolved.provider_id)
+    plan = request_plan_for(thread_id or get_current_thread_id(), resolved.selection_ref)
+    return create_chat_model(resolved.runtime_model, resolved.provider_id, reasoning_plan=plan)
+
+
+def _get_llm_for_reasoning_plan(model_label: str, reasoning_plan, *, use_override: bool = True):
+    """Keep simple test/fake callables compatible while using the production plan API."""
+    if not use_override and bool(getattr(reasoning_plan, "is_default", True)):
+        return get_llm()
+    try:
+        parameters = inspect.signature(get_llm_for).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if "reasoning_plan" in parameters:
+        return get_llm_for(model_label, reasoning_plan=reasoning_plan)
+    return get_llm_for(model_label)
 
 
 def stream_chat_only(
@@ -5068,6 +5114,7 @@ def stream_chat_only(
                 )
         except Exception:
             logger.debug("Settled Chat Only context snapshot failed", exc_info=True)
+    yield from _reasoning_notice_events(thread_id)
     yield ("done", answer)
 
 
@@ -5083,6 +5130,16 @@ def _memory_recall_warning_events(config: dict):
             yield ("warning", notice)
     except Exception:
         logger.debug("Could not read memory recall fallback notices", exc_info=True)
+
+
+def _reasoning_notice_events(thread_id: str):
+    try:
+        from row_bot.providers.reasoning import consume_reasoning_notices
+
+        for notice in consume_reasoning_notices(thread_id):
+            yield (str(notice.get("kind") or "reasoning_fallback"), notice)
+    except Exception:
+        logger.debug("Could not read reasoning notices", exc_info=True)
 
 
 def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
@@ -6075,6 +6132,13 @@ def _stream_graph(agent, input_data, config: dict,
                 )
                 yield ("error", str(retry_exc))
                 return
+        elif _is_reasoning_validation_error_text(exc_str):
+            logger.error(
+                "_stream_graph reasoning validation failed before iteration diagnostics=%s",
+                _agent_runtime_diagnostics(config),
+            )
+            yield ("error", _friendly_api_error(exc_str))
+            return
         elif _tool_support_error(exc_str) or "status code: 400" in exc_str:
             logger.error(
                 "_stream_graph failed before iteration: %s diagnostics=%s",
@@ -6333,6 +6397,14 @@ def _stream_graph(agent, input_data, config: dict,
                 _notify_api_error(_rmsg)
                 yield ("error", _rmsg)
                 return
+        elif _is_reasoning_validation_error_text(exc_str):
+            _err = _friendly_api_error(exc_str)
+            logger.error(
+                "_stream_graph reasoning validation error diagnostics=%s",
+                _agent_runtime_diagnostics(config),
+            )
+            _notify_api_error(_err)
+            yield ("error", _err)
         elif _tool_support_error(exc_str) or "status code: 400" in exc_str:
             _err = _friendly_api_error(exc_str)
             logger.error(
@@ -6543,6 +6615,8 @@ def _stream_graph(agent, input_data, config: dict,
                 yield ("context_usage", _usage_event_payload(settled_usage))
     except Exception:
         logger.debug("Settled Agent context snapshot failed", exc_info=True)
+    thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
+    yield from _reasoning_notice_events(thread_id)
     yield ("done", _joined_visible_answer(full_answer))
 
 if __name__ == "__main__":

@@ -64,7 +64,6 @@ fpdf2==2.8.7
 frozenlist==1.8.0
 fsspec==2026.6.0
 funasr==1.3.22 ; platform_machine != 'x86_64' or sys_platform != 'darwin'
-google-ai-generativelanguage==0.12.0
 google-api-core==2.30.3
 google-api-python-client==2.197.0
 google-auth==2.55.0
@@ -117,9 +116,9 @@ langchain==1.3.10
 langchain-anthropic==1.4.6
 langchain-classic==1.0.8
 langchain-community==0.4.2
-langchain-core==1.4.8
+langchain-core==1.6.0
 langchain-google-community==3.0.5
-langchain-google-genai==3.2.0
+langchain-google-genai==4.3.4
 langchain-huggingface==1.2.2
 langchain-mcp-adapters==0.3.0
 langchain-ollama==1.1.0

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from row_bot.providers.capabilities import snapshot_supports_surface
 from row_bot.providers.auth_store import get_provider_secret, provider_secret_status
@@ -12,6 +12,9 @@ from row_bot.providers.custom import (
     get_custom_endpoint,
     is_custom_openai_provider,
 )
+
+if TYPE_CHECKING:
+    from row_bot.providers.reasoning import ReasoningRequestPlan
 
 
 def is_provider_available(provider_id: str) -> bool:
@@ -252,7 +255,38 @@ def provider_status(provider_id: str, *, refresh_tokens: bool = True) -> dict:
     return status
 
 
-def create_chat_model(model_name: str, provider_id: str | None = None):
+def create_chat_model(
+    model_name: str,
+    provider_id: str | None = None,
+    *,
+    reasoning_plan: ReasoningRequestPlan | None = None,
+):
+    primary = _create_chat_model(model_name, provider_id, reasoning_plan=reasoning_plan)
+    if reasoning_plan is None or reasoning_plan.is_default:
+        return primary
+    from row_bot.providers.resolution import resolve_provider_config
+    from row_bot.providers.transports.reasoning_fallback import ReasoningFallbackChatModel
+
+    resolved = resolve_provider_config(
+        model_name,
+        provider_id,
+        allow_legacy_local=provider_id is not None,
+    )
+    provider_default = _create_chat_model(model_name, provider_id, reasoning_plan=None)
+    return ReasoningFallbackChatModel(
+        primary=primary,
+        provider_default=provider_default,
+        plan=reasoning_plan,
+        provider_id=resolved.provider_id,
+    )
+
+
+def _create_chat_model(
+    model_name: str,
+    provider_id: str | None = None,
+    *,
+    reasoning_plan: ReasoningRequestPlan | None = None,
+):
     """Create the LangChain chat model for an existing API-key provider."""
     from row_bot.providers.resolution import resolve_provider_config
 
@@ -263,6 +297,7 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
     )
     provider = resolved.provider_id
     model_name = resolved.runtime_model
+    reasoning_plan = _validated_runtime_reasoning_plan(reasoning_plan, resolved.selection_ref)
     ensure_chat_model_compatible(model_name, provider)
     if provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -277,6 +312,7 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
         }
         if is_ollama_reasoning_model(runtime_model):
             kwargs["reasoning"] = True
+        kwargs.update(_reasoning_constructor_kwargs(reasoning_plan, provider="ollama"))
         return ChatOllama(**kwargs)
     if provider == "ollama_cloud":
         from row_bot.providers.transports.ollama_cloud import ChatOllamaCloud
@@ -286,7 +322,12 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
             raise ValueError("Ollama Cloud API key not configured. Set it in Settings -> Providers.")
         definition = get_provider_definition("ollama_cloud")
         base_url = definition.base_url if definition and definition.base_url else "https://ollama.com"
-        return ChatOllamaCloud(model_name=model_name, api_key=api_key, base_url=base_url)
+        return ChatOllamaCloud(
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            reasoning_plan=reasoning_plan,
+        )
     if provider in {"opencode_zen", "opencode_go"}:
         from row_bot.providers.opencode import (
             OpenCodeUnsupportedRouteError,
@@ -318,11 +359,13 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
                     "transport": transport.value,
                     "profile": "opencode",
                 },
+                reasoning_plan=reasoning_plan,
             )
         if transport == "openai_responses" or transport.value == "openai_responses":
             from langchain_openai import ChatOpenAI
             from row_bot.providers.transports.cancellable_http import cancellable_http_client
 
+            kwargs = _reasoning_constructor_kwargs(reasoning_plan, provider=provider, responses=True)
             return ChatOpenAI(
                 model=model_name,
                 api_key=api_key,
@@ -330,6 +373,7 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
                 use_responses_api=True,
                 output_version="responses/v1",
                 http_client=cancellable_http_client(),
+                **kwargs,
             )
         if transport == "anthropic_messages" or transport.value == "anthropic_messages":
             from row_bot.providers.transports.anthropic_cancellable import CancellableChatAnthropic
@@ -338,6 +382,7 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
                 model=model_name,
                 api_key=api_key,
                 base_url=opencode_anthropic_base_url(provider),
+                **_reasoning_constructor_kwargs(reasoning_plan, provider=provider),
             )
         raise OpenCodeUnsupportedRouteError(
             f"OpenCode route for {provider_label} model '{model_name}' uses unsupported/deferred transport {transport.value}."
@@ -361,16 +406,21 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
                 "base_url": endpoint["base_url"],
                 "http_client": cancellable_http_client(),
             }
+            baseline = _custom_endpoint_responses_baseline(endpoint)
+            if baseline:
+                kwargs["extra_body"] = baseline
             headers = endpoint.get("headers")
             if isinstance(headers, dict) and headers:
                 kwargs["default_headers"] = headers
             kwargs.update({"use_responses_api": True, "output_version": "responses/v1"})
+            kwargs.update(_reasoning_constructor_kwargs(reasoning_plan, provider=provider, responses=True))
             return ChatOpenAI(**kwargs)
         return ChatOpenAICompatible(
             model_name=model_name,
             api_key=api_key,
             base_url=str(endpoint["base_url"]),
             endpoint=endpoint,
+            reasoning_plan=reasoning_plan,
         )
     if provider == "codex":
         from row_bot.providers.codex import codex_runtime_available
@@ -381,7 +431,7 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
                 "Codex subscription runtime needs an in-app ChatGPT login with runnable OAuth tokens. "
                 "Connect ChatGPT in Settings -> Providers, then try the Codex model again."
             )
-        return ChatCodexResponses(model_name=model_name)
+        return ChatCodexResponses(model_name=model_name, reasoning_plan=reasoning_plan)
     if provider == "claude_subscription":
         from row_bot.providers.claude_subscription import claude_subscription_runtime_available
         from row_bot.providers.transports.claude_subscription_messages import ChatClaudeSubscriptionMessages
@@ -391,7 +441,7 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
                 "Claude Subscription runtime needs Row-Bot-owned OAuth tokens. "
                 "Connect Claude Subscription in Settings -> Providers, then try the provider-qualified model again."
             )
-        return ChatClaudeSubscriptionMessages(model_name=model_name)
+        return ChatClaudeSubscriptionMessages(model_name=model_name, reasoning_plan=reasoning_plan)
     if provider == "xai_oauth":
         from row_bot.providers.transports.xai_oauth_responses import ChatXAIOAuthResponses
         from row_bot.providers.xai_oauth import xai_oauth_runtime_available
@@ -401,7 +451,7 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
                 "xAI Grok runtime needs Row-Bot-owned OAuth tokens. "
                 "Connect xAI Grok in Settings -> Providers, then try the provider-qualified model again."
             )
-        return ChatXAIOAuthResponses(model_name=model_name)
+        return ChatXAIOAuthResponses(model_name=model_name, reasoning_plan=reasoning_plan)
     if provider == "openai":
         from langchain_openai import ChatOpenAI
         from row_bot.providers.transports.cancellable_http import cancellable_http_client
@@ -411,26 +461,46 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
         kwargs = {"model": model_name, "api_key": api_key, "http_client": cancellable_http_client()}
         if openai_model_uses_responses_api(model_name):
             kwargs.update({"use_responses_api": True, "output_version": "responses/v1"})
+        kwargs.update(
+            _reasoning_constructor_kwargs(
+                reasoning_plan,
+                provider="openai",
+                responses=openai_model_uses_responses_api(model_name),
+            )
+        )
         return ChatOpenAI(**kwargs)
     if provider == "anthropic":
         from row_bot.providers.transports.anthropic_cancellable import CancellableChatAnthropic
         api_key = get_provider_secret("anthropic")
         if not api_key:
             raise ValueError("Anthropic API key not configured. Set it in Settings → Providers.")
-        return CancellableChatAnthropic(model=model_name, api_key=api_key)
+        return CancellableChatAnthropic(
+            model=model_name,
+            api_key=api_key,
+            **_reasoning_constructor_kwargs(reasoning_plan, provider="anthropic"),
+        )
     if provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
         api_key = get_provider_secret("google")
         if not api_key:
             raise ValueError("Google AI API key not configured. Set it in Settings → Providers.")
-        return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key)
+        return ChatGoogleGenerativeAI(
+            model=model_name,
+            google_api_key=api_key,
+            **_reasoning_constructor_kwargs(reasoning_plan, provider="google"),
+        )
     if provider == "xai":
         from langchain_xai import ChatXAI
         from row_bot.providers.transports.cancellable_http import cancellable_http_client
         api_key = get_provider_secret("xai")
         if not api_key:
             raise ValueError("xAI API key not configured. Set it in Settings → Providers.")
-        return ChatXAI(model=model_name, api_key=api_key, http_client=cancellable_http_client())
+        return ChatXAI(
+            model=model_name,
+            api_key=api_key,
+            http_client=cancellable_http_client(),
+            **_reasoning_constructor_kwargs(reasoning_plan, provider="xai"),
+        )
     if provider == "minimax":
         from row_bot.providers.transports.anthropic_cancellable import CancellableChatAnthropic
         api_key = get_provider_secret("minimax")
@@ -442,6 +512,7 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
             model=model_name,
             api_key=api_key,
             base_url=api_url,
+            **_reasoning_constructor_kwargs(reasoning_plan, provider="minimax"),
         )
     if provider == "atlascloud":
         from row_bot.providers.transports.openai_compatible import ChatOpenAICompatible
@@ -462,6 +533,7 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
                 "transport": "openai_chat",
                 "profile": "atlascloud",
             },
+            reasoning_plan=reasoning_plan,
         )
 
     if provider == "requesty":
@@ -483,13 +555,96 @@ def create_chat_model(model_name: str, provider_id: str | None = None):
                 "transport": "openai_chat",
                 "profile": "requesty",
             },
+            reasoning_plan=reasoning_plan,
         )
 
     from row_bot.providers.transports.openrouter_cancellable import CancellableChatOpenRouter
     api_key = get_provider_secret("openrouter")
     if not api_key:
         raise ValueError("OpenRouter API key not configured. Set it in Settings → Providers.")
-    return CancellableChatOpenRouter(model_name=model_name, openrouter_api_key=api_key)
+    return CancellableChatOpenRouter(
+        model_name=model_name,
+        openrouter_api_key=api_key,
+        **_reasoning_constructor_kwargs(reasoning_plan, provider="openrouter"),
+    )
+
+
+def _validated_runtime_reasoning_plan(
+    plan: ReasoningRequestPlan | None,
+    selection_ref: str,
+) -> ReasoningRequestPlan | None:
+    if plan is None or plan.is_default:
+        return None
+    if plan.model_ref != selection_ref:
+        raise ValueError("Reasoning request plan does not match the selected provider-qualified model.")
+    from row_bot.providers.reasoning import validate_reasoning_selection
+
+    validate_reasoning_selection(plan.selection, plan.capabilities)
+    return plan
+
+
+def _reasoning_constructor_kwargs(
+    plan: ReasoningRequestPlan | None,
+    *,
+    provider: str,
+    responses: bool = False,
+) -> dict[str, Any]:
+    if plan is None or plan.is_default:
+        return {}
+    selection = plan.selection
+    capabilities = plan.capabilities
+    style = capabilities.request_style if capabilities else ""
+    if provider == "openrouter" or style == "openrouter":
+        if selection.kind == "effort":
+            return {"reasoning": {"effort": selection.effort}}
+        if selection.kind in {"on", "off"}:
+            return {"reasoning": {"enabled": selection.kind == "on"}}
+        if selection.kind == "budget":
+            return {"reasoning": {"max_tokens": selection.budget}}
+    if provider in {"anthropic", "claude_subscription", "minimax"} or style == "anthropic":
+        kwargs: dict[str, Any] = {}
+        if selection.kind == "effort":
+            kwargs["effort"] = selection.effort
+            if capabilities and capabilities.thinking_mode == "adaptive":
+                kwargs["thinking"] = {"type": "adaptive"}
+        elif selection.kind == "budget":
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": selection.budget}
+        elif selection.kind == "off":
+            kwargs["thinking"] = {"type": "disabled"}
+        return kwargs
+    if provider == "google" or style.startswith("google_"):
+        if selection.kind == "effort":
+            return {"thinking_level": selection.effort}
+        if selection.kind == "budget":
+            return {"thinking_budget": selection.budget}
+        if selection.kind == "off":
+            return {"thinking_budget": 0}
+    if provider in {"ollama", "ollama_cloud"} or style == "ollama":
+        if selection.kind == "effort":
+            return {"reasoning": selection.effort}
+        if selection.kind in {"on", "off"}:
+            return {"reasoning": selection.kind == "on"}
+    if selection.kind == "effort":
+        return {"reasoning_effort": selection.effort}
+    return {}
+
+
+def _custom_endpoint_responses_baseline(endpoint: dict[str, Any]) -> dict[str, Any]:
+    baseline = dict(endpoint.get("extra_body") or {}) if isinstance(endpoint.get("extra_body"), dict) else {}
+    mode = str(endpoint.get("reasoning_mode") or "auto").strip().lower()
+    if mode == "on":
+        baseline["reasoning"] = {"enabled": True}
+    elif mode == "off":
+        baseline["reasoning"] = {"enabled": False}
+    budget = endpoint.get("thinking_budget")
+    try:
+        parsed_budget = int(budget or 0)
+    except (TypeError, ValueError):
+        parsed_budget = 0
+    if parsed_budget > 0:
+        reasoning = baseline.get("reasoning") if isinstance(baseline.get("reasoning"), dict) else {}
+        baseline["reasoning"] = {**reasoning, "max_tokens": parsed_budget}
+    return baseline
 
 
 def ensure_chat_model_compatible(model_name: str, provider_id: str | None = None) -> None:

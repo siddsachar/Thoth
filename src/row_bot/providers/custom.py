@@ -295,6 +295,9 @@ def list_custom_provider_definitions() -> list[ProviderDefinition]:
 
 
 def save_custom_endpoint(endpoint: dict) -> None:
+    extra_body = endpoint.get("extra_body")
+    if isinstance(extra_body, dict) and _extra_body_contains_credentials(extra_body):
+        raise ValueError("Custom endpoint extra_body must not contain credentials or secrets.")
     cfg = load_provider_config()
     endpoints = [item for item in cfg.get("custom_endpoints", []) if isinstance(item, dict)]
     secret = str(endpoint.get("api_key") or "")
@@ -308,6 +311,21 @@ def save_custom_endpoint(endpoint: dict) -> None:
         set_provider_secret(str(normalized["provider_id"]), "api_key", secret)
     elif not normalized.get("auth_required"):
         delete_provider_secret(str(normalized["provider_id"]), "api_key")
+
+
+def _extra_body_contains_credentials(value: Any) -> bool:
+    secret_keys = {
+        "authorization", "api_key", "api-key", "x-api-key", "access_token",
+        "refresh_token", "password", "secret", "bearer",
+    }
+    if isinstance(value, dict):
+        return any(
+            str(key).strip().lower() in secret_keys or _extra_body_contains_credentials(nested)
+            for key, nested in value.items()
+        )
+    if isinstance(value, list):
+        return any(_extra_body_contains_credentials(item) for item in value)
+    return False
 
 
 def delete_custom_endpoint(endpoint_or_provider_id: str) -> int:

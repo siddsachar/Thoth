@@ -28,6 +28,8 @@ Use local Ollama for local-first privacy and no provider billing. Use an API pro
 
 Keep at least one everyday chat model and one stronger tool-capable model pinned. For Developer, Designer, workflows, and complex tools, choose a model that can handle tool calls and enough context.
 
+For models with exact reasoning capabilities, Row-Bot exposes a per-thread [Reasoning control](/docs/chat/reasoning-controls) with only the efforts, toggle, or token-budget choices that model supports. Provider default remains available as the compatibility-safe option.
+
 For Ollama, Row-Bot prefers explicit tool-calling metadata, then the daemon's reported capability list. A reported `tools` capability enables agent use even for a model family newer than Row-Bot's maintained fallback catalogue; an explicit capability list that omits `tools` remains authoritative. Family fallbacks are used only when the daemon provides no capability metadata.
 
 ## Troubleshooting

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import os
 import sys
@@ -141,6 +142,50 @@ def test_builtin_commands_win_skill_collisions(tmp_path):
     assert resolved.id == "status"
     assert resolved.handler_key == "status"
     assert not any(spec.id == "skill:status" for spec in slash_commands.get_command_specs())
+
+
+def test_reasoning_is_a_builtin_chat_command_without_aliases(tmp_path):
+    _skills, _activation, slash_commands = _reload_skill_command_modules(tmp_path)
+
+    spec = slash_commands.resolve_command_token("/reasoning", include_skills=False)
+
+    assert spec is not None
+    assert spec.id == "reasoning"
+    assert spec.aliases == ()
+    assert spec.argument_behavior == "prefix"
+    assert "`/reasoning`" in slash_commands.help_text(include_skills=False)
+
+
+def test_bare_reasoning_opens_shared_control_without_dispatching_transcript_content(monkeypatch):
+    from row_bot.ui import chat_components
+
+    calls = []
+
+    async def _run_javascript(script, *, timeout):
+        calls.append((script, timeout))
+        return True
+
+    monkeypatch.setattr(chat_components.ui, "run_javascript", _run_javascript)
+
+    asyncio.run(chat_components.open_reasoning_control())
+
+    assert len(calls) == 1
+    script, timeout = calls[0]
+    assert timeout == 3.0
+    assert 'data-docs-id="chat-reasoning-picker"' in script
+    assert 'data-docs-id="mobile-reasoning-control"' in script
+    assert 'data-docs-id="mobile-chat-composer"' in script
+    assert ".row-bot-mobile-model-pill" in script
+
+    streaming_source = Path("src/row_bot/ui/streaming.py").read_text(encoding="utf-8")
+    reasoning_branch = streaming_source.split('if spec.id == "reasoning":', 1)[1].split(
+        'if spec.id == "goal":', 1
+    )[0]
+    bare_branch = reasoning_branch.split("command_response =", 1)[0]
+    assert "if not arg.strip():" in bare_branch
+    assert "await open_reasoning_control()" in bare_branch
+    assert "return" in bare_branch
+    assert "dispatch_text_command" not in bare_branch
 
 
 def test_direct_skill_activation_and_reset_dispatch(tmp_path):

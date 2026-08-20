@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from row_bot.cancellation import CancellationScope, use_cancellation_scope
 from row_bot.providers.custom import custom_endpoint_profile
+from row_bot.providers.reasoning import ReasoningCapabilities, ReasoningRequestPlan, ReasoningSelection
 from row_bot.providers.tool_protocol import format_validation_retry_result
 from row_bot.providers.transports.openai_compatible import ChatOpenAICompatible
 
@@ -1527,3 +1528,58 @@ def test_openai_compatible_stream_cancellation_closes_blocking_response():
     assert not worker.is_alive()
     assert client.response.close_calls == 1
     assert events == []
+
+
+def test_custom_reasoning_precedence_is_extra_then_structured_then_dynamic():
+    caps = ReasoningCapabilities(
+        supported_efforts=("high",),
+        request_style="openai_chat",
+    )
+    model = ChatOpenAICompatible(
+        model_name="exact-model",
+        base_url="http://127.0.0.1:8000/v1",
+        endpoint={
+            "profile": "vllm",
+            "supports_reasoning_content": True,
+            "extra_body": {
+                "reasoning_effort": "low",
+                "chat_template_kwargs": {"enable_thinking": False, "custom": True},
+            },
+            "reasoning_mode": "on",
+            "thinking_budget": 2048,
+        },
+        reasoning_plan=ReasoningRequestPlan(
+            "model:custom_openai_exact:exact-model",
+            ReasoningSelection(kind="effort", effort="high"),
+            caps,
+        ),
+    )
+
+    body = model._request_body([HumanMessage(content="hello")], stream=False)
+
+    assert body["reasoning_effort"] == "high"
+    assert body["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "custom": True,
+        "thinking_budget": 2048,
+    }
+
+
+def test_custom_provider_default_keeps_static_reasoning_baseline():
+    model = ChatOpenAICompatible(
+        model_name="exact-model",
+        base_url="http://127.0.0.1:8000/v1",
+        endpoint={
+            "profile": "vllm",
+            "supports_reasoning_content": True,
+            "extra_body": {"top_k": 10},
+            "reasoning_mode": "off",
+            "thinking_budget": 1024,
+        },
+    )
+
+    body = model._request_body([HumanMessage(content="hello")], stream=False)
+
+    assert body["top_k"] == 10
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "reasoning_effort" not in body

@@ -208,6 +208,7 @@ def _run_agent_sync(user_text: str, config: dict) -> tuple[str, dict | None, lis
     full_answer: list[str] = []
     tool_reports: list[str] = []
     context_notices: list[dict] = []
+    reasoning_notices: list[str] = []
     interrupt_data: dict | None = None
 
     for event_type, payload in agent_mod.stream_agent(user_text, enabled, config):
@@ -220,6 +221,8 @@ def _run_agent_sync(user_text: str, config: dict) -> tuple[str, dict | None, lis
             tool_reports.append(f"✅ {name} done")
         elif event_type == "interrupt":
             interrupt_data = payload
+        elif event_type == "reasoning_fallback":
+            reasoning_notices.append(str((payload or {}).get("message") or "Provider default reasoning was used."))
         elif event_type == "compaction_succeeded" and isinstance(payload, dict):
             if int(payload.get("event_id") or 0):
                 context_notices.append({
@@ -237,6 +240,8 @@ def _run_agent_sync(user_text: str, config: dict) -> tuple[str, dict | None, lis
         answer = "\n".join(tool_reports) + "\n\n" + answer
     if tool_reports and not answer:
         answer = "\n".join(tool_reports)
+    if reasoning_notices:
+        answer = (answer + "\n\n" if answer else "") + "\n".join(dict.fromkeys(reasoning_notices))
 
     return answer or "(No response)", interrupt_data, context_notices
 
@@ -252,6 +257,7 @@ def _resume_agent_sync(config: dict, approved: bool,
     full_answer: list[str] = []
     tool_reports: list[str] = []
     context_notices: list[dict] = []
+    reasoning_notices: list[str] = []
     interrupt_data: dict | None = None
 
     for event_type, payload in agent_mod.resume_stream_agent(
@@ -266,6 +272,8 @@ def _resume_agent_sync(config: dict, approved: bool,
             tool_reports.append(f"✅ {name} done")
         elif event_type == "interrupt":
             interrupt_data = payload
+        elif event_type == "reasoning_fallback":
+            reasoning_notices.append(str((payload or {}).get("message") or "Provider default reasoning was used."))
         elif event_type == "compaction_succeeded" and isinstance(payload, dict):
             if int(payload.get("event_id") or 0):
                 context_notices.append({
@@ -283,6 +291,8 @@ def _resume_agent_sync(config: dict, approved: bool,
         answer = "\n".join(tool_reports) + "\n\n" + answer
     elif tool_reports:
         answer = "\n".join(tool_reports)
+    if reasoning_notices:
+        answer = (answer + "\n\n" if answer else "") + "\n".join(dict.fromkeys(reasoning_notices))
 
     return answer or "(No response)", interrupt_data, context_notices
 

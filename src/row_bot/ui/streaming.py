@@ -3357,6 +3357,7 @@ async def consume_generation(
 
         if (
             event_type in {"warning", "error", "tool_call", "tool_done", "summarizing", "interrupt", "done"}
+            or event_type in {"reasoning_fallback", "stale_selection"}
             or event_type in {
                 "context_usage", "compaction_started", "compaction_succeeded",
                 "compaction_failed",
@@ -3419,6 +3420,16 @@ async def consume_generation(
                             cb.add_chat_message(context_message)
                         except Exception as exc:
                             _handle_ui_runtime_error(gen, state, exc, "context event row")
+
+        elif event_type in {"reasoning_fallback", "stale_selection"}:
+            notice = dict(payload or {}) if isinstance(payload, dict) else {"message": str(payload or "")}
+            if not gen.detached:
+                ui.notify(
+                    str(notice.get("message") or "Provider default reasoning is active."),
+                    type="warning",
+                    close_button=True,
+                    timeout=5000,
+                )
 
         elif event_type == "warning":
             notice = dict(payload) if isinstance(payload, dict) else {
@@ -4816,6 +4827,31 @@ async def send_message(
         resolved_command = await run.io_bound(lambda: resolve_command_text(text, include_skills=True))
         if resolved_command is not None:
             spec, arg = resolved_command
+            if spec.id == "reasoning":
+                if not arg.strip():
+                    from row_bot.ui.chat_components import open_reasoning_control
+
+                    await open_reasoning_control()
+                    return
+                command_response = await run.io_bound(
+                    lambda: dispatch_text_command(
+                        gen_thread_id,
+                        text,
+                        enabled_tool_names=enabled_tool_names,
+                    )
+                )
+                if command_response is not None:
+                    from row_bot.agent import clear_agent_cache
+                    from row_bot.models import clear_llm_cache
+
+                    clear_agent_cache()
+                    clear_llm_cache()
+                    ui.notify(command_response, type="info", close_button=True, timeout=5000)
+                    try:
+                        cb.rebuild_main()
+                    except TypeError:
+                        pass
+                    return
             if spec.id == "goal":
                 from row_bot import goals
 

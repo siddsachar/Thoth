@@ -35,7 +35,7 @@ def normalize_str_set(value: Any) -> set[str]:
 def normalize_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(snapshot, Mapping):
         return {}
-    return {
+    normalized = {
         "capabilities": normalize_str_set(snapshot.get("capabilities")),
         "input_modalities": normalize_str_set(snapshot.get("input_modalities")),
         "output_modalities": normalize_str_set(snapshot.get("output_modalities")),
@@ -46,6 +46,9 @@ def normalize_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "transport": str(snapshot.get("transport") or ""),
         "source_confidence": str(snapshot.get("source_confidence") or ""),
     }
+    if isinstance(snapshot.get("reasoning"), Mapping):
+        normalized["reasoning"] = dict(snapshot["reasoning"])
+    return normalized
 
 
 def snapshot_for_model(model_info: ModelInfo) -> dict[str, Any]:

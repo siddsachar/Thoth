@@ -22,6 +22,7 @@ const sidebars: SidebarsConfig = {
         'app-shell/navigation',
         'chat/index',
         'chat/model-picker',
+        'chat/reasoning-controls',
         'chat/tools-approvals-and-terminal',
         'guides/progressive-tools-and-skills',
         'profiles-goals-agents/index',

@@ -72,10 +72,22 @@ def ensure_composer_control_css() -> None:
         return
     ui.add_css(
         """
+        .row-bot-desktop-composer {
+          container-name: row-bot-composer;
+          container-type: inline-size;
+        }
         .row-bot-composer-toolbar {
           min-height: 40px;
           align-items: center;
           flex-wrap: nowrap;
+          min-width: 0;
+          overflow: visible;
+        }
+        .row-bot-composer-policy-host {
+          display: flex;
+          flex: 0 1 auto;
+          min-width: 0;
+          overflow: hidden;
         }
         .row-bot-composer-control-group {
           height: 34px;
@@ -87,6 +99,48 @@ def ensure_composer_control_css() -> None:
           display: flex;
           align-items: center;
           gap: 4px;
+        }
+        .row-bot-desktop-composer .row-bot-composer-control-group {
+          min-width: 0;
+          padding: 0;
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+          gap: 4px;
+          overflow: hidden;
+        }
+        .row-bot-composer-control {
+          height: 34px;
+          min-height: 34px;
+          min-width: 0;
+          padding: 2px 5px;
+          border: 1px solid rgba(255,255,255,0.09);
+          border-radius: 10px;
+          background: rgba(255,255,255,0.04);
+          display: flex;
+          align-items: center;
+          gap: 3px;
+          overflow: hidden;
+          transition: background-color 140ms ease, border-color 140ms ease;
+        }
+        .row-bot-composer-control:hover,
+        .row-bot-composer-control:focus-within {
+          border-color: rgba(100,181,246,0.34);
+          background: rgba(100,181,246,0.08);
+        }
+        .row-bot-composer-control-model {
+          flex: 0 1 auto;
+        }
+        .row-bot-composer-control-reasoning,
+        .row-bot-composer-control-approval {
+          flex: 0 0 auto;
+        }
+        .row-bot-composer-control-icon {
+          flex: 0 0 18px;
+        }
+        .row-bot-composer-reasoning-host {
+          min-width: 0;
+          flex-wrap: nowrap;
         }
         .row-bot-composer-voice-group {
           height: 34px;
@@ -110,6 +164,46 @@ def ensure_composer_control_css() -> None:
           align-items: center;
           gap: 4px;
         }
+        .row-bot-desktop-composer .row-bot-composer-action-group {
+          flex: 0 0 auto;
+          margin-left: auto;
+          padding: 0;
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+        }
+        .row-bot-composer-primary-action-slot {
+          position: relative;
+          width: 34px;
+          height: 34px;
+          flex: 0 0 34px;
+        }
+        .row-bot-composer-primary-action-slot > .q-btn {
+          position: absolute;
+          inset: 0;
+        }
+        .row-bot-desktop-composer .row-bot-composer-primary-action-slot
+          .row-bot-composer-stop-button:disabled,
+        .row-bot-desktop-composer .row-bot-composer-primary-action-slot
+          .row-bot-composer-stop-button.disabled {
+          display: none;
+        }
+        .row-bot-desktop-composer .row-bot-composer-primary-action-slot:has(
+          .row-bot-composer-stop-button:not(:disabled):not(.disabled)
+        ) .row-bot-composer-send-button {
+          display: none;
+        }
+        .row-bot-composer-status {
+          position: absolute;
+          left: 16px;
+          bottom: 48px;
+          z-index: 3;
+          max-width: calc(100% - 32px);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          pointer-events: none;
+        }
         .row-bot-composer-icon-button {
           width: 30px;
           height: 30px;
@@ -125,6 +219,7 @@ def ensure_composer_control_css() -> None:
           height: 30px;
           min-height: 30px;
           align-self: center;
+          min-width: 0;
         }
         .row-bot-composer-select .q-field__control {
           height: 30px !important;
@@ -161,6 +256,27 @@ def ensure_composer_control_css() -> None:
           font-size: 18px;
           line-height: 30px;
         }
+        .row-bot-composer-skills-trigger-compact {
+          display: none;
+          position: relative;
+        }
+        .row-bot-composer-skill-count {
+          position: absolute;
+          top: -5px;
+          right: -7px;
+          min-width: 16px;
+          height: 16px;
+          padding: 0 4px;
+          border-radius: 999px;
+          font-size: 10px;
+          line-height: 16px;
+        }
+        .row-bot-context-label-compact {
+          display: none;
+        }
+        .row-bot-context-meter-track {
+          transition: width 140ms ease;
+        }
         .row-bot-composer-separator {
           height: 20px;
           opacity: 0.35;
@@ -190,6 +306,89 @@ def ensure_composer_control_css() -> None:
         .row-bot-composer-stop-button .q-btn__content {
           min-height: 34px;
           line-height: 34px;
+        }
+
+        @container row-bot-composer (max-width: 759px) {
+          .row-bot-composer-model-select {
+            width: 140px !important;
+            min-width: 96px !important;
+            max-width: 140px !important;
+          }
+          .row-bot-composer-reasoning-select,
+          .row-bot-composer-approval-select {
+            width: 20px !important;
+            min-width: 20px !important;
+            max-width: 20px !important;
+          }
+          .row-bot-composer-reasoning-select .q-field__control-container,
+          .row-bot-composer-approval-select .q-field__control-container {
+            width: 0 !important;
+            min-width: 0 !important;
+            flex: 0 0 0 !important;
+            overflow: hidden !important;
+          }
+          .row-bot-composer-reasoning-select .q-field__append,
+          .row-bot-composer-approval-select .q-field__append {
+            width: 18px !important;
+            min-width: 18px !important;
+          }
+          .row-bot-composer-skills-trigger-full,
+          .row-bot-composer-skill-chip,
+          .row-bot-composer-skill-suggestion {
+            display: none !important;
+          }
+          .row-bot-composer-skills-trigger-compact {
+            display: inline-flex !important;
+          }
+          .row-bot-context-label-full {
+            display: none !important;
+          }
+          .row-bot-context-label-compact {
+            display: block !important;
+          }
+          .row-bot-context-meter {
+            min-width: 72px !important;
+          }
+          .row-bot-context-meter-track,
+          .row-bot-context-meter-track .q-linear-progress {
+            width: 72px !important;
+          }
+        }
+
+        @container row-bot-composer (max-width: 519px) {
+          .row-bot-composer-left-gap {
+            width: 2px;
+            min-width: 2px;
+          }
+          .row-bot-composer-model-select {
+            width: 20px !important;
+            min-width: 20px !important;
+            max-width: 20px !important;
+          }
+          .row-bot-composer-model-select .q-field__control-container {
+            width: 0 !important;
+            min-width: 0 !important;
+            flex: 0 0 0 !important;
+            overflow: hidden !important;
+          }
+          .row-bot-composer-model-select .q-field__append {
+            width: 18px !important;
+            min-width: 18px !important;
+          }
+          .row-bot-composer-control {
+            padding-inline: 4px;
+          }
+          .row-bot-composer-control-group {
+            gap: 2px !important;
+          }
+          .row-bot-composer-toolbar {
+            padding-left: 4px !important;
+            padding-right: 4px !important;
+            gap: 2px !important;
+          }
+          .row-bot-composer-action-divider {
+            margin-inline: 1px;
+          }
         }
         """
     )
@@ -391,7 +590,7 @@ def build_chat_messages(
     *,
     messages: list[dict] | None = None,
     add_chat_message: Callable | None = None,
-    placeholder_text: str = "Ask anything...",
+    placeholder_text: str = "Do anything…",
     cloud_tint: bool | None = None,
 ) -> None:
     """Build the scrollable chat message area and wire ``p.chat_scroll`` / ``p.chat_container``.
@@ -716,9 +915,10 @@ def notify_context_policy_once(state: AppState, policy: Any) -> bool:
 class ContextMeterController:
     """Event-driven desktop context meter; persisted snapshots are display-only."""
 
-    def __init__(self, root, label, progress, marker, tooltip) -> None:
+    def __init__(self, root, label, progress, marker, tooltip, compact_label=None) -> None:
         self.root = root
         self.label = label
+        self.compact_label = compact_label
         self.progress = progress
         self.marker = marker
         self.tooltip = tooltip
@@ -772,6 +972,20 @@ class ContextMeterController:
             label_text = "Context unavailable"
             percent = 0.0
         self.label.text = label_text
+        if current == "compacting":
+            compact_label_text = "Compacting…"
+        elif current == "ready" and usable:
+            compact_label_text = f"{'~' if stale else ''}{percent_text}"
+        elif current == "failed" and usable:
+            compact_label_text = f"{percent_text} !"
+        elif not snapshot and capacity_state == "unknown_auto":
+            compact_label_text = "Unavailable"
+        elif not snapshot:
+            compact_label_text = "Ready"
+        else:
+            compact_label_text = "Unavailable"
+        if self.compact_label is not None:
+            self.compact_label.text = compact_label_text
         self.progress.value = percent
         marker_position = min(1.0, compact_at / usable) if usable and compact_at else 0.0
         self.marker.style(
@@ -824,7 +1038,10 @@ class ContextMeterController:
             f'tabindex="0" role="status" aria-label="{label_text}; '
             f'compaction threshold marker"'
         )
-        for element in (self.label, self.progress, self.marker, self.tooltip, self.root):
+        elements = (self.label, self.compact_label, self.progress, self.marker, self.tooltip, self.root)
+        for element in elements:
+            if element is None:
+                continue
             try:
                 element.update()
             except Exception:
@@ -838,8 +1055,11 @@ def create_context_meter(p: P, state: AppState) -> ContextMeterController:
         "min-width: 112px; cursor: help; outline-offset: 3px;"
     ).props('tabindex="0" role="status"') as root:
         with ui.column().classes("gap-0 items-end"):
-            label = ui.label("Context ready").classes("text-xs text-grey-6")
-            with ui.element("div").style("height: 3px; width: 112px; position: relative;"):
+            label = ui.label("Context ready").classes("text-xs text-grey-6 row-bot-context-label-full")
+            compact_label = ui.label("Ready").classes("text-xs text-grey-6 row-bot-context-label-compact")
+            with ui.element("div").classes("row-bot-context-meter-track").style(
+                "height: 3px; width: 112px; position: relative;"
+            ):
                 progress = ui.linear_progress(value=0, show_value=False).style(
                     "height: 3px; width: 112px;"
                 )
@@ -848,7 +1068,14 @@ def create_context_meter(p: P, state: AppState) -> ContextMeterController:
                     "background: rgba(255,255,255,0.55); display: none;"
                 ).props('aria-label="Automatic compaction threshold"')
         tooltip = ui.tooltip("Context will appear after the next validated model preparation.")
-    controller = ContextMeterController(root, label, progress, marker, tooltip)
+    controller = ContextMeterController(
+        root,
+        label,
+        progress,
+        marker,
+        tooltip,
+        compact_label=compact_label,
+    )
     p.context_meter = controller
     p.token_label = label
     p.token_bar = progress
@@ -943,7 +1170,7 @@ def build_chat_input_bar(
             )
 
     # Input card
-    with ui.column().classes("w-full shrink-0 gap-0").style(
+    with ui.column().classes("w-full shrink-0 gap-0 row-bot-desktop-composer").style(
         "border: 1px solid rgba(255,255,255,0.15); border-radius: 18px; "
         "background: rgba(255,255,255,0.04); padding: 0; overflow: hidden; "
         "position: relative;"
@@ -961,7 +1188,7 @@ def build_chat_input_bar(
 
         # Textarea
         p.chat_input = (
-            ui.textarea(placeholder="Ask anything...")
+            ui.textarea(placeholder="Do anything…")
             .classes("w-full")
             .props(
                 'borderless autogrow input-style="padding: 12px 16px 4px 16px; '
@@ -1088,12 +1315,13 @@ def build_chat_input_bar(
 
             ui.element("div").classes("row-bot-composer-left-gap")
 
-            build_composer_policy_cluster(
-                state,
-                open_settings=open_settings,
-                show_model_picker=show_model_picker,
-                on_model_switch=on_model_switch,
-            )
+            with ui.element("div").classes("row-bot-composer-policy-host"):
+                build_composer_policy_cluster(
+                    state,
+                    open_settings=open_settings,
+                    show_model_picker=show_model_picker,
+                    on_model_switch=on_model_switch,
+                )
             from row_bot.ui.voice_realtime_events import make_realtime_event_handler
 
             _on_realtime_event = make_realtime_event_handler(
@@ -1202,7 +1430,7 @@ def build_chat_input_bar(
                 if p.dictate_btn:
                     _set_dictate_button_active(p, True)
 
-            p.voice_status_label = ui.label("").classes("text-xs text-grey-6")
+            p.voice_status_label = ui.label("").classes("text-xs text-grey-6 row-bot-composer-status")
 
             ui.space()
 
@@ -1221,13 +1449,14 @@ def build_chat_input_bar(
 
                 ui.element("div").classes("row-bot-composer-action-divider")
 
-                ui.button(icon="send", on_click=_on_send).props(
-                    "color=primary round dense size=sm"
-                ).classes("row-bot-composer-send-button").tooltip("Send")
+                with ui.element("div").classes("row-bot-composer-primary-action-slot"):
+                    ui.button(icon="send", on_click=_on_send).props(
+                        "color=primary round dense size=sm"
+                    ).classes("row-bot-composer-send-button").tooltip("Send")
 
-                p.stop_btn = ui.button(icon="stop", on_click=_on_stop).props(
-                    "round dense size=sm"
-                ).classes("row-bot-composer-stop-button").tooltip("Stop generation")
+                    p.stop_btn = ui.button(icon="stop", on_click=_on_stop).props(
+                        "round dense size=sm"
+                    ).classes("row-bot-composer-stop-button").tooltip("Stop generation")
             _has_active = state.thread_id in _active_generations
             if not _has_active:
                 p.stop_btn.disable()
@@ -1285,19 +1514,52 @@ def build_composer_policy_cluster(
 
     ensure_composer_control_css()
 
-    with ui.row().classes("items-center row-bot-composer-control-group"):
+    with ui.row().classes("items-center no-wrap row-bot-composer-control-group"):
         if show_model_picker:
-            ui.icon("hub", size="18px").classes("text-grey-5")
-            _build_inline_model_picker(
-                state,
-                open_settings=open_settings,
-                on_model_switch=on_model_switch,
-                generation_getter=generation_getter,
-                shell_generation=shell_generation,
-            )
-            ui.separator().props("vertical").classes("row-bot-composer-separator")
-        ui.icon("shield", size="18px").classes("text-grey-5")
-        _build_inline_approval_picker(state)
+            reasoning_host = None
+            reasoning_control = None
+
+            def _refresh_reasoning_control() -> None:
+                if reasoning_host is None or reasoning_control is None:
+                    return
+                reasoning_host.clear()
+                with reasoning_host:
+                    rendered = _build_inline_reasoning_picker(state)
+                reasoning_control.set_visibility(rendered)
+
+            with ui.element("div").classes(
+                "row-bot-composer-control row-bot-composer-control-model"
+            ).props('role="group" aria-label="Model"'):
+                ui.icon("hub", size="18px").classes(
+                    "text-grey-5 row-bot-composer-control-icon"
+                ).tooltip("Model")
+                _build_inline_model_picker(
+                    state,
+                    open_settings=open_settings,
+                    on_model_switch=on_model_switch,
+                    generation_getter=generation_getter,
+                    shell_generation=shell_generation,
+                    on_reasoning_refresh=_refresh_reasoning_control,
+                )
+
+            with ui.element("div").classes(
+                "row-bot-composer-control row-bot-composer-control-reasoning"
+            ).props('role="group" aria-label="Thinking"') as reasoning_control:
+                ui.icon("psychology", size="18px").classes(
+                    "text-grey-5 row-bot-composer-control-icon"
+                ).tooltip("Thinking")
+                reasoning_host = ui.row().classes(
+                    "items-center no-wrap row-bot-composer-reasoning-host"
+                )
+                _refresh_reasoning_control()
+
+        with ui.element("div").classes(
+            "row-bot-composer-control row-bot-composer-control-approval"
+        ).props('role="group" aria-label="Approval"'):
+            ui.icon("shield", size="18px").classes(
+                "text-grey-5 row-bot-composer-control-icon"
+            ).tooltip("Approval")
+            _build_inline_approval_picker(state)
 
 
 def _build_inline_model_picker(
@@ -1307,6 +1569,7 @@ def _build_inline_model_picker(
     on_model_switch: Callable | None = None,
     generation_getter: Callable[[], int] | None = None,
     shell_generation: int | None = None,
+    on_reasoning_refresh: Callable | None = None,
 ) -> None:
     """Compact model picker rendered inside the input bar."""
     from row_bot.agent import clear_agent_cache
@@ -1418,9 +1681,14 @@ def _build_inline_model_picker(
             _set_thread_model_override(state.thread_id, "")
             val = _default_opt
         _current_picker_value[0] = val
+        selected_label = str(_picker_opts.get(val) or model_id_from_choice_value(val) or val)
+        e.sender._props["aria-label"] = f"Model: {selected_label}"
+        e.sender._props["title"] = f"Model: {selected_label}"
         e.sender.set_value(val)
         clear_context_usage_projection(state)
         clear_agent_cache()
+        if on_reasoning_refresh:
+            on_reasoning_refresh()
         _eff = state.thread_model_override or get_current_model()
         if on_model_switch:
             on_model_switch()
@@ -1441,13 +1709,18 @@ def _build_inline_model_picker(
             )
         ui.notify(f"Switched to {_picker_opts.get(val, _eff)}", type="info")
 
+    _selected_model_label = str(_picker_opts.get(_picker_val) or _cur_default)
     _select = ui.select(
         options=_picker_opts,
         value=_picker_val,
         on_change=_on_model_pick,
-    ).props("dense borderless options-dense hide-bottom-space data-docs-id=chat-model-picker").classes("text-xs row-bot-composer-select").style(
+    ).props("dense borderless options-dense hide-bottom-space data-docs-id=chat-model-picker").classes(
+        "text-xs row-bot-composer-select row-bot-composer-model-select"
+    ).style(
         _compact_select_style(min_width=170, max_width=260)
-    ).tooltip("Select model for this thread")
+    ).tooltip(f"Model: {_selected_model_label}")
+    _select._props["aria-label"] = f"Model: {_selected_model_label}"
+    _select._props["title"] = f"Model: {_selected_model_label}"
 
     async def _load_picker_options() -> None:
         started = time.perf_counter()
@@ -1506,6 +1779,177 @@ def _build_inline_model_picker(
         defer_ui(_load_picker_options, delay=0.05)
 
 
+def _build_inline_reasoning_picker(state: AppState) -> bool:
+    """Conditional exact-model reasoning control shared by every desktop composer."""
+    from row_bot.models import clear_llm_cache, get_current_model
+    from row_bot.providers.reasoning import (
+        ReasoningSelection,
+        reasoning_choices,
+        resolve_reasoning_capabilities,
+        validate_reasoning_selection,
+    )
+    from row_bot.providers.resolution import resolve_provider_config
+    from row_bot.threads import get_thread_reasoning_selection, set_thread_reasoning_selection
+
+    selected_model = state.thread_model_override or get_current_model()
+    try:
+        resolved = resolve_provider_config(selected_model, allow_legacy_local=True)
+        capabilities = resolve_reasoning_capabilities(resolved.provider_id, resolved.runtime_model)
+    except Exception:
+        return False
+    choices = reasoning_choices(capabilities)
+    if not choices or capabilities is None:
+        return False
+
+    try:
+        current = ReasoningSelection.from_json(
+            get_thread_reasoning_selection(state.thread_id, resolved.selection_ref)
+        )
+        validate_reasoning_selection(current, capabilities)
+    except ValueError:
+        current = ReasoningSelection()
+        set_thread_reasoning_selection(state.thread_id, resolved.selection_ref, None)
+        ui.notify(
+            "The saved reasoning setting is no longer supported; Provider default is active.",
+            type="warning",
+            close_button=True,
+            timeout=5000,
+        )
+
+    def _value(selection: ReasoningSelection) -> str:
+        if selection.kind == "effort":
+            return f"effort:{selection.effort}"
+        if selection.kind == "budget":
+            return f"budget:{selection.budget}"
+        return selection.kind
+
+    options = {
+        _value(choice): choice.label
+        for choice in choices
+    }
+    if current.kind == "budget":
+        options[_value(current)] = current.label
+    if capabilities.supports_budget:
+        options["budget:custom"] = "Budget…"
+
+    budget_dialog = ui.dialog()
+    budget_value = current.budget if current.kind == "budget" else max(capabilities.budget_min, 1)
+    with budget_dialog, ui.card().classes("q-pa-md gap-3"):
+        ui.label("Reasoning budget").classes("text-subtitle2")
+        budget_input = ui.number(
+            "Tokens",
+            value=budget_value,
+            min=capabilities.budget_min,
+            max=capabilities.budget_max or None,
+            step=1,
+        ).props("outlined dense")
+        with ui.row().classes("justify-end w-full"):
+            ui.button("Cancel", on_click=budget_dialog.close).props("flat")
+            save_budget = ui.button("Apply", color="primary")
+
+    picker = None
+
+    async def _persist(selection: ReasoningSelection) -> None:
+        validate_reasoning_selection(selection, capabilities)
+        await run.io_bound(
+            set_thread_reasoning_selection,
+            state.thread_id,
+            resolved.selection_ref,
+            None if selection.is_default else selection.to_json(),
+        )
+        from row_bot.agent import clear_agent_cache
+
+        clear_agent_cache()
+        clear_llm_cache()
+        ui.notify(f"Reasoning: {selection.label}", type="info", timeout=3000)
+
+    async def _save_budget() -> None:
+        try:
+            selection = ReasoningSelection(kind="budget", budget=int(budget_input.value or 0))
+            await _persist(selection)
+        except ValueError as exc:
+            ui.notify(str(exc), type="negative", close_button=True)
+            return
+        budget_dialog.close()
+        if picker is not None:
+            picker.options = {**options, _value(selection): selection.label}
+            picker.set_value(_value(selection))
+            picker.update()
+
+    save_budget.on("click", _save_budget)
+
+    async def _on_pick(e) -> None:
+        raw = str(e.value or "")
+        if raw == "budget:custom":
+            e.sender.set_value(_value(current))
+            budget_dialog.open()
+            return
+        if raw.startswith("effort:"):
+            selection = ReasoningSelection(kind="effort", effort=raw.split(":", 1)[1])
+        elif raw.startswith("budget:"):
+            selection = ReasoningSelection(kind="budget", budget=int(raw.split(":", 1)[1]))
+        else:
+            selection = ReasoningSelection(kind=raw)
+        await _persist(selection)
+        e.sender._props["aria-label"] = f"Thinking: {selection.label}"
+        e.sender._props["title"] = f"Thinking: {selection.label}"
+        e.sender.set_value(_value(selection))
+
+    picker = ui.select(
+        options=options,
+        value=_value(current),
+        on_change=_on_pick,
+    ).props(
+        "dense borderless options-dense hide-bottom-space data-docs-id=chat-reasoning-picker"
+    ).classes("text-xs row-bot-composer-select row-bot-composer-reasoning-select").style(
+        _compact_select_style(min_width=70, max_width=126)
+    ).tooltip("Thinking: Provider default" if current.is_default else f"Thinking: {current.label}")
+    picker._props["aria-label"] = f"Thinking: {current.label}"
+    picker._props["title"] = f"Thinking: {current.label}"
+    return True
+
+
+async def open_reasoning_control() -> None:
+    """Open and focus the visible desktop or mobile reasoning picker."""
+
+    await ui.run_javascript(
+        """
+        (async () => {
+          const visible = (element) => Boolean(
+            element && element.getClientRects().length &&
+            window.getComputedStyle(element).visibility !== 'hidden'
+          );
+          const openPicker = (element) => {
+            if (!visible(element)) return false;
+            element.scrollIntoView({block: 'nearest', inline: 'nearest'});
+            const focusTarget = element.querySelector('input') || element;
+            focusTarget.focus({preventScroll: true});
+            element.click();
+            return true;
+          };
+
+          const desktop = document.querySelector('[data-docs-id="chat-reasoning-picker"]');
+          if (openPicker(desktop)) return true;
+
+          let mobile = document.querySelector('[data-docs-id="mobile-reasoning-control"]');
+          if (openPicker(mobile)) return true;
+
+          const composer = document.querySelector('[data-docs-id="mobile-chat-composer"]');
+          const controlsTrigger = composer?.querySelector('.row-bot-mobile-model-pill');
+          if (!visible(controlsTrigger)) return false;
+          controlsTrigger.click();
+          for (let attempt = 0; attempt < 10; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            mobile = document.querySelector('[data-docs-id="mobile-reasoning-control"]');
+            if (openPicker(mobile)) return true;
+          }
+          return false;
+        })()
+        """,
+        timeout=3.0,
+    )
+
+
 def _build_inline_approval_picker(state: AppState) -> None:
     """Compact approval-mode picker rendered inside the input bar."""
     from row_bot.agent import clear_agent_cache
@@ -1531,13 +1975,20 @@ def _build_inline_approval_picker(state: AppState) -> None:
         if state.thread_id:
             await run.io_bound(_set_thread_approval_mode, state.thread_id, val)
         clear_agent_cache()
+        selected_label = approval_label(val)
+        e.sender._props["aria-label"] = f"Approval: {selected_label}"
+        e.sender._props["title"] = f"Approval: {selected_label}"
         e.sender.set_value(val)
-        ui.notify(f"Approval mode: {approval_label(val)}", type="info")
+        ui.notify(f"Approval mode: {selected_label}", type="info")
 
-    ui.select(
+    approval_picker = ui.select(
         options=options,
         value=current,
         on_change=_on_pick,
-    ).props("dense borderless options-dense hide-bottom-space").classes("text-xs row-bot-composer-select").style(
+    ).props("dense borderless options-dense hide-bottom-space").classes(
+        "text-xs row-bot-composer-select row-bot-composer-approval-select"
+    ).style(
         _compact_select_style(min_width=78, max_width=104)
-    ).tooltip("Approval mode for this thread")
+    ).tooltip(f"Approval: {approval_label(current)}")
+    approval_picker._props["aria-label"] = f"Approval: {approval_label(current)}"
+    approval_picker._props["title"] = f"Approval: {approval_label(current)}"

@@ -343,6 +343,11 @@ def _custom_endpoint_edit_payload(
     vision_mode: str = "auto",
     tool_mode: str = "auto",
     context_window: object = "",
+    reasoning_mode: str = "auto",
+    thinking_budget: object = "",
+    extra_body_json: object = "",
+    supports_reasoning_content: bool = False,
+    supports_reasoning_replay: bool = False,
 ) -> tuple[dict, bool]:
     payload = dict(endpoint)
     payload["id"] = str(endpoint.get("id") or "").strip()
@@ -363,6 +368,29 @@ def _custom_endpoint_edit_payload(
     else:
         payload.pop("manual_capabilities", None)
 
+    mode = str(reasoning_mode or "auto").strip().lower()
+    if mode not in {"auto", "on", "off"}:
+        raise ValueError("Reasoning mode must be Auto, On, or Off.")
+    payload["reasoning_mode"] = mode
+    budget_text = str(thinking_budget or "").strip()
+    if budget_text:
+        try:
+            parsed_budget = int(budget_text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Thinking budget must be a positive integer.") from exc
+        if parsed_budget <= 0:
+            raise ValueError("Thinking budget must be a positive integer.")
+        payload["thinking_budget"] = parsed_budget
+    else:
+        payload.pop("thinking_budget", None)
+    extra_body = _parse_custom_extra_body(extra_body_json)
+    if extra_body:
+        payload["extra_body"] = extra_body
+    else:
+        payload.pop("extra_body", None)
+    payload["supports_reasoning_content"] = bool(supports_reasoning_content)
+    payload["supports_reasoning_replay"] = bool(supports_reasoning_replay)
+
     stale_probe = (
         str(endpoint.get("base_url") or "").strip().rstrip("/") != payload["base_url"]
         or bool(endpoint.get("auth_required")) != payload["auth_required"]
@@ -372,6 +400,44 @@ def _custom_endpoint_edit_payload(
         payload.pop("last_probe", None)
         payload.pop("models", None)
     return payload, stale_probe
+
+
+_CUSTOM_EXTRA_BODY_SECRET_KEYS = {
+    "authorization",
+    "api_key",
+    "api-key",
+    "x-api-key",
+    "access_token",
+    "refresh_token",
+    "password",
+    "secret",
+    "bearer",
+}
+
+
+def _parse_custom_extra_body(value: object) -> dict:
+    text = str(value or "").strip()
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Extra request JSON is invalid: {exc.msg}.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Extra request JSON must be a JSON object.")
+
+    def _reject_secrets(item: object) -> None:
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                if str(key).strip().lower() in _CUSTOM_EXTRA_BODY_SECRET_KEYS:
+                    raise ValueError("Extra request JSON must not contain credentials or secrets.")
+                _reject_secrets(nested)
+        elif isinstance(item, list):
+            for nested in item:
+                _reject_secrets(nested)
+
+    _reject_secrets(payload)
+    return payload
 
 
 def _source_label(source: str) -> str:
@@ -1419,6 +1485,31 @@ def build_custom_endpoints_section(on_change=None) -> None:
                                     placeholder="Auto",
                                 ).classes("w-full").props("dense outlined")
                                 ui.label(f"Used as {APP_DISPLAY_NAME}'s provider ceiling for trimming and readiness. The app-wide context setting still caps actual usage.").classes("text-grey-6 text-xs")
+                                with ui.expansion("Reasoning", icon="psychology", value=False).classes("w-full"):
+                                    reasoning_mode = ui.select(
+                                        {"auto": "Auto", "on": "On", "off": "Off"},
+                                        value=str(endpoint.get("reasoning_mode") or "auto"),
+                                        label="Reasoning mode",
+                                    ).classes("w-full").props("dense outlined")
+                                    thinking_budget = ui.input(
+                                        "Thinking budget",
+                                        value=str(endpoint.get("thinking_budget") or ""),
+                                        placeholder="Optional positive integer",
+                                    ).classes("w-full").props("dense outlined")
+                                    supports_reasoning_content = ui.checkbox(
+                                        "Endpoint returns reasoning content",
+                                        value=bool(endpoint.get("supports_reasoning_content")),
+                                    )
+                                    supports_reasoning_replay = ui.checkbox(
+                                        "Replay preserved reasoning to the endpoint",
+                                        value=bool(endpoint.get("supports_reasoning_replay")),
+                                    )
+                                    with ui.expansion("Extra request JSON", icon="data_object", value=False).classes("w-full"):
+                                        extra_body_json = ui.textarea(
+                                            "Credential-free JSON object",
+                                            value=json.dumps(endpoint.get("extra_body") or {}, indent=2, sort_keys=True),
+                                        ).classes("w-full").props("outlined autogrow")
+                                        ui.label("Structured fields override conflicting JSON values. Credentials are rejected.").classes("text-grey-6 text-xs")
 
                             async def _save_edit(endpoint=endpoint):
                                 name = str(name_input.value or "").strip()
@@ -1426,16 +1517,25 @@ def build_custom_endpoints_section(on_change=None) -> None:
                                 if not name or not base_url:
                                     ui.notify("Display name and base URL are required", type="warning")
                                     return
-                                payload, stale = _custom_endpoint_edit_payload(
-                                    endpoint,
-                                    display_name=name,
-                                    base_url=base_url,
-                                    no_auth=bool(no_auth_input.value),
-                                    api_key=api_key_input.value,
-                                    vision_mode=str(vision_mode.value or "auto"),
-                                    tool_mode=str(tool_mode.value or "auto"),
-                                    context_window=context_input.value,
-                                )
+                                try:
+                                    payload, stale = _custom_endpoint_edit_payload(
+                                        endpoint,
+                                        display_name=name,
+                                        base_url=base_url,
+                                        no_auth=bool(no_auth_input.value),
+                                        api_key=api_key_input.value,
+                                        vision_mode=str(vision_mode.value or "auto"),
+                                        tool_mode=str(tool_mode.value or "auto"),
+                                        context_window=context_input.value,
+                                        reasoning_mode=str(reasoning_mode.value or "auto"),
+                                        thinking_budget=thinking_budget.value,
+                                        extra_body_json=extra_body_json.value,
+                                        supports_reasoning_content=bool(supports_reasoning_content.value),
+                                        supports_reasoning_replay=bool(supports_reasoning_replay.value),
+                                    )
+                                except ValueError as exc:
+                                    ui.notify(str(exc), type="negative", close_button=True)
+                                    return
                                 save_custom_endpoint(payload)
                                 storage_warning = ""
                                 if payload.get("api_key"):
@@ -1603,6 +1703,24 @@ def build_custom_endpoints_section(on_change=None) -> None:
                 ).classes("min-w-[180px]")
                 context_override = ui.input("Native context limit", placeholder="Auto").classes("min-w-[180px]")
             ui.label("Agent readiness still depends on live probe results. The app-wide context setting still caps actual context usage.").classes("text-grey-6 text-xs")
+            with ui.expansion("Reasoning", icon="psychology", value=False).classes("w-full"):
+                reasoning_mode = ui.select(
+                    {"auto": "Auto", "on": "On", "off": "Off"},
+                    value="auto",
+                    label="Reasoning mode",
+                ).classes("w-full").props("dense outlined")
+                thinking_budget = ui.input(
+                    "Thinking budget",
+                    placeholder="Optional positive integer",
+                ).classes("w-full").props("dense outlined")
+                supports_reasoning_content = ui.checkbox("Endpoint returns reasoning content", value=False)
+                supports_reasoning_replay = ui.checkbox("Replay preserved reasoning to the endpoint", value=False)
+                with ui.expansion("Extra request JSON", icon="data_object", value=False).classes("w-full"):
+                    extra_body_json = ui.textarea(
+                        "Credential-free JSON object",
+                        value="{}",
+                    ).classes("w-full").props("outlined autogrow")
+                    ui.label("Structured fields override conflicts. Credentials are rejected.").classes("text-grey-6 text-xs")
 
         def _save() -> None:
             name = str(name_input.value or "").strip()
@@ -1627,6 +1745,23 @@ def build_custom_endpoints_section(on_change=None) -> None:
             )
             if manual_caps:
                 payload["manual_capabilities"] = manual_caps
+            try:
+                extra_body = _parse_custom_extra_body(extra_body_json.value)
+                budget_text = str(thinking_budget.value or "").strip()
+                if budget_text:
+                    budget = int(budget_text)
+                    if budget <= 0:
+                        raise ValueError("Thinking budget must be a positive integer.")
+                    payload["thinking_budget"] = budget
+            except (TypeError, ValueError) as exc:
+                message = str(exc) if str(exc) else "Thinking budget must be a positive integer."
+                ui.notify(message, type="negative", close_button=True)
+                return
+            payload["reasoning_mode"] = str(reasoning_mode.value or "auto")
+            payload["supports_reasoning_content"] = bool(supports_reasoning_content.value)
+            payload["supports_reasoning_replay"] = bool(supports_reasoning_replay.value)
+            if extra_body:
+                payload["extra_body"] = extra_body
             save_custom_endpoint(payload)
             storage_warning = ""
             if payload.get("api_key"):

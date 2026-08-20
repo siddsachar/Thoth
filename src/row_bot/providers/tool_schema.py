@@ -151,14 +151,16 @@ def inspect_google_tool_schemas(
 ) -> dict[str, tuple[ToolSchemaIssue, ...]]:
     """Inspect schemas produced by the locked Gemini adapter in one batch.
 
-    The adapter can change schema shape while translating valid JSON Schema.
-    In particular, a ``string | list[string]`` union is currently emitted as
-    an array without ``items`` even though the source array branch is typed.
+    The adapter can change schema shape while translating valid JSON Schema,
+    so validate the effective consolidated-SDK declarations before binding.
     """
     tool_list = tuple(tools)
     try:
-        import google.ai.generativelanguage as glm
-        import google.ai.generativelanguage_v1beta.types as gapic
+        # Coverage/source discovery can import Row-Bot's optional MCP package
+        # before google-genai. Ensure Pydantic's lazy RootModel module remains
+        # registered for google-genai's optional MCP types during that sequence.
+        import pydantic.root_model  # noqa: F401
+        from google.genai import types
         from langchain_google_genai._function_utils import (
             convert_to_genai_function_declarations,
         )
@@ -179,13 +181,18 @@ def inspect_google_tool_schemas(
     def inspect_converted(converted) -> dict[str, tuple[ToolSchemaIssue, ...]]:
         result: dict[str, tuple[ToolSchemaIssue, ...]] = {}
 
-        for declaration in converted.function_declarations:
+        declarations = [
+            declaration
+            for converted_tool in converted
+            for declaration in (converted_tool.function_declarations or ())
+        ]
+        for declaration in declarations:
             tool_name = str(declaration.name or "<unnamed>")
             issues: list[ToolSchemaIssue] = []
 
             def visit(node: Any, path: str) -> None:
                 if isinstance(node, Mapping):
-                    if node.get("type_") == int(glm.Type.ARRAY):
+                    if node.get("type") == types.Type.ARRAY:
                         items = node.get("items")
                         if not isinstance(items, Mapping) or not items:
                             issues.append(
@@ -202,10 +209,7 @@ def inspect_google_tool_schemas(
                     for index, value in enumerate(node):
                         visit(value, f"{path}[{index}]")
 
-            schema = gapic.Schema.to_dict(
-                declaration.parameters,
-                preserving_proto_field_name=True,
-            )
+            schema = declaration.parameters.model_dump(exclude_none=True)
             visit(schema, "$")
             if issues:
                 result[tool_name] = tuple(issues)

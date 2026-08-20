@@ -52,6 +52,7 @@ class ChatOllamaCloud(BaseChatModel):
     base_url: str = OLLAMA_CLOUD_BASE_URL
     timeout: float = 120.0
     http_client: Any | None = None
+    reasoning_plan: Any | None = None
 
     @property
     def _llm_type(self) -> str:
@@ -127,6 +128,12 @@ class ChatOllamaCloud(BaseChatModel):
             tool_choice = kwargs.get("tool_choice")
             if tool_choice and tool_choice != "auto":
                 body["tool_choice"] = tool_choice
+        if self.reasoning_plan is not None and not self.reasoning_plan.is_default:
+            selection = self.reasoning_plan.selection
+            if selection.kind == "effort":
+                body["think"] = selection.effort
+            elif selection.kind in {"on", "off"}:
+                body["think"] = selection.kind == "on"
         return body
 
     def _post(self, body: dict[str, Any]) -> Any:

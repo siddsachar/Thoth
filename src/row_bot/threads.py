@@ -42,6 +42,7 @@ _THREAD_META_COLUMNS = {
     "agent_profile_id": "TEXT DEFAULT ''",
     "agent_profile_slug": "TEXT DEFAULT ''",
     "pinned_at": "TEXT DEFAULT ''",
+    "reasoning_selections_json": "TEXT NOT NULL DEFAULT ''",
 }
 
 THREAD_NAME_SOURCE_AUTO = "auto"
@@ -1091,6 +1092,139 @@ def _set_thread_model_override(thread_id: str, model_name: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def get_thread_reasoning_selections(thread_id: str) -> dict[str, dict]:
+    """Return the per-canonical-model reasoning selections for a thread."""
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(reasoning_selections_json, '') FROM thread_meta WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    if not row or not row[0]:
+        return {}
+    try:
+        payload = json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): dict(value)
+        for key, value in payload.items()
+        if isinstance(key, str) and key.startswith("model:") and isinstance(value, dict)
+    }
+
+
+def get_thread_reasoning_selection(thread_id: str, canonical_model_ref: str) -> dict | None:
+    """Return one saved reasoning selection, or None for Provider default."""
+    value = get_thread_reasoning_selections(thread_id).get(str(canonical_model_ref or ""))
+    return dict(value) if isinstance(value, dict) else None
+
+
+def set_thread_reasoning_selection(
+    thread_id: str,
+    canonical_model_ref: str,
+    selection: dict | None,
+) -> None:
+    """Merge or clear one exact-model reasoning selection for a thread."""
+    from row_bot.providers.selection import parse_model_ref
+
+    model_key = str(canonical_model_ref or "").strip()
+    if parse_model_ref(model_key) is None:
+        raise ValueError("Reasoning selections require a canonical provider-qualified model reference.")
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(reasoning_selections_json, '') FROM thread_meta WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        payload: dict[str, dict] = {}
+        if row and row[0]:
+            try:
+                loaded = json.loads(row[0])
+                if isinstance(loaded, dict):
+                    payload = {
+                        str(key): dict(value)
+                        for key, value in loaded.items()
+                        if isinstance(value, dict)
+                    }
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+        if selection is None:
+            payload.pop(model_key, None)
+        else:
+            from row_bot.providers.reasoning import ReasoningSelection
+
+            validated = ReasoningSelection.from_json(selection)
+            if validated.is_default:
+                payload.pop(model_key, None)
+            else:
+                payload[model_key] = validated.to_json()
+        conn.execute(
+            "UPDATE thread_meta SET reasoning_selections_json = ?, updated_at = ? WHERE thread_id = ?",
+            (json.dumps(payload, sort_keys=True, separators=(",", ":")), datetime.now().isoformat(), thread_id),
+        )
+        conn.commit()
+
+
+def set_thread_chat_controls(
+    thread_id: str,
+    *,
+    model_override: str,
+    approval_mode: str,
+    profile_id_or_slug: str,
+    reasoning_model_ref: str,
+    reasoning_selection: dict | None,
+) -> None:
+    """Atomically save the combined mobile model/chat-controls dialog."""
+    from row_bot.providers.reasoning import ReasoningSelection
+    from row_bot.providers.selection import parse_model_ref
+
+    profile_id = ""
+    profile_slug = ""
+    if profile_id_or_slug:
+        from row_bot.agent_profiles import require_agent_profile
+
+        profile = require_agent_profile(profile_id_or_slug, enabled_only=True)
+        profile_id = str(profile["id"])
+        profile_slug = str(profile["slug"])
+    model_key = str(reasoning_model_ref or "").strip()
+    if parse_model_ref(model_key) is None:
+        raise ValueError("Reasoning controls require a canonical provider-qualified model reference.")
+    selection = ReasoningSelection.from_json(reasoning_selection)
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT COALESCE(reasoning_selections_json, '') FROM thread_meta WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        try:
+            loaded = json.loads(row[0]) if row and row[0] else {}
+        except (TypeError, json.JSONDecodeError):
+            loaded = {}
+        reasoning_map = dict(loaded) if isinstance(loaded, dict) else {}
+        if selection.is_default:
+            reasoning_map.pop(model_key, None)
+        else:
+            reasoning_map[model_key] = selection.to_json()
+        conn.execute(
+            "UPDATE thread_meta SET model_override = ?, approval_mode = ?, "
+            "agent_profile_id = ?, agent_profile_slug = ?, reasoning_selections_json = ?, updated_at = ? "
+            "WHERE thread_id = ?",
+            (
+                str(model_override or ""),
+                normalize_approval_mode(approval_mode, DEFAULT_APPROVAL_MODE),
+                profile_id,
+                profile_slug,
+                json.dumps(reasoning_map, sort_keys=True, separators=(",", ":")),
+                datetime.now().isoformat(),
+                thread_id,
+            ),
+        )
+        conn.commit()
 
 
 def get_thread_skills_override(thread_id: str) -> list[str] | None:

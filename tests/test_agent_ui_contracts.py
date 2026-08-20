@@ -408,7 +408,9 @@ def test_shared_goal_ui_is_used_by_all_chat_surfaces():
     assert chat.index("p.chat_scroll =") < chat.index("p.goal_strip_container =")
     assert developer.index("build_chat_messages(") < developer.index("p.goal_strip_container =")
     assert designer.index("build_chat_messages(") < designer.index("p.goal_strip_container =")
-    assert chat.index("p.goal_strip_container =") < chat.index("with ui.column().classes(\"w-full shrink-0 gap-0\").style(")
+    assert chat.index("p.goal_strip_container =") < chat.index(
+        'with ui.column().classes("w-full shrink-0 gap-0 row-bot-desktop-composer").style('
+    )
     assert developer.index("p.goal_strip_container =") < developer.index("build_chat_input_bar(")
     assert designer.index("p.goal_strip_container =") < designer.index("build_chat_input_bar(")
     assert "ui.timer(2.0, _refresh_goal_strip)" in chat

@@ -47,6 +47,8 @@ def test_mobile_active_thread_composer_uses_shared_chat_controls() -> None:
     assert "data-docs-id=mobile-chat-composer" in src
     assert "attach_file" in src
     assert "mobile-chat-controls" in src
+    assert "data-docs-id=mobile-reasoning-control" in src
+    assert "set_thread_chat_controls(" in src
     assert "send_message(text)" in src
     assert "create_chat_composer_extras(" in src
     assert "show_draft_suggestions=False" in src
@@ -60,6 +62,25 @@ def test_mobile_active_thread_composer_uses_shared_chat_controls() -> None:
     assert "owner_controls" not in src
     assert "has_capability" not in src
     assert "Companion sessions" not in src
+
+
+def test_mobile_reasoning_command_can_open_and_focus_controls_sheet() -> None:
+    shared_src = Path("src/row_bot/ui/chat_components.py").read_text(encoding="utf-8")
+
+    assert 'data-docs-id="mobile-chat-composer"' in shared_src
+    assert ".row-bot-mobile-model-pill" in shared_src
+    assert 'data-docs-id="mobile-reasoning-control"' in shared_src
+    assert "controlsTrigger.click()" in shared_src
+    assert "for (let attempt = 0; attempt < 10; attempt += 1)" in shared_src
+    assert "if (openPicker(mobile)) return true" in shared_src
+
+
+def test_mobile_submit_preserves_nicegui_client_context() -> None:
+    src = Path("src/row_bot/ui/mobile_chat.py").read_text(encoding="utf-8")
+
+    assert "async def _submit() -> None:" in src
+    assert "await _submit_async()" in src
+    assert "asyncio.create_task(_submit_async())" not in src
 
 
 def test_mobile_active_thread_removes_space_heavy_policy_chrome() -> None:

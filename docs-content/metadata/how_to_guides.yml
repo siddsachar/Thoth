@@ -44,6 +44,15 @@ guides:
     - src/row_bot/ui/chat.py
     - src/row_bot/ui/tool_trace.py
     - src/row_bot/tools/approval_gate.py
+  control-model-reasoning:
+    title: Control Model Reasoning
+    route: /docs/chat/reasoning-controls
+    sources:
+    - src/row_bot/providers/reasoning.py
+    - src/row_bot/providers/transports/reasoning_fallback.py
+    - src/row_bot/ui/chat_components.py
+    - src/row_bot/ui/mobile_chat.py
+    - src/row_bot/channels/commands.py
   use-skills-plugins-mcp:
     title: Use Skills Plugins And MCP
     route: /docs/skills/

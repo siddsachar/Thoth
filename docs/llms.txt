@@ -18,6 +18,8 @@ Public documentation index for Row-Bot.
   Route: /docs/chat/. Use Row-Bot chat, composer controls, model choices, attachments, tools, approvals, and history.
 - [Model Picker](/docs/chat/model-picker)
   Route: /docs/chat/model-picker. Choose, pin, and troubleshoot Row-Bot models across local, hosted, subscription, and custom providers.
+- [Reasoning Controls](/docs/chat/reasoning-controls)
+  Route: /docs/chat/reasoning-controls. Choose provider-aware reasoning effort, thinking toggles, and token budgets for the active Row-Bot model.
 - [Tools, Approvals, And Terminal](/docs/chat/tools-approvals-and-terminal)
   Route: /docs/chat/tools-approvals-and-terminal. Understand Row-Bot tools, approval prompts, tool results, and terminal output.
 - [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills)

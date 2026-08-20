@@ -1,0 +1,71 @@
+---
+title: "Reasoning Controls"
+description: "Choose provider-aware reasoning effort, thinking toggles, and token budgets for the active Row-Bot model."
+---
+
+# Reasoning Controls
+
+Reasoning controls let you change how much supported models reason before answering without switching models. Row-Bot shows only choices that the exact provider-qualified model reports or that Row-Bot can identify from a maintained model route.
+
+## Where To Find The Control
+
+- In desktop Chat, Designer Studio, and Developer Studio, the **Thinking** control sits beside the model picker in the composer. On narrow desktop windows, the composer progressively compacts labels while keeping each icon paired with its own menu.
+- In the compact mobile layout, open **Chat controls**. Reasoning appears below Model when the selected model supports it.
+- In Chat or a connected messaging channel, use `/reasoning` to inspect the current choice and the valid choices for the active model.
+
+The control is intentionally absent when Row-Bot does not have exact, actionable reasoning capability data for the selected model. A generic model name or a provider-wide assumption is not enough.
+
+## What The Choices Mean
+
+| Choice | Effect |
+| --- | --- |
+| Provider default | Sends no per-thread reasoning override and lets the provider or endpoint choose its normal behavior. This is the safest compatibility choice. |
+| Low, Medium, High, XHigh, or another effort | Requests one of the exact effort levels supported by the selected model. The list varies by model. |
+| On or Off | Enables or disables thinking only when that model exposes a true toggle. Models with mandatory reasoning do not offer Off. |
+| Token budget | Sets a positive reasoning-token budget within the minimum and maximum reported for that model. This appears only for budget-capable models. |
+
+More reasoning can increase latency and provider token usage. It can help with planning, coding, analysis, and multi-step tool use, but a higher setting is not automatically better for every request.
+
+## Scope And Persistence
+
+A selection is saved locally for one thread and one exact provider-qualified model. Switching models does not apply an incompatible value to the new model. If you return to a model in the same thread, Row-Bot can restore that model's valid saved choice.
+
+Changing the global default model does not rewrite existing thread choices. Designer Studio and Developer Studio use the same thread-scoped behavior as normal Chat.
+
+## Slash And Channel Commands
+
+Run `/reasoning` with no argument to show the active setting and valid choices. Supported examples include:
+
+```text
+/reasoning high
+/reasoning default
+/reasoning on
+/reasoning off
+/reasoning budget 4096
+```
+
+Row-Bot validates the command against the active model. Unsupported efforts, toggles, or budgets are rejected without replacing the previous valid selection. Messaging channels use their conversation's active thread and model, so the setting remains isolated from unrelated chats.
+
+## Providers And Custom Endpoints
+
+Row-Bot maps native reasoning controls for supported OpenAI and Codex, Anthropic and Claude Subscription, xAI, Google, Ollama and Ollama Cloud, OpenRouter, and compatible endpoint routes when exact capability data is available. Available models and choices can change as provider catalogs change; the control itself is the authoritative list for the selected model.
+
+For a custom OpenAI-compatible endpoint, open **Settings -> Providers**, edit or add the endpoint, then expand **Advanced -> Reasoning**. Keep **Reasoning mode** on Auto unless the endpoint's metadata is missing or wrong. Thinking budget, returned reasoning content, replay, and extra request JSON are advanced compatibility settings that apply to every model exposed by that endpoint. Enable replay only when the endpoint explicitly supports receiving preserved reasoning history.
+
+## Responses And Compatibility Fallback
+
+When a provider returns reasoning content, Row-Bot can stream it separately and retain it as a collapsed **Thinking** section instead of mixing it into the final answer.
+
+If a provider rejects a valid-looking explicit reasoning choice before returning response content, Row-Bot retries once with Provider default, clears the rejected saved override, and shows a notice. Authentication failures, rate limits, timeouts, cancellations, and server failures are not silently retried as reasoning compatibility problems.
+
+## Privacy And Safety
+
+The selected control is stored locally with thread settings, but hosted providers receive the resulting reasoning parameter and may bill for additional tokens. Reasoning content returned by a provider can contain sensitive intermediate material. Do not enable reasoning replay for a custom endpoint unless you trust that endpoint and understand its message format.
+
+## Troubleshooting
+
+- **The control is missing:** confirm the active model is provider-qualified, refresh Providers and Models, and check that its catalog entry exposes exact reasoning capabilities.
+- **A choice disappeared after switching models:** choices are model-specific; inspect the new model's menu or run `/reasoning`.
+- **A saved choice reset to Provider default:** the provider rejected it or refreshed capability metadata no longer supports it. Read the notice, refresh the catalog, and choose from the current list.
+- **A custom endpoint returns reasoning in the wrong place:** review its Advanced Reasoning settings, especially returned reasoning content and replay. Keep replay off unless required.
+- **High reasoning is slow or expensive:** choose a lower supported effort, a smaller budget, or Provider default.

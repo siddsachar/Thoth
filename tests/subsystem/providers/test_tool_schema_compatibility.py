@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import google.ai.generativelanguage as glm
-import google.ai.generativelanguage_v1beta.types as gapic
 import pytest
-from langchain_google_genai._function_utils import convert_to_genai_function_declarations
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -95,7 +92,7 @@ def test_google_filters_invalid_optional_tool_and_preserves_order() -> None:
     assert result.issues[0].path == "$.properties.values.items"
 
 
-def test_google_checks_effective_adapter_schema_after_union_conversion() -> None:
+def test_google_preserves_valid_union_after_consolidated_adapter_conversion() -> None:
     valid = _tool("valid", _TypedArgs)
     union_tool = _tool("union_tool", _StringOrArrayArgs)
 
@@ -105,11 +102,9 @@ def test_google_checks_effective_adapter_schema_after_union_conversion() -> None
         TransportMode.GOOGLE_GENAI,
     )
 
-    assert result.tools == (valid,)
-    assert result.rejected_tool_names == ("union_tool",)
-    assert [(issue.code, issue.path) for issue in result.issues] == [
-        ("array_items_required", "$.properties.to.items"),
-    ]
+    assert result.tools == (valid, union_tool)
+    assert result.rejected_tool_names == ()
+    assert result.issues == ()
 
 
 def test_google_fails_for_explicitly_requested_invalid_tool() -> None:
@@ -172,6 +167,8 @@ def test_all_core_builtin_arrays_have_typed_items() -> None:
 
 
 def test_locked_google_conversion_keeps_items_for_every_core_builtin_array() -> None:
+    from google.genai import types
+    from langchain_google_genai._function_utils import convert_to_genai_function_declarations
     from row_bot.tools import registry
 
     tools = [
@@ -179,12 +176,17 @@ def test_locked_google_conversion_keeps_items_for_every_core_builtin_array() -> 
         for owner in registry.get_all_tools()
         for tool in owner.as_langchain_tools()
     ]
-    declarations = convert_to_genai_function_declarations(tools)
+    converted_tools = convert_to_genai_function_declarations(tools)
+    declarations = [
+        declaration
+        for converted_tool in converted_tools
+        for declaration in (converted_tool.function_declarations or ())
+    ]
     failures: list[str] = []
 
     def visit(tool_name: str, node: Any, path: str) -> None:
         if isinstance(node, dict):
-            if node.get("type_") == int(glm.Type.ARRAY) and not node.get("items"):
+            if node.get("type") == types.Type.ARRAY and not node.get("items"):
                 failures.append(f"{tool_name}: {path}.items")
             for key, value in node.items():
                 visit(tool_name, value, f"{path}.{key}")
@@ -192,12 +194,9 @@ def test_locked_google_conversion_keeps_items_for_every_core_builtin_array() -> 
             for index, value in enumerate(node):
                 visit(tool_name, value, f"{path}[{index}]")
 
-    for declaration in declarations.function_declarations:
-        schema = gapic.Schema.to_dict(
-            declaration.parameters,
-            preserving_proto_field_name=True,
-        )
+    for declaration in declarations:
+        schema = declaration.parameters.model_dump(exclude_none=True)
         visit(declaration.name, schema, "$")
 
-    assert len(declarations.function_declarations) >= 60
+    assert len(declarations) >= 60
     assert failures == []

@@ -672,7 +672,7 @@ def get_llm():
     return _llm_instance
 
 
-_override_llm_cache: dict[tuple[str, int], object] = {}  # model → ChatOllama or ChatOpenAI
+_override_llm_cache: dict[tuple[str, int, str], object] = {}
 
 
 def clear_llm_cache() -> None:
@@ -698,7 +698,7 @@ def _local_num_ctx_for(model_name: str | None) -> int:
     return min(candidates)
 
 
-def get_llm_for(model_name: str, num_ctx: int | None = None):
+def get_llm_for(model_name: str, num_ctx: int | None = None, *, reasoning_plan=None):
     """Return an LLM for a specific model (not the global singleton).
 
     For local (Ollama) models, returns a ``ChatOllama``.
@@ -706,15 +706,21 @@ def get_llm_for(model_name: str, num_ctx: int | None = None):
     the OpenRouter API.  Results are cached per (model, ctx) pair.
     """
     if is_cloud_model(model_name):
-        return _get_cloud_llm(model_name)
+        return _get_cloud_llm(model_name, reasoning_plan=reasoning_plan)
 
     runtime_model = _ollama_runtime_model_name(model_name)
     if num_ctx is None:
         num_ctx = _local_num_ctx_for(model_name)
-    key = (runtime_model, num_ctx)
+    fingerprint = getattr(reasoning_plan, "fingerprint", "reasoning:provider-default")
+    key = (runtime_model, num_ctx, fingerprint)
     if key not in _override_llm_cache:
         logger.info("Creating override LLM: model=%s, num_ctx=%s", runtime_model, num_ctx)
-        _override_llm_cache[key] = _chat_ollama(model=runtime_model, num_ctx=num_ctx)
+        kwargs = {}
+        if reasoning_plan is not None and not reasoning_plan.is_default:
+            from row_bot.providers.runtime import _reasoning_constructor_kwargs
+
+            kwargs.update(_reasoning_constructor_kwargs(reasoning_plan, provider="ollama"))
+        _override_llm_cache[key] = _chat_ollama(model=runtime_model, num_ctx=num_ctx, **kwargs)
     return _override_llm_cache[key]
 
 
@@ -1649,7 +1655,7 @@ def is_cloud_vision_model(model_name: str) -> bool:
     )
 
 
-def _get_cloud_llm(model_name: str):
+def _get_cloud_llm(model_name: str, *, reasoning_plan=None):
     """Return a cached LLM for a cloud model.
 
     OpenAI-direct models use ``ChatOpenAI``.  OpenRouter models use
@@ -1661,13 +1667,14 @@ def _get_cloud_llm(model_name: str):
     provider = get_cloud_provider(model_name)
     runtime_model = _runtime_model_name(model_name)
     ctx = get_cloud_model_context(model_name)
-    key = (f"{provider or 'openrouter'}:{runtime_model}", ctx)
+    fingerprint = getattr(reasoning_plan, "fingerprint", "reasoning:provider-default")
+    key = (f"{provider or 'openrouter'}:{runtime_model}", ctx, fingerprint)
     if key in _override_llm_cache:
         return _override_llm_cache[key]
 
     logger.info("Creating provider LLM: model=%s via %s", runtime_model, provider or "openrouter")
 
-    _override_llm_cache[key] = create_chat_model(runtime_model, provider)
+    _override_llm_cache[key] = create_chat_model(runtime_model, provider, reasoning_plan=reasoning_plan)
     return _override_llm_cache[key]
 
 
