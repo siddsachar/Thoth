@@ -2319,7 +2319,7 @@ async def index():
         p.chat_container.clear()
         if not display_msgs:
             with p.chat_container:
-                ui.label("Ask anything...").classes("text-grey-5 text-sm q-pa-md")
+                ui.label("Do anything…").classes("text-grey-5 text-sm q-pa-md")
             _log_sync("empty", 0)
             return
 

@@ -673,10 +673,28 @@ class ComposerExtrasController:
                                     on_click=lambda _, n=suggestion.name: self._dismiss_suggestion(n),
                                 ).props("flat dense no-caps size=sm")
                     return
-                label = "Skills"
-                ui.button(label, icon="auto_fix_high", on_click=self._open_skill_picker).props(
+                active_count = len(self.active_skill_names)
+                ui.button("Skills", icon="auto_fix_high", on_click=self._open_skill_picker).props(
                     "outline dense no-caps size=sm"
-                ).classes("text-xs").tooltip(self.config.skill_button_tooltip or "Choose skills for this chat")
+                ).classes("text-xs row-bot-composer-skills-trigger-full").tooltip(
+                    self.config.skill_button_tooltip or "Choose skills for this chat"
+                )
+                compact_skills_button = ui.button(
+                    icon="auto_fix_high",
+                    on_click=self._open_skill_picker,
+                ).props("outline dense round size=sm").classes(
+                    "text-xs row-bot-composer-skills-trigger-compact"
+                )
+                compact_skills_button._props["aria-label"] = f"Skills: {active_count} active"
+                compact_skills_button.tooltip(
+                    f"Skills: {active_count} active. "
+                    f"{self.config.skill_button_tooltip or 'Choose skills for this chat'}"
+                )
+                if active_count:
+                    with compact_skills_button:
+                        ui.badge(str(active_count), color="primary").classes(
+                            "row-bot-composer-skill-count"
+                        )
                 for name in self.active_skill_names:
                     skill = self._get_skill(name)
                     chip_label = f"{skill.icon} {skill.display_name}" if skill else name
@@ -684,13 +702,17 @@ class ComposerExtrasController:
                         chip_label,
                         icon="close",
                         on_click=lambda _, n=name: self.remove_skill(n),
-                    ).props("outline dense no-caps size=sm").classes("text-xs").tooltip(
+                    ).props("outline dense no-caps size=sm").classes(
+                        "text-xs row-bot-composer-skill-chip"
+                    ).tooltip(
                         "Remove skill from this composer"
                     )
                 for suggestion in draft_suggestions:
                     with ui.button(
                         f"{suggestion.icon} {suggestion.display_name}",
-                    ).props("flat dense no-caps size=sm").classes("text-xs"):
+                    ).props("flat dense no-caps size=sm").classes(
+                        "text-xs row-bot-composer-skill-suggestion"
+                    ):
                         with ui.menu().classes("q-pa-sm"):
                             ui.label(suggestion.description or suggestion.reason).classes(
                                 "text-xs text-grey-5 q-mb-xs"

@@ -1050,7 +1050,7 @@ def build_chat(
         ),
     )
 
-    with ui.column().classes("w-full shrink-0 gap-0").style(
+    with ui.column().classes("w-full shrink-0 gap-0 row-bot-desktop-composer").style(
         "border: 1px solid rgba(255,255,255,0.15); border-radius: 18px; "
         "background: rgba(255,255,255,0.04); padding: 0; overflow: hidden; "
         "position: relative;"
@@ -1342,9 +1342,29 @@ def build_chat(
                     _skill_chips_row.clear()
                     draft_suggestions = _suggestions_for_text(draft_text, limit=3)
                     with _skill_chips_row:
+                        active_count = len(_active_skill_names.get("names", []))
                         ui.button("Skills", icon="auto_fix_high", on_click=_open_skill_picker).props(
                             "outline dense no-caps size=sm"
-                        ).classes("text-xs").tooltip("Choose skills for this chat")
+                        ).classes("text-xs row-bot-composer-skills-trigger-full").tooltip(
+                            "Choose skills for this chat"
+                        )
+                        compact_skills_button = ui.button(
+                            icon="auto_fix_high",
+                            on_click=_open_skill_picker,
+                        ).props("outline dense round size=sm").classes(
+                            "text-xs row-bot-composer-skills-trigger-compact"
+                        )
+                        compact_skills_button._props["aria-label"] = (
+                            f"Skills: {active_count} active"
+                        )
+                        compact_skills_button.tooltip(
+                            f"Skills: {active_count} active. Choose skills for this chat"
+                        )
+                        if active_count:
+                            with compact_skills_button:
+                                ui.badge(str(active_count), color="primary").classes(
+                                    "row-bot-composer-skill-count"
+                                )
 
                         for _name in _active_skill_names.get("names", []):
                             _skill = _get_skill_for_chips(_name)
@@ -1353,14 +1373,18 @@ def build_chat(
                                 _label,
                                 icon="close",
                                 on_click=lambda _, n=_name: _remove_skill(n),
-                            ).props("outline dense no-caps size=sm").classes("text-xs").tooltip(
+                            ).props("outline dense no-caps size=sm").classes(
+                                "text-xs row-bot-composer-skill-chip"
+                            ).tooltip(
                                 "Remove skill from this chat"
                             )
 
                         for _suggestion in draft_suggestions:
                             with ui.button(
                                 f"{_suggestion.icon} {_suggestion.display_name}",
-                            ).props("flat dense no-caps size=sm").classes("text-xs"):
+                            ).props("flat dense no-caps size=sm").classes(
+                                "text-xs row-bot-composer-skill-suggestion"
+                            ):
                                 with ui.menu().classes("q-pa-sm"):
                                     ui.label(_suggestion.description or _suggestion.reason).classes(
                                         "text-xs text-grey-5 q-mb-xs"
@@ -1758,7 +1782,7 @@ def build_chat(
 
         # Textarea
         p.chat_input = (
-            ui.textarea(placeholder="Ask anything...")
+            ui.textarea(placeholder="Do anything…")
             .classes("w-full")
             .props('borderless autogrow input-style="padding: 12px 16px 4px 16px; max-height: 200px; overflow-y: auto;"')
             .style("font-size: 0.95rem;")
@@ -1941,7 +1965,9 @@ def build_chat(
                     logger.debug("Composer model controls refresh failed", exc_info=True)
 
             p.refresh_model_controls = _refresh_model_controls
-            p.model_controls_container = ui.row().classes("items-center no-wrap gap-1")
+            p.model_controls_container = ui.row().classes(
+                "items-center no-wrap gap-1 row-bot-composer-policy-host"
+            )
             with p.model_controls_container:
                 _render_model_controls()
             from row_bot.ui.voice_realtime_events import make_realtime_event_handler
@@ -2165,7 +2191,7 @@ def build_chat(
                 if p.dictate_btn:
                     _set_dictate_button_active(p, True)
 
-            p.voice_status_label = ui.label("").classes("text-xs text-grey-6")
+            p.voice_status_label = ui.label("").classes("text-xs text-grey-6 row-bot-composer-status")
 
             ui.space()  # push right-side items to the right
 
@@ -2184,13 +2210,14 @@ def build_chat(
 
                 ui.element("div").classes("row-bot-composer-action-divider")
 
-                ui.button(icon="send", on_click=_on_send).props(
-                    "color=primary round dense size=sm"
-                ).classes("row-bot-composer-send-button").tooltip("Send")
+                with ui.element("div").classes("row-bot-composer-primary-action-slot"):
+                    ui.button(icon="send", on_click=_on_send).props(
+                        "color=primary round dense size=sm"
+                    ).classes("row-bot-composer-send-button").tooltip("Send")
 
-                p.stop_btn = ui.button(icon="stop", on_click=_on_stop).props(
-                    "round dense size=sm"
-                ).classes("row-bot-composer-stop-button").tooltip("Stop generation")
+                    p.stop_btn = ui.button(icon="stop", on_click=_on_stop).props(
+                        "round dense size=sm"
+                    ).classes("row-bot-composer-stop-button").tooltip("Stop generation")
             _has_active = state.thread_id in _active_generations
             if not _has_active:
                 p.stop_btn.disable()
