@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
+from typing import Iterator
 
 import pytest
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
 
 from row_bot.providers.models import ModelInfo, TransportMode
 from row_bot.providers.reasoning import (
@@ -259,6 +265,27 @@ class _ReasoningRequestError(RuntimeError):
     status_code = 400
 
 
+class _StreamingChatModel(BaseChatModel):
+    chunks: tuple[str, ...] = ("Hello", " world")
+    error: Exception | None = None
+
+    @property
+    def _llm_type(self) -> str:
+        return "test_streaming_chat_model"
+
+    def _generate(self, *args, **kwargs) -> ChatResult:
+        raise NotImplementedError
+
+    def _stream(self, *args, **kwargs) -> Iterator[ChatGenerationChunk]:
+        if self.error:
+            raise self.error
+        for text in self.chunks:
+            yield ChatGenerationChunk(message=AIMessageChunk(content=text))
+
+    def bind_tools(self, tools, **kwargs):
+        return self.bind(tools=tools, **kwargs)
+
+
 class _FakeRunnable:
     def __init__(self, events=None, error=None):
         self.events = list(events or [])
@@ -301,6 +328,70 @@ def _fallback_model(primary, provider_default) -> ReasoningFallbackChatModel:
         ),
         provider_id="openai",
     )
+
+
+@tool
+def _harmless_tool(value: str) -> str:
+    """Return a harmless value for tool-binding tests."""
+    return value
+
+
+def _reasoning_graph(model: ReasoningFallbackChatModel):
+    return create_react_agent(
+        model=model,
+        tools=[_harmless_tool],
+        name="row_bot_agent",
+        version="v2",
+    )
+
+
+def _visible_message_chunks(events) -> list[str]:
+    chunks: list[str] = []
+    for mode, data in events:
+        if mode != "messages":
+            continue
+        message, metadata = data
+        if metadata.get("langgraph_node") != "agent":
+            continue
+        text = str(message.content or "")
+        if text:
+            chunks.append(text)
+    return chunks
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_reasoning_wrapper_publishes_each_graph_chunk_once(fallback, monkeypatch) -> None:
+    import row_bot.providers.transports.reasoning_fallback as fallback_module
+
+    error = _ReasoningRequestError("HTTP 400: reasoning effort is unsupported") if fallback else None
+    model = _fallback_model(_StreamingChatModel(error=error), _StreamingChatModel())
+    monkeypatch.setattr(fallback_module, "_active_thread_id", lambda: "")
+    monkeypatch.setattr(fallback_module, "suppress_reasoning_override", lambda *_args: None)
+    monkeypatch.setattr(fallback_module, "queue_reasoning_notice", lambda *_args: None)
+
+    events = list(
+        _reasoning_graph(model).stream(
+            {"messages": [HumanMessage(content="test")]},
+            stream_mode=["messages", "updates"],
+        )
+    )
+
+    assert _visible_message_chunks(events) == ["Hello", " world"]
+
+
+def test_reasoning_wrapper_publishes_each_async_graph_chunk_once() -> None:
+    model = _fallback_model(_StreamingChatModel(), _StreamingChatModel())
+
+    async def collect_events():
+        events = []
+        async for event in _reasoning_graph(model).astream(
+            {"messages": [HumanMessage(content="test")]},
+            stream_mode=["messages", "updates"],
+        ):
+            events.append(event)
+        return events
+
+    assert _visible_message_chunks(asyncio.run(collect_events())) == ["Hello", " world"]
 
 
 def test_fallback_retries_once_before_any_output(monkeypatch, caplog) -> None:

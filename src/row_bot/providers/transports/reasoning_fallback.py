@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import contextmanager
 from typing import Any, AsyncIterator, Iterator, Sequence
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable
+from langchain_core.runnables.config import ensure_config, var_child_runnable_config
 
 from row_bot.cancellation import current_cancellation_scope
 from row_bot.providers.reasoning import (
@@ -19,6 +21,26 @@ from row_bot.providers.reasoning import (
 logger = logging.getLogger(__name__)
 
 _REASONING_ERROR_TERMS = ("reasoning", "thinking", "effort", "budget")
+
+
+def _delegated_model_config() -> dict[str, Any]:
+    """Keep inner model callbacks from duplicating the wrapper's stream."""
+    config = dict(ensure_config())
+    config["callbacks"] = []
+    config.pop("run_id", None)
+    config.pop("run_name", None)
+    return config
+
+
+@contextmanager
+def _isolated_delegated_model_config() -> Iterator[dict[str, Any]]:
+    """Override inherited callbacks while a bound inner runnable executes."""
+    config = _delegated_model_config()
+    token = var_child_runnable_config.set(config)
+    try:
+        yield config
+    finally:
+        var_child_runnable_config.reset(token)
 
 
 class ReasoningFallbackChatModel(BaseChatModel):
@@ -55,12 +77,24 @@ class ReasoningFallbackChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         try:
-            message = self.primary.invoke(messages, stop=stop, **kwargs)
+            with _isolated_delegated_model_config() as delegated_config:
+                message = self.primary.invoke(
+                    messages,
+                    config=delegated_config,
+                    stop=stop,
+                    **kwargs,
+                )
         except Exception as exc:
             if not should_retry_reasoning_error(exc):
                 raise
             self._prepare_fallback(exc)
-            message = self.provider_default.invoke(messages, stop=stop, **kwargs)
+            with _isolated_delegated_model_config() as delegated_config:
+                message = self.provider_default.invoke(
+                    messages,
+                    config=delegated_config,
+                    stop=stop,
+                    **kwargs,
+                )
             self._fallback_succeeded()
         return _chat_result(message)
 
@@ -73,16 +107,28 @@ class ReasoningFallbackChatModel(BaseChatModel):
     ) -> Iterator[ChatGenerationChunk]:
         emitted = False
         try:
-            for message in self.primary.stream(messages, stop=stop, **kwargs):
-                emitted = True
-                yield _generation_chunk(message)
+            with _isolated_delegated_model_config() as delegated_config:
+                for message in self.primary.stream(
+                    messages,
+                    config=delegated_config,
+                    stop=stop,
+                    **kwargs,
+                ):
+                    emitted = True
+                    yield _generation_chunk(message)
             return
         except Exception as exc:
             if emitted or not should_retry_reasoning_error(exc):
                 raise
             self._prepare_fallback(exc)
-        for message in self.provider_default.stream(messages, stop=stop, **kwargs):
-            yield _generation_chunk(message)
+        with _isolated_delegated_model_config() as delegated_config:
+            for message in self.provider_default.stream(
+                messages,
+                config=delegated_config,
+                stop=stop,
+                **kwargs,
+            ):
+                yield _generation_chunk(message)
         self._fallback_succeeded()
 
     async def _agenerate(
@@ -93,12 +139,24 @@ class ReasoningFallbackChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         try:
-            message = await self.primary.ainvoke(messages, stop=stop, **kwargs)
+            with _isolated_delegated_model_config() as delegated_config:
+                message = await self.primary.ainvoke(
+                    messages,
+                    config=delegated_config,
+                    stop=stop,
+                    **kwargs,
+                )
         except Exception as exc:
             if not should_retry_reasoning_error(exc):
                 raise
             self._prepare_fallback(exc)
-            message = await self.provider_default.ainvoke(messages, stop=stop, **kwargs)
+            with _isolated_delegated_model_config() as delegated_config:
+                message = await self.provider_default.ainvoke(
+                    messages,
+                    config=delegated_config,
+                    stop=stop,
+                    **kwargs,
+                )
             self._fallback_succeeded()
         return _chat_result(message)
 
@@ -111,16 +169,28 @@ class ReasoningFallbackChatModel(BaseChatModel):
     ) -> AsyncIterator[ChatGenerationChunk]:
         emitted = False
         try:
-            async for message in self.primary.astream(messages, stop=stop, **kwargs):
-                emitted = True
-                yield _generation_chunk(message)
+            with _isolated_delegated_model_config() as delegated_config:
+                async for message in self.primary.astream(
+                    messages,
+                    config=delegated_config,
+                    stop=stop,
+                    **kwargs,
+                ):
+                    emitted = True
+                    yield _generation_chunk(message)
             return
         except Exception as exc:
             if emitted or not should_retry_reasoning_error(exc):
                 raise
             self._prepare_fallback(exc)
-        async for message in self.provider_default.astream(messages, stop=stop, **kwargs):
-            yield _generation_chunk(message)
+        with _isolated_delegated_model_config() as delegated_config:
+            async for message in self.provider_default.astream(
+                messages,
+                config=delegated_config,
+                stop=stop,
+                **kwargs,
+            ):
+                yield _generation_chunk(message)
         self._fallback_succeeded()
 
     def _prepare_fallback(self, exc: BaseException) -> None:
