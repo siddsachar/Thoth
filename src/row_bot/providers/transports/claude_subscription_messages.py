@@ -27,6 +27,7 @@ class ChatClaudeSubscriptionMessages(BaseChatModel):
     max_tokens: int = 4096
     anthropic_client: Any | None = None
     client_factory: Any | None = None
+    reasoning_plan: Any | None = None
 
     @property
     def _llm_type(self) -> str:
@@ -139,6 +140,17 @@ class ChatClaudeSubscriptionMessages(BaseChatModel):
                 request["tool_choice"] = tool_choice
         if stop:
             request["stop_sequences"] = list(stop)
+        if self.reasoning_plan is not None and not self.reasoning_plan.is_default:
+            selection = self.reasoning_plan.selection
+            capabilities = self.reasoning_plan.capabilities
+            if selection.kind == "effort":
+                request["output_config"] = {"effort": selection.effort}
+                if capabilities and capabilities.thinking_mode == "adaptive":
+                    request["thinking"] = {"type": "adaptive"}
+            elif selection.kind == "budget":
+                request["thinking"] = {"type": "enabled", "budget_tokens": selection.budget}
+            elif selection.kind == "off":
+                request["thinking"] = {"type": "disabled"}
         return request
 
     def _create_message(self, request: dict[str, Any]) -> Any:

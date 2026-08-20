@@ -143,6 +143,18 @@ def test_builtin_commands_win_skill_collisions(tmp_path):
     assert not any(spec.id == "skill:status" for spec in slash_commands.get_command_specs())
 
 
+def test_reasoning_is_a_builtin_chat_command_without_aliases(tmp_path):
+    _skills, _activation, slash_commands = _reload_skill_command_modules(tmp_path)
+
+    spec = slash_commands.resolve_command_token("/reasoning", include_skills=False)
+
+    assert spec is not None
+    assert spec.id == "reasoning"
+    assert spec.aliases == ()
+    assert spec.argument_behavior == "prefix"
+    assert "`/reasoning`" in slash_commands.help_text(include_skills=False)
+
+
 def test_direct_skill_activation_and_reset_dispatch(tmp_path):
     _write_skill(
         tmp_path,

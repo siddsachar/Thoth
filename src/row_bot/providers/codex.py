@@ -253,6 +253,8 @@ def _codex_model_info(
     tool_calling: bool | None = None,
     streaming: bool | None = True,
 ) -> ModelInfo:
+    from row_bot.providers.reasoning import reasoning_metadata_for_catalog
+
     inputs = set(input_modalities or {ModelModality.TEXT.value})
     if not inputs:
         inputs = {ModelModality.TEXT.value}
@@ -279,6 +281,7 @@ def _codex_model_info(
         source_confidence=source_confidence,
         risk_label="subscription",
         source=source,
+        reasoning=reasoning_metadata_for_catalog(CODEX_PROVIDER_ID, model_id, {}),
     )
 
 
@@ -324,7 +327,14 @@ def _codex_model_info_from_live_item(item: dict[str, Any]) -> ModelInfo | None:
         streaming=item.get("streaming") if isinstance(item.get("streaming"), bool) else True,
     )
     if isinstance(reasoning_efforts, (list, tuple, set)) and reasoning_efforts:
-        return _codex_model_info_with_capabilities(info, {"reasoning"})
+        from row_bot.providers.reasoning import ReasoningCapabilities
+
+        reasoning = ReasoningCapabilities(
+            supported_efforts=tuple(str(value) for value in reasoning_efforts),
+            source="codex_live_catalog",
+            request_style="openai_responses",
+        ).to_json()
+        return replace(_codex_model_info_with_capabilities(info, {"reasoning"}), reasoning=reasoning)
     return info
 
 
@@ -339,6 +349,7 @@ def _codex_model_cache_row(model_info: ModelInfo) -> dict[str, Any]:
         "streaming": model_info.streaming,
         "source_confidence": model_info.source_confidence,
         "source": model_info.source,
+        "reasoning": dict(model_info.reasoning) if model_info.reasoning else None,
     }
 
 
@@ -362,7 +373,11 @@ def _codex_model_info_from_cache_row(row: dict[str, Any]) -> ModelInfo | None:
         capabilities = {raw_capabilities}
     elif isinstance(raw_capabilities, (list, tuple, set, frozenset)):
         capabilities = {str(item) for item in raw_capabilities if str(item)}
-    return _codex_model_info_with_capabilities(info, capabilities) if capabilities else info
+    if capabilities:
+        info = _codex_model_info_with_capabilities(info, capabilities)
+    if isinstance(row.get("reasoning"), dict):
+        info = replace(info, reasoning=dict(row["reasoning"]))
+    return info
 
 
 def _decode_jwt_claims(token: str) -> dict[str, Any]:

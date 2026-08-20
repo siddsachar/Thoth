@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Mapping
 
 
 class AuthMethod(StrEnum):
@@ -117,6 +117,7 @@ class ModelInfo:
     last_verified_at: str = ""
     risk_label: str = "api_key"
     source: str = "catalog"
+    reasoning: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -142,6 +143,7 @@ class ModelInfo:
             "billing_label": self.billing_label,
             "source_confidence": self.source_confidence,
             "last_verified_at": self.last_verified_at,
+            "reasoning": dict(self.reasoning) if isinstance(self.reasoning, Mapping) else None,
         }
 
 

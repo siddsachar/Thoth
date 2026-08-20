@@ -1777,6 +1777,8 @@ def _is_xai_media_model_id(model_id: str) -> bool:
 
 
 def _model_info_from_live_item(item: dict[str, Any], *, verified_at: str) -> ModelInfo | None:
+    from row_bot.providers.reasoning import reasoning_metadata_for_catalog
+
     model_id = str(item.get("id") or item.get("model") or item.get("name") or "").strip()
     if not model_id or is_hidden_xai_model(item, model_id):
         return None
@@ -1851,6 +1853,7 @@ def _model_info_from_live_item(item: dict[str, Any], *, verified_at: str) -> Mod
         last_verified_at=verified_at,
         risk_label="subscription",
         source="xai_oauth_live_catalog",
+        reasoning=reasoning_metadata_for_catalog(XAI_OAUTH_PROVIDER_ID, model_id, item),
     )
 
 
@@ -1868,6 +1871,7 @@ def _model_cache_row(model_info: ModelInfo) -> dict[str, Any]:
         "source_confidence": model_info.source_confidence,
         "source": model_info.source,
         "last_verified_at": model_info.last_verified_at,
+        "reasoning": dict(model_info.reasoning) if model_info.reasoning else None,
     }
 
 
@@ -1893,6 +1897,7 @@ def _model_info_from_cache_row(row: dict[str, Any]) -> ModelInfo | None:
         last_verified_at=str(row.get("last_verified_at") or ""),
         risk_label="subscription",
         source=str(row.get("source") or "xai_oauth_cached_catalog"),
+        reasoning=dict(row["reasoning"]) if isinstance(row.get("reasoning"), dict) else None,
     )
     return info
 

@@ -47,6 +47,8 @@ def test_mobile_active_thread_composer_uses_shared_chat_controls() -> None:
     assert "data-docs-id=mobile-chat-composer" in src
     assert "attach_file" in src
     assert "mobile-chat-controls" in src
+    assert "data-docs-id=mobile-reasoning-control" in src
+    assert "set_thread_chat_controls(" in src
     assert "send_message(text)" in src
     assert "create_chat_composer_extras(" in src
     assert "show_draft_suggestions=False" in src

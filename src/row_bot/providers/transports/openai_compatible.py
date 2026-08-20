@@ -53,6 +53,7 @@ class ChatOpenAICompatible(BaseChatModel):
     endpoint: dict[str, Any] = Field(default_factory=dict)
     timeout: float = Field(default_factory=_default_read_timeout)
     http_client: Any | None = None
+    reasoning_plan: Any | None = None
 
     @property
     def _llm_type(self) -> str:
@@ -370,6 +371,7 @@ class ChatOpenAICompatible(BaseChatModel):
         for key in ("temperature", "top_p", "max_tokens", "presence_penalty", "frequency_penalty"):
             if key in kwargs and kwargs[key] is not None:
                 body[key] = kwargs[key]
+        _apply_dynamic_reasoning_plan(body, self.reasoning_plan)
         if self.endpoint.get("drop_unsupported_params", True):
             _drop_empty_or_unsupported(body, accepts_tools=accepts_tools)
         return body
@@ -788,6 +790,8 @@ def _apply_reasoning_request_config(body: dict[str, Any], endpoint: dict[str, An
         body.pop("reasoning", None)
         body.pop("reasoning_effort", None)
         return
+    if mode == "on" and (profile in template_profiles or endpoint.get("supports_reasoning_content")):
+        _merge_chat_template_kwargs(body, {"enable_thinking": True})
     budget = endpoint.get("thinking_budget")
     if budget not in (None, "", 0):
         try:
@@ -796,6 +800,31 @@ def _apply_reasoning_request_config(body: dict[str, Any], endpoint: dict[str, An
             parsed = 0
         if parsed > 0 and (profile in template_profiles or endpoint.get("supports_reasoning_content")):
             _merge_chat_template_kwargs(body, {"thinking_budget": parsed})
+
+
+def _apply_dynamic_reasoning_plan(body: dict[str, Any], plan: Any | None) -> None:
+    if plan is None or getattr(plan, "is_default", True):
+        return
+    selection = plan.selection
+    style = str(getattr(getattr(plan, "capabilities", None), "request_style", "") or "")
+    if style == "openrouter":
+        if selection.kind == "effort":
+            body["reasoning"] = {"effort": selection.effort}
+        elif selection.kind in {"on", "off"}:
+            body["reasoning"] = {"enabled": selection.kind == "on"}
+        elif selection.kind == "budget":
+            body["reasoning"] = {"max_tokens": selection.budget}
+        return
+    if style in {"anthropic", "openai_responses", "xai_responses"}:
+        if selection.kind == "effort":
+            body["reasoning"] = {"effort": selection.effort}
+        return
+    if selection.kind == "effort":
+        body["reasoning_effort"] = selection.effort
+    elif selection.kind in {"on", "off"}:
+        body["reasoning"] = {"enabled": selection.kind == "on"}
+    elif selection.kind == "budget":
+        body["reasoning"] = {"max_tokens": selection.budget}
 
 
 class _StreamToolCallAssembler:

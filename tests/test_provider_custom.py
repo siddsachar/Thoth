@@ -1432,6 +1432,55 @@ def test_custom_endpoint_edit_payload_stales_probe_for_connection_and_advanced_c
     assert payload["execution_location"] == "local"
 
 
+def test_custom_endpoint_edit_payload_validates_reasoning_and_extra_json():
+    from row_bot.ui.provider_settings import _custom_endpoint_edit_payload
+
+    endpoint = {
+        "id": "vllm",
+        "name": "vLLM",
+        "base_url": "http://127.0.0.1:8000/v1",
+        "profile": "vllm",
+        "transport": "openai_chat",
+        "execution_location": "local",
+        "auth_required": False,
+    }
+
+    payload, stale = _custom_endpoint_edit_payload(
+        endpoint,
+        display_name="vLLM",
+        base_url=endpoint["base_url"],
+        no_auth=True,
+        reasoning_mode="on",
+        thinking_budget="4096",
+        extra_body_json='{"top_k": 20, "chat_template_kwargs": {"custom": true}}',
+        supports_reasoning_content=True,
+        supports_reasoning_replay=True,
+    )
+
+    assert stale is False
+    assert payload["reasoning_mode"] == "on"
+    assert payload["thinking_budget"] == 4096
+    assert payload["extra_body"] == {"top_k": 20, "chat_template_kwargs": {"custom": True}}
+    assert payload["supports_reasoning_content"] is True
+    assert payload["supports_reasoning_replay"] is True
+
+
+@pytest.mark.parametrize(
+    ("extra_json", "message"),
+    [
+        ("not-json", "invalid"),
+        ("[]", "JSON object"),
+        ('{"authorization": "Bearer secret"}', "credentials"),
+        ('{"nested": {"api_key": "secret"}}', "credentials"),
+    ],
+)
+def test_custom_endpoint_extra_request_json_rejects_invalid_or_secret_data(extra_json, message):
+    from row_bot.ui.provider_settings import _parse_custom_extra_body
+
+    with pytest.raises(ValueError, match=message):
+        _parse_custom_extra_body(extra_json)
+
+
 def test_custom_endpoint_probe_classifies_chat_only_when_tools_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
     save_custom_endpoint({"id": "dummy", "base_url": "http://127.0.0.1:8000/v1", "auth_required": False})

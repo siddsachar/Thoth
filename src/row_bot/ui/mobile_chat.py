@@ -23,7 +23,9 @@ from row_bot.threads import (
     _set_thread_agent_profile,
     _set_thread_model_override,
     create_thread,
+    get_thread_reasoning_selection,
     get_thread_name,
+    set_thread_chat_controls,
 )
 from row_bot.ui.chat_components import (
     build_chat_messages,
@@ -320,6 +322,101 @@ def _build_chat_controls_dialog(
                 value=model_value if model_value in model_options else "__default__",
                 label="Model",
             ).classes("w-full").props("outlined dense")
+            reasoning_host = ui.column().classes("w-full gap-1")
+            reasoning_draft: dict[str, Any] = {
+                "model_ref": "",
+                "selection": {"kind": "provider_default"},
+            }
+
+            def _refresh_reasoning_row() -> None:
+                from row_bot.models import get_current_model
+                from row_bot.providers.reasoning import (
+                    ReasoningSelection,
+                    reasoning_choices,
+                    resolve_reasoning_capabilities,
+                    validate_reasoning_selection,
+                )
+                from row_bot.providers.resolution import resolve_provider_config
+
+                reasoning_host.clear()
+                selected = str(model_select.value or "")
+                selected = get_current_model() if selected == "__default__" else selected
+                try:
+                    resolved = resolve_provider_config(selected, allow_legacy_local=True)
+                    capabilities = resolve_reasoning_capabilities(resolved.provider_id, resolved.runtime_model)
+                except Exception:
+                    reasoning_draft.update({"model_ref": "", "selection": {"kind": "provider_default"}})
+                    return
+                choices = reasoning_choices(capabilities)
+                if not choices or capabilities is None:
+                    reasoning_draft.update({
+                        "model_ref": resolved.selection_ref,
+                        "selection": {"kind": "provider_default"},
+                    })
+                    return
+                try:
+                    current = ReasoningSelection.from_json(
+                        get_thread_reasoning_selection(state.thread_id, resolved.selection_ref)
+                    )
+                    validate_reasoning_selection(current, capabilities)
+                except ValueError:
+                    current = ReasoningSelection()
+                    ui.notify(
+                        "The saved reasoning setting is no longer supported; Provider default is active.",
+                        type="warning",
+                    )
+
+                def _value(selection: ReasoningSelection) -> str:
+                    if selection.kind == "effort":
+                        return f"effort:{selection.effort}"
+                    return selection.kind
+
+                options = {
+                    _value(choice): "Provider default" if choice.is_default else choice.label
+                    for choice in choices
+                }
+                if capabilities.supports_budget:
+                    options["budget"] = "Token budget"
+                reasoning_draft.update({
+                    "model_ref": resolved.selection_ref,
+                    "selection": current.to_json(),
+                })
+                with reasoning_host:
+                    reasoning_select = ui.select(
+                        options=options,
+                        value="budget" if current.kind == "budget" else _value(current),
+                        label="Reasoning",
+                    ).classes("w-full").props("outlined dense data-docs-id=mobile-reasoning-control")
+                    budget_input = None
+                    if capabilities.supports_budget:
+                        budget_input = ui.number(
+                            "Reasoning budget (tokens)",
+                            value=current.budget if current.kind == "budget" else max(capabilities.budget_min, 1),
+                            min=capabilities.budget_min,
+                            max=capabilities.budget_max or None,
+                            step=1,
+                        ).classes("w-full").props("outlined dense")
+
+                    def _capture_reasoning() -> None:
+                        raw = str(reasoning_select.value or "provider_default")
+                        try:
+                            if raw == "budget":
+                                selection = ReasoningSelection(kind="budget", budget=int(budget_input.value or 0))
+                            elif raw.startswith("effort:"):
+                                selection = ReasoningSelection(kind="effort", effort=raw.split(":", 1)[1])
+                            else:
+                                selection = ReasoningSelection(kind=raw)
+                            validate_reasoning_selection(selection, capabilities)
+                            reasoning_draft["selection"] = selection.to_json()
+                        except ValueError as exc:
+                            ui.notify(str(exc), type="negative")
+
+                    reasoning_select.on_value_change(lambda _e: _capture_reasoning())
+                    if budget_input is not None:
+                        budget_input.on_value_change(lambda _e: _capture_reasoning())
+
+            model_select.on_value_change(lambda _e: _refresh_reasoning_row())
+            _refresh_reasoning_row()
             approval_select = ui.select(
                 options={
                     "block": "Block risky tools",
@@ -356,16 +453,27 @@ def _build_chat_controls_dialog(
                     return
                 model_value = str(model_select.value or "")
                 model_override = "" if model_value == "__default__" else model_value
-                _set_thread_model_override(state.thread_id, model_override)
-                _set_thread_approval_mode(state.thread_id, str(approval_select.value or "block"))
                 profile_value = str(profile_select.value or "__default__")
-                if profile_value == "__default__":
-                    _clear_thread_agent_profile(state.thread_id)
-                else:
-                    _set_thread_agent_profile(state.thread_id, profile_value)
+                try:
+                    set_thread_chat_controls(
+                        state.thread_id,
+                        model_override=model_override,
+                        approval_mode=str(approval_select.value or "block"),
+                        profile_id_or_slug="" if profile_value == "__default__" else profile_value,
+                        reasoning_model_ref=str(reasoning_draft.get("model_ref") or ""),
+                        reasoning_selection=reasoning_draft.get("selection"),
+                    )
+                except ValueError as exc:
+                    ui.notify(str(exc), type="negative", close_button=True)
+                    return
                 state.thread_model_override = model_override
                 state.thread_approval_mode = str(approval_select.value or "block")
                 clear_context_usage_projection(state)
+                from row_bot.agent import clear_agent_cache
+                from row_bot.models import clear_llm_cache
+
+                clear_agent_cache()
+                clear_llm_cache()
                 try:
                     from row_bot.models import get_context_policy
 

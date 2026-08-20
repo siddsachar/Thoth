@@ -324,6 +324,7 @@ def model_info_from_legacy(model_id: str, info: dict[str, Any]) -> ModelInfo | N
         last_verified_at=str(snapshot.get("last_verified_at") or info.get("last_verified_at") or ""),
         risk_label=str(info.get("risk_label") or (definition.risk_label if definition else "api_key")),
         source=str(info.get("source") or "legacy_cloud_cache"),
+        reasoning=snapshot.get("reasoning") if isinstance(snapshot.get("reasoning"), dict) else None,
     )
 
 
@@ -340,6 +341,9 @@ def model_info_from_metadata(
 ) -> ModelInfo:
     definition = get_provider_definition(provider_id)
     classified = classify_model_capabilities(provider_id, model_id, metadata, transport=transport)
+    from row_bot.providers.reasoning import reasoning_metadata_for_catalog
+
+    reasoning = reasoning_metadata_for_catalog(provider_id, model_id, metadata)
     return ModelInfo(
         provider_id=provider_id,
         model_id=model_id,
@@ -355,6 +359,7 @@ def model_info_from_metadata(
         endpoint_compatibility=frozenset(classified["endpoint_compatibility"]),
         risk_label=risk_label or (definition.risk_label if definition else "api_key"),
         source=source,
+        reasoning=reasoning,
     )
 
 

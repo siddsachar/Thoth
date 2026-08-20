@@ -1288,13 +1288,22 @@ def build_composer_policy_cluster(
     with ui.row().classes("items-center row-bot-composer-control-group"):
         if show_model_picker:
             ui.icon("hub", size="18px").classes("text-grey-5")
+            reasoning_host = ui.row().classes("items-center")
+
+            def _refresh_reasoning_control() -> None:
+                reasoning_host.clear()
+                with reasoning_host:
+                    _build_inline_reasoning_picker(state)
+
             _build_inline_model_picker(
                 state,
                 open_settings=open_settings,
                 on_model_switch=on_model_switch,
                 generation_getter=generation_getter,
                 shell_generation=shell_generation,
+                on_reasoning_refresh=_refresh_reasoning_control,
             )
+            _refresh_reasoning_control()
             ui.separator().props("vertical").classes("row-bot-composer-separator")
         ui.icon("shield", size="18px").classes("text-grey-5")
         _build_inline_approval_picker(state)
@@ -1307,6 +1316,7 @@ def _build_inline_model_picker(
     on_model_switch: Callable | None = None,
     generation_getter: Callable[[], int] | None = None,
     shell_generation: int | None = None,
+    on_reasoning_refresh: Callable | None = None,
 ) -> None:
     """Compact model picker rendered inside the input bar."""
     from row_bot.agent import clear_agent_cache
@@ -1421,6 +1431,8 @@ def _build_inline_model_picker(
         e.sender.set_value(val)
         clear_context_usage_projection(state)
         clear_agent_cache()
+        if on_reasoning_refresh:
+            on_reasoning_refresh()
         _eff = state.thread_model_override or get_current_model()
         if on_model_switch:
             on_model_switch()
@@ -1504,6 +1516,132 @@ def _build_inline_model_picker(
 
     if not docs_options and (cached_options is None or _cached_picker_stale):
         defer_ui(_load_picker_options, delay=0.05)
+
+
+def _build_inline_reasoning_picker(state: AppState) -> None:
+    """Conditional exact-model reasoning control shared by every desktop composer."""
+    from row_bot.models import clear_llm_cache, get_current_model
+    from row_bot.providers.reasoning import (
+        ReasoningSelection,
+        reasoning_choices,
+        resolve_reasoning_capabilities,
+        validate_reasoning_selection,
+    )
+    from row_bot.providers.resolution import resolve_provider_config
+    from row_bot.threads import get_thread_reasoning_selection, set_thread_reasoning_selection
+
+    selected_model = state.thread_model_override or get_current_model()
+    try:
+        resolved = resolve_provider_config(selected_model, allow_legacy_local=True)
+        capabilities = resolve_reasoning_capabilities(resolved.provider_id, resolved.runtime_model)
+    except Exception:
+        return
+    choices = reasoning_choices(capabilities)
+    if not choices or capabilities is None:
+        return
+
+    try:
+        current = ReasoningSelection.from_json(
+            get_thread_reasoning_selection(state.thread_id, resolved.selection_ref)
+        )
+        validate_reasoning_selection(current, capabilities)
+    except ValueError:
+        current = ReasoningSelection()
+        set_thread_reasoning_selection(state.thread_id, resolved.selection_ref, None)
+        ui.notify(
+            "The saved reasoning setting is no longer supported; Provider default is active.",
+            type="warning",
+            close_button=True,
+            timeout=5000,
+        )
+
+    def _value(selection: ReasoningSelection) -> str:
+        if selection.kind == "effort":
+            return f"effort:{selection.effort}"
+        if selection.kind == "budget":
+            return f"budget:{selection.budget}"
+        return selection.kind
+
+    options = {
+        _value(choice): "Auto" if choice.is_default else choice.label
+        for choice in choices
+    }
+    if current.kind == "budget":
+        options[_value(current)] = current.label
+    if capabilities.supports_budget:
+        options["budget:custom"] = "Budget…"
+
+    budget_dialog = ui.dialog()
+    budget_value = current.budget if current.kind == "budget" else max(capabilities.budget_min, 1)
+    with budget_dialog, ui.card().classes("q-pa-md gap-3"):
+        ui.label("Reasoning budget").classes("text-subtitle2")
+        budget_input = ui.number(
+            "Tokens",
+            value=budget_value,
+            min=capabilities.budget_min,
+            max=capabilities.budget_max or None,
+            step=1,
+        ).props("outlined dense")
+        with ui.row().classes("justify-end w-full"):
+            ui.button("Cancel", on_click=budget_dialog.close).props("flat")
+            save_budget = ui.button("Apply", color="primary")
+
+    picker = None
+
+    async def _persist(selection: ReasoningSelection) -> None:
+        validate_reasoning_selection(selection, capabilities)
+        await run.io_bound(
+            set_thread_reasoning_selection,
+            state.thread_id,
+            resolved.selection_ref,
+            None if selection.is_default else selection.to_json(),
+        )
+        from row_bot.agent import clear_agent_cache
+
+        clear_agent_cache()
+        clear_llm_cache()
+        ui.notify(f"Reasoning: {selection.label}", type="info", timeout=3000)
+
+    async def _save_budget() -> None:
+        try:
+            selection = ReasoningSelection(kind="budget", budget=int(budget_input.value or 0))
+            await _persist(selection)
+        except ValueError as exc:
+            ui.notify(str(exc), type="negative", close_button=True)
+            return
+        budget_dialog.close()
+        if picker is not None:
+            picker.options = {**options, _value(selection): selection.label}
+            picker.set_value(_value(selection))
+            picker.update()
+
+    save_budget.on("click", _save_budget)
+
+    async def _on_pick(e) -> None:
+        raw = str(e.value or "")
+        if raw == "budget:custom":
+            e.sender.set_value(_value(current))
+            budget_dialog.open()
+            return
+        if raw.startswith("effort:"):
+            selection = ReasoningSelection(kind="effort", effort=raw.split(":", 1)[1])
+        elif raw.startswith("budget:"):
+            selection = ReasoningSelection(kind="budget", budget=int(raw.split(":", 1)[1]))
+        else:
+            selection = ReasoningSelection(kind=raw)
+        await _persist(selection)
+        e.sender.set_value(_value(selection))
+
+    ui.icon("psychology", size="18px").classes("text-grey-5")
+    picker = ui.select(
+        options=options,
+        value=_value(current),
+        on_change=_on_pick,
+    ).props(
+        "dense borderless options-dense hide-bottom-space data-docs-id=chat-reasoning-picker"
+    ).classes("text-xs row-bot-composer-select").style(
+        _compact_select_style(min_width=70, max_width=126)
+    ).tooltip("Reasoning: Provider default" if current.is_default else f"Reasoning: {current.label}")
 
 
 def _build_inline_approval_picker(state: AppState) -> None:

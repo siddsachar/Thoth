@@ -1293,6 +1293,8 @@ def _claude_subscription_model_info(
     tool_calling: bool | None = True,
     streaming: bool | None = True,
 ) -> ModelInfo:
+    from row_bot.providers.reasoning import reasoning_metadata_for_catalog
+
     inputs = set(input_modalities or {ModelModality.TEXT.value})
     if not inputs:
         inputs = {ModelModality.TEXT.value}
@@ -1319,6 +1321,7 @@ def _claude_subscription_model_info(
         source_confidence=source_confidence,
         risk_label="subscription",
         source=source,
+        reasoning=reasoning_metadata_for_catalog(CLAUDE_SUBSCRIPTION_PROVIDER_ID, model_id, {}),
     )
 
 
@@ -1382,6 +1385,7 @@ def _model_cache_row(model_info: ModelInfo) -> dict[str, Any]:
         "source_confidence": model_info.source_confidence,
         "source": model_info.source,
         "last_verified_at": model_info.last_verified_at,
+        "reasoning": dict(model_info.reasoning) if model_info.reasoning else None,
     }
 
 
@@ -1401,6 +1405,8 @@ def _model_info_from_cache_row(row: dict[str, Any]) -> ModelInfo | None:
     )
     if row.get("last_verified_at"):
         info = replace(info, last_verified_at=str(row.get("last_verified_at")))
+    if isinstance(row.get("reasoning"), dict):
+        info = replace(info, reasoning=dict(row["reasoning"]))
     raw_capabilities = row.get("capabilities")
     capabilities: set[str] = set()
     if isinstance(raw_capabilities, str):

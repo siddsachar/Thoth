@@ -77,6 +77,7 @@ BOT_COMMANDS = [
     BotCommand("newthread", "Start a new conversation"),
     BotCommand("model", "Switch model (cloud/local)"),
     BotCommand("approval", "Switch approval mode"),
+    BotCommand("reasoning", "Show or set model reasoning"),
     BotCommand("tools", "List enabled tools"),
     BotCommand("profiles", "List Agent Profiles"),
     BotCommand("profile", "Show or set Agent Profile"),
@@ -369,6 +370,8 @@ def _run_agent_sync(user_text: str, config: dict,
                 used_video_gen = True
         elif event_type == "interrupt":
             interrupt_data = payload
+        elif event_type == "reasoning_fallback":
+            setting_audits.append(str((payload or {}).get("message") or "Provider default reasoning was used."))
         elif event_type == "error":
             full_answer.append(f"⚠️ Error: {payload}")
         elif event_type == "done":
@@ -441,6 +444,8 @@ def _resume_agent_sync(
                 setting_audits.append(audit_line)
         elif event_type == "interrupt":
             interrupt_data = payload
+        elif event_type == "reasoning_fallback":
+            setting_audits.append(str((payload or {}).get("message") or "Provider default reasoning was used."))
         elif event_type == "error":
             full_answer.append(f"⚠️ Error: {payload}")
         elif event_type == "done":
@@ -1076,6 +1081,17 @@ async def _cmd_approval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     args = (update.message.text or "").split(maxsplit=1)
     arg = args[1] if len(args) > 1 else ""
     response = ch_commands.cmd_approval("telegram", arg, thread_id=thread_id)
+    await update.message.reply_text(response)
+
+
+async def _cmd_reasoning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /reasoning for this Telegram conversation."""
+    if not _is_authorised(update):
+        return
+    thread_id = _thread_id_for_command(update, context)
+    args = (update.message.text or "").split(maxsplit=1)
+    arg = args[1] if len(args) > 1 else ""
+    response = ch_commands.cmd_reasoning("telegram", arg, thread_id=thread_id)
     await update.message.reply_text(response)
 
 
@@ -2141,6 +2157,7 @@ async def start_bot() -> bool:
     _app.add_handler(CommandHandler("newthread", _cmd_newthread))
     _app.add_handler(CommandHandler("model", _cmd_model))
     _app.add_handler(CommandHandler("approval", _cmd_approval))
+    _app.add_handler(CommandHandler("reasoning", _cmd_reasoning))
     _app.add_handler(CommandHandler("tools", _cmd_tools))
     _app.add_handler(CommandHandler("profiles", _cmd_profiles))
     _app.add_handler(CommandHandler("profile", _cmd_profile))

@@ -43,10 +43,39 @@ def _write_skill(root: Path, name: str, *, description: str, tools: list[str] | 
 def test_thread_scoped_command_tokens_include_reset_aliases(tmp_path):
     _skills, _activation, commands = _reload_skill_modules(tmp_path)
 
-    for text in ("/skill foo", "/skills", "/skill-reset", "/skillreset", "/skill_reset", "/noskill"):
+    for text in ("/skill foo", "/skills", "/skill-reset", "/skillreset", "/skill_reset", "/noskill", "/reasoning high"):
         assert commands.is_thread_scoped_command(text)
     for text in ("/help", "/status", "/tools", "/new", "/stop", "/model"):
         assert not commands.is_thread_scoped_command(text)
+
+
+def test_channel_reasoning_dispatch_uses_conversation_thread_id(tmp_path, monkeypatch):
+    _skills, _activation, commands = _reload_skill_modules(tmp_path)
+    import row_bot.agent as agent
+    import row_bot.models as models
+    import row_bot.providers.reasoning as reasoning
+    import row_bot.providers.resolution as resolution
+    import row_bot.threads as threads
+
+    calls = []
+    monkeypatch.setattr(threads, "_get_thread_model_override", lambda thread_id: "model:openai:gpt-5")
+    monkeypatch.setattr(
+        resolution,
+        "resolve_provider_config",
+        lambda selected, allow_legacy_local=True: type("Resolved", (), {"selection_ref": selected})(),
+    )
+    monkeypatch.setattr(
+        reasoning,
+        "apply_reasoning_command",
+        lambda thread_id, model_ref, arg: calls.append((thread_id, model_ref, arg)) or "Reasoning: High.",
+    )
+    monkeypatch.setattr(agent, "clear_agent_cache", lambda: None)
+    monkeypatch.setattr(models, "clear_llm_cache", lambda: None)
+
+    response = commands.dispatch("sms", "/reasoning high", thread_id="sms-thread")
+
+    assert response == "Reasoning: High."
+    assert calls == [("sms-thread", "model:openai:gpt-5", "high")]
 
 
 def test_channel_dispatch_skill_reset_aliases_use_thread_id(tmp_path):

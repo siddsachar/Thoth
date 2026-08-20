@@ -23,6 +23,40 @@ class SourceTestRule:
 
 SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
     SourceTestRule(
+        "reasoning_control",
+        (
+            "src/row_bot/providers/reasoning.py",
+            "src/row_bot/providers/models.py",
+            "src/row_bot/providers/capabilities.py",
+            "src/row_bot/providers/capability_resolution.py",
+            "src/row_bot/providers/catalog.py",
+            "src/row_bot/providers/runtime.py",
+            "src/row_bot/providers/transports/**",
+            "src/row_bot/providers/custom.py",
+            "src/row_bot/models.py",
+            "src/row_bot/agent.py",
+            "src/row_bot/threads.py",
+            "src/row_bot/slash_commands.py",
+            "src/row_bot/ui/chat_components.py",
+            "src/row_bot/ui/mobile_chat.py",
+            "src/row_bot/ui/streaming.py",
+            "src/row_bot/ui/provider_settings.py",
+            "src/row_bot/channels/**",
+        ),
+        (
+            "tests/subsystem/providers/test_reasoning_control.py",
+            "tests/test_provider_runtime.py",
+            "tests/test_openai_compatible_transport.py",
+            "tests/test_provider_custom.py",
+            "tests/test_chat_only_runtime.py",
+            "tests/test_slash_commands.py",
+            "tests/test_channel_skill_commands.py",
+            "tests/subsystem/channels",
+            "tests/subsystem/mobile",
+        ),
+        "Per-thread reasoning spans provider metadata and transports, cache identity, fallback, shared desktop/mobile UI, commands, and channel delivery.",
+    ),
+    SourceTestRule(
         "context_window_compaction",
         (
             "src/row_bot/agent.py",

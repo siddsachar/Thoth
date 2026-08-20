@@ -33,6 +33,7 @@ class ChatCodexResponses(BaseChatModel):
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     installation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     http_client: Any | None = None
+    reasoning_plan: Any | None = None
 
     @property
     def _llm_type(self) -> str:
@@ -145,7 +146,7 @@ class ChatCodexResponses(BaseChatModel):
     def _request_body(self, messages: list[BaseMessage], **kwargs: Any) -> dict[str, Any]:
         instructions, input_items = _messages_to_responses_input(messages)
         tools = [_responses_tool(tool) for tool in kwargs.get("tools") or []]
-        return {
+        body = {
             "model": self.model_name,
             "instructions": instructions,
             "input": input_items,
@@ -159,6 +160,11 @@ class ChatCodexResponses(BaseChatModel):
             "prompt_cache_key": self.session_id,
             "client_metadata": {"x-codex-installation-id": self.installation_id},
         }
+        if self.reasoning_plan is not None and not self.reasoning_plan.is_default:
+            selection = self.reasoning_plan.selection
+            if selection.kind == "effort":
+                body["reasoning"] = {"effort": selection.effort}
+        return body
 
     def _post(self, body: dict[str, Any]) -> Any:
         response = self._post_once(body)

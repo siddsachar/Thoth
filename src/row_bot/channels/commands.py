@@ -10,6 +10,7 @@ Supported commands
 ``/new``    — start a new conversation thread
 ``/status`` — show current model and channel status
 ``/model``  — show or switch the active LLM model
+``/reasoning`` — show or switch reasoning for the active model
 ``/help``   — list available commands
 ``/tools``  — list enabled tools
 ``/goal``   — start or control Goal Mode
@@ -39,6 +40,7 @@ COMMANDS: list[ChannelCommand] = [
     ChannelCommand("/new",    "Start a new conversation thread", "cmd_new"),
     ChannelCommand("/status", "Show agent status",               "cmd_status"),
     ChannelCommand("/model",  "Show or switch the active model", "cmd_model"),
+    ChannelCommand("/reasoning", "Show or set reasoning for this model", "cmd_reasoning"),
     ChannelCommand("/approval", "Show or switch approval mode",  "cmd_approval"),
     ChannelCommand("/help",   "List available commands",         "cmd_help"),
     ChannelCommand("/tools",  "List enabled tools",              "cmd_tools"),
@@ -70,6 +72,7 @@ PROFILES_COMMAND_TOKENS = {"/profiles", "/agent-profiles"}
 AGENTS_COMMAND_TOKENS = {"/agents"}
 AGENT_COMMAND_TOKENS = {"/agent", "/subagent"}
 GOAL_COMMAND_TOKENS = {"/goal"}
+REASONING_COMMAND_TOKENS = {"/reasoning"}
 
 
 def command_token(text: str) -> str:
@@ -90,6 +93,7 @@ def is_thread_scoped_command(text: str) -> bool:
         | AGENTS_COMMAND_TOKENS
         | AGENT_COMMAND_TOKENS
         | GOAL_COMMAND_TOKENS
+        | REASONING_COMMAND_TOKENS
     )
 
 
@@ -230,6 +234,28 @@ def cmd_approval(channel_name: str, arg: str = "", *, thread_id: str | None = No
     _set_thread_approval_mode(thread_id, mode)
     clear_agent_cache()
     return f"Approval mode set to **{approval_label(mode)}** (`{mode}`)."
+
+
+def cmd_reasoning(channel_name: str, arg: str = "", *, thread_id: str | None = None) -> str:
+    """Handle exact per-thread, per-model reasoning controls."""
+    if not thread_id:
+        return f"{channel_name} could not identify the current conversation thread."
+    try:
+        from row_bot.agent import clear_agent_cache
+        from row_bot.models import clear_llm_cache, get_current_model
+        from row_bot.providers.reasoning import apply_reasoning_command
+        from row_bot.providers.resolution import resolve_provider_config
+        from row_bot.threads import _get_thread_model_override
+
+        selected = _get_thread_model_override(thread_id) or get_current_model()
+        resolved = resolve_provider_config(selected, allow_legacy_local=True)
+        response = apply_reasoning_command(thread_id, resolved.selection_ref, arg)
+        clear_agent_cache()
+        clear_llm_cache()
+        return response
+    except Exception as exc:
+        log.warning("/reasoning failed: %s", exc)
+        return f"Could not update reasoning: {exc}"
 
 
 def cmd_profiles(channel_name: str, arg: str = "") -> str:
@@ -482,6 +508,9 @@ def dispatch(
 
     if cmd in GOAL_COMMAND_TOKENS:
         return cmd_goal(channel_name, arg, thread_id=thread_id)
+
+    if cmd in REASONING_COMMAND_TOKENS:
+        return cmd_reasoning(channel_name, arg, thread_id=thread_id)
 
     handler = _HANDLER_MAP.get(cmd)
     if handler is None:

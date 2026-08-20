@@ -60,6 +60,11 @@ BUILTIN_COMMANDS: tuple[SlashCommandSpec, ...] = (
         "Chat", "none", "stop_generation",
     ),
     SlashCommandSpec(
+        "reasoning", "/reasoning", (), "Reasoning",
+        "Show or set reasoning for the active model in this chat.", "psychology",
+        "Chat", "prefix", "reasoning",
+    ),
+    SlashCommandSpec(
         "profiles", "/profiles", ("/agent-profiles",), "Agent Profiles",
         "List Agent Profiles available for this chat.", "badge",
         "Agents", "optional", "profiles",
@@ -442,6 +447,18 @@ def dispatch_text_command(
         from row_bot.goals import handle_goal_command
 
         return handle_goal_command(thread_id, arg)
+    if spec.id == "reasoning":
+        from row_bot.models import get_current_model
+        from row_bot.providers.reasoning import apply_reasoning_command
+        from row_bot.providers.resolution import resolve_provider_config
+        from row_bot.threads import _get_thread_model_override
+
+        selected = _get_thread_model_override(thread_id) or get_current_model()
+        try:
+            resolved_model = resolve_provider_config(selected, allow_legacy_local=True)
+        except Exception as exc:
+            return f"Could not resolve the active model for reasoning: {exc}"
+        return apply_reasoning_command(thread_id, resolved_model.selection_ref, arg)
     if spec.id == "help":
         return help_text(include_skills=True)
     if spec.id == "new":
