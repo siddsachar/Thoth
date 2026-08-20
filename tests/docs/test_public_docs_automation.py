@@ -83,6 +83,30 @@ def test_progressive_tools_and_skills_are_documented_at_public_entry_points() ->
     assert "Load all external tools" in generated_controls
 
 
+def test_reasoning_controls_are_documented_at_public_entry_points() -> None:
+    docs_root = ROOT / "docs-site" / "docs"
+    guide = (docs_root / "chat" / "reasoning-controls.mdx").read_text(encoding="utf-8")
+    chat = (docs_root / "chat" / "index.mdx").read_text(encoding="utf-8")
+    models = (docs_root / "configuration" / "models-and-providers.mdx").read_text(
+        encoding="utf-8"
+    )
+    channels = (docs_root / "integrations" / "channels.mdx").read_text(encoding="utf-8")
+    sidebar = (ROOT / "docs-site" / "sidebars.ts").read_text(encoding="utf-8")
+
+    for phrase in (
+        "Provider default",
+        "one thread and one exact provider-qualified model",
+        "/reasoning budget 4096",
+        "retries once with Provider default",
+        "Settings -> Providers",
+    ):
+        assert phrase in guide
+    assert "/docs/chat/reasoning-controls" in chat
+    assert "/docs/chat/reasoning-controls" in models
+    assert "`/reasoning`" in channels
+    assert "'chat/reasoning-controls'" in sidebar
+
+
 def test_all_published_html_internal_links_resolve() -> None:
     publish_root = ROOT / "docs"
     pages = sorted(publish_root.rglob("*.html"))

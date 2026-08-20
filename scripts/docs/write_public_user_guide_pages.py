@@ -125,6 +125,7 @@ SETTINGS = {
             "Subscription accounts show sign-in based providers such as ChatGPT / Codex or Claude Subscription. Use connect, reconnect, test, and refresh actions from the row.",
             "API providers show services that need an API key or compatible endpoint. Their credential buttons open the setup flow for that provider.",
             "Custom endpoint providers let advanced users point Row-Bot at OpenAI-compatible servers such as LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, or SGLang.",
+            "Custom endpoint Advanced settings can describe reasoning mode, a thinking budget, returned reasoning content, and whether preserved reasoning may be replayed to that endpoint.",
             "Runtime tests check whether a provider can handle the kind of requests Row-Bot needs. A failed test keeps the provider visible but may stop Row-Bot from offering it for agent work.",
         ],
         "workflow": [
@@ -666,6 +667,7 @@ These pages describe Row-Bot 4.7.1, the current stable release represented by th
 - [Getting Started](/docs/getting-started/) explains the install path, first launch, and setup choices.
 - [Row-Bot Interface](/docs/app-shell/navigation) tours the sidebar, thread list, Home tabs, Activity Center, Buddy, Settings, and terminal.
 - [Chat](/docs/chat/) explains conversations, composer controls, attachments, model selection, approvals, and tool results.
+- [Reasoning Controls](/docs/chat/reasoning-controls) explains model-specific effort, thinking toggles, token budgets, and provider-default fallback behavior.
 - [Settings](/docs/settings/) explains every configuration tab and what each choice changes.
 - [Profiles, Goals, And Agents](/docs/profiles-goals-agents/) explains reusable roles, bounded goals, parent-led work waves, dependencies, and recovery.
 - [Remote Access And Server Mode](/docs/operations/remote-access) explains invitations, sessions, Tailscale, LAN, HTTPS proxies, and browser-local voice.
@@ -675,6 +677,7 @@ These pages describe Row-Bot 4.7.1, the current stable release represented by th
 ## Feature Guides
 
 - [Workflows](/docs/guides/workflows) for repeatable background work and scheduled agents.
+- [Reasoning Controls](/docs/chat/reasoning-controls) for choosing the supported reasoning depth of the active model without changing models.
 - [Designer Studio](/docs/designer/) for creating pages, slides, mockups, branded assets, and exportable designs.
 - [Developer Studio](/docs/developer/) for folders, repositories, code chat, inspectors, commands, and sandbox modes.
 - [Knowledge](/docs/knowledge/) for local memory, durable document ingestion, graph review, and background organization.
@@ -684,6 +687,7 @@ These pages describe Row-Bot 4.7.1, the current stable release represented by th
 - [Docker And VPS Operations](/docs/operations/docker/) for the official image, hardened Compose, credentials, backup, upgrade, rollback, and recovery.
 - [Monitor](/docs/monitor/) for logs, journals, channel state, and background activity.
 - [Skills Hub](/docs/skills/) for browsing, enabling, creating, and reviewing skills.
+- [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills) for automatic external-tool discovery, per-task skill selection, compatibility mode, and safety boundaries.
 - [Channels](/docs/integrations/channels), [MCP](/docs/integrations/mcp), and [Plugins](/docs/integrations/plugins) for integrations.
 - [Extend Row-Bot](/docs/extending/) to choose safely between Skills, Custom Tools, plugins, MCP, channels, and accounts.
 - [Operations, Data, And Recovery](/docs/operations/) for backups, restore, updates, repair, uninstall, and diagnostic sharing.
@@ -970,9 +974,10 @@ Chat is the main place to ask Row-Bot for help. A chat thread can stay simple, o
 - **Stop** appears while Row-Bot is responding and asks the current run to stop.
 - **Regenerate or retry controls** appear when a response can be run again.
 - **Model picker** chooses the model for this thread. See [Model Picker](/docs/chat/model-picker).
+- **Thinking control** appears beside the model only when that exact model exposes supported reasoning choices. See [Reasoning Controls](/docs/chat/reasoning-controls).
 - **Approval mode** controls how sensitive actions are reviewed for this thread.
 - **Attachments and context controls** add files or local context to the current request.
-- **Skills and slash commands** help start structured tasks when available.
+- **Skills and slash commands** help start structured tasks when available. Enabled skills can also be selected progressively for the current task.
 - **Voice buttons** use Dictate or Talk when voice is configured.
 - **Tool traces** show what tools Row-Bot used and what came back.
 - **Approval prompts** pause gated actions until you approve or reject them. When a child agent needs approval, the prompt appears in the parent thread too.
@@ -996,7 +1001,7 @@ Chat is the main place to ask Row-Bot for help. A chat thread can stay simple, o
 
 ## What Is Saved
 
-Thread names, messages, selected model overrides, approval mode, profile selection, attachments copied into Row-Bot-managed storage, and tool results are saved locally. Some external providers may receive prompt content when you choose their models.
+Thread names, messages, selected model overrides, per-model reasoning selections, approval mode, profile selection, attachments copied into Row-Bot-managed storage, and tool results are saved locally. Some external providers may receive prompt content when you choose their models.
 
 ## Privacy And Safety
 
@@ -1005,8 +1010,10 @@ Local model runs can stay on your machine. Hosted models, web search, browser ac
 ## Troubleshooting
 
 - If Row-Bot cannot answer with the current model, choose a more capable model in the picker.
+- If the Thinking control is missing or a saved choice resets, read [Reasoning Controls](/docs/chat/reasoning-controls#troubleshooting).
 - If attachments are ignored, confirm the files finished uploading and are relevant to the prompt.
 - If a tool is unavailable, check Settings, the current Agent Profile, and approval mode.
+- If an external tool is enabled but not selected automatically, use a more specific request or review [Progressive Tools And Skills](/docs/guides/progressive-tools-and-skills).
 - If a run is stuck, press Stop, then retry with a narrower prompt.
 """,
         screenshot=True,
@@ -1044,6 +1051,8 @@ Models appear after Row-Bot discovers them from a connected provider or local ru
 
 Use a smaller or local model for quick private chats. Use a stronger tool-capable model for workflows, Developer Studio, Designer Studio, long context, or multi-step tool use. For local and self-hosted endpoints, prefer a context window large enough for Row-Bot's instructions and tool schemas.
 
+Reasoning choices belong to the exact provider-qualified model, not just its display name. After choosing a supported model, use the conditional Thinking control described in [Reasoning Controls](/docs/chat/reasoning-controls).
+
 ## Pinning Models
 
 Open Settings -> Models, refresh the catalog, and pin the models you use often. Pinning does not create a new model; it just puts an existing discovered model into your Quick Choices.
@@ -1054,6 +1063,80 @@ Open Settings -> Models, refresh the catalog, and pin the models you use often. 
 - If a provider is connected but disabled, review the provider row message.
 - If a model appears but fails with tools, choose a model labeled or tested for Agent Mode.
 - If custom endpoint models look duplicated, use the provider-qualified name.
+""",
+    )
+
+    write(
+        "chat/reasoning-controls.mdx",
+        "Reasoning Controls",
+        "Choose provider-aware reasoning effort, thinking toggles, and token budgets for the active Row-Bot model.",
+        """
+# Reasoning Controls
+
+Reasoning controls let you change how much supported models reason before answering without switching models. Row-Bot shows only choices that the exact provider-qualified model reports or that Row-Bot can identify from a maintained model route.
+
+## Where To Find The Control
+
+- In desktop Chat, Designer Studio, and Developer Studio, the **Thinking** control sits beside the model picker in the composer. On narrow desktop windows, the composer progressively compacts labels while keeping each icon paired with its own menu.
+- In the compact mobile layout, open **Chat controls**. Reasoning appears below Model when the selected model supports it.
+- In Chat or a connected messaging channel, use `/reasoning` to inspect the current choice and the valid choices for the active model.
+
+The control is intentionally absent when Row-Bot does not have exact, actionable reasoning capability data for the selected model. A generic model name or a provider-wide assumption is not enough.
+
+## What The Choices Mean
+
+| Choice | Effect |
+| --- | --- |
+| Provider default | Sends no per-thread reasoning override and lets the provider or endpoint choose its normal behavior. This is the safest compatibility choice. |
+| Low, Medium, High, XHigh, or another effort | Requests one of the exact effort levels supported by the selected model. The list varies by model. |
+| On or Off | Enables or disables thinking only when that model exposes a true toggle. Models with mandatory reasoning do not offer Off. |
+| Token budget | Sets a positive reasoning-token budget within the minimum and maximum reported for that model. This appears only for budget-capable models. |
+
+More reasoning can increase latency and provider token usage. It can help with planning, coding, analysis, and multi-step tool use, but a higher setting is not automatically better for every request.
+
+## Scope And Persistence
+
+A selection is saved locally for one thread and one exact provider-qualified model. Switching models does not apply an incompatible value to the new model. If you return to a model in the same thread, Row-Bot can restore that model's valid saved choice.
+
+Changing the global default model does not rewrite existing thread choices. Designer Studio and Developer Studio use the same thread-scoped behavior as normal Chat.
+
+## Slash And Channel Commands
+
+Run `/reasoning` with no argument to show the active setting and valid choices. Supported examples include:
+
+```text
+/reasoning high
+/reasoning default
+/reasoning on
+/reasoning off
+/reasoning budget 4096
+```
+
+Row-Bot validates the command against the active model. Unsupported efforts, toggles, or budgets are rejected without replacing the previous valid selection. Messaging channels use their conversation's active thread and model, so the setting remains isolated from unrelated chats.
+
+## Providers And Custom Endpoints
+
+Row-Bot maps native reasoning controls for supported OpenAI and Codex, Anthropic and Claude Subscription, xAI, Google, Ollama and Ollama Cloud, OpenRouter, and compatible endpoint routes when exact capability data is available. Available models and choices can change as provider catalogs change; the control itself is the authoritative list for the selected model.
+
+For a custom OpenAI-compatible endpoint, open **Settings -> Providers**, edit or add the endpoint, then expand **Advanced -> Reasoning**. Keep **Reasoning mode** on Auto unless the endpoint's metadata is missing or wrong. Thinking budget, returned reasoning content, replay, and extra request JSON are advanced compatibility settings that apply to every model exposed by that endpoint. Enable replay only when the endpoint explicitly supports receiving preserved reasoning history.
+
+## Responses And Compatibility Fallback
+
+When a provider returns reasoning content, Row-Bot can stream it separately and retain it as a collapsed **Thinking** section instead of mixing it into the final answer.
+
+If a provider rejects a valid-looking explicit reasoning choice before returning response content, Row-Bot retries once with Provider default, clears the rejected saved override, and shows a notice. Authentication failures, rate limits, timeouts, cancellations, and server failures are not silently retried as reasoning compatibility problems.
+
+## Privacy And Safety
+
+The selected control is stored locally with thread settings, but hosted providers receive the resulting reasoning parameter and may bill for additional tokens. Reasoning content returned by a provider can contain sensitive intermediate material. Do not enable reasoning replay for a custom endpoint unless you trust that endpoint and understand its message format.
+
+## Troubleshooting
+
+- **The control is missing:** confirm the active model is provider-qualified, refresh Providers and Models, and check that its catalog entry exposes exact reasoning capabilities.
+- **A choice disappeared after switching models:** choices are model-specific; inspect the new model's menu or run `/reasoning`.
+- **A saved choice reset to Provider default:** the provider rejected it or refreshed capability metadata no longer supports it. Read the notice, refresh the catalog, and choose from the current list.
+- **A custom endpoint returns reasoning in the wrong place:** review its Advanced Reasoning settings, especially returned reasoning content and replay. Keep replay off unless required.
+- **High reasoning is slow or expensive:** choose a lower supported effort, a smaller budget, or Provider default.
 """,
     )
 
@@ -1504,6 +1587,7 @@ Channels connect Row-Bot to external messaging platforms such as Telegram, Whats
 - **DM Pairing Code** approves a user before private-message access.
 - **Paired Users** lists approved users and lets you revoke access.
 - **Setup Guide** explains platform-specific prerequisites.
+- **`/reasoning`** shows or changes the reasoning choice for that channel conversation's active model. Run it without an argument to see the exact valid choices.
 
 ## Safety
 
@@ -1513,7 +1597,9 @@ When work starts from a channel and a child agent asks for approval, Row-Bot sen
 
 ## Troubleshooting
 
-- If a channel cannot start, check required fields and tunnel state.
+- If Telegram encounters one transient network failure during initialization, Row-Bot cleans up the partial runtime and retries once. Persistent network failures remain stopped with an actionable diagnostic; invalid bot tokens are not retried.
+- If Telegram starts but its command menu cannot be registered, polling remains available and the menu failure is logged as non-fatal.
+- If a channel cannot start, check required fields and tunnel state. Automatic tunnel startup runs outside the UI event loop, so a slow tunnel helper should report status without freezing app startup.
 - If inbound messages fail, verify webhook URLs and platform permissions.
 - If the wrong person has access, revoke them from Paired Users.
 """,
@@ -2359,6 +2445,7 @@ Start with the visible status text in Row-Bot. Then check the relevant Settings 
 - Refresh Providers, then refresh Models.
 - Choose a tool-capable model for workflows, Designer, Developer, and multi-step tool use.
 - For local and custom endpoints, use enough context for Row-Bot's instructions and tool schemas.
+- If reasoning choices are missing, rejected, or reset, use the active model's conditional control or `/reasoning`, then follow [Reasoning Controls](/docs/chat/reasoning-controls#troubleshooting).
 
 ## Chat And Tool Problems
 
@@ -2469,10 +2556,15 @@ Use local Ollama for local-first privacy and no provider billing. Use an API pro
 
 Keep at least one everyday chat model and one stronger tool-capable model pinned. For Developer, Designer, workflows, and complex tools, choose a model that can handle tool calls and enough context.
 
+For models with exact reasoning capabilities, Row-Bot exposes a per-thread [Reasoning control](/docs/chat/reasoning-controls) with only the efforts, toggle, or token-budget choices that model supports. Provider default remains available as the compatibility-safe option.
+
+For Ollama, Row-Bot prefers explicit tool-calling metadata, then the daemon's reported capability list. A reported `tools` capability enables agent use even for a model family newer than Row-Bot's maintained fallback catalogue; an explicit capability list that omits `tools` remains authoritative. Family fallbacks are used only when the daemon provides no capability metadata.
+
 ## Troubleshooting
 
 - If a provider connects but has no models, refresh Models.
 - If a model fails with tools, choose a tool-capable model.
+- If an Ollama model is unexpectedly excluded from agent use, refresh the local catalogue and inspect the capabilities reported by the installed Ollama daemon.
 - If a custom endpoint fails, check base URL, model name, API compatibility, and context window.
 """,
     )
