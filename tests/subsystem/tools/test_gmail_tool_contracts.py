@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import google.ai.generativelanguage as glm
-import google.ai.generativelanguage_v1beta.types as gapic
 from langchain_core.tools import StructuredTool
-from langchain_google_genai._function_utils import convert_to_genai_function_declarations
 
 from row_bot.tools.gmail_tool import _CreateDraftInput, _SendMessageInput
 
@@ -51,16 +48,21 @@ def test_gmail_recipient_fields_keep_legacy_scalar_inputs() -> None:
 
 
 def test_gmail_tools_retain_items_after_locked_google_conversion() -> None:
-    declarations = convert_to_genai_function_declarations([
+    from google.genai import types
+    from langchain_google_genai._function_utils import convert_to_genai_function_declarations
+
+    converted_tools = convert_to_genai_function_declarations([
         _tool("create_gmail_draft", _CreateDraftInput),
         _tool("send_gmail_message", _SendMessageInput),
     ])
+    declarations = [
+        declaration
+        for converted_tool in converted_tools
+        for declaration in (converted_tool.function_declarations or ())
+    ]
 
-    for declaration in declarations.function_declarations:
-        properties = gapic.Schema.to_dict(
-            declaration.parameters,
-            preserving_proto_field_name=True,
-        )["properties"]
+    for declaration in declarations:
+        properties = declaration.parameters.model_dump(exclude_none=True)["properties"]
         for field_name in ("to", "cc", "bcc", "attachments"):
-            assert properties[field_name]["type_"] == int(glm.Type.ARRAY)
-            assert properties[field_name]["items"]["type_"] == int(glm.Type.STRING)
+            assert properties[field_name]["type"] == types.Type.ARRAY
+            assert properties[field_name]["items"]["type"] == types.Type.STRING

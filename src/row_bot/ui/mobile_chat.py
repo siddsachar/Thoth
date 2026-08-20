@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 import uuid
@@ -596,8 +595,8 @@ def _build_mobile_thread_composer(
                     await result
                 set_mobile_chat_mode(state, "thread")
 
-            def _submit() -> None:
-                asyncio.create_task(_submit_async())
+            async def _submit() -> None:
+                await _submit_async()
 
             async def _on_browser_voice_transcript(e) -> None:
                 payload = e.args if isinstance(e.args, dict) else {}

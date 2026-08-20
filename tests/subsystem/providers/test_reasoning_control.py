@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
@@ -40,13 +41,20 @@ def test_reasoning_metadata_round_trips_through_model_snapshot() -> None:
 
 def test_reasoning_choices_are_exact_and_mandatory_models_omit_off() -> None:
     caps = ReasoningCapabilities(
-        supported_efforts=("high", "low"),
+        supported_efforts=("xhigh", "high", "low"),
         mandatory=True,
         can_disable=True,
         request_style="openai",
     )
 
-    assert [choice.label for choice in reasoning_choices(caps)] == ["Provider default", "Low", "High"]
+    assert [choice.label for choice in reasoning_choices(caps)] == [
+        "Provider default",
+        "Low",
+        "High",
+        "XHigh",
+    ]
+    xhigh = reasoning_choices(caps)[-1]
+    assert xhigh.to_json() == {"kind": "effort", "effort": "xhigh"}
     with pytest.raises(ValueError, match="cannot be disabled"):
         validate_reasoning_selection(ReasoningSelection(kind="off"), caps)
 
@@ -196,7 +204,9 @@ def test_reasoning_command_is_strict_and_persists_for_active_exact_model(tmp_pat
         ("openrouter", ReasoningSelection(kind="budget", budget=4096), {"reasoning": {"max_tokens": 4096}}),
         ("openai", ReasoningSelection(kind="effort", effort="low"), {"reasoning_effort": "low"}),
         ("xai", ReasoningSelection(kind="effort", effort="high"), {"reasoning_effort": "high"}),
+        ("google", ReasoningSelection(kind="effort", effort="high"), {"thinking_level": "high"}),
         ("google", ReasoningSelection(kind="budget", budget=2048), {"thinking_budget": 2048}),
+        ("google", ReasoningSelection(kind="off"), {"thinking_budget": 0}),
         ("ollama", ReasoningSelection(kind="effort", effort="medium"), {"reasoning": "medium"}),
     ],
 )
@@ -213,6 +223,16 @@ def test_transport_constructor_mapping_is_provider_native(provider, selection, e
     plan = ReasoningRequestPlan(f"model:{provider}:exact", selection, caps)
 
     assert _reasoning_constructor_kwargs(plan, provider=provider) == expected
+
+
+def test_shared_reasoning_picker_uses_canonical_labels() -> None:
+    source = Path("src/row_bot/ui/chat_components.py").read_text(encoding="utf-8")
+    picker = source.split("def _build_inline_reasoning_picker(", 1)[1].split(
+        "async def open_reasoning_control(", 1
+    )[0]
+
+    assert "_value(choice): choice.label" in picker
+    assert '"Auto" if choice.is_default' not in picker
 
 
 def test_anthropic_effort_enables_only_exact_adaptive_thinking() -> None:

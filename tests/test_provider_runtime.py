@@ -1,3 +1,5 @@
+import asyncio
+import base64
 import sys
 import socket
 from types import ModuleType, SimpleNamespace
@@ -110,6 +112,159 @@ def test_google_provider_constructor_is_preserved(monkeypatch):
     assert model.kwargs["google_api_key"] == "google-key"
     assert "thinking_budget" not in model.kwargs
     assert "thinking_level" not in model.kwargs
+
+
+def test_google_provider_constructor_preserves_reasoning_and_default_semantics(monkeypatch):
+    from row_bot.providers.reasoning import (
+        ReasoningCapabilities,
+        ReasoningRequestPlan,
+        ReasoningSelection,
+    )
+    from row_bot.providers.transports.reasoning_fallback import ReasoningFallbackChatModel
+
+    fake_module = ModuleType("langchain_google_genai")
+
+    class _FakeChatGoogleGenerativeAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    fake_module.ChatGoogleGenerativeAI = _FakeChatGoogleGenerativeAI
+    monkeypatch.setitem(sys.modules, "langchain_google_genai", fake_module)
+    monkeypatch.setattr(runtime, "get_provider_secret", lambda provider_id: "google-key")
+    caps = ReasoningCapabilities(
+        supported_efforts=("low", "high"),
+        mandatory=True,
+        request_style="google_level",
+    )
+    plan = ReasoningRequestPlan(
+        "model:google:gemini-3.1-pro-preview",
+        ReasoningSelection(kind="effort", effort="high"),
+        caps,
+    )
+
+    model = runtime.create_chat_model(
+        "gemini-3.1-pro-preview",
+        provider_id="google",
+        reasoning_plan=plan,
+    )
+
+    assert isinstance(model, ReasoningFallbackChatModel)
+    assert model.primary.kwargs["thinking_level"] == "high"
+    assert "thinking_budget" not in model.primary.kwargs
+    assert "thinking_level" not in model.provider_default.kwargs
+    assert "thinking_budget" not in model.provider_default.kwargs
+
+
+def test_google_consolidated_sdk_preserves_tools_streaming_multimodal_and_thought_replay():
+    from google.genai import types
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_google_genai.chat_models import _parse_chat_history
+
+    model = ChatGoogleGenerativeAI(
+        model="gemini-3.1-pro-preview",
+        google_api_key="test-key",
+    )
+    bound = model.bind_tools([
+        {
+            "name": "lookup",
+            "description": "Look up a value",
+            "parameters": {"type": "object", "properties": {}},
+        }
+    ])
+    assert "tools" in bound.kwargs
+
+    signature = base64.b64encode(b"rb337-signature").decode("ascii")
+    messages = [
+        HumanMessage(content=[
+            {"type": "text", "text": "Inspect this image"},
+            {
+                "type": "media",
+                "mime_type": "image/png",
+                "data": "iVBORw0KGgo=",
+            },
+        ]),
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "lookup",
+                "args": {},
+                "id": "call_google",
+                "type": "tool_call",
+            }],
+            additional_kwargs={
+                "__gemini_function_call_thought_signatures__": {
+                    "call_google": signature,
+                }
+            },
+        ),
+        ToolMessage(content="ok", tool_call_id="call_google"),
+    ]
+    _system, history = _parse_chat_history(messages, model="gemini-3.1-pro-preview")
+
+    assert history[0].parts[1].inline_data.mime_type == "image/png"
+    assert history[1].parts[0].thought_signature == b"rb337-signature"
+
+    response = types.GenerateContentResponse(candidates=[
+        types.Candidate(
+            content=types.Content(role="model", parts=[types.Part(text="streamed")])
+        )
+    ])
+    object.__setattr__(
+        model,
+        "client",
+        SimpleNamespace(
+            models=SimpleNamespace(
+                generate_content_stream=lambda **_kwargs: iter([response])
+            )
+        ),
+    )
+
+    chunks = list(model._stream([HumanMessage(content="hello")]))
+
+    assert [chunk.message.content for chunk in chunks] == ["streamed"]
+
+
+def test_google_consolidated_sdk_async_stream_propagates_cancellation():
+    from langchain_core.messages import HumanMessage
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    async def _scenario() -> None:
+        started = asyncio.Event()
+
+        class _BlockingStream:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                started.set()
+                await asyncio.Future()
+
+        class _AsyncModels:
+            async def generate_content_stream(self, **_kwargs):
+                return _BlockingStream()
+
+        model = ChatGoogleGenerativeAI(
+            model="gemini-3.1-pro-preview",
+            google_api_key="test-key",
+        )
+        object.__setattr__(
+            model,
+            "client",
+            SimpleNamespace(aio=SimpleNamespace(models=_AsyncModels())),
+        )
+
+        async def _consume() -> None:
+            async for _chunk in model._astream([HumanMessage(content="hello")]):
+                pass
+
+        task = asyncio.create_task(_consume())
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_scenario())
 
 
 def test_xai_provider_constructor_is_preserved(monkeypatch):
@@ -1140,6 +1295,76 @@ def test_minimax_pre_model_trim_uses_anthropic_message_consolidation(tmp_path, m
         and any(isinstance(block, dict) and "cache_control" in block for block in msg.content)
         for msg in result
     )
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "model_id"),
+    [
+        ("openrouter", "anthropic/claude-opus-5"),
+        ("requesty", "anthropic/claude-opus-5"),
+        ("requesty", "bedrock/claude-opus-5"),
+        ("requesty", "vertex/claude-opus-5"),
+    ],
+)
+def test_routed_claude_pre_model_trim_consolidates_long_history_without_mutating_checkpoint(
+    tmp_path,
+    monkeypatch,
+    provider_id,
+    model_id,
+):
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path / "data"))
+    import row_bot.agent as agent
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+    model_ref = f"model:{provider_id}:{model_id}"
+    tool_call = {
+        "name": "row_bot_status",
+        "args": {"category": "overview"},
+        "id": "call_routed_claude",
+        "type": "tool_call",
+    }
+    checkpoint_messages = [
+        SystemMessage(content="Root system"),
+        HumanMessage(content="Inspect status"),
+        AIMessage(content="", tool_calls=[tool_call]),
+        ToolMessage(content="ok", name="row_bot_status", tool_call_id="call_routed_claude"),
+        AIMessage(content="Status inspected"),
+        SystemMessage(content="Late recall and wind-down"),
+        HumanMessage(content="Continue"),
+    ]
+    checkpoint_types = [type(message) for message in checkpoint_messages]
+    checkpoint_contents = [message.content for message in checkpoint_messages]
+
+    monkeypatch.setattr(agent, "get_context_size", lambda: 200_000)
+    monkeypatch.setattr(agent, "get_current_model", lambda: model_ref)
+    monkeypatch.setattr(agent, "is_cloud_model", lambda model: True)
+    monkeypatch.setattr(agent, "get_cloud_provider", lambda model: provider_id)
+    monkeypatch.setattr(agent, "is_background_workflow", lambda: False)
+
+    agent.set_active_model_override(model_ref)
+    try:
+        provider_messages = agent._pre_model_trim({
+            "execution_budget": new_execution_budget(f"routed-claude-{provider_id}"),
+            "messages": checkpoint_messages,
+        })["llm_input_messages"]
+    finally:
+        agent.set_active_model_override("")
+
+    assert isinstance(provider_messages[0], SystemMessage)
+    assert sum(isinstance(message, SystemMessage) for message in provider_messages) == 1
+    assert "Root system" in provider_messages[0].content
+    assert "Late recall and wind-down" in provider_messages[0].content
+    assert not any(isinstance(message, SystemMessage) for message in provider_messages[1:])
+    tool_call_index = next(
+        index for index, message in enumerate(provider_messages) if getattr(message, "tool_calls", None)
+    )
+    assert isinstance(provider_messages[tool_call_index + 1], ToolMessage)
+    assert provider_messages[tool_call_index + 1].tool_call_id == provider_messages[
+        tool_call_index
+    ].tool_calls[0]["id"]
+    assert [type(message) for message in checkpoint_messages] == checkpoint_types
+    assert [message.content for message in checkpoint_messages] == checkpoint_contents
+    assert isinstance(checkpoint_messages[5], SystemMessage)
 
 
 def test_custom_openai_pre_model_trim_compacts_32k_agent_payload(tmp_path, monkeypatch):

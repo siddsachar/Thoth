@@ -4828,6 +4828,11 @@ async def send_message(
         if resolved_command is not None:
             spec, arg = resolved_command
             if spec.id == "reasoning":
+                if not arg.strip():
+                    from row_bot.ui.chat_components import open_reasoning_control
+
+                    await open_reasoning_control()
+                    return
                 command_response = await run.io_bound(
                     lambda: dispatch_text_command(
                         gen_thread_id,

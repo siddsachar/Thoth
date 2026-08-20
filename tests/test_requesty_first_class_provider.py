@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 def test_requesty_is_registered_in_provider_catalog():
     from row_bot.providers.catalog import PROVIDER_DEFINITIONS, get_provider_definition
@@ -418,3 +420,32 @@ def test_requesty_settings_and_setup_wizard_are_wired():
     assert "Requesty API Key (optional)" in setup_source
     assert '("requesty", requesty_val)' in setup_source
     assert 'set_key("REQUESTY_API_KEY", requesty_val)' in setup_source
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "anthropic/claude-opus-5",
+        "bedrock/claude-opus-5",
+        "vertex/claude-opus-5",
+    ],
+)
+def test_requesty_claude_routes_use_anthropic_message_normalization(model_id):
+    from row_bot.agent import _provider_uses_anthropic_messages
+
+    assert _provider_uses_anthropic_messages("requesty", model_id) is True
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "moonshotai/kimi-k3",
+        "qwen/qwen3.8-max",
+        "openai/gpt-5",
+        "bedrock/nova-pro",
+    ],
+)
+def test_requesty_non_claude_routes_preserve_existing_message_path(model_id):
+    from row_bot.agent import _provider_uses_anthropic_messages
+
+    assert _provider_uses_anthropic_messages("requesty", model_id) is False

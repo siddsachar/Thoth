@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 PROVIDER_DEFAULT = "provider_default"
 SELECTION_KINDS = frozenset({PROVIDER_DEFAULT, "effort", "on", "off", "budget"})
 _EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+_EFFORT_LABELS = {"xhigh": "XHigh"}
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,7 @@ class ReasoningSelection:
         if self.is_default:
             return "Provider default"
         if self.kind == "effort":
-            return self.effort.title()
+            return _EFFORT_LABELS.get(self.effort, self.effort.title())
         if self.kind == "budget":
             return f"Budget {self.budget}"
         return self.kind.title()

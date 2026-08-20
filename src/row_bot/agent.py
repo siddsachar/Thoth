@@ -116,6 +116,16 @@ apply_keys()
 def _provider_uses_anthropic_messages(provider_id: str | None, model_id: str | None = None) -> bool:
     if not provider_id:
         return False
+    normalized_provider = str(provider_id).strip().lower()
+    normalized_model = str(model_id or "").strip().lower()
+    if normalized_provider == "openrouter":
+        return normalized_model.startswith("anthropic/claude-")
+    if normalized_provider == "requesty":
+        return normalized_model.startswith((
+            "anthropic/claude-",
+            "bedrock/claude-",
+            "vertex/claude-",
+        ))
     if provider_id in {"opencode_zen", "opencode_go"} and model_id:
         try:
             from row_bot.providers.models import TransportMode
@@ -1970,14 +1980,11 @@ def _collect_agent_complete_input(state: dict) -> dict:
         except Exception:
             _model_id = str(_cur or "")
         if _provider_uses_anthropic_messages(_provider_id, _model_id):
-            _sys = [m for m in trimmed if isinstance(m, SystemMessage)]
-            _rest = [m for m in trimmed if not isinstance(m, SystemMessage)]
-            trimmed = _sys + _rest
-
             # ── Anthropic prompt caching ─────────────────────────────
             # Only direct Anthropic API receives cache_control, and only on
             # stable system context. Conversation history is never marked.
             if _provider_id != "anthropic":
+                trimmed = _consolidate_system_messages(trimmed)
                 return {
                     "llm_input_messages": _normalize_provider_facing_messages(
                         trimmed,
@@ -1986,6 +1993,9 @@ def _collect_agent_complete_input(state: dict) -> dict:
                     ),
                     "execution_budget": budget,
                 }
+            _sys = [m for m in trimmed if isinstance(m, SystemMessage)]
+            _rest = [m for m in trimmed if not isinstance(m, SystemMessage)]
+            trimmed = _sys + _rest
             trimmed, _cache_marker_result = apply_anthropic_system_cache_marker(
                 trimmed,
                 provider_id=_provider_id,

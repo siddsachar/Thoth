@@ -1563,7 +1563,7 @@ def _build_inline_reasoning_picker(state: AppState) -> None:
         return selection.kind
 
     options = {
-        _value(choice): "Auto" if choice.is_default else choice.label
+        _value(choice): choice.label
         for choice in choices
     }
     if current.kind == "budget":
@@ -1642,6 +1642,47 @@ def _build_inline_reasoning_picker(state: AppState) -> None:
     ).classes("text-xs row-bot-composer-select").style(
         _compact_select_style(min_width=70, max_width=126)
     ).tooltip("Reasoning: Provider default" if current.is_default else f"Reasoning: {current.label}")
+
+
+async def open_reasoning_control() -> None:
+    """Open and focus the visible desktop or mobile reasoning picker."""
+
+    await ui.run_javascript(
+        """
+        (async () => {
+          const visible = (element) => Boolean(
+            element && element.getClientRects().length &&
+            window.getComputedStyle(element).visibility !== 'hidden'
+          );
+          const openPicker = (element) => {
+            if (!visible(element)) return false;
+            element.scrollIntoView({block: 'nearest', inline: 'nearest'});
+            const focusTarget = element.querySelector('input') || element;
+            focusTarget.focus({preventScroll: true});
+            element.click();
+            return true;
+          };
+
+          const desktop = document.querySelector('[data-docs-id="chat-reasoning-picker"]');
+          if (openPicker(desktop)) return true;
+
+          let mobile = document.querySelector('[data-docs-id="mobile-reasoning-control"]');
+          if (openPicker(mobile)) return true;
+
+          const composer = document.querySelector('[data-docs-id="mobile-chat-composer"]');
+          const controlsTrigger = composer?.querySelector('.row-bot-mobile-model-pill');
+          if (!visible(controlsTrigger)) return false;
+          controlsTrigger.click();
+          for (let attempt = 0; attempt < 10; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            mobile = document.querySelector('[data-docs-id="mobile-reasoning-control"]');
+            if (openPicker(mobile)) return true;
+          }
+          return false;
+        })()
+        """,
+        timeout=3.0,
+    )
 
 
 def _build_inline_approval_picker(state: AppState) -> None:
