@@ -22,9 +22,10 @@ It combines chat, durable memory, tool use, Agent Profiles, Goal Mode,
 automatic parent-led agent orchestration, profile-first workflows, Developer
 Studio, Designer Studio, Smart Skills, Skills Hub, Custom Tools, Plugin System
 v2, progressive external-tool and skill discovery, context metering and rolling
-compaction, messaging channels, authenticated multi-device owner access with
-durable trusted addresses, opt-in native Computer Use, realtime voice, and
-provider-aware model routing. Durable app data stays local by default.
+compaction, provider-aware reasoning controls, messaging channels,
+authenticated multi-device owner access with durable trusted addresses,
+opt-in native Computer Use, realtime voice, and provider-aware model routing.
+Durable app data stays local by default.
 
 For larger tasks, Row-Bot can keep a visible goal, run the thread through a
 focused Agent Profile, and orchestrate scoped child agents for research, review,
@@ -44,21 +45,24 @@ available and searches enabled MCP, plugin, Custom Tool, and channel
 capabilities only when a request needs them. Enabled manual and plugin skills
 can be selected for the current parent or child task under the same profile,
 approval, workspace, and execution-budget boundaries. For long conversations,
-the desktop composer meters the complete next model input and Row-Bot can
-compact complete older turns into durable untrusted reference context while
-preserving recent turns and tool-call/result groups.
+the responsive desktop composer meters the complete next model input and
+Row-Bot can compact complete older turns into durable untrusted reference
+context while preserving the newest turn and atomic tool-call/result groups.
+It validates the rebuilt prompt before saving and fails with an exact capacity
+message when the fixed prompt and tool schemas cannot fit the selected window.
 
 Choose the model path that fits the task: local models through
 [Ollama](https://ollama.com/); provider keys for OpenAI, Anthropic, Google AI,
 xAI, MiniMax, OpenRouter,
 [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=row_bot),
 [Requesty](https://requesty.ai/),
-and Ollama Cloud; subscription or OAuth sign-in for ChatGPT / Codex, Claude
-Subscription, and xAI Grok; or custom OpenAI-compatible endpoints such as oMLX,
-LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, and SGLang. Row-Bot keeps
-provider identity, capability labels, context limits, media surfaces, and
-chat-only fallbacks explicit so local, hosted, subscription, and self-hosted
-models can sit side by side.
+Ollama Cloud, OpenCode Zen, and OpenCode Go; subscription or OAuth sign-in for
+ChatGPT / Codex, Claude Subscription, and xAI Grok; or custom
+OpenAI-compatible endpoints such as oMLX, LM Studio, vLLM, llama.cpp, LocalAI,
+LiteLLM, and SGLang. Row-Bot keeps provider identity, capability labels,
+reasoning choices, context limits, media surfaces, and chat-only fallbacks
+explicit so local, hosted, subscription, and self-hosted models can sit side by
+side.
 
 Row-Bot itself has no account system, no Row-Bot-hosted inference server, and
 no first-party telemetry pipeline. Provider calls go to the provider or
@@ -86,8 +90,8 @@ Download the latest installer from [GitHub Releases](https://github.com/siddsach
 
 | Area | Details |
 |------|---------|
-| Agent orchestration | LangGraph ReAct agent, Goal Mode, Agent Profiles, Profile Library, automatic parent-led child-agent orchestration, required and detached work, dependency ordering, multi-wave live joins, ordered steering and approvals, transient retry, folder-scoped parallel writers, orphan-only checkpoint repair, explicit parent restart recovery, compact Agent groups and cards, exactly-once completion, checkpoint-safe work budgets, repeated-action protection, configurable nesting/concurrency/active-time limits, profile/tool allowlists, promoted Agent-run workflows, generation-scoped cancellation, complete-input context metering, capacity-aware rolling compaction, and per-thread, per-workflow, per-profile, and per-Developer model overrides. |
-| Models and providers | Provider-qualified model selection, readiness routing, chat-only fallback for non-tool models, chat/agent/vision/image/video capability labels, native Ollama tool-capability detection with maintained-family fallback, custom endpoint profiles and probes, provider-scoped credential-backed live catalog discovery with last-known-good preservation, xAI Grok OAuth, ChatGPT / Codex and Claude Subscription providers, OpenCode providers, provider-scoped tool-schema compatibility, phased OpenAI-compatible timeouts with safe pre-stream retry, prompt-cache diagnostics, and background model cache. |
+| Agent orchestration | LangGraph ReAct agent, Goal Mode, Agent Profiles, Profile Library, automatic parent-led child-agent orchestration, required and detached work, dependency ordering, multi-wave live joins, ordered steering and approvals, transient retry, folder-scoped parallel writers, orphan-only checkpoint repair, explicit parent restart recovery, compact Agent groups and cards, exactly-once completion, checkpoint-safe work budgets, repeated-action protection, configurable nesting/concurrency/active-time limits, profile/tool allowlists, promoted Agent-run workflows, generation-scoped cancellation, complete-input context metering, fixed-envelope preflight, recoverable capacity-aware rolling compaction, and per-thread, per-workflow, per-profile, and per-Developer model overrides. |
+| Models and providers | Provider-qualified model selection, exact per-thread/per-model reasoning effort, toggle, and budget controls, readiness routing, chat-only fallback for non-tool models, chat/agent/vision/image/video capability labels, native Ollama tool-capability detection with maintained-family fallback, model-scoped custom endpoint profiles and probes, detected/manual/custom context caps, provider-scoped credential-backed live catalog discovery with last-known-good preservation, xAI Grok OAuth, ChatGPT / Codex and Claude Subscription providers, native OpenCode gateway discovery and per-model transport routing, provider-scoped tool-schema compatibility, phased OpenAI-compatible timeouts with safe pre-stream retry, prompt-cache diagnostics, and background model cache. |
 | Memory and knowledge | Personal knowledge graph, 10 entity types, 67 typed relations, bounded semantic/lexical/graph recall, a disclosed checked-by-default local embedding setup download, cache-only normal recall, explicit repair, fast lexical/graph fallback, durable bounded document batches, streamed upload hashing and deduplication, atomic sharded vectors, resumable extraction, queue controls and health repair, audit and review states, recall traces, graph visualization, Obsidian-compatible wiki export with source provenance, Dream Cycle refinement, duplicate merging, stale-confidence decay, relationship inference, self-knowledge, insights, and conversation search. |
 | Tools | 30+ core tool modules for web search, DuckDuckGo, Wikipedia, arXiv, YouTube transcripts, URL reading, documents, wiki vault, Gmail, Google Calendar, filesystem, shell, visible browser automation, opt-in native Computer Use, workflows, Goal Mode, child-agent delegation, tracker, channels, X, image generation/editing, video generation, MCP, Developer Studio, Designer Studio, Custom Tool Builder, status, calculator, Wolfram Alpha, weather, vision, memory, system info, and charts. Recommended Auto loading keeps core profile tools direct and searches enabled external MCP, plugin, Custom Tool, and channel schemas on demand; eager compatibility mode remains available. File tools read PDF, CSV, Excel, JSON, JSONL, TSV, and image files, with schema, stats, previews, and PDF export where supported. |
 | Developer Studio | Local Git workspace linking and cloning, code threads, explicit existing-folder assignment for child Agents, folder-scoped writer locks, per-thread and child-agent worktrees, repo inspector, file tree, diffs, todos, tests, branch, commit, push and PR prep, approval modes, and optional Docker Sandbox with a shadow workspace and explicit import back into the real repo. Docker Sandbox intentionally fails closed inside the official Row-Bot server container instead of nesting or falling back silently. |
@@ -131,7 +135,7 @@ curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/i
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.7.1
+curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.8.0
 ```
 
 The installer downloads the release tarball, verifies its SHA256 from the GitHub release manifest, installs under `~/.local/share/row-bot`, creates `~/.local/bin/row-bot`, and stores user data in `~/.row-bot`. The default Linux build opens in your system browser. Native window and tray support are available when the required GTK, Qt, and AppIndicator libraries are installed.
@@ -156,7 +160,7 @@ arm64. From the repository root, pin the release and start the hardened
 loopback-only Compose profile:
 
 ```bash
-export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.7.1
+export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.8.0
 docker compose -f deploy/docker/compose.yaml up --detach
 docker compose -f deploy/docker/compose.yaml ps
 ```
@@ -194,8 +198,8 @@ On first launch, Row-Bot opens a setup wizard. Pick one of three paths:
 | Mode | Use it when | Setup |
 |------|-------------|-------|
 | Local | You want inference and embeddings on your machine. | Choose a local runtime, download a recommended model such as `qwen3:14b` or a smaller model such as `qwen3:8b`, then start chatting. Ollama is the supported local runtime today. |
-| Providers | You want hosted models, frontier reasoning, media generation, or no local model download. | Add an OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, Atlas Cloud, Requesty, or Ollama Cloud key, refresh live catalogs where available, pick a default model, and save Quick Choices. ChatGPT / Codex, Claude Subscription, and xAI Grok OAuth sign-in are available in Settings after launch. |
-| Custom/Self-hosted | You run oMLX, LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, SGLang, or a private gateway. | Enter an OpenAI-compatible base URL such as `http://127.0.0.1:1234/v1`, choose the closest compatibility profile, add a key if your server requires one, fetch models, and choose a default. |
+| Providers | You want hosted models, frontier reasoning, media generation, or no local model download. | Add an OpenAI, Anthropic, Google AI, xAI, MiniMax, OpenRouter, Atlas Cloud, Requesty, Ollama Cloud, OpenCode Zen, or OpenCode Go key, refresh live catalogs where available, pick a default model, and save Quick Choices. ChatGPT / Codex, Claude Subscription, and xAI Grok OAuth sign-in are available in Settings after launch. |
+| Custom/Self-hosted | You run oMLX, LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, SGLang, or a private gateway. | Enter an OpenAI-compatible base URL such as `http://127.0.0.1:1234/v1`, choose the closest compatibility profile, add a key if your server requires one, fetch models, probe the exact model, verify or declare its server context, and choose a default. |
 
 For routine chats, use Row-Bot normally. For longer work, create a Goal so
 progress and blockers stay visible, choose an Agent Profile for the role you
@@ -213,6 +217,13 @@ by the active Agent Profile stay directly available; enabled external tools and
 skills are searched locally and loaded for the current task as needed. Use
 `Settings -> Tools -> Capability loading` to select eager compatibility mode
 for an older provider or integration that requires every external schema.
+
+Supported models expose a **Thinking** control beside the desktop model picker
+and inside compact mobile Chat controls. The available effort, On/Off, and
+token-budget choices come from the exact provider-qualified model and persist
+only for that model in that chat. Use `/reasoning` in Chat or a connected
+messaging channel to inspect or change the same setting; Provider default sends
+no per-thread override and remains the compatibility choice.
 
 To use the same running Row-Bot from another computer, phone, or tablet, open
 `Settings -> System -> Remote Access` on an authorized owner device. Select a
@@ -247,14 +258,19 @@ Common first prompts:
 - `Turn this GitHub repo into a Custom Tool`
 - `What did I ask about taxes last week?`
 
-For local and self-hosted servers, keep context on Auto or choose a window large
-enough for Row-Bot's complete prompt, images, history, and tool schemas. A
-`4096` context can fail before the first chat turn with misleading
-prompt-template errors; `32768` is a practical starting allocation for local
-agent mode. The desktop meter shows the estimated next input and automatic
-rolling compaction begins at 75 percent of the effective window when capacity
-is known. Models that are useful for normal conversation but not reliable with
-tools can still run through chat-only mode.
+For local and self-hosted servers, keep context on Auto or choose a verified
+window large enough for Row-Bot's complete prompt, images, history, and tool
+schemas. Ollama Auto targets 65,536 tokens and remains capped by native or
+observed capacity; fixed 32K is still available for smaller-memory setups.
+Custom endpoints use detected or manually declared server capacity in Auto and
+stay unavailable when that capacity is unknown until you declare it or set a
+verified Custom cap. Exact advanced values from 16,384 through 4,194,304 tokens
+are accepted, but an app cap does not reconfigure the server: set llama.cpp
+`--ctx-size` or the equivalent server option separately. The desktop meter
+shows the estimated next input and automatic rolling compaction begins at 75
+percent of the effective window when capacity is known. Models that are useful
+for normal conversation but not reliable with tools can still run through
+chat-only mode.
 
 ## Remote Access And Server Mode
 
@@ -431,6 +447,14 @@ scheduled refreshes preserve each provider's last-known-good rows when a fetch
 is empty, fails, or stops part-way through pagination; Settings labels live,
 cached, and fallback catalog outcomes.
 
+OpenCode Zen and OpenCode Go refresh each gateway's live `/models` list and
+intersect it with OpenCode's public native routing registry. Row-Bot persists
+the resulting provider-qualified context, modality, tool, streaming, reasoning,
+and OpenAI Chat, OpenAI Responses, Anthropic Messages, or Google GenAI transport
+metadata, so newly listed supported models can become usable without a
+hardcoded name update. A failed gateway or registry refresh preserves the last
+known good rows; a cold failure uses the bundled static fallback.
+
 Live catalog refreshes resolve credentials through the same provider-scoped
 auth store used by Settings. A key saved in the provider dialog can therefore
 refresh its catalog and populate provider-qualified rows immediately without a
@@ -441,6 +465,15 @@ when it is available. A new model family that advertises `tools` can therefore
 enter Agent mode without waiting for a maintained family-list update or an
 unnecessary live probe, while a model whose native metadata omits `tools` is not
 promoted merely because its name resembles a historically tool-capable family.
+
+Reasoning controls are exact-model capabilities rather than a provider-wide
+switch. A supported selection is stored locally per chat and canonical model,
+mapped into that transport's native request shape, and shown as a separate
+collapsed Thinking section when replayable reasoning content is returned. If a
+provider rejects an explicit choice before returning output, Row-Bot retries
+once with Provider default, clears the rejected choice, and tells you; it does
+not replay authentication, rate-limit, timeout, cancellation, server, or
+mid-stream failures.
 
 | Service | Key or setup | Used for |
 |---------|--------------|----------|
@@ -453,6 +486,8 @@ promoted merely because its name resembles a historically tool-capable family.
 | xAI Grok | In-app xAI Grok OAuth | OAuth-backed Grok chat, vision, and Grok Imagine media through the xAI Grok provider. This is separate from `XAI_API_KEY`. |
 | MiniMax | `MINIMAX_API_KEY` | Current MiniMax models through the Anthropic-compatible API, discovered from the live provider catalog where available. |
 | OpenRouter | `OPENROUTER_API_KEY` | Access to 100+ provider models. |
+| OpenCode Zen | `OPENCODE_ZEN_API_KEY` | OpenCode Zen gateway models discovered from the live gateway and native routing registry. |
+| OpenCode Go | `OPENCODE_GO_API_KEY` | OpenCode Go gateway models discovered independently from the live gateway and native routing registry. |
 | [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=row_bot) | `ATLASCLOUD_API_KEY` | OpenAI-compatible access to Atlas-hosted chat, agent, and vision models, discovered from the live provider catalog. Image and video generation rows are not exposed as chat models. |
 | [Requesty](https://requesty.ai/) | `REQUESTY_API_KEY` | OpenAI-compatible access to Requesty's model gateway, with live catalog normalization for context windows, tool support, vision support, and chat-surface filtering. |
 | Ollama Cloud | `OLLAMA_CLOUD_API_KEY` or local daemon sign-in | Direct Ollama Cloud models and cloud-tagged daemon models. |
@@ -489,6 +524,14 @@ xAI Grok OAuth is also a first-class provider path. It keeps subscription/OAuth
 Grok runtime state separate from `XAI_API_KEY`, reports token health and runtime
 readiness in Settings, and scopes Grok Imagine image/video models to media
 surfaces instead of chat and agent pickers.
+
+Custom/Self-hosted endpoints keep server capacity and Row-Bot's planning cap
+separate. Auto uses model metadata or the endpoint's manually declared native
+limit and does not invent a generic context window. Probe evidence is scoped to
+the exact tested model, so one successful model cannot promote an untested
+sibling to Agent mode or streaming tool use. Advanced provider settings also
+offer explicit reasoning compatibility controls; enable reasoning replay only
+when the endpoint documents and accepts its preserved thinking format.
 
 Embedding providers are configured separately from chat models. Local
 embeddings are available for private document and vector indexing and load
@@ -591,11 +634,13 @@ explicit prompt context/cache sections, a durable document queue and sharded
 retrieval index, memory, profile-first workflows, the single-owner access gate
 with runtime-managed exact origins and full/compact browser shells,
 authenticated server mode, progressive capability catalogs and bridges, one
-complete-input context preparation and rolling-compaction pipeline, separate
-browser and native Computer Use engines, shared channel streaming, Designer
-Studio, Developer Studio worktrees and folder-scoped child writers, provider
-runtime and bounded subprocess cancellation, interrupted-parent checkpoint
-repair, Plugin System v2/MCP boundaries, and safety controls.
+complete-input context preparation and rolling-compaction pipeline with explicit
+capacity sources and fixed-envelope preflight, exact per-thread/per-model
+reasoning plans, native OpenCode catalog-to-transport routing, separate browser
+and native Computer Use engines, shared channel streaming, Designer Studio,
+Developer Studio worktrees and folder-scoped child writers, provider runtime
+and bounded subprocess cancellation, interrupted-parent checkpoint repair,
+Plugin System v2/MCP boundaries, and safety controls.
 
 Explore the visual architecture gallery: [docs/architecture.html](docs/architecture.html)
 
@@ -633,12 +678,12 @@ Review the Docusaurus docs source and local preview instructions:
 
 | Setup | Minimum | Recommended |
 |-------|---------|-------------|
-| Local model runtime | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.12+ for source installs; 8 GB RAM for 8B models; about 5 GB disk for the app and one small model; internet for install and model download. | 16 to 32 GB RAM for 14B to 30B models; NVIDIA GPU with 8+ GB VRAM or Apple Silicon for much faster inference; 20+ GB disk for multiple or larger models. |
+| Local model runtime | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.12+ for source installs; 8 GB RAM for 8B models; about 5 GB disk for the app and one small model; internet for install and model download. | 16 to 32 GB RAM for 14B to 30B models; NVIDIA GPU with 8+ GB VRAM or Apple Silicon for much faster inference; 20+ GB disk for multiple or larger models. Ollama Auto targets 64K context and may require a fixed 32K setting on tighter-memory systems. |
 | Provider/custom models only | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.12+ for source installs; 4 GB RAM; about 1 GB disk; internet for provider inference. | No GPU required. Use this path if you do not want local model downloads. |
 | Optional SenseVoice STT | Windows, Linux, or Apple Silicon macOS; the voice runtime; internet for the explicit approximately 940 MB ModelScope snapshot download plus space for the matching CPU PyTorch/Torchaudio stack. | Optional and off until installed from Voice settings. Normal transcription is local and cache-only afterwards. Intel macOS is unsupported; local Whisper remains available. |
 | Computer Use beta | Windows 10/11 x86-64 or ARM64, or macOS 12+ on Intel/Apple Silicon; interactive local UI; internet for the explicit Cua Driver install or repair; Accessibility and Screen Recording permission on macOS. | Optional and off by default. Browser automation remains preferred for websites; Linux and unattended/background use are not supported. |
 | Developer Sandbox | Docker Desktop or a compatible Docker/Podman runtime. | Optional. Developer Studio also works with local execution in the selected repo. |
-| Docker / headless server | Docker Engine with Compose v2 on an amd64 or arm64 Linux host; enough persistent storage for `/data`, the encryption-key volume, documents, models, and backups. | Pin `ghcr.io/siddsachar/row-bot:4.7.1`, keep the default loopback publication, and use Tailscale or an operator-managed HTTPS proxy for remote reachability. |
+| Docker / headless server | Docker Engine with Compose v2 on an amd64 or arm64 Linux host; enough persistent storage for `/data`, the encryption-key volume, documents, models, and backups. | Pin `ghcr.io/siddsachar/row-bot:4.8.0`, keep the default loopback publication, and use Tailscale or an operator-managed HTTPS proxy for remote reachability. |
 | Public docs site | Node.js 20+ and npm. | Optional. Used only for local Docusaurus docs preview and generated-docs validation. |
 
 Your default Brain model is set by the setup wizard. If you choose the local path, Row-Bot uses one of the models already exposed by your local runtime; 14B-class models are recommended for stronger agent/tool behavior, while smaller 8B-class models are better for 8 GB machines. Hosted and custom endpoint setups can skip local model downloads entirely.
@@ -756,6 +801,14 @@ logs, checkpoints, approvals, memory, and media.
 
 Provider and custom models are opt-in. When selected, the current conversation, model-visible tool context, and tool results are sent to that endpoint. Memories, documents, files, graph data, and other conversations stay local unless you explicitly include them in the current conversation or expose them through a tool result. Memory recall happens locally before any selected memory is inserted into the active turn.
 
+Reasoning choices are stored locally per chat and model, but the selected
+provider receives the resulting reasoning parameter and may bill for additional
+tokens. Returned reasoning can contain sensitive intermediate material. Custom
+endpoint reasoning replay remains off unless you explicitly declare support;
+enable it only for an endpoint whose format and trust boundary you understand.
+An explicit OpenCode catalog refresh contacts both the configured Zen or Go
+gateway and the public native routing registry to resolve current model routes.
+
 External-tool and skill matching also happens locally over enabled capability
 metadata. Search does not contact an embedding or model provider. When rolling
 compaction is needed, Row-Bot uses the task's selected model to summarize a
@@ -792,6 +845,7 @@ telemetry pipeline.
 - [Remote Access and server mode](https://row-bot.ai/docs/operations/remote-access)
 - [Docker and VPS operations](https://row-bot.ai/docs/operations/docker)
 - [Progressive tools and skills](https://row-bot.ai/docs/guides/progressive-tools-and-skills)
+- [Reasoning controls](https://row-bot.ai/docs/chat/reasoning-controls)
 - [Release notes](RELEASE_NOTES.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Visual architecture gallery](docs/architecture.html)

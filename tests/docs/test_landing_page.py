@@ -24,16 +24,16 @@ INDEX_LINUX_COMMAND = (
     "installer/install-linux.sh | bash -s -- 4.7.1"
 )
 SITE_WINDOWS_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.7.1/"
-    "Row-Bot-4.7.1-Windows-x64.exe"
+    "https://github.com/siddsachar/row-bot/releases/download/v4.8.0/"
+    "Row-Bot-4.8.0-Windows-x64.exe"
 )
 SITE_MAC_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.7.1/"
-    "Row-Bot-4.7.1-macOS-arm64.dmg"
+    "https://github.com/siddsachar/row-bot/releases/download/v4.8.0/"
+    "Row-Bot-4.8.0-macOS-arm64.dmg"
 )
 SITE_LINUX_COMMAND = (
     "curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/"
-    "installer/install-linux.sh | bash -s -- 4.7.1"
+    "installer/install-linux.sh | bash -s -- 4.8.0"
 )
 MARKETING_PAGES = ("index.html", "features.html", "architecture.html", "contact.html", "404.html")
 
@@ -265,7 +265,8 @@ def test_marketing_pages_share_analytics_and_download_conversion_contract() -> N
     assert "data-row-bot-google-tag" in JS
     assert "trackAdsConversion" in JS
 
-    cache_versions = {name: "4.7.1" for name in MARKETING_PAGES}
+    cache_versions = {name: "4.8.0" for name in MARKETING_PAGES}
+    cache_versions["index.html"] = "4.7.1"
     for name in MARKETING_PAGES:
         content = (ROOT / "docs" / name).read_text(encoding="utf-8")
         version = cache_versions[name]

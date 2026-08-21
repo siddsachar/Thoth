@@ -2,6 +2,196 @@
 
 ---
 
+## v4.8.0 - Reasoning Controls, Context Safety & Native OpenCode Discovery
+
+This release builds on v4.7.1 with provider-aware reasoning controls, safer
+context-capacity handling, more resilient rolling compaction, native OpenCode
+gateway discovery, and a responsive desktop composer. It lets each chat keep
+an exact model-specific reasoning choice, prevents custom endpoints from
+silently inheriting an invented context window, recovers more long
+conversations without a compaction failure loop, discovers newly listed
+OpenCode models with their real transport metadata, and strengthens Google,
+Anthropic-routed, mobile, and streaming compatibility without weakening
+local-first, approval, credential, or transcript boundaries.
+
+### Provider-Aware Reasoning Controls
+
+- **Exact model controls** - adds Provider default, supported effort levels,
+  thinking On or Off, and bounded token-budget choices only when the active
+  provider-qualified model exposes an actionable capability.
+- **Thread-and-model persistence** - stores reasoning selections locally for
+  one thread and one canonical model reference, restores a valid selection
+  when that model is revisited, and does not leak it into another chat or an
+  incompatible model.
+- **Desktop and mobile access** - adds a Thinking picker beside the desktop
+  model control, exposes the same choices inside mobile Chat controls, and
+  shares the behavior with normal Chat, Designer Studio, and Developer Studio.
+- **Slash and channel control** - adds `/reasoning` to Chat and Telegram,
+  Discord, Slack, WhatsApp, and SMS conversations; the bare desktop or mobile
+  command opens the visible control while explicit effort, toggle, budget, and
+  default arguments are validated against the active model.
+- **Provider-native requests** - maps supported selections to OpenAI and Codex,
+  Anthropic and Claude Subscription, Google, xAI, Ollama and Ollama Cloud,
+  OpenRouter, OpenCode, and compatible-endpoint request formats without
+  applying a provider-wide guess to an unknown model.
+- **Custom endpoint controls** - extends Custom/Self-hosted provider settings
+  with reasoning Auto, On, or Off behavior, optional thinking budgets,
+  returned-reasoning preservation, explicit replay capability, and advanced
+  request JSON for endpoints that require compatibility tuning.
+- **Separate thinking presentation** - streams returned reasoning separately
+  from the final answer and retains it as a collapsed Thinking section when
+  the provider returns replayable content.
+- **One safe compatibility fallback** - when a provider rejects a valid-looking
+  explicit reasoning option before producing output, retries once with
+  Provider default, clears only that rejected model selection, and shows a
+  local notice; authentication, rate-limit, timeout, cancellation, server, and
+  mid-stream failures are not silently replayed.
+- **Single stream callback path** - isolates callbacks inside the reasoning
+  fallback wrapper so normal and fallback streaming cannot duplicate visible
+  tokens, tool events, or completion callbacks.
+
+### Context Capacity And Compaction Recovery
+
+- **Custom endpoint capacity ownership** - treats every Custom/Self-hosted
+  endpoint as server-managed even when it runs locally, uses only detected or
+  manually declared model capacity in Auto, and no longer presents the generic
+  remote 128K application fallback as evidence about a custom server.
+- **Fail-closed unknown custom context** - keeps a custom model unavailable
+  when Row-Bot cannot determine its context window and no cap is set, with
+  guidance to refresh or probe the endpoint, declare its native limit, choose
+  a verified Custom cap, or select another model.
+- **Exact advanced context values** - adds validated Custom context entries
+  from 16,384 through 4,194,304 tokens for local and provider models while
+  retaining the common 16K through 1M presets and preserving exact saved
+  values across the context-policy v3 migration.
+- **64K local Auto target** - raises the recommended Ollama Auto request from
+  32K to 65,536 tokens, still capped by known native metadata or the observed
+  loaded allocation; a fixed 32K choice remains available for smaller-memory
+  or reduced-tool configurations.
+- **Server-safe request behavior** - treats the app setting as a planning cap,
+  not permission to reconfigure the server, and stops sending the undocumented
+  `n_ctx` chat-completions field to llama.cpp; server context remains a startup
+  setting such as `--ctx-size`.
+- **Model-scoped endpoint probes** - records which model a Custom endpoint
+  probe tested and applies chat, tool-round-trip, streaming, and context
+  evidence only to that model, preventing a successful sibling model from
+  promoting or changing transport behavior for an untested one.
+- **Readiness aligned with evidence** - promotes a probed custom model to Agent
+  mode only after a successful tool round trip, keeps verified chat-only models
+  in Chat Only, blocks failed chat probes, and preserves the minimum context
+  floor even after a successful tool probe.
+- **Fixed-envelope preflight** - measures the non-compactable system prompt and
+  bound tool schemas before attempting rolling compaction and produces an exact
+  estimated-versus-usable token error when the selected context cannot fit
+  them.
+- **Newest-turn recovery** - when retaining two recent groups cannot create
+  enough slack, safely ages one more complete atomic group while keeping the
+  newest group intact, including tool-call and tool-result pairs.
+- **Exact rebuild fallback** - validates the rebuilt prompt before persistence,
+  makes one additional bounded summary pass when necessary, and saves only the
+  final successful summary state so an oversized intermediate result cannot
+  trap the unchanged conversation in a repeated failure loop.
+- **Private failure diagnostics** - logs bounded known compaction reasons while
+  reducing unexpected exceptions to their class name, keeping transcript and
+  provider text out of warning logs.
+
+### Native OpenCode Gateway Discovery
+
+- **Live gateway intersection** - refreshes the OpenCode Zen and OpenCode Go
+  `/models` catalogs and intersects each gateway's actual availability with
+  the public native routing metadata used by OpenCode.
+- **Per-model transport routing** - derives OpenAI Chat, OpenAI Responses,
+  Anthropic Messages, or Google GenAI transport from explicit model or provider
+  SDK metadata instead of relying only on a maintained model-name classifier.
+- **Richer model metadata** - persists provider-qualified display names,
+  context windows, input and output modalities, tool calling, streaming, and
+  reasoning capability so newly listed supported models can flow through the
+  catalog, readiness checks, context policy, and runtime after refresh.
+- **Google gateway support** - enables OpenCode models routed through Google
+  GenAI with the gateway's v1 endpoint and provider-native reasoning request
+  mapping.
+- **Durable dynamic routes** - restores cached OpenCode route metadata after a
+  restart, retains the legacy static classifier for older cache rows, and fails
+  closed with a sanitized diagnostic when a cached or newly advertised native
+  protocol is unsupported.
+- **Failure-safe refreshes** - coalesces the shared native-registry request
+  across a full provider refresh, preserves the last known good gateway rows on
+  network or registry failure, uses the static catalog only for a cold failed
+  refresh, clears stale rows after a valid empty gateway response, and keeps
+  Zen and Go caches isolated.
+
+### Composer And Provider Compatibility
+
+- **Responsive desktop composer** - uses component-width breakpoints to compact
+  Model, Thinking, and Approval labels progressively while keeping each icon,
+  picker, tooltip, keyboard target, and accessible state available.
+- **Compact secondary controls** - collapses active Skill chips into a counted
+  Skills button, shortens the context meter without losing its threshold or
+  tooltip, moves transient voice status above the toolbar, and gives Send and
+  Stop one stable action slot so controls do not wrap or jump.
+- **Clearer desktop invitation** - updates desktop Chat, Designer, and Developer
+  composer copy to “Do anything…” while retaining the compact mobile wording.
+- **Google adapter modernization** - moves to the consolidated
+  `langchain-google-genai` 4.x adapter and `langchain-core` 1.6 line, removes
+  the retired `google-ai-generativelanguage` runtime dependency, and updates
+  effective tool-schema inspection for the new SDK declarations.
+- **Google feature preservation** - verifies typed array and union tool schemas,
+  streaming, multimodal input, thought-signature replay, reasoning defaults,
+  and asynchronous cancellation through the consolidated adapter.
+- **Routed Claude history repair** - recognizes Claude routes through OpenRouter
+  and Requesty, consolidates late system messages for Anthropic Messages, keeps
+  tool-call/result groups valid, and leaves the durable checkpoint transcript
+  unchanged.
+- **Google history repair** - normalizes replayable Google reasoning or thinking
+  blocks and drops private incompatible blocks only in the provider-facing copy
+  so switching from another transport cannot fail before the Google request.
+- **Awaited mobile submission** - keeps mobile send handling inside the UI
+  callback lifecycle instead of spawning an untracked task, improving error
+  propagation and deterministic command behavior.
+
+### Documentation, Dependencies And Release Validation
+
+- **Reasoning user guide** - adds a dedicated public Reasoning Controls page,
+  navigation, provider/settings links, `/reasoning` examples, persistence and
+  fallback behavior, privacy guidance, and troubleshooting, then regenerates
+  the searchable documentation artifacts.
+- **Context documentation sync** - updates generated settings references and
+  published pages for the 64K local Auto target, exact custom values, custom
+  server capacity semantics, and model-scoped endpoint evidence.
+- **Post-4.7.1 site completion** - aligns the already published landing-page
+  downloads and contracts with v4.7.1 before the v4.8 documentation work.
+- **Provider and agent coverage** - adds deterministic coverage for reasoning
+  capability resolution, persistence, commands, transport payloads, fallback
+  classification, duplicate callback prevention, custom endpoint context and
+  probe isolation, fixed-envelope failures, compaction fallback, and dynamic
+  OpenCode refresh-to-runtime behavior.
+- **UI and compatibility coverage** - adds responsive desktop composer,
+  accessible compact-control, context-meter, mobile reasoning, Google adapter,
+  routed-Claude normalization, tool-schema, Gmail, Goal, Requesty, and
+  cancellation contracts, and updates source-to-test ownership for the new
+  provider modules.
+
+### Breaking Changes And Caveats
+
+- No application data migration or public CLI break is introduced by v4.8.0;
+  model and thread settings migrate in place.
+- Existing local Auto context settings now target 64K instead of 32K and can
+  therefore use more Ollama memory. Select a fixed 32K context if the larger
+  allocation is unsuitable for the machine or model.
+- A Custom/Self-hosted model with unknown native context no longer inherits a
+  generic fallback. Refresh or probe it, declare the server's native limit, or
+  set a verified Custom cap before use.
+- A Custom server context cap limits Row-Bot's planning and requests; it does
+  not change the server's loaded allocation. Configure llama.cpp, vLLM,
+  SGLang, LM Studio, or another server independently.
+- Reasoning options, latency, token use, and billing are model- and
+  provider-specific. Provider default remains the compatibility choice, and
+  reasoning replay for a custom endpoint should be enabled only when that
+  endpoint's format and trust boundary are understood.
+- OpenCode catalog refresh now consults both the selected gateway and the
+  public native routing registry. A failed refresh preserves the last known
+  good rows or uses the bundled static fallback on a cold cache.
+
 ## v4.7.1 - Agent Recovery, Local Voice Options & Runtime Reliability
 
 This patch release builds on v4.7.0 with focused agent-orchestration,
