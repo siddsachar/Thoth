@@ -384,6 +384,16 @@ def _create_chat_model(
                 base_url=opencode_anthropic_base_url(provider),
                 **_reasoning_constructor_kwargs(reasoning_plan, provider=provider),
             )
+        if transport == "google_genai" or transport.value == "google_genai":
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            return ChatGoogleGenerativeAI(
+                model=model_name,
+                google_api_key=api_key,
+                base_url=opencode_anthropic_base_url(provider),
+                api_version="v1",
+                **_reasoning_constructor_kwargs(reasoning_plan, provider="google"),
+            )
         raise OpenCodeUnsupportedRouteError(
             f"OpenCode route for {provider_label} model '{model_name}' uses unsupported/deferred transport {transport.value}."
         )

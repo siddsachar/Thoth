@@ -1567,6 +1567,39 @@ def test_provider_transcript_normalizer_preserves_healthy_native_reasoning(tmp_p
     assert result[1].additional_kwargs == {"reasoning_content": "native reasoning"}
 
 
+def test_provider_transcript_normalizer_repairs_google_reasoning_blocks(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path / "data"))
+    import row_bot.agent as agent
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langchain_google_genai.chat_models import _parse_chat_history
+
+    messages = [
+        HumanMessage(content="hi"),
+        AIMessage(
+            content=[
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "private"}]},
+                {"type": "reasoning", "text": "legacy reasoning"},
+                {"type": "text", "text": "hello"},
+            ]
+        ),
+    ]
+
+    result = agent._normalize_provider_facing_messages(
+        messages,
+        provider_id="opencode_zen",
+        google_genai=True,
+    )
+
+    assert result[1].content == [
+        {"type": "reasoning", "reasoning": "legacy reasoning"},
+        {"type": "text", "text": "hello"},
+    ]
+    _system, history = _parse_chat_history(result, model="gemini-3-flash")
+    assert history[1].parts[0].text == "legacy reasoning"
+    assert history[1].parts[0].thought is True
+    assert history[1].parts[1].text == "hello"
+
+
 def test_provider_transcript_normalizer_strips_reasoning_for_custom_artifacts(tmp_path, monkeypatch):
     monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path / "data"))
     import row_bot.agent as agent

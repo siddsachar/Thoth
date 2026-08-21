@@ -213,7 +213,14 @@ def build_model_catalog_rows(
         for model_info in _minimax_static_model_infos():
             _add_model_info_row(rows, model_info, provider_status, pinned_by_ref, default_refs, installed=True)
 
+    cached_opencode_providers = {
+        row.provider_id
+        for row in rows.values()
+        if row.provider_id in {"opencode_zen", "opencode_go"}
+    }
     for model_info in _opencode_model_infos(provider_status):
+        if model_info.provider_id in cached_opencode_providers:
+            continue
         _add_model_info_row(rows, model_info, provider_status, pinned_by_ref, default_refs, installed=True)
 
     for model_info in _custom_model_infos():
