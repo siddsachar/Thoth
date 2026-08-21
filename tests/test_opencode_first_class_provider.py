@@ -11,6 +11,7 @@ import pytest
 import row_bot.models as models
 import row_bot.providers.runtime as runtime
 import row_bot.providers.config as provider_config
+from row_bot.providers import opencode as opencode_provider
 from row_bot.cancellation import CancellationScope, use_cancellation_scope
 from row_bot.providers.auth_store import get_provider_secret, provider_secret_status
 from row_bot.providers.catalog import PROVIDER_DEFINITIONS, classify_model_capabilities, infer_provider_id, legacy_cache_to_model_infos
@@ -67,6 +68,90 @@ EXISTING_PROVIDER_IDS = (
     "xai",
     "minimax",
 )
+
+
+def _native_opencode_registry() -> dict:
+    return {
+        "opencode": {
+            "id": "opencode",
+            "name": "OpenCode Zen",
+            "npm": "@ai-sdk/openai-compatible",
+            "models": {
+                "x-preview-f-free": {
+                    "id": "x-preview-f-free",
+                    "name": "Ox Alpha Free",
+                    "provider": {"npm": "@ai-sdk/openai-compatible"},
+                    "tool_call": True,
+                    "reasoning": True,
+                    "limit": {"context": 200_000, "output": 64_000},
+                    "modalities": {"input": ["text", "image"], "output": ["text"]},
+                },
+                "gemini-3-flash": {
+                    "id": "gemini-3-flash",
+                    "name": "Gemini 3 Flash",
+                    "provider": {"npm": "@ai-sdk/google"},
+                    "tool_call": True,
+                    "reasoning": True,
+                    "limit": {"context": 1_048_576, "output": 65_536},
+                    "modalities": {"input": ["text", "image"], "output": ["text"]},
+                },
+                "registry-only": {
+                    "id": "registry-only",
+                    "name": "Registry Only",
+                    "provider": {"npm": "@ai-sdk/openai-compatible"},
+                    "tool_call": True,
+                    "limit": {"context": 32_768, "output": 4_096},
+                    "modalities": {"input": ["text"], "output": ["text"]},
+                },
+                "gpt-5.5": {
+                    "id": "gpt-5.5",
+                    "name": "GPT 5.5",
+                    "provider": {"npm": "@ai-sdk/openai"},
+                },
+                "gpt-5.6": {
+                    "id": "gpt-5.6",
+                    "name": "GPT 5.6",
+                    "provider": {"npm": "@ai-sdk/openai"},
+                },
+                "claude-sonnet-4-5": {
+                    "id": "claude-sonnet-4-5",
+                    "name": "Claude Sonnet 4.5",
+                    "provider": {"npm": "@ai-sdk/anthropic"},
+                },
+                "qwen3.6-plus": {
+                    "id": "qwen3.6-plus",
+                    "name": "Qwen3.6 Plus",
+                    "provider": {"npm": "@ai-sdk/anthropic"},
+                },
+            },
+        },
+        "opencode-go": {
+            "id": "opencode-go",
+            "name": "OpenCode Go",
+            "npm": "@ai-sdk/openai-compatible",
+            "models": {
+                "gemini-3-flash": {
+                    "id": "gemini-3-flash",
+                    "name": "Gemini 3 Flash",
+                    "provider": {"npm": "@ai-sdk/google"},
+                    "tool_call": True,
+                    "reasoning": True,
+                    "limit": {"context": 1_048_576, "output": 65_536},
+                    "modalities": {"input": ["text", "image"], "output": ["text"]},
+                },
+                "qwen3.6-plus": {
+                    "id": "qwen3.6-plus",
+                    "name": "Qwen3.6 Plus",
+                    "provider": {"npm": "@ai-sdk/anthropic"},
+                },
+                "minimax-m2.7": {
+                    "id": "minimax-m2.7",
+                    "name": "MiniMax M2.7",
+                    "provider": {"npm": "@ai-sdk/anthropic"},
+                },
+            },
+        },
+    }
 
 
 def test_phase1_existing_provider_definitions_baseline_unchanged():
@@ -261,6 +346,84 @@ def test_phase3_opencode_static_routes_map_transports():
     assert opencode_model_transport("opencode_go", "qwen3.6-plus") == TransportMode.ANTHROPIC_MESSAGES
 
 
+@pytest.mark.parametrize(
+    ("package", "expected"),
+    [
+        ("@ai-sdk/openai-compatible", TransportMode.OPENAI_CHAT),
+        ("@ai-sdk/openai", TransportMode.OPENAI_RESPONSES),
+        ("@ai-sdk/anthropic", TransportMode.ANTHROPIC_MESSAGES),
+        ("@ai-sdk/google", TransportMode.GOOGLE_GENAI),
+        ("@ai-sdk/unknown", None),
+        ("", None),
+    ],
+)
+def test_native_opencode_protocol_table_fails_closed(package, expected):
+    assert opencode_provider.native_opencode_transport(package) == expected
+
+
+def test_native_opencode_registry_builds_ox_and_gemini_routes():
+    registry = opencode_provider.parse_opencode_registry_provider(
+        _native_opencode_registry(),
+        "opencode_zen",
+    )
+
+    ox = opencode_provider.opencode_native_model_route(
+        "opencode_zen",
+        {"id": "x-preview-f-free"},
+        registry,
+    )
+    gemini = opencode_provider.opencode_native_model_route(
+        "opencode_zen",
+        {"id": "gemini-3-flash"},
+        registry,
+    )
+
+    assert ox is not None
+    assert ox.display_name == "Ox Alpha Free"
+    assert ox.transport == TransportMode.OPENAI_CHAT
+    assert ox.context_window == 200_000
+    assert ox.tool_calling is True
+    assert ox.reasoning is True
+    assert ox.input_modalities == frozenset({"text", "image"})
+    assert gemini is not None
+    assert gemini.transport == TransportMode.GOOGLE_GENAI
+    assert gemini.context_window == 1_048_576
+
+
+def test_native_opencode_go_rollout_skew_uses_supported_provider_default():
+    registry = opencode_provider.parse_opencode_registry_provider(
+        _native_opencode_registry(),
+        "opencode_go",
+    )
+
+    route = opencode_provider.opencode_native_model_route(
+        "opencode_go",
+        {"id": "x-preview-f-free", "name": "Ox Alpha Free", "context_length": 200_000},
+        registry,
+    )
+
+    assert route is not None
+    assert route.model_id == "x-preview-f-free"
+    assert route.transport == TransportMode.OPENAI_CHAT
+    assert route.display_name == "Ox Alpha Free"
+
+
+def test_native_opencode_unknown_model_protocol_is_not_guessed():
+    payload = _native_opencode_registry()
+    payload["opencode"]["models"]["mystery"] = {
+        "id": "mystery",
+        "name": "Mystery",
+        "provider": {"npm": "@ai-sdk/not-supported"},
+    }
+    registry = opencode_provider.parse_opencode_registry_provider(payload, "opencode_zen")
+
+    assert opencode_provider.opencode_native_model_route(
+        "opencode_zen",
+        {"id": "mystery"},
+        registry,
+    ) is None
+
+
 def test_followup_opencode_stale_models_are_known_but_not_supported():
     route = opencode_known_route("opencode_zen", "deepseek-v3.2")
 
@@ -326,7 +489,7 @@ def test_followup_opencode_zen_vision_refs_appear_after_discovery_refresh_withou
     monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
     monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
     try:
-        models._fetch_opencode_models("opencode_zen")
+        models._fetch_opencode_models("opencode_zen", registry_payload=_native_opencode_registry())
         vision_models = set(models.list_cloud_vision_models())
 
         assert "model:opencode_zen:gpt-5.5" in vision_models
@@ -387,7 +550,7 @@ def test_followup_opencode_go_vision_ref_appears_after_discovery_refresh_without
     monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
     monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
     try:
-        models._fetch_opencode_models("opencode_go")
+        models._fetch_opencode_models("opencode_go", registry_payload=_native_opencode_registry())
         vision_models = set(models.list_cloud_vision_models())
 
         assert "model:opencode_go:mimo-v2-omni" in vision_models
@@ -419,7 +582,7 @@ def test_followup_opencode_live_input_modalities_override_static_vision_metadata
     monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
     monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
     try:
-        models._fetch_opencode_models("opencode_go")
+        models._fetch_opencode_models("opencode_go", registry_payload=_native_opencode_registry())
         vision_models = set(models.list_cloud_vision_models())
 
         assert "model:opencode_go:kimi-k2.5" in vision_models
@@ -443,6 +606,43 @@ def test_phase3_opencode_models_appear_in_catalog_with_canonical_refs(monkeypatc
     assert "model:opencode_go:glm-5.1" in refs
     assert "model:opencode_go:mimo-v2.5-pro" in refs
     assert "model:opencode_zen:gemini-2.5-pro" not in refs
+
+
+def test_dynamic_opencode_catalog_rows_are_not_overwritten_or_expanded_by_static_rows(monkeypatch):
+    monkeypatch.setattr("row_bot.providers.model_catalog._provider_status_by_id", lambda: {
+        "opencode_zen": {"configured": True},
+    })
+    dynamic_ref = "model:opencode_zen:x-preview-f-free"
+    rows = build_model_catalog_rows(
+        cloud_cache={
+            dynamic_ref: {
+                "provider": "opencode_zen",
+                "label": "Ox Alpha Free (Live)",
+                "ctx": 200_000,
+                "transport": "openai_chat",
+                "source": "opencode_live_catalog",
+                "capabilities_snapshot": {
+                    "transport": "openai_chat",
+                    "tasks": ["chat"],
+                    "capabilities": ["chat", "reasoning", "streaming", "text", "tool_calling", "vision"],
+                    "input_modalities": ["image", "text"],
+                    "output_modalities": ["text"],
+                    "tool_calling": True,
+                    "streaming": True,
+                    "endpoint_compatibility": ["openai_chat"],
+                },
+            }
+        },
+        ollama_rows=[],
+        quick_choices=[],
+    )
+    by_ref = {row.selection_ref: row for row in rows}
+
+    assert by_ref[dynamic_ref].display_name == "Ox Alpha Free (Live)"
+    assert by_ref[dynamic_ref].context_window == 200_000
+    assert "vision" in by_ref[dynamic_ref].capabilities_snapshot["capabilities"]
+    assert "model:opencode_zen:gpt-5.5" not in by_ref
+    assert "model:opencode_zen:nemotron-3-super-free" not in by_ref
 
 
 def test_phase3_fetch_opencode_models_uses_provider_qualified_cache(monkeypatch):
@@ -471,7 +671,7 @@ def test_phase3_fetch_opencode_models_uses_provider_qualified_cache(monkeypatch)
     monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
     monkeypatch.setattr("httpx.get", _fake_get)
     try:
-        count = models._fetch_opencode_models("opencode_go")
+        count = models._fetch_opencode_models("opencode_go", registry_payload=_native_opencode_registry())
 
         assert count >= 3
         assert captured["headers"]["Authorization"] == "Bearer opencode-key"
@@ -479,13 +679,398 @@ def test_phase3_fetch_opencode_models_uses_provider_qualified_cache(monkeypatch)
         assert models._cloud_model_cache["model:opencode_go:glm-5.1"]["provider"] == "opencode_go"
         assert models._cloud_model_cache["model:opencode_go:mimo-v2.5-pro"]["provider"] == "opencode_go"
         assert models._cloud_model_cache["model:opencode_go:qwen3.6-plus"]["transport"] == "anthropic_messages"
-        assert "model:opencode_go:hy3-preview" not in models._cloud_model_cache
+        assert models._cloud_model_cache["model:opencode_go:hy3-preview"]["transport"] == "openai_chat"
     finally:
         models._cloud_model_cache.clear()
         models._cloud_model_cache.update(original)
 
 
-def test_followup_opencode_discovery_omits_stale_models(monkeypatch):
+def test_native_opencode_discovery_intersects_live_availability_with_registry(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "x-preview-f-free"}]}
+
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "zen-key")
+    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
+    try:
+        count = models._fetch_opencode_models(
+            "opencode_zen",
+            registry_payload=_native_opencode_registry(),
+        )
+
+        assert count == 1
+        assert set(models._cloud_model_cache) == {"model:opencode_zen:x-preview-f-free"}
+        cached = models._cloud_model_cache["model:opencode_zen:x-preview-f-free"]
+        assert cached["label"] == "Ox Alpha Free"
+        assert cached["ctx"] == 200_000
+        assert cached["transport"] == "openai_chat"
+        assert cached["capabilities_snapshot"]["reasoning"] is None
+        assert "reasoning" in cached["capabilities_snapshot"]["capabilities"]
+        assert "image" in cached["capabilities_snapshot"]["input_modalities"]
+        assert "model:opencode_zen:gemini-3-flash" not in models._cloud_model_cache
+        assert "model:opencode_zen:registry-only" not in models._cloud_model_cache
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_discovery_isolated_by_gateway(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+
+    class _Resp:
+        def __init__(self, model_id):
+            self.model_id = model_id
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": self.model_id}]}
+
+    def _fake_get(url, **kwargs):
+        if "/go/" in url:
+            return _Resp("gemini-3-flash")
+        return _Resp("x-preview-f-free")
+
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: f"{provider_id}-key")
+    monkeypatch.setattr("httpx.get", _fake_get)
+    try:
+        models._fetch_opencode_models("opencode_zen", registry_payload=_native_opencode_registry())
+        models._fetch_opencode_models("opencode_go", registry_payload=_native_opencode_registry())
+
+        assert "model:opencode_zen:x-preview-f-free" in models._cloud_model_cache
+        assert "model:opencode_go:x-preview-f-free" not in models._cloud_model_cache
+        assert "model:opencode_go:gemini-3-flash" in models._cloud_model_cache
+        assert "model:opencode_zen:gemini-3-flash" not in models._cloud_model_cache
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_gateway_failure_preserves_last_known_good(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+    cached_ref = "model:opencode_zen:x-preview-f-free"
+    cached = {
+        "provider": "opencode_zen",
+        "label": "Ox Alpha Free",
+        "ctx": 200_000,
+        "transport": "openai_chat",
+        "source": "opencode_live_catalog",
+    }
+    models._cloud_model_cache[cached_ref] = dict(cached)
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "zen-key")
+    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: (_ for _ in ()).throw(httpx.ConnectError("offline")))
+    try:
+        assert models._fetch_opencode_models(
+            "opencode_zen",
+            registry_payload=_native_opencode_registry(),
+        ) == 0
+        assert models._cloud_model_cache[cached_ref] == cached
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_registry_failure_preserves_last_known_good(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+    cached_ref = "model:opencode_go:x-preview-f-free"
+    cached = {
+        "provider": "opencode_go",
+        "label": "Ox Alpha Free",
+        "ctx": 200_000,
+        "transport": "openai_chat",
+        "source": "opencode_live_catalog",
+    }
+    models._cloud_model_cache[cached_ref] = dict(cached)
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "x-preview-f-free"}]}
+
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "go-key")
+    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
+    try:
+        assert models._fetch_opencode_models("opencode_go", registry_payload=None) == 0
+        assert models._cloud_model_cache[cached_ref] == cached
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_cold_gateway_failure_uses_static_fallback(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "zen-key")
+    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: (_ for _ in ()).throw(httpx.ConnectError("offline")))
+    try:
+        count = models._fetch_opencode_models("opencode_zen")
+
+        assert count > 0
+        cached = models._cloud_model_cache["model:opencode_zen:gpt-5.5"]
+        assert cached["transport"] == "openai_responses"
+        assert cached["source"] == "opencode_static_fallback"
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_valid_empty_gateway_catalog_clears_stale_rows(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+    models._cloud_model_cache["model:opencode_zen:x-preview-f-free"] = {
+        "provider": "opencode_zen",
+        "label": "Ox Alpha Free",
+        "ctx": 200_000,
+        "transport": "openai_chat",
+        "source": "opencode_live_catalog",
+    }
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": []}
+
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "zen-key")
+    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
+    try:
+        assert models._fetch_opencode_models(
+            "opencode_zen",
+            registry_payload=_native_opencode_registry(),
+        ) == 0
+        assert not models._provider_cloud_cache_entries("opencode_zen")
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_full_refresh_coalesces_models_dev_fetch(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+    calls: list[str] = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def _fake_get(url, **kwargs):
+        calls.append(url)
+        if url == opencode_provider.OPENCODE_MODELS_DEV_URL:
+            return _Resp(_native_opencode_registry())
+        if "/go/" in url:
+            return _Resp({"data": [{"id": "gemini-3-flash"}]})
+        return _Resp({"data": [{"id": "x-preview-f-free"}]})
+
+    monkeypatch.setattr(models, "REFRESHABLE_CLOUD_PROVIDER_IDS", ("opencode_zen", "opencode_go"))
+    monkeypatch.setattr(models, "fetch_context_catalog", lambda: None)
+    monkeypatch.setattr(models, "_save_cloud_cache", lambda: None)
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: f"{provider_id}-key")
+    monkeypatch.setattr("httpx.get", _fake_get)
+    try:
+        results = models.refresh_cloud_models_detailed()
+
+        assert results["opencode_zen"].status == "live"
+        assert results["opencode_go"].status == "live"
+        assert calls.count(opencode_provider.OPENCODE_MODELS_DEV_URL) == 1
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_unknown_protocol_diagnostic_is_sanitized(caplog, monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+    payload = _native_opencode_registry()
+    payload["opencode"]["models"]["mystery"] = {
+        "id": "mystery",
+        "provider": {"npm": "@ai-sdk/not-supported"},
+        "private_debug": "raw-sensitive-response-content",
+    }
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "mystery", "debug": "raw-sensitive-response-content"}]}
+
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "secret-do-not-log")
+    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
+    try:
+        with caplog.at_level("WARNING", logger="row_bot.models"):
+            assert models._fetch_opencode_models("opencode_zen", registry_payload=payload) == 0
+
+        logged = caplog.text
+        assert "opencode_zen/mystery" in logged
+        assert "@ai-sdk/not-supported" in logged
+        assert "secret-do-not-log" not in logged
+        assert "raw-sensitive-response-content" not in logged
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_cache_route_survives_persistence_without_name_classification(tmp_path, monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+    monkeypatch.setattr(models, "_CLOUD_CACHE_PATH", tmp_path / "cloud_models_cache.json")
+    monkeypatch.setattr(models, "_DATA_DIR", tmp_path)
+    models._cloud_model_cache["model:opencode_zen:x-preview-f-free"] = {
+        "provider": "opencode_zen",
+        "label": "Ox Alpha Free",
+        "ctx": 200_000,
+        "transport": "openai_chat",
+        "source": "opencode_live_catalog",
+        "capabilities_snapshot": {
+            "transport": "openai_chat",
+            "tasks": ["chat"],
+            "capabilities": ["chat", "reasoning", "streaming", "text", "tool_calling"],
+            "input_modalities": ["image", "text"],
+            "output_modalities": ["text"],
+            "tool_calling": True,
+            "streaming": True,
+            "endpoint_compatibility": ["openai_chat"],
+        },
+    }
+    try:
+        models._save_cloud_cache()
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(models._load_cloud_cache())
+
+        route = opencode_model_route("opencode_zen", "x-preview-f-free")
+        resolved = resolve_provider_config("model:opencode_zen:x-preview-f-free")
+
+        assert route.transport == TransportMode.OPENAI_CHAT
+        assert route.display_name == "Ox Alpha Free"
+        assert route.input_modalities == frozenset({"text", "image"})
+        assert resolved.transport == TransportMode.OPENAI_CHAT
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_old_opencode_cache_row_without_route_uses_legacy_static_fallback(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+    models._cloud_model_cache["model:opencode_zen:gpt-5.5"] = {
+        "provider": "opencode_zen",
+        "label": "GPT 5.5",
+        "ctx": 400_000,
+    }
+    try:
+        assert opencode_model_route("opencode_zen", "gpt-5.5").transport == TransportMode.OPENAI_RESPONSES
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_malformed_cached_opencode_route_fails_closed(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+    models._cloud_model_cache["model:opencode_zen:x-preview-f-free"] = {
+        "provider": "opencode_zen",
+        "label": "Ox Alpha Free",
+        "ctx": 200_000,
+        "transport": "invented_transport",
+        "source": "opencode_live_catalog",
+    }
+    try:
+        with pytest.raises(OpenCodeUnsupportedRouteError, match="unsupported cached transport"):
+            opencode_model_route("opencode_zen", "x-preview-f-free")
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_refresh_to_catalog_resolution_and_runtime_end_to_end(monkeypatch):
+    original = dict(models._cloud_model_cache)
+    models._cloud_model_cache.clear()
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "x-preview-f-free"}, {"id": "gemini-3-flash"}]}
+
+    fake_google_module = ModuleType("langchain_google_genai")
+
+    class _FakeChatGoogleGenerativeAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    fake_google_module.ChatGoogleGenerativeAI = _FakeChatGoogleGenerativeAI
+    monkeypatch.setitem(sys.modules, "langchain_google_genai", fake_google_module)
+    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
+    monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "zen-key")
+    monkeypatch.setattr(runtime, "get_provider_secret", lambda provider_id, credential_name="api_key": "zen-key")
+    monkeypatch.setattr("row_bot.providers.model_catalog._provider_status_by_id", lambda: {
+        "opencode_zen": {"configured": True},
+    })
+    monkeypatch.setattr("row_bot.providers.readiness.provider_status", lambda provider_id: {"configured": True})
+    try:
+        assert models._fetch_opencode_models(
+            "opencode_zen",
+            registry_payload=_native_opencode_registry(),
+        ) == 2
+
+        rows = build_model_catalog_rows(
+            cloud_cache=dict(models._cloud_model_cache),
+            ollama_rows=[],
+            quick_choices=[],
+        )
+        by_ref = {row.selection_ref: row for row in rows}
+        ox_ref = "model:opencode_zen:x-preview-f-free"
+        gemini_ref = "model:opencode_zen:gemini-3-flash"
+
+        assert {
+            ref
+            for ref, row in by_ref.items()
+            if row.provider_id == "opencode_zen"
+        } == {ox_ref, gemini_ref}
+        assert resolve_provider_config(ox_ref).transport == TransportMode.OPENAI_CHAT
+        assert resolve_provider_config(gemini_ref).transport == TransportMode.GOOGLE_GENAI
+
+        ox_model = runtime.create_chat_model(ox_ref)
+        gemini_model = runtime.create_chat_model(gemini_ref)
+
+        assert ox_model.model_name == "x-preview-f-free"
+        assert ox_model.api_key == "zen-key"
+        assert ox_model.base_url == "https://opencode.ai/zen/v1"
+        assert gemini_model.kwargs["model"] == "gemini-3-flash"
+        assert gemini_model.kwargs["google_api_key"] == "zen-key"
+        assert gemini_model.kwargs["base_url"] == "https://opencode.ai/zen"
+        assert gemini_model.kwargs["api_version"] == "v1"
+        assert (
+            f"{gemini_model.kwargs['base_url']}/{gemini_model.kwargs['api_version']}"
+            f"/models/{gemini_model.kwargs['model']}:generateContent"
+        ) == "https://opencode.ai/zen/v1/models/gemini-3-flash:generateContent"
+        assert evaluate_agent_readiness(gemini_ref, context_window_override=1_048_576).ready is True
+    finally:
+        models._cloud_model_cache.clear()
+        models._cloud_model_cache.update(original)
+
+
+def test_native_opencode_provider_default_handles_live_registry_rollout_skew(monkeypatch):
     original = dict(models._cloud_model_cache)
     models._cloud_model_cache.clear()
 
@@ -499,11 +1084,11 @@ def test_followup_opencode_discovery_omits_stale_models(monkeypatch):
     monkeypatch.setattr("row_bot.providers.auth_store.get_provider_secret", lambda provider_id: "opencode-key")
     monkeypatch.setattr("httpx.get", lambda *args, **kwargs: _Resp())
     try:
-        models._fetch_opencode_models("opencode_zen")
+        models._fetch_opencode_models("opencode_zen", registry_payload=_native_opencode_registry())
 
         assert "model:opencode_zen:deepseek-v4-flash-free" in models._cloud_model_cache
         assert models._cloud_model_cache["model:opencode_zen:gpt-5.6"]["transport"] == "openai_responses"
-        assert "model:opencode_zen:deepseek-v3.2" not in models._cloud_model_cache
+        assert models._cloud_model_cache["model:opencode_zen:deepseek-v3.2"]["transport"] == "openai_chat"
     finally:
         models._cloud_model_cache.clear()
         models._cloud_model_cache.update(original)

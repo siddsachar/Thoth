@@ -192,6 +192,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "tests/test_provider_runtime.py",
             "tests/test_provider_selection.py",
             "tests/test_provider_resolution.py",
+            "tests/test_opencode_first_class_provider.py",
             "tests/test_xai_media.py",
         ),
         "Provider and media runtime changes need fake-provider contracts plus focused provider regressions.",

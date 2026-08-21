@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 from row_bot.providers.models import ModelInfo, ModelModality, ModelTask, TransportMode
 from row_bot.providers.selection import model_ref
@@ -12,10 +12,32 @@ OPENCODE_PROVIDER_IDS = frozenset({OPENCODE_ZEN_PROVIDER_ID, OPENCODE_GO_PROVIDE
 
 OPENCODE_ZEN_BASE_URL = "https://opencode.ai/zen/v1"
 OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1"
+OPENCODE_MODELS_DEV_URL = "https://models.dev/api.json"
+
+_MODELS_DEV_PROVIDER_IDS = {
+    OPENCODE_ZEN_PROVIDER_ID: "opencode",
+    OPENCODE_GO_PROVIDER_ID: "opencode-go",
+}
+_NATIVE_TRANSPORTS = {
+    "@ai-sdk/openai-compatible": TransportMode.OPENAI_CHAT,
+    "@ai-sdk/openai": TransportMode.OPENAI_RESPONSES,
+    "@ai-sdk/anthropic": TransportMode.ANTHROPIC_MESSAGES,
+    "@ai-sdk/google": TransportMode.GOOGLE_GENAI,
+}
+_SUPPORTED_OPENCODE_TRANSPORTS = frozenset(_NATIVE_TRANSPORTS.values())
 
 
 class OpenCodeUnsupportedRouteError(ValueError):
     """Raised when an OpenCode model is known but intentionally unsupported."""
+
+
+@dataclass(frozen=True)
+class OpenCodeRegistryProvider:
+    provider_id: str
+    registry_provider_id: str
+    default_package: str
+    default_transport: TransportMode | None
+    models: Mapping[str, Mapping[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -29,6 +51,9 @@ class OpenCodeModelRoute:
     streaming: bool | None = True
     unsupported_reason: str = ""
     image_input: bool | None = None
+    input_modalities: frozenset[str] | None = None
+    output_modalities: frozenset[str] | None = None
+    reasoning: bool | None = None
 
     @property
     def selection_ref(self) -> str:
@@ -177,6 +202,8 @@ _MODELS_DEV_IMAGE_INPUT_IDS: dict[str, frozenset[str]] = {
 def _route_supports_image_input(route: OpenCodeModelRoute) -> bool:
     if route.unsupported_reason:
         return False
+    if route.input_modalities is not None:
+        return ModelModality.IMAGE.value in route.input_modalities
     if route.image_input is not None:
         return route.image_input
     lower = route.model_id.lower()
@@ -194,6 +221,163 @@ def _with_image_input_metadata(
 
 def is_opencode_provider(provider_id: str | None) -> bool:
     return str(provider_id or "") in OPENCODE_PROVIDER_IDS
+
+
+def native_opencode_transport(package: str | None) -> TransportMode | None:
+    """Map an explicit models.dev SDK package to a supported Row-Bot route."""
+    return _NATIVE_TRANSPORTS.get(str(package or "").strip())
+
+
+def parse_opencode_registry_provider(
+    payload: Mapping[str, Any],
+    provider_id: str,
+) -> OpenCodeRegistryProvider:
+    """Extract the small provider-scoped subset Row-Bot uses from models.dev."""
+    provider = str(provider_id or "").strip()
+    registry_provider_id = _MODELS_DEV_PROVIDER_IDS.get(provider)
+    if not registry_provider_id:
+        raise ValueError(f"Unknown OpenCode provider: {provider_id}")
+    raw_provider = payload.get(registry_provider_id) if isinstance(payload, Mapping) else None
+    if not isinstance(raw_provider, Mapping):
+        raise ValueError(f"models.dev has no provider metadata for '{registry_provider_id}'.")
+    raw_models = raw_provider.get("models")
+    models = {
+        str(model_id): dict(model)
+        for model_id, model in raw_models.items()
+        if str(model_id) and isinstance(model, Mapping)
+    } if isinstance(raw_models, Mapping) else {}
+    default_package = str(raw_provider.get("npm") or "").strip()
+    return OpenCodeRegistryProvider(
+        provider_id=provider,
+        registry_provider_id=registry_provider_id,
+        default_package=default_package,
+        default_transport=native_opencode_transport(default_package),
+        models=models,
+    )
+
+
+def opencode_native_package(registry: OpenCodeRegistryProvider, model_id: str) -> str:
+    """Return the explicit model package or the supported provider rollout default."""
+    metadata = registry.models.get(str(model_id or ""))
+    if isinstance(metadata, Mapping):
+        model_provider = metadata.get("provider")
+        if isinstance(model_provider, Mapping):
+            package = str(model_provider.get("npm") or "").strip()
+            if package:
+                return package
+        package = str(metadata.get("npm") or "").strip()
+        if package:
+            return package
+    return registry.default_package
+
+
+def _string_set(value: object) -> frozenset[str] | None:
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        values = value
+    else:
+        return None
+    return frozenset(
+        str(item).strip().lower()
+        for item in values
+        if str(item).strip()
+    )
+
+
+def _modalities(metadata: Mapping[str, Any], direction: str) -> frozenset[str] | None:
+    nested = metadata.get("modalities")
+    if isinstance(nested, Mapping):
+        values = _string_set(nested.get(direction))
+        if values is not None:
+            return values
+    keys = (
+        ("input_modalities", "inputModalities")
+        if direction == "input"
+        else ("output_modalities", "outputModalities")
+    )
+    for key in keys:
+        values = _string_set(metadata.get(key))
+        if values is not None:
+            return values
+    architecture = metadata.get("architecture")
+    if isinstance(architecture, Mapping):
+        values = _string_set(architecture.get(f"{direction}_modalities"))
+        if values is not None:
+            return values
+    return None
+
+
+def _first_bool(*values: object) -> bool | None:
+    return next((value for value in values if isinstance(value, bool)), None)
+
+
+def _positive_int(*values: object) -> int:
+    for value in values:
+        try:
+            parsed = int(value or 0)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
+    return 0
+
+
+def opencode_native_model_route(
+    provider_id: str,
+    live_model: Mapping[str, Any],
+    registry: OpenCodeRegistryProvider,
+) -> OpenCodeModelRoute | None:
+    """Resolve one live gateway row using native registry routing metadata."""
+    provider = str(provider_id or "").strip()
+    model_id = str(live_model.get("id") or "").strip()
+    if provider != registry.provider_id or not model_id:
+        return None
+    registry_model = registry.models.get(model_id)
+    metadata = registry_model if isinstance(registry_model, Mapping) else {}
+    package = opencode_native_package(registry, model_id)
+    transport = native_opencode_transport(package)
+    if transport is None:
+        return None
+
+    limit = metadata.get("limit") if isinstance(metadata.get("limit"), Mapping) else {}
+    context_window = _positive_int(
+        limit.get("context"),
+        metadata.get("context_length"),
+        metadata.get("context_window"),
+        live_model.get("context_length"),
+        live_model.get("context_window"),
+    ) or _context_window(model_id, transport)
+    tool_calling = _first_bool(
+        metadata.get("tool_call"),
+        metadata.get("tool_calling"),
+        live_model.get("tool_call"),
+        live_model.get("tool_calling"),
+    )
+    streaming = _first_bool(metadata.get("streaming"), live_model.get("streaming"))
+    input_modalities = _modalities(metadata, "input")
+    if input_modalities is None:
+        input_modalities = _modalities(live_model, "input")
+    output_modalities = _modalities(metadata, "output")
+    if output_modalities is None:
+        output_modalities = _modalities(live_model, "output")
+    return OpenCodeModelRoute(
+        provider_id=provider,
+        model_id=model_id,
+        display_name=str(
+            metadata.get("name")
+            or live_model.get("display_name")
+            or live_model.get("name")
+            or _display_name(model_id)
+        ),
+        transport=transport,
+        context_window=context_window,
+        tool_calling=True if tool_calling is None else tool_calling,
+        streaming=True if streaming is None else streaming,
+        input_modalities=input_modalities,
+        output_modalities=output_modalities,
+        reasoning=_first_bool(metadata.get("reasoning"), live_model.get("reasoning")),
+    )
 
 
 def opencode_base_url(provider_id: str) -> str:
@@ -298,8 +482,88 @@ def classify_opencode_model_route(provider_id: str, model_id: str) -> OpenCodeMo
     )
 
 
+def _cached_opencode_entry(provider_id: str, model_id: str) -> Mapping[str, Any] | None:
+    try:
+        from row_bot.models import _cloud_model_cache
+    except Exception:
+        return None
+    qualified = _cloud_model_cache.get(model_ref(provider_id, model_id))
+    if isinstance(qualified, Mapping):
+        cached_provider = str(qualified.get("provider") or "")
+        if not cached_provider or cached_provider == provider_id:
+            return qualified
+    legacy = _cloud_model_cache.get(model_id)
+    if isinstance(legacy, Mapping) and str(legacy.get("provider") or "") == provider_id:
+        return legacy
+    return None
+
+
+def _cached_opencode_route(provider_id: str, model_id: str) -> OpenCodeModelRoute | None:
+    cached = _cached_opencode_entry(provider_id, model_id)
+    if cached is None:
+        return None
+    snapshot = cached.get("capabilities_snapshot")
+    capabilities = snapshot.get("capabilities") if isinstance(snapshot, Mapping) else None
+    raw_transport = (
+        snapshot.get("transport") if isinstance(snapshot, Mapping) else None
+    ) or cached.get("transport")
+    if not raw_transport:
+        return None
+    try:
+        transport = TransportMode(str(raw_transport))
+    except ValueError:
+        safe_transport = str(raw_transport)[:80].replace("\r", "").replace("\n", "")
+        return _unsupported_route(
+            provider_id,
+            model_id,
+            f"OpenCode model '{model_id}' has unsupported cached transport '{safe_transport}'. Refresh the catalog.",
+        )
+    if transport not in _SUPPORTED_OPENCODE_TRANSPORTS:
+        return _unsupported_route(
+            provider_id,
+            model_id,
+            f"OpenCode model '{model_id}' has unsupported cached transport '{transport.value}'. Refresh the catalog.",
+        )
+    input_modalities = (
+        _string_set(snapshot.get("input_modalities"))
+        if isinstance(snapshot, Mapping)
+        else None
+    )
+    output_modalities = (
+        _string_set(snapshot.get("output_modalities"))
+        if isinstance(snapshot, Mapping)
+        else None
+    )
+    tool_calling = (
+        snapshot.get("tool_calling")
+        if isinstance(snapshot, Mapping) and isinstance(snapshot.get("tool_calling"), bool)
+        else None
+    )
+    streaming = (
+        snapshot.get("streaming")
+        if isinstance(snapshot, Mapping) and isinstance(snapshot.get("streaming"), bool)
+        else None
+    )
+    return OpenCodeModelRoute(
+        provider_id=provider_id,
+        model_id=model_id,
+        display_name=str(cached.get("label") or _display_name(model_id)),
+        transport=transport,
+        context_window=_positive_int(cached.get("ctx")) or _context_window(model_id, transport),
+        tool_calling=True if tool_calling is None else tool_calling,
+        streaming=True if streaming is None else streaming,
+        input_modalities=input_modalities,
+        output_modalities=output_modalities,
+        reasoning=(
+            "reasoning" in _string_set(capabilities)
+            if _string_set(capabilities) is not None
+            else None
+        ),
+    )
+
+
 def opencode_model_route(provider_id: str, model_id: str) -> OpenCodeModelRoute:
-    route = classify_opencode_model_route(provider_id, str(model_id or ""))
+    route = opencode_known_route(provider_id, str(model_id or ""))
     if not route:
         raise OpenCodeUnsupportedRouteError(
             f"OpenCode model '{model_id}' has no supported route mapping for provider '{provider_id}'."
@@ -314,7 +578,10 @@ def opencode_model_transport(provider_id: str, model_id: str) -> TransportMode:
 
 
 def opencode_known_route(provider_id: str, model_id: str) -> OpenCodeModelRoute | None:
-    return classify_opencode_model_route(provider_id, str(model_id or ""))
+    provider = str(provider_id or "")
+    model = str(model_id or "")
+    cached = _cached_opencode_route(provider, model)
+    return cached or classify_opencode_model_route(provider, model)
 
 
 def opencode_static_fallback_model_ids(provider_id: str) -> tuple[str, ...]:
@@ -344,7 +611,7 @@ def list_opencode_model_routes(
         if include_unsupported:
             ids.extend(["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3-flash"])
         for model_id in dict.fromkeys(str(model_id or "") for model_id in ids):
-            route = classify_opencode_model_route(str(item), model_id)
+            route = opencode_known_route(str(item), model_id)
             if not route:
                 continue
             route = _with_image_input_metadata(route, image_input_lookup)
@@ -355,12 +622,17 @@ def list_opencode_model_routes(
 
 def opencode_model_info(route: OpenCodeModelRoute) -> ModelInfo:
     tasks = {ModelTask.RESPONSES.value} if route.transport == TransportMode.OPENAI_RESPONSES else {ModelTask.CHAT.value}
-    capabilities = {"text", "chat", "streaming"}
-    input_modalities = {ModelModality.TEXT.value}
+    capabilities = {"text", "chat"}
+    if route.streaming:
+        capabilities.add("streaming")
+    input_modalities = set(route.input_modalities or {ModelModality.TEXT.value})
+    output_modalities = set(route.output_modalities or {ModelModality.TEXT.value})
     if route.transport == TransportMode.OPENAI_RESPONSES:
         capabilities.add("responses")
     if route.tool_calling:
         capabilities.add("tool_calling")
+    if route.reasoning:
+        capabilities.add("reasoning")
     if _route_supports_image_input(route):
         input_modalities.add(ModelModality.IMAGE.value)
         capabilities.add("vision")
@@ -368,6 +640,7 @@ def opencode_model_info(route: OpenCodeModelRoute) -> ModelInfo:
         tasks = set()
         capabilities = {"unsupported"}
         input_modalities = {ModelModality.TEXT.value}
+        output_modalities = {ModelModality.TEXT.value}
     return ModelInfo(
         provider_id=route.provider_id,
         model_id=route.model_id,
@@ -376,7 +649,7 @@ def opencode_model_info(route: OpenCodeModelRoute) -> ModelInfo:
         transport=route.transport,
         capabilities=frozenset(capabilities),
         input_modalities=frozenset(input_modalities),
-        output_modalities=frozenset({ModelModality.TEXT.value}),
+        output_modalities=frozenset(output_modalities),
         tasks=frozenset(tasks),
         tool_calling=route.tool_calling if not route.unsupported_reason else False,
         streaming=route.streaming,

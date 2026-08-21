@@ -170,6 +170,11 @@ _OPENAI_SKIP_SUBSTRINGS = ("dall-e", "whisper", "tts", "embedding", "davinci",
 # ── Dynamic cloud model cache ───────────────────────────────────────────────
 _cloud_model_cache: dict[str, dict] = {}   # model_id → {label, ctx, provider}
 _cloud_cache_lock = threading.Lock()
+_opencode_registry_refresh_state: contextvars.ContextVar[dict[str, object] | None] = contextvars.ContextVar(
+    "opencode_registry_refresh_state",
+    default=None,
+)
+_OPENCODE_REGISTRY_UNSET = object()
 
 REFRESHABLE_CLOUD_PROVIDER_IDS: tuple[str, ...] = (
     "openai",
@@ -235,14 +240,19 @@ def _cloud_cache_entry_belongs_to_provider(model_id: str, info: dict, provider_i
     return _runtime_model_name(key).split("/")[-1].lower().startswith("minimax")
 
 
-def _replace_provider_cloud_cache_entries(provider_id: str, entries: dict[str, dict]) -> int:
+def _replace_provider_cloud_cache_entries(
+    provider_id: str,
+    entries: dict[str, dict],
+    *,
+    allow_empty: bool = False,
+) -> int:
     provider = str(provider_id or "").strip()
     staged = {
         str(model_id): dict(info)
         for model_id, info in entries.items()
         if model_id and isinstance(info, dict) and str(info.get("provider") or "") == provider
     }
-    if not staged:
+    if not staged and not allow_empty:
         return 0
     with _cloud_cache_lock:
         stale_keys = [
@@ -2789,81 +2799,138 @@ def _fetch_minimax_models(api_key: str) -> int:
     return count
 
 
-def _fetch_opencode_models(provider_id: str) -> int:
-    """Populate OpenCode models from live discovery using provider-qualified keys."""
+def _fetch_opencode_registry_payload() -> dict[str, object]:
+    """Fetch OpenCode's public native routing metadata during explicit refresh."""
+    import httpx
+
+    from row_bot.providers.opencode import OPENCODE_MODELS_DEV_URL
+
+    response = httpx.get(OPENCODE_MODELS_DEV_URL, timeout=15)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("models.dev returned a non-object registry payload.")
+    return payload
+
+
+def _opencode_registry_payload(
+    explicit_payload: object = _OPENCODE_REGISTRY_UNSET,
+) -> dict[str, object]:
+    if explicit_payload is not _OPENCODE_REGISTRY_UNSET:
+        if not isinstance(explicit_payload, dict):
+            raise ValueError("OpenCode registry payload is unavailable or malformed.")
+        return explicit_payload
+
+    state = _opencode_registry_refresh_state.get()
+    if state is None:
+        return _fetch_opencode_registry_payload()
+    cached = state.get("payload")
+    if isinstance(cached, dict):
+        return cached
+    cached_error = state.get("error")
+    if isinstance(cached_error, BaseException):
+        raise RuntimeError("models.dev registry fetch failed earlier in this refresh.") from cached_error
+    try:
+        payload = _fetch_opencode_registry_payload()
+    except Exception as exc:
+        state["error"] = exc
+        raise
+    state["payload"] = payload
+    return payload
+
+
+def _fetch_opencode_models(
+    provider_id: str,
+    *,
+    registry_payload: object = _OPENCODE_REGISTRY_UNSET,
+) -> int:
+    """Intersect one OpenCode gateway catalog with native routing metadata."""
     import httpx
 
     from row_bot.providers.auth_store import get_provider_secret
     from row_bot.providers.catalog import model_info_to_cache_entry
-    from row_bot.providers.opencode import list_opencode_model_infos, opencode_models_url
+    from row_bot.providers.opencode import (
+        list_opencode_model_infos,
+        opencode_model_info,
+        opencode_models_url,
+        opencode_native_model_route,
+        opencode_native_package,
+        parse_opencode_registry_provider,
+    )
 
-    def _string_list(value: object) -> list[str] | None:
-        if not isinstance(value, list):
-            return None
-        return [str(item).strip().lower() for item in value if str(item).strip()]
-
-    def _opencode_input_modalities(item: dict) -> list[str] | None:
-        modalities = item.get("modalities")
-        if isinstance(modalities, dict):
-            values = _string_list(modalities.get("input"))
-            if values is not None:
-                return values
-        for key in ("input_modalities", "inputModalities"):
-            values = _string_list(item.get(key))
-            if values is not None:
-                return values
-        architecture = item.get("architecture")
-        if isinstance(architecture, dict):
-            values = _string_list(architecture.get("input_modalities"))
-            if values is not None:
-                return values
-        return None
+    def _use_static_fallback() -> int:
+        entries = {
+            model_info.selection_ref: {
+                **model_info_to_cache_entry(model_info),
+                "source": "opencode_static_fallback",
+            }
+            for model_info in list_opencode_model_infos(provider_id)
+        }
+        return _replace_provider_cloud_cache_entries(provider_id, entries)
 
     existing_rows = _provider_cloud_cache_entries(provider_id)
     api_key = get_provider_secret(provider_id)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    model_ids: list[str] | None = None
-    image_input_model_ids: set[str] | None = None
-    source = "live"
     try:
         resp = httpx.get(opencode_models_url(provider_id), headers=headers, timeout=15)
         resp.raise_for_status()
-        data = resp.json().get("data", [])
-        model_ids = []
-        discovered_image_inputs: set[str] = set()
-        saw_input_metadata = False
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            model_id = str(item.get("id") or "").strip()
-            if not model_id:
-                continue
-            model_ids.append(model_id)
-            input_modalities = _opencode_input_modalities(item)
-            if input_modalities is not None:
-                saw_input_metadata = True
-                if "image" in input_modalities:
-                    discovered_image_inputs.add(model_id)
-        if saw_input_metadata:
-            image_input_model_ids = discovered_image_inputs
+        payload = resp.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise ValueError("OpenCode gateway returned a malformed model catalog.")
     except Exception as exc:
         if existing_rows:
             logger.warning("Failed to fetch %s models: %s; preserving previous OpenCode cache", provider_id, exc)
             return 0
         logger.warning("Failed to fetch %s models: %s; using static OpenCode fallback", provider_id, exc)
-        source = "fallback"
+        return _use_static_fallback()
 
-    infos = list_opencode_model_infos(
-        provider_id,
-        model_ids=model_ids,
-        image_input_model_ids=image_input_model_ids,
-    )
+    try:
+        registry = parse_opencode_registry_provider(
+            _opencode_registry_payload(registry_payload),
+            provider_id,
+        )
+    except Exception as exc:
+        if existing_rows:
+            logger.warning(
+                "Failed to resolve %s native model metadata: %s; preserving previous OpenCode cache",
+                provider_id,
+                exc,
+            )
+            return 0
+        logger.warning(
+            "Failed to resolve %s native model metadata: %s; using static OpenCode fallback",
+            provider_id,
+            exc,
+        )
+        return _use_static_fallback()
+
     entries: dict[str, dict] = {}
-    for model_info in infos:
+    seen: set[str] = set()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id") or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        route = opencode_native_model_route(provider_id, item, registry)
+        if route is None:
+            package = opencode_native_package(registry, model_id) or "<missing>"
+            safe_package = package[:120].replace("\r", "").replace("\n", "")
+            safe_model_id = model_id[:200].replace("\r", "").replace("\n", "")
+            logger.warning(
+                "Skipping OpenCode model %s/%s with unsupported native protocol %s",
+                provider_id,
+                safe_model_id,
+                safe_package,
+            )
+            continue
+        model_info = opencode_model_info(route)
         entry = model_info_to_cache_entry(model_info)
-        entry["source"] = "opencode_live_catalog" if source == "live" else "opencode_static_fallback"
+        entry["source"] = "opencode_live_catalog"
         entries[model_info.selection_ref] = entry
-    count = _replace_provider_cloud_cache_entries(provider_id, entries)
+    count = _replace_provider_cloud_cache_entries(provider_id, entries, allow_empty=True)
     logger.info("Fetched %d %s models", count, provider_id)
     return count
 
@@ -3024,10 +3091,14 @@ def refresh_cloud_models_detailed() -> dict[str, ProviderCatalogRefreshResult]:
 
     # Fetch context catalog first so OpenAI models get accurate sizes
     fetch_context_catalog()
-    results = {
-        provider_id: refresh_cloud_provider_models(provider_id)
-        for provider_id in REFRESHABLE_CLOUD_PROVIDER_IDS
-    }
+    registry_token = _opencode_registry_refresh_state.set({})
+    try:
+        results = {
+            provider_id: refresh_cloud_provider_models(provider_id)
+            for provider_id in REFRESHABLE_CLOUD_PROVIDER_IDS
+        }
+    finally:
+        _opencode_registry_refresh_state.reset(registry_token)
     _save_cloud_cache()
 
     # Do not rewrite the user's default just because a provider refresh missed

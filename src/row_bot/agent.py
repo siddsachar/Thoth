@@ -145,6 +145,31 @@ def _provider_uses_anthropic_messages(provider_id: str | None, model_id: str | N
         return provider_id == "anthropic"
 
 
+def _provider_uses_google_genai(provider_id: str | None, model_id: str | None = None) -> bool:
+    if not provider_id:
+        return False
+    normalized_provider = str(provider_id).strip().lower()
+    if normalized_provider == "google":
+        return True
+    if normalized_provider in {"opencode_zen", "opencode_go"} and model_id:
+        try:
+            from row_bot.providers.models import TransportMode
+            from row_bot.providers.opencode import opencode_known_route
+
+            route = opencode_known_route(normalized_provider, str(model_id))
+            return bool(route and route.transport == TransportMode.GOOGLE_GENAI)
+        except Exception:
+            return False
+    try:
+        from row_bot.providers.catalog import get_provider_definition
+        from row_bot.providers.models import TransportMode
+
+        definition = get_provider_definition(normalized_provider)
+        return bool(definition and definition.default_transport == TransportMode.GOOGLE_GENAI)
+    except Exception:
+        return False
+
+
 def _has_visible_message_content(message: BaseMessage) -> bool:
     return bool(_content_to_str(getattr(message, "content", "") or "").strip())
 
@@ -344,19 +369,78 @@ def _normalize_anthropic_content_blocks(content: Any) -> tuple[Any, int, int, in
     return (normalized if changed else content), repaired, dropped, cleaned
 
 
+def _normalize_google_content_blocks(content: Any) -> tuple[Any, int, int]:
+    """Return content blocks accepted by ``langchain-google-genai``.
+
+    OpenAI Responses history can contain a ``reasoning`` block with only a
+    summary. Google GenAI expects that block to have a string ``reasoning``
+    value and otherwise raises ``KeyError`` before making the provider call.
+    Drop private reasoning blocks that have no replayable text, and repair the
+    older Row-Bot ``text`` spelling when it is present.
+    """
+
+    if not isinstance(content, list):
+        return content, 0, 0
+
+    normalized: list[Any] = []
+    repaired = 0
+    dropped = 0
+    changed = False
+    for block in content:
+        if not isinstance(block, dict):
+            normalized.append(block)
+            continue
+
+        block_type = str(block.get("type") or "")
+        required_key = (
+            "reasoning"
+            if block_type == "reasoning"
+            else "thinking"
+            if block_type == "thinking"
+            else ""
+        )
+        if required_key:
+            value = block.get(required_key)
+            if isinstance(value, str):
+                normalized.append(block)
+                continue
+            legacy_text = block.get("text")
+            if isinstance(legacy_text, str) and legacy_text:
+                next_block = dict(block)
+                next_block[required_key] = legacy_text
+                next_block.pop("text", None)
+                normalized.append(next_block)
+                repaired += 1
+            else:
+                dropped += 1
+            changed = True
+            continue
+
+        if block_type == "redacted_thinking":
+            dropped += 1
+            changed = True
+            continue
+
+        normalized.append(block)
+
+    return (normalized if changed else content), repaired, dropped
+
+
 def _normalize_provider_facing_messages(
     messages: list[BaseMessage],
     *,
     provider_id: str | None = None,
     anthropic_messages: bool | None = None,
+    google_genai: bool | None = None,
 ) -> list[BaseMessage]:
     """Return a protocol-valid copy of messages for the next LLM call only.
 
     The checkpoint/UI transcript remains untouched. The global fixes here are
     restricted to invalid tool protocol state: invalid tool calls, duplicate
-    tool-call ids, orphan tool results, and provider-native Anthropic thinking
-    content blocks. Reasoning fields are compatibility metadata, so they are
-    stripped only when custom endpoint artifacts are present in the transcript.
+    tool-call ids, orphan tool results, and provider-native Anthropic/Google
+    thinking content blocks. Reasoning fields are compatibility metadata, so
+    they are stripped only when custom endpoint artifacts are present in the
+    transcript.
     """
 
     before = _provider_transcript_diagnostics(messages)
@@ -365,6 +449,11 @@ def _normalize_provider_facing_messages(
         bool(anthropic_messages)
         if anthropic_messages is not None
         else _provider_uses_anthropic_messages(provider_id)
+    )
+    use_google_genai = (
+        bool(google_genai)
+        if google_genai is not None
+        else _provider_uses_google_genai(provider_id)
     )
     keep_empty_reasoning_turns = _custom_endpoint_supports_reasoning_replay(provider_id)
     normalized: list[BaseMessage] = []
@@ -375,6 +464,8 @@ def _normalize_provider_facing_messages(
     repaired_anthropic_thinking = 0
     dropped_anthropic_thinking = 0
     cleaned_anthropic_blocks = 0
+    repaired_google_reasoning = 0
+    dropped_google_reasoning = 0
     rewritten_ids = 0
     dropped_orphans = 0
     dropped_empty = 0
@@ -397,6 +488,10 @@ def _normalize_provider_facing_messages(
                 repaired_anthropic_thinking += repaired
                 dropped_anthropic_thinking += dropped
                 cleaned_anthropic_blocks += cleaned
+            if use_google_genai:
+                content, repaired, dropped = _normalize_google_content_blocks(content)
+                repaired_google_reasoning += repaired
+                dropped_google_reasoning += dropped
             tool_calls: list[dict] = []
             pending_tool_pairs = []
             for index, call in enumerate(getattr(message, "tool_calls", None) or []):
@@ -451,6 +546,8 @@ def _normalize_provider_facing_messages(
         or repaired_anthropic_thinking
         or dropped_anthropic_thinking
         or cleaned_anthropic_blocks
+        or repaired_google_reasoning
+        or dropped_google_reasoning
         or rewritten_ids
         or dropped_orphans
         or dropped_empty
@@ -465,6 +562,8 @@ def _normalize_provider_facing_messages(
                 "repaired_anthropic_thinking_blocks": repaired_anthropic_thinking,
                 "dropped_anthropic_thinking_blocks": dropped_anthropic_thinking,
                 "cleaned_anthropic_content_blocks": cleaned_anthropic_blocks,
+                "repaired_google_reasoning_blocks": repaired_google_reasoning,
+                "dropped_google_reasoning_blocks": dropped_google_reasoning,
                 "rewritten_tool_call_ids": rewritten_ids,
                 "dropped_orphan_tool_messages": dropped_orphans,
                 "dropped_empty_assistant_messages": dropped_empty,
@@ -1968,10 +2067,11 @@ def _collect_agent_complete_input(state: dict) -> dict:
         trimmed = _consolidate_system_messages(trimmed)
         trimmed = _repair_trimmed_tool_messages(trimmed)
 
+    _provider_id = _active_provider_id()
+    _model_id = ""
     try:
         _cur = _active_model_override.get() or get_current_model()
         _provider_id = get_cloud_provider(_cur) if is_cloud_model(_cur) else None
-        _model_id = ""
         try:
             from row_bot.providers.selection import parse_model_ref
 
@@ -2012,7 +2112,11 @@ def _collect_agent_complete_input(state: dict) -> dict:
     except Exception:
         pass  # Non-fatal
 
-    trimmed = _normalize_provider_facing_messages(trimmed, provider_id=_active_provider_id())
+    trimmed = _normalize_provider_facing_messages(
+        trimmed,
+        provider_id=_provider_id,
+        google_genai=_provider_uses_google_genai(_provider_id, _model_id),
+    )
     return {"llm_input_messages": trimmed, "execution_budget": budget}
 
 
