@@ -1,9 +1,9 @@
 (() => {
     'use strict';
 
-    const WINDOWS_URL = 'https://github.com/siddsachar/row-bot/releases/download/v4.7.1/Row-Bot-4.7.1-Windows-x64.exe';
-    const MAC_URL = 'https://github.com/siddsachar/row-bot/releases/download/v4.7.1/Row-Bot-4.7.1-macOS-arm64.dmg';
-    const LINUX_COMMAND = 'curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.7.1';
+    const WINDOWS_URL = 'https://github.com/siddsachar/row-bot/releases/download/v4.8.0/Row-Bot-4.8.0-Windows-x64.exe';
+    const MAC_URL = 'https://github.com/siddsachar/row-bot/releases/download/v4.8.0/Row-Bot-4.8.0-macOS-arm64.dmg';
+    const LINUX_COMMAND = 'curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.8.0';
     const DESKTOP_LINK = 'https://row-bot.ai/';
     const GA_MEASUREMENT_ID = 'G-0YYKPX5M5E';
     const GOOGLE_ADS_ID = 'AW-847204616';

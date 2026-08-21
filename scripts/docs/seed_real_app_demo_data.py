@@ -427,7 +427,7 @@ def _seed_integrations_and_mobile(data_dir: Path, state: dict) -> None:
             "id": "docs-demo-crm",
             "name": "Demo CRM Lookup",
             "version": "1.0.0",
-            "min_row_bot_version": "4.7.1",
+            "min_row_bot_version": "4.8.0",
             "author": {"name": "Row-Bot Docs Demo"},
             "description": "An inert fictional plugin used only for documentation capture.",
             "provides": {"native_tools": [], "mcp_servers": [], "channels": [], "skills": []},

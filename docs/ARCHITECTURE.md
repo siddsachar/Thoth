@@ -18,6 +18,7 @@ Only conversations bounded and recoverable.
 
 - [ReAct Agent Architecture](#react-agent-architecture)
 - [Context Window Accounting & Rolling Compaction](#context-window-accounting--rolling-compaction)
+- [Provider-Aware Reasoning Controls](#provider-aware-reasoning-controls)
 - [Generation Cancellation & Stop Propagation](#generation-cancellation--stop-propagation)
 - [Agent Execution Budgets & Delegation Capacity](#agent-execution-budgets--delegation-capacity)
 - [Durable Parent/Child Agent Orchestration](#durable-parentchild-agent-orchestration)
@@ -75,8 +76,8 @@ Only conversations bounded and recoverable.
 - **Autonomous tool use** — the agent decides which tools to call, when, and how many times, based on your question
 - **30+ core tools plus discoverable external capabilities** — web search, email, calendar, file management, shell access, browser automation, opt-in native Computer Use, vision, image generation, video generation, X (Twitter), a personal knowledge graph, Agent Profiles, Goal Mode, child-agent delegation, Designer Studio, Developer Studio, Custom Tool Builder, scheduled workflows, habit tracking, Row-Bot Status self-inspection, and enabled MCP, plugin, Custom Tool, and channel tools
 - **Streaming responses** — tokens stream in real-time with a typing indicator
-- **Thinking indicators** — shows when the model is reasoning before responding
-- **Unified context management** — Agent Mode, tool-loop model calls, approval/orchestration resumes, and Chat Only assemble and count the complete next provider request through one capacity-aware preparation path; automatic rolling compaction begins at 75% of the effective limit while recent complete turns and tool-call/result groups remain intact
+- **Provider-aware reasoning controls** — exact-model capability metadata exposes only valid Provider default, effort, On/Off, or token-budget choices; the selected value is isolated per thread and provider-qualified model, mapped into the native transport request, and reset safely if the provider rejects it before output
+- **Unified context management** — Agent Mode, tool-loop model calls, approval/orchestration resumes, and Chat Only assemble and count the complete next provider request through one capacity-aware preparation path; fixed prompt/tool overhead is checked before history compaction, automatic rolling compaction begins at 75% of the effective limit, and one exact rebuild prevents a stale projection from entering a retry loop
 - **Progressive external capability loading** — recommended Auto mode binds permitted core tools plus bounded search/invoke bridges and keeps enabled external schemas in an immutable authorized catalog until needed; eager compatibility mode remains available, and background workflow runs retain an eager snapshot
 - **Explicit prompt context/cache sections** — `prompt_context.py` assembles named stable and ephemeral sections so identity, profile, platform, self-knowledge, tool guides, manual skills, plugin skills, turn state, memory recall, Developer context, Designer context, channel state, and history have deterministic cache behavior
 - **Runtime readiness routing** — before building the graph, selected models are evaluated for context headroom, provider capability metadata, tool support, and surface requirements; full agent mode, chat-only mode, and blocked states are explicit outcomes rather than accidental provider failures
@@ -85,12 +86,12 @@ Only conversations bounded and recoverable.
 - **Parent-led orchestration** — parent agents can delegate focused work to durable required or detached child runs with profile snapshots, context summaries, dependencies, tool allowlists, explicit local-folder or worktree assignments, wait/stop/status controls, and ordered parent events; required results rejoin the same authoritative parent turn instead of becoming disconnected summaries
 - **Provider transcript normalization** — model-facing histories are checked for duplicate tool-call IDs, orphan tool results, invalid tool calls, empty assistant turns, and unsafe reasoning/tool artifacts before replay to custom or hosted providers
 - **Centralized prompts plus self-knowledge injection** — base prompt templates live in `prompts.py`, while `self_knowledge.py` injects a dynamic identity line, capability manifest, and live runtime state so Row-Bot can describe itself accurately without stale hard-coded copy
-- **Event-driven context meter** — the desktop composer shows the estimated complete next input, effective capacity, and automatic compaction threshold; persisted usage restores after reopen, while compact/mobile layouts keep the narrow composer and render only durable compaction notices
+- **Event-driven context meter** — the responsive desktop composer shows the estimated complete next input, effective capacity, and automatic compaction threshold; persisted usage restores after reopen, compact desktop layouts preserve the meter in a narrower control row, and mobile renders durable compaction notices without widening the input
 - **Generation-scoped stop & error recovery** — each active generation owns a cancellation scope that closes registered provider responses, terminates registered subprocesses, wakes queued state, and stops only generation-linked child runs; checkpointed model-iteration budgets and no-progress detection wind down long or repetitive tool loops; orphaned tool calls are repaired without replay, including interrupted-parent recovery after restart; provider/API errors are surfaced as persistent red toasts and saved to the conversation checkpoint so they survive thread refresh
 - **Workflow cancellation** — running background workflows can be stopped from the chat header, activity panel, or workflow card; cancellation is checked between every LangGraph node for clean shutdown
 - **Displaced tool-call auto-repair** — if context trimming displaces tool-call/response pairs, the agent automatically detects and repairs the ordering before the next LLM call; orphaned tool calls trigger an automatic retry
 - **Grouped tool traces** — repeated tool calls of the same type are grouped into quiet compact expandable rows, keeping long research, browser, and Developer runs readable while preserving individual results and real discovered-integration labels
-- **Thinking retention** — non-empty reasoning/thinking text is preserved across streaming, detached reattach, checkpoint loading, and final transcript rendering without treating reasoning-only chunks as user-visible final answers
+- **Thinking retention** — non-empty reasoning/thinking text is separated from answer tokens, preserved across streaming, detached reattach, checkpoint loading, and final transcript rendering, and shown in a collapsed Thinking trace without treating reasoning-only chunks as the visible final answer
 - **Date/time awareness** — current date and time is injected into every LLM call so the model always knows "today"
 - **Destructive action confirmation** — dangerous operations (file deletion, sending emails, deleting calendar events, deleting memories, deleting workflows, selected settings changes) require explicit user approval via an interrupt mechanism
 - **Workflow-scoped background permissions** — background workflows use a tiered system: safe operations always run, low-risk operations (move file, move calendar, send email) are allowed with optional runtime guards, and irreversible operations (delete file, delete memory) are always blocked; shell commands and email recipients can be allowlisted per-workflow via the editor UI
@@ -103,35 +104,53 @@ Context capacity is resolved before each model call and exact input preparation
 is shared across Agent Mode and Chat Only. `models.py` owns the versioned
 capacity policy, `agent.py` assembles, counts, compacts, and emits usage events,
 `threads.py` persists validated summaries, usage snapshots, and presentation
-events, and `ui/chat_components.py` renders the desktop meter.
+events, and `ui/chat_components.py` renders the responsive desktop meter.
 
-- **Policy version 2** — `model_settings.json` distinguishes Auto from fixed
-  local allocation and represents the provider cap as an optional advanced
-  override. Historical local 32K and provider 128K defaults migrate to Auto
-  because legacy files cannot distinguish a former default from an explicit
-  choice; non-default values remain fixed
+- **Policy version 3** — `model_settings.json` distinguishes Auto from fixed
+  local allocation and represents the provider/custom cap as an optional
+  advanced override. Historical local 32K and provider 128K defaults migrate
+  to Auto because legacy files cannot distinguish a former default from an
+  explicit choice; exact values from 16,384 through 4,194,304 are preserved
+  instead of being snapped to a preset
 - **Capacity resolution** — `get_context_policy()` combines provider catalog or
-  maintained metadata, local requested and observed Ollama allocation, custom
-  endpoint defaults/overrides, and a disclosed 128K application fallback for
-  remote models with unknown capacity
-- **Application authority boundary** — the remote fallback and most provider
-  overrides govern trimming, accounting, and compaction only; they are not
-  presented as native provider metadata or sent as a runtime context parameter
-  unless a custom endpoint explicitly supports one
+  maintained metadata, local requested and observed Ollama allocation, and
+  explicit advanced caps. Local Ollama Auto targets 65,536 tokens, bounded by
+  the model's native or observed allocation; fixed 32K remains available
+- **Custom endpoint authority** — custom/self-hosted endpoints are always
+  treated as server-managed. Auto requires native catalog metadata, an exact
+  model probe, or a manual declaration; an unknown custom capacity stays
+  unavailable instead of inheriting the generic 128K remote fallback. A custom
+  cap limits Row-Bot's accounting/compaction authority and does not reconfigure
+  the server; llama.cpp capacity is configured with server-side `--ctx-size`,
+  not an undocumented chat-completion `n_ctx` field
+- **Application authority boundary** — the disclosed 128K fallback for other
+  unknown remote models and most provider overrides govern trimming,
+  accounting, and compaction only; they are not presented as native provider
+  metadata or sent as runtime context parameters
+- **Model-scoped probe evidence** — custom endpoint catalog, chat, tool,
+  streaming, and context probe results carry the exact model id. Legacy
+  unscoped evidence is accepted only when the endpoint exposes one model, so a
+  successful tool round-trip for one model cannot make a sibling model Agent
+  ready
 - **Provider headroom** — combined input/output windows expose 85% as usable
   input, input-only provider limits expose 95%, and both start automatic
   compaction at 75% of the effective limit
 - **Complete next-input count** — system and contextual prompts, the projected
   transcript, images, and the exact bound tool schemas are counted together
-  with LangChain's deterministic approximate counter. Provider-reported usage
-  is normalized afterward for diagnostics, not used to rewrite the estimate
+  with LangChain's deterministic approximate counter. The fixed system/tool
+  envelope is preflighted before any history compaction; if it cannot fit, the
+  turn stops with the exact token requirement and recovery guidance.
+  Provider-reported usage is normalized afterward for diagnostics, not used to
+  rewrite the estimate
 - **One preparation contract** — Agent Mode pre-model hooks, tool-loop rounds,
   approval/orchestration resumes, and Chat Only call the same preparation and
   compaction functions, preventing the UI estimate from describing a different
   payload than the runtime path
 - **Rolling user-led boundaries** — compaction selects complete older groups,
-  retains at least two recent complete user turns, keeps tool calls adjacent to
-  their results, and incrementally incorporates a prior validated summary
+  normally retains at least two recent complete user turns, keeps tool calls
+  adjacent to their results, and incrementally incorporates a prior validated
+  summary. If that two-group tail cannot fit, all but the newest atomic group
+  can age into the summary; an oversized current group still fails bounded
 - **Untrusted historical reference** — the summary uses fixed headings for the
   current goal, constraints, completed work, state, relevant details, and next
   step, then enters the provider request inside an explicit untrusted
@@ -147,6 +166,11 @@ events, and `ui/chat_components.py` renders the desktop meter.
 - **Concurrent-winner recovery** — when compare-and-swap loses, the runtime
   accepts only another summary that validates against the same current
   transcript and still creates sufficient safe slack
+- **Exact rebuild fallback** — after a successful summary, the runtime rebuilds
+  the real provider request and may compact once more if the exact result still
+  exceeds the safe limit. Only the final successful summary/usage state is
+  saved, preventing intermediate compaction state from repeating on the next
+  model pass
 - **Durable usage snapshots** — `thread_meta.context_usage_json` stores the
   event-driven estimate with capacity source/state, effective/usable/compact-at
   values, mode, model ref, checkpoint revision, and preparation/policy
@@ -160,10 +184,60 @@ events, and `ui/chat_components.py` renders the desktop meter.
 - **Safe failure and overflow** — a failed compaction may continue only while
   the unchanged input remains below the usable limit; oversized failures stop
   with recovery guidance, and a provider overflow marks that model unavailable
-  for the same session until the model or reviewed override changes
+  for the same session until the model or reviewed override changes. Known
+  bounded compaction failures log reason codes, while unexpected failures log
+  only the exception class rather than transcript or provider content
 - **Privacy boundary** — counting and policy resolution are local. Compaction
   uses the already selected task model, so a cloud-selected task sends the
   bounded aged range to that same provider as part of normal model use
+
+---
+
+## Provider-Aware Reasoning Controls
+
+Reasoning is modeled as exact provider/model capability state rather than one
+global switch. `providers/reasoning.py` resolves capabilities, validates and
+persists selections, builds a transport-neutral request plan, and owns
+display-safe fallback notices. Provider constructors translate that plan into
+the native request shape, while returned reasoning is kept distinct from final
+answer text.
+
+- **Exact capability resolution** — reasoning metadata comes from the selected
+  provider-qualified catalog row where available, then narrowly maintained
+  exact-model data or reviewed Ollama/OpenCode family routing. A model without
+  supported metadata receives no control rather than a guessed option
+- **Typed selections** — `ReasoningSelection` supports Provider default,
+  provider-defined effort levels, On, Off, and positive token budgets; each
+  choice is validated against the exact model's supported values and bounds
+- **Thread and model isolation** — `thread_meta.reasoning_selections_json`
+  stores selections by canonical `model:<provider>:<model>` ref. Switching
+  models restores that model's own value, and unsupported stale selections are
+  cleared back to Provider default with a visible notice
+- **Shared visible controls** — desktop Chat, Designer, and Developer composers
+  render the same Thinking picker beside Model and Approval controls; the
+  compact mobile chat exposes the corresponding control. `/reasoning` can
+  inspect or change the current value, and a bare desktop/mobile command opens
+  the visible picker
+- **Channel command parity** — Telegram, Discord, Slack, WhatsApp, and SMS
+  command paths validate `/reasoning default`, provider effort names, `on`,
+  `off`, or `budget <tokens>` against the channel thread's selected model
+- **Native request mapping** — OpenAI/Codex, Anthropic/Claude Subscription,
+  Google, xAI, Ollama/Ollama Cloud, OpenRouter, OpenCode, and custom-compatible
+  runtimes receive only their supported effort, thinking, enable/disable, or
+  budget fields; request-plan fingerprints also keep model caches isolated
+- **Custom endpoint controls** — advanced custom endpoint settings can declare
+  Auto/On/Off reasoning, an optional budget, replay support, and bounded extra
+  request JSON. Reasoning fields are preserved in provider-facing history only
+  when replay was explicitly declared
+- **Reasoning stream separation** — native reasoning blocks, compatibility
+  metadata, and `<think>` streams are decoded into reasoning events; answer
+  text remains a separate stream, and callback isolation prevents duplicate
+  token or reasoning events through wrapper layers
+- **Single compatibility retry** — `providers/transports/reasoning_fallback.py`
+  retries one provider rejection of an explicit reasoning setting with Provider
+  default only before any output is emitted. It clears the saved override and
+  queues a local notice, but never retries authentication, rate-limit, timeout,
+  cancellation, server, or mid-stream failures
 
 ---
 
@@ -458,13 +532,13 @@ resumable map/reduce knowledge extraction.
 
 ## Brain Model & Providers
 
-The brain model is Row-Bot's default LLM — the model used for conversations, memory extraction, dream analysis, and any thread, profile, child-agent run, or workflow without a specific override. It is selected during setup or later from Settings, and can come from the supported local runtime, a hosted provider, Requesty, ChatGPT / Codex, Claude Subscription, xAI Grok OAuth, Ollama Cloud, or a custom OpenAI-compatible endpoint.
+The brain model is Row-Bot's default LLM — the model used for conversations, memory extraction, dream analysis, and any thread, profile, child-agent run, or workflow without a specific override. It is selected during setup or later from Settings, and can come from the supported local runtime, a hosted provider, OpenCode Zen/Go, Requesty, ChatGPT / Codex, Claude Subscription, xAI Grok OAuth, Ollama Cloud, or a custom OpenAI-compatible endpoint.
 
 Row-Bot is local-first in its data model, but model routing is provider-neutral. Local models remain a first-class path for offline and private use, while hosted and self-hosted models can be selected per thread, workflow, Agent Profile, child-agent run, Developer workspace, or media surface. The setup wizard determines the initial default; on the local path, Row-Bot uses one of the models already exposed by the local runtime, with 14B-class models recommended for stronger agent/tool behavior.
 
 Provider models are supported for users without a dedicated GPU, for frontier reasoning on demand, or for trying many providers without downloading large local weights. Row-Bot supports opt-in provider models through **OpenAI** (direct API), **Anthropic** (Claude through the API-key route), **Google AI** (Gemini), **xAI** (direct Grok API), **xAI Grok OAuth** (subscription/OAuth-backed Grok runtime and Grok Imagine media), **MiniMax** (live catalog through the Anthropic-compatible API), **OpenCode** providers, **OpenRouter** (many third-party models), **Atlas Cloud** (OpenAI-compatible access to Atlas-hosted chat, agent, and vision models discovered from the live provider catalog), **Requesty** (OpenAI-compatible model gateway with Requesty-specific catalog metadata), **Ollama Cloud** (direct API and local daemon cloud-tagged models), **ChatGPT / Codex** (subscription-backed Codex models), **Claude Subscription** (subscription-backed Claude models), and Custom/Self-hosted OpenAI-compatible endpoints such as oMLX, LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, SGLang, or private gateways. Provider connections, health, and credential sources are configured from Settings -> Providers; model catalog browsing, pinning, and defaults live in Settings -> Models.
 
-The `providers/` subsystem now owns provider config, auth metadata, model catalog normalization, capability resolution, runtime construction, display-safe status, runtime readiness, and Quick Choices. Model selections are preserved as provider-qualified refs (`model:<provider>:<model>`) at UI and settings boundaries so a local/custom model does not silently fall back to OpenRouter, xAI, or another provider when multiple providers expose the same or unknown bare model id. Existing public functions in `models.py` remain as compatibility facades while provider-backed selection is rolled through the app. Settings -> Models pickers are intentionally Quick Choice surfaces: catalog rows must be pinned before they become everyday Brain, Vision, Image, or Video choices, while the current default can still appear as a fallback value. `providers/model_catalog_cache.py` refreshes hosted-provider and local-runtime catalog rows in the background so Settings can render from cache without blocking on large remote catalogs. Targeted and scheduled refreshes iterate registered providers, including Codex subscription discovery, and commit rows provider-by-provider. Empty, failed, or partially paginated results retain that provider's last-known-good rows; successful results replace only that provider's rows. Provider Settings surfaces whether the current snapshot came from a live refresh, cache, or fallback.
+The `providers/` subsystem now owns provider config, auth metadata, model catalog normalization, capability and reasoning resolution, runtime construction, display-safe status, runtime readiness, and Quick Choices. Model selections are preserved as provider-qualified refs (`model:<provider>:<model>`) at UI and settings boundaries so a local/custom model does not silently fall back to OpenRouter, xAI, or another provider when multiple providers expose the same or unknown bare model id. Existing public functions in `models.py` remain as compatibility facades while provider-backed selection is rolled through the app. Settings -> Models pickers are intentionally Quick Choice surfaces: catalog rows must be pinned before they become everyday Brain, Vision, Image, or Video choices, while the current default can still appear as a fallback value. `providers/model_catalog_cache.py` refreshes hosted-provider and local-runtime catalog rows in the background so Settings can render from cache without blocking on large remote catalogs. Targeted and scheduled refreshes iterate registered providers, including Codex subscription discovery, and commit rows provider-by-provider. Empty, failed, or partially paginated results retain that provider's last-known-good rows; successful results replace only that provider's rows. Provider Settings surfaces whether the current snapshot came from a live refresh, cache, or fallback.
 
 Live catalog fetches obtain secrets through
 `providers/auth_store.get_provider_secret()` rather than the legacy generic
@@ -474,7 +548,20 @@ provider-scoped secret saved in Settings even when no duplicate legacy key or
 environment variable exists. Catalog rows remain provider-qualified and secret
 values never enter cache metadata.
 
-Runtime readiness is evaluated before agent execution. `providers/readiness.py`, `providers/resolution.py`, and `providers/capability_resolution.py` resolve the selected model/provider, inspect cached capability snapshots, probe uncertain local/custom models when needed, compare the effective context window against tool-schema requirements, and return one of three outcomes: full agent mode, chat-only mode, or blocked with user-facing guidance. Forced-agent surfaces such as workflow execution, approval resumes, and Designer text generation request agent mode explicitly; normal chat can fall back to chat-only mode when a model is conversationally useful but not tool-compatible.
+OpenCode Zen and OpenCode Go use a two-source native routing catalog. A refresh
+intersects the gateway's live `/models` response with the public
+`https://models.dev/api.json` registry, then maps the registry's per-model npm
+package to OpenAI Chat, OpenAI Responses, Anthropic Messages, or Google GenAI.
+Each provider-qualified row retains context, modalities, tool, streaming, and
+reasoning metadata, so a newly listed supported model can become runnable after
+refresh without a hard-coded name. The registry is fetched once per full
+refresh; valid empty gateway results clear stale rows, gateway/registry failures
+preserve the provider's last-known-good cache, cold failures use the static
+fallback, and Zen/Go outcomes remain isolated. Cached native routes restore
+after restart; older rows use the narrow static classifier, while malformed or
+unsupported packages fail closed with display-safe diagnostics.
+
+Runtime readiness is evaluated before agent execution. `providers/readiness.py`, `providers/resolution.py`, and `providers/capability_resolution.py` resolve the selected model/provider, inspect cached capability snapshots, probe uncertain local/custom models when needed, compare the effective context window against tool-schema requirements, and return one of three outcomes: full agent mode, chat-only mode, or blocked with user-facing guidance. Custom probe evidence is scoped to the exact model: a successful chat check makes only that model conversational, and Agent readiness still requires its own successful tool round-trip. Forced-agent surfaces such as workflow execution, approval resumes, and Designer text generation request agent mode explicitly; normal chat can fall back to chat-only mode when a model is conversationally useful but not tool-compatible.
 
 Provider-facing tool schemas are also checked at graph construction time.
 `providers/tool_schema.py` extracts each tool's effective JSON schema and applies
@@ -522,11 +609,12 @@ Claude Subscription's Settings card includes a runtime diagnostic that exercises
 - **Live provider discovery** — provider catalogs can be refreshed from live APIs where supported; Atlas Cloud, MiniMax, Requesty, Codex, and other registered providers participate in targeted/scheduled refresh, xAI API-key rows merge the provider's available model endpoints, and Claude Subscription/xAI Grok OAuth use live catalog reads only with Row-Bot-owned OAuth so API-key and subscription model paths remain distinct
 - **Provider-scoped catalog credentials** — live refresh resolves the same provider secret source used by Settings and runtime construction, allowing provider-only key saves to populate catalogs without mirroring values into a legacy generic key slot
 - **Provider-isolated catalog commits** — refreshes preserve last-known-good rows for failed, empty, or partially paginated providers, replace only successfully refreshed provider rows, and record live/cached/fallback provenance for Settings and diagnostics
-- **Gemini tool-schema compatibility** — Google-bound tools are checked after adapter conversion for typed array items; optional incompatible tools are filtered, explicitly selected incompatible tools fail clearly, and non-Google transports remain unchanged
+- **Gemini tool-schema compatibility** — Google-bound tools are checked after the locked adapter conversion for typed array items and valid unions; optional incompatible tools are filtered, explicitly selected incompatible tools fail clearly, and non-Google transports remain unchanged
 - **Prompt-cache gating** — `prompt_cache.py` applies Anthropic `cache_control` markers only to eligible stable system content for the direct Anthropic API and normalizes provider cache read/write token metadata for diagnostics
 - **Capability-aware surface filtering** — catalog rows carry chat, agent/tool, vision, image, video, context, and provider provenance metadata; Brain, Vision, Image, and Video pickers each filter against the relevant surface instead of treating every remote catalog row as a runnable chat model
-- **OpenCode provider runtime** — OpenCode-compatible providers are represented as first-class provider/runtime entries with auth, catalog, selection, and readiness coverage instead of being treated as generic custom endpoints
-- **Capacity-aware context management** — complete-input accounting and rolling compaction use native/catalog/observed capacity when available, preserve recent complete turns and tool groups, and treat an unknown remote model's 128K value as disclosed application authority rather than provider metadata
+- **OpenCode native runtime** — Zen/Go are first-class provider entries whose live gateway rows use models.dev native transport metadata, including Google GenAI, rather than being forced through one generic compatible protocol; provider-isolated cached and static fallbacks keep restart and outage behavior deterministic
+- **Provider-aware reasoning** — exact catalog/model metadata determines valid reasoning choices, per-thread selections are converted into native provider request fields, returned reasoning stays separate from answer text, and a rejected explicit value can fall back once to Provider default before output
+- **Capacity-aware context management** — complete-input accounting and rolling compaction use native/catalog/observed capacity when available, local Ollama Auto targets 64K, custom endpoints require detected or declared capacity, exact advanced values are preserved, and an unknown non-custom remote model's 128K value is disclosed application authority rather than provider metadata
 - **Local catalog accuracy** — installed Ollama chat models remain visible even when their family is newer than Row-Bot's curated tool/vision heuristics, while embedding-like local models are kept out of chat choices and Vision support is only inferred from known metadata/families
 - **Native Ollama tool metadata** — `providers/ollama.py` gives an explicit
   `tool_calling` boolean first priority, otherwise consumes the daemon's
@@ -535,11 +623,11 @@ Claude Subscription's Settings card includes a runtime diagnostic that exercises
   metadata is absent
 - **Ollama Cloud paths** — direct Ollama Cloud API keys and local daemon `:cloud` models are represented separately while sharing catalog normalization and display metadata; direct API errors are normalized into user-facing provider messages
 - **Tool-support validation** — unsupported or uncertain local/custom models are warned about, can be probed with a real tool round-trip, and route to agent, chat-only, or blocked mode based on the result
-- **Custom endpoint compatibility profiles** — OpenAI-compatible endpoints can use oMLX, LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, SGLang, or generic profiles to normalize message content, tool history, unsupported parameters, streaming behavior, and request-time context settings
-- **Custom endpoint probes** — self-hosted/proxy endpoints can be probed for model catalog access, streaming deltas, tool-call round trips, native context metadata, and no-auth behavior; results are persisted with provider metadata for later routing decisions
-- **Configurable context window** — Auto/fixed local allocation and the optional advanced provider override are stored under policy version 2; actual model limits are still respected, override caches are invalidated when caps change, and custom endpoint profiles can pass capped context request parameters only when the backend declares support
+- **Custom endpoint compatibility profiles** — OpenAI-compatible endpoints can use oMLX, LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, SGLang, or generic profiles to normalize message content, tool history, unsupported parameters, streaming behavior, reasoning replay, and bounded extra request JSON
+- **Custom endpoint probes** — self-hosted/proxy endpoints can be probed for model catalog access, streaming deltas, tool-call round trips, native context metadata, and no-auth behavior; evidence is persisted against the exact tested model for later routing decisions
+- **Configurable context window** — Auto/fixed local allocation and the optional advanced provider/custom cap are stored under policy version 3; exact 16,384–4,194,304 values survive round trips, actual model limits are still respected, override caches are invalidated when caps change, and custom caps remain Row-Bot planning limits rather than server reconfiguration
 - **OpenAI-compatible timeout/retry contract** — phased connect/write/pool/read limits keep long generations alive without allowing connection setup to hang, and the single retry is restricted to failures before the first stream event so partial assistant or tool output is never replayed
-- **Provider transcript hygiene** — provider-facing message histories are normalized to strip invalid tool calls, rewrite duplicate tool-call IDs, drop orphan tool results, flatten tool history for non-tool profiles, and preserve or suppress reasoning fields depending on endpoint support
+- **Provider transcript hygiene** — provider-facing message histories are normalized to strip invalid tool calls, rewrite duplicate tool-call IDs, drop orphan tool results, flatten tool history for non-tool profiles, consolidate late system messages for Claude-shaped routes through OpenRouter/Requesty, repair Google reasoning blocks, and preserve or suppress reasoning fields depending on endpoint support
 - **Local & provider indicators** — the UI clearly distinguishes downloaded local models, missing local models, and connected provider models
 - **Provider vision detection** — provider models with image capability are detected and reused by the Vision feature when available; Atlas-hosted multimodal chat models keep Vision capability when metadata or curated provider-family rules support it, and xAI Grok OAuth can run a vision probe to confirm Grok image-input support before advertising Vision readiness
 
@@ -1024,6 +1112,7 @@ around that channel.
 - **Auto-generated channel tools** — when a channel is running, the agent gains send/photo/document tools for that channel automatically
 - **Approval routing** — approvals can be sent through supported channels with inline action controls
 - **Goal and profile context** — channel-triggered turns carry thread goal/profile context into the normal agent path so Goal Mode and Agent Profile behavior are consistent outside the desktop UI
+- **Reasoning command parity** — Telegram, Discord, Slack, WhatsApp, and SMS expose the same exact-model `/reasoning` validation as local chat, persist the choice on the channel thread, and never advertise unsupported values
 - **No duplicate finals** — normal turns, Goal Mode callbacks, approval resumes, and plugin-channel turns share a delivery result contract so a successfully streamed final is not sent again by legacy completion code
 - **Detached parent delivery** — a parent that suspends for required children saves the originating channel transport and can deliver its later final through that binding; failed sends remain pending with the same idempotency key
 - **Cancellation behavior** — cancelled streams clean previews and return a non-finalized delivery result instead of persisting or announcing a false success
@@ -1388,6 +1477,7 @@ modifying the core codebase.
   a JSON body that the public readiness route does not promise
 - **Startup diagnostics** — `startup_diagnostics.py` runs early in `app.py` and probes fragile optional native packages. Missing optional packages are ignored; installed-but-broken packages such as TorchCodec are logged with recovery steps and patched out of optional Transformers availability checks where safe.
 - **First-launch setup wizard** — starts with model/provider choice, then migration and setup-center steps for Local, Providers, Custom/Self-hosted, memory/docs, workflows, Agent/Profile surfaces, Designer, Developer, channels, voice, and related setup without touching config files by hand
+- **Responsive desktop composer** — container-query breakpoints keep the ordered Model, Thinking, and Approval units, Skills count, context meter, voice state, and stable Send/Stop slot usable below 760 px and 520 px; compact icons retain accessible labels, tooltips, and current-state text
 - **Self-contained installers** — Windows and macOS releases bundle dependencies for one-click setup; Linux uses a one-line bootstrapper that verifies and installs the self-contained XDG tarball into user-owned paths
 - **Packaged runtime validation** — Windows packaging validates embedded Python, bundled Tk, required native DLLs, and startup smoke paths so splash/picker failures are caught before artifact publication
 - **Launcher identity and ports** — the launcher probes `/api/launcher-ping` before reusing port 8080, passes the chosen port through `ROW_BOT_PORT`, and supports explicit `--browser`, `--native`, `--tray`, `--no-tray`, `--server`, `--no-open`, `--port`, and `--host` modes
@@ -1570,9 +1660,9 @@ the full desktop layout.
 
 - **Presentation routing** — `ui/mobile.py` selects the compact shell for an authenticated compact invitation or explicit `?mobile=1` presentation request; `AccessContext` carries owner identity independently, and an authenticated owner can return to the full layout
 - **Phone-native navigation** — Chat, Activity, Workflows, Knowledge, and Settings render as full-height mobile surfaces without desktop drawers, terminal, Buddy, Developer Studio, or Designer Studio chrome
-- **Shared durable state** — mobile chat uses the normal thread/checkpoint store, parent orchestration stream, file attachments, profile/model selection, manual skills, auto-title rules, and generation controls
+- **Shared durable state** — mobile chat uses the normal thread/checkpoint store, parent orchestration stream, file attachments, profile/model/reasoning selection, manual skills, auto-title rules, and generation controls
 - **Conversation list boundary** — internal `agent_child` threads are excluded from Recent chats while their durable activity indicator remains attached to the owning parent conversation
-- **Responsive composer** — safe-area-aware left/right/bottom padding, a bounded model pill, contained action row, and non-shrinking send button keep narrow mobile layouts usable
+- **Responsive composer** — safe-area-aware left/right/bottom padding, bounded Model and Thinking controls, a contained action row, and non-shrinking send button keep narrow mobile layouts usable
 - **Activity surface** — tool approvals, orchestration/child approvals, active chat generations, running/stoppable workflows, and recent workflow history are combined into a compact operational view
 - **Safe workflow editing** — the simple mobile editor can create and update prompt workflows while detecting and preserving advanced graph workflows that require desktop controls
 - **Settings adapters** — provider cards expose display-safe connection and credential summaries; installed skills can be enabled or pinned; installed plugins can be enabled or disabled when setup is complete; Skills Hub and Plugin Marketplace install/configure/update flows remain desktop-only
@@ -1620,9 +1710,10 @@ the full desktop layout.
 - **Multi-turn threads** — conversation history is stored in SQLite via LangGraph checkpointing and local thread metadata
 - **Auto-naming and switching** — threads are named from the conversation and can be reopened, exported, or deleted individually; placeholder mobile titles remain auto-renamable while manual names retain ownership and are never overwritten by a later first message
 - **Per-thread model override** — conversations can pin a different local or provider model than the global default
+- **Per-thread reasoning override** — supported models can pin their own Provider default, effort, On/Off, or budget value in the thread; changing models swaps to the target model's independent saved selection
 - **Per-thread Agent Profile** — conversations can carry a selected Agent Profile whose instructions and policy are injected into agent and chat-only turns
 - **Goal Mode continuity** — active goals, progress, blockers, and continuation decisions are tied to the thread so long work stays visible across turns
-- **Input-level model picker** — the main chat model selector lives in the chat input area, loads cached options immediately, refreshes asynchronously, and keeps the top bar focused on thread state
+- **Input-level model and reasoning pickers** — the main chat Model and Thinking selectors live in the chat input area, load exact cached capability state immediately, refresh asynchronously, and keep the top bar focused on thread state
 - **Desktop context meter** — `ui/chat_components.py` renders the event-driven
   complete-next-input estimate, capacity/threshold state, compaction activity,
   and failure guidance beside the desktop composer without widening the compact
@@ -1630,7 +1721,7 @@ the full desktop layout.
 - **File attachments** — drag-and-drop, clipboard paste, and standard upload flows handle images, PDFs, spreadsheets, JSON, and text
 - **Media persistence** — chat media is stored per thread on disk with sidecar metadata; generated content persists more aggressively than transient capture artifacts
 - **Inline rich rendering** — Plotly charts, Mermaid diagrams, YouTube embeds, syntax-highlighted code, and images render directly in the transcript
-- **Shared chat components** — `ui/chat_components.py` provides the input bar, upload flow, and message container for main chat, Designer Studio, and Developer Studio
+- **Shared chat components** — `ui/chat_components.py` provides the responsive input bar, exact-model reasoning picker, upload flow, and message container for main chat, Designer Studio, and Developer Studio
 - **Bounded transcript rendering** — `ui/transcript.py` chooses a visible window for large threads, exposes load-earlier behavior, and avoids rendering every historic row on initial open
 - **Checkpoint loading without graph import** — transcript loaders can read checkpoint messages and token usage without constructing the agent graph, reducing blank-thread and large-thread latency
 - **Status monitor panel** — Home health-check pills, diagnosis actions, and quick settings links surface runtime health at a glance
@@ -1685,7 +1776,8 @@ Row-Bot includes a stability layer for the kinds of failures that are hard to ca
 - **Context diagnostics** — usage snapshots record estimated and confirmed input
   counts, effective/usable/threshold capacity, capacity source/state, model/mode,
   checkpoint revision, and prompt/tool/policy fingerprints without serializing
-  the prompt or summary into diagnostic events
+  the prompt or summary into diagnostic events; bounded compaction failures use
+  reason codes and unexpected failures retain only the exception class
 - **Document diagnostics** — queue integrity, expired leases, missing sources, staging/work orphans, partial shards, stale embeddings, and compatible legacy vectors are surfaced through Documents health and recover without reading real user data in deterministic tests
 - **Frontend error reporting** — browser-side exceptions are reported back into the structured log with enough context to correlate with UI actions
 - **Performance probes** — memory RSS/VMS/thread counts, event-loop lag, token-counter refresh, model settings load, Settings tab render generations, transcript rendering, FAISS rebuild, and catalog refresh timings are logged for support investigations
@@ -1774,9 +1866,9 @@ Runtime code is packaged under `src/row_bot`. The paths below are package-relati
 | **`buddy/`** + **`ui/buddy.py`** | Buddy companion event bus, behavior brain, config, asset validation, Hatch generation, in-app docked/undocked presence, and optional desktop overlay helpers |
 | **`designer/`** | Designer Studio subsystem: gallery, editor, tooling, storage, exports, presentation mode, publishing, and asset hydration |
 | **`developer/`** | Developer Studio subsystem: workspace links and child-folder registration, folder-scoped writer ownership, Git helpers, durable worktree allocation, approval policy, Docker/local runtime, sandbox state, inspector snapshots, todos, file tree, diffs, GitHub helpers, Custom Tool internals, and UI |
-| **`ui/chat_components.py`** | Shared chat input, upload, message-area, active-skill chip, and desktop context-meter components reused by main chat, Designer Studio, and Developer Studio |
+| **`ui/chat_components.py`** | Responsive shared chat input, exact-model Thinking picker, upload, message-area, active-skill chip, stable Send/Stop slot, and desktop context-meter components reused by main chat, Designer Studio, and Developer Studio |
 | **`ui/chat_composer_extras.py`** | Shared slash palette, skill picker, skill chips, and composer-level Smart Skills controls reused across chat surfaces |
-| **`agent.py`** | LangGraph ReAct agent, prompt assembly, Agent Profile injection, authorized progressive tool/skill snapshot construction, tool allowlist handling, complete-input preparation/accounting, rolling compaction, checkpointed budget hooks/finalization and orphan-only repair, runtime readiness routing, chat-only execution, provider transcript normalization, streaming/context events, interrupt handling, cache clearing, and background execution integration |
+| **`agent.py`** | LangGraph ReAct agent, prompt assembly, Agent Profile injection, authorized progressive tool/skill snapshot construction, tool allowlist handling, fixed-envelope and complete-input preparation/accounting, recoverable rolling compaction, checkpointed budget hooks/finalization and orphan-only repair, runtime readiness routing, chat-only execution, provider/reasoning transcript normalization, separated answer/thinking streams, context events, interrupt handling, cache clearing, and background execution integration |
 | **`agent_budget.py`** + **`agent_settings.py`** | Checkpoint-safe model-iteration budgets, no-progress digests, exactly-once terminal finalization, validated application-wide work/delegation limits, and atomic `agent_settings.json` persistence |
 | **`agent_profiles.py`** + **`agent_context.py`** + **`agent_tool_catalog.py`** | Built-in/user Agent Profile registry, profile persistence, profile context assembly, policy blocks, profile search/selection helpers, and tool catalog metadata for scoped delegation |
 | **`agent_orchestrator.py`** | Versioned parent-led orchestration, required/detached members, dependencies/waves, ordered thread events, group joins, initial parent continuation snapshots, parent leases/checkpoints, approval/steering resume, orphan-only parent repair, transient retry, stop, exactly-once finalization/delivery, activity projections, and restart repair |
@@ -1785,7 +1877,7 @@ Runtime code is packaged under `src/row_bot`. The paths below are package-relati
 | **`cancellation.py`** + **`process_cancellation.py`** | Generation-scoped cleanup registration, provider/tool/browser/Computer Use/process Stop propagation, process-group termination, file-backed output capture for detached descendants, bounded timeout handling, and cancellation results |
 | **`goals.py`** | Thread-scoped Goal Mode state, goal commands, progress/evidence/blocker tracking, continuation prompts, verifier decisions, and synchronization with Agent Run status |
 | **`approval_policy.py`** + **`tools/approval_gate.py`** | Unified approval modes and tool-level approval gate helpers for chat, Developer, workflows, channels, and promoted tools |
-| **`threads.py`** | SQLite-backed thread metadata, LangGraph checkpoint wiring, checkpoint transcript helpers, revision-validated rolling-summary and context-usage persistence, presentation-only thread events and channel claims, per-thread media storage, model/profile overrides, and cleanup hooks for chat-created agent/goal/skill state |
+| **`threads.py`** | SQLite-backed thread metadata, LangGraph checkpoint wiring, checkpoint transcript helpers, revision-validated rolling-summary and context-usage persistence, presentation-only thread events and channel claims, per-thread media storage, model/profile overrides, provider-qualified reasoning selections, and cleanup hooks for chat-created agent/goal/skill state |
 | **`memory.py`** | Backward-compatible memory wrapper that maps legacy memory calls onto the knowledge graph implementation |
 | **`memory_policy.py`** + **`memory_evolution.py`** | Bounded auto-recall scoring/filtering/tracing plus memory status, tier, confidence, evidence, review, superseding, archival, and evolution journal helpers |
 | **`knowledge_graph.py`** | Entity/relation store, FAISS and FTS5 recall, NetworkX traversal, deduplication, relation normalization, recall reinforcement, and graph stats |
@@ -1795,9 +1887,9 @@ Runtime code is packaged under `src/row_bot`. The paths below are package-relati
 | **`document_uploads.py`** + **`document_jobs.py`** | Bounded streamed staging, hash/dedup identity, durable SQLite batches/jobs, transitions, leases, progress, pause/cancel/retry, restart/orphan recovery, and single-flight supervisor |
 | **`document_index.py`** | Bounded per-document vector segments, atomic corpus manifests, deterministic current/legacy top-k retrieval, stale exclusion, ID-scoped removal, rebuild, cache release, and index health |
 | **`document_extraction.py`** | Resumable rolling-map/hierarchical-reduce document extraction, persisted intermediate summaries, cancellation, provider-failure isolation, and idempotent graph/wiki/document finalization |
-| **`models.py`** | Local model compatibility facades, versioned Auto/fixed context policy and migration, native/requested/observed/fallback capacity resolution, usable-input and compaction thresholds, Quick Choices, provider detection, xAI OAuth catalog bridge, model factories, and legacy model APIs |
+| **`models.py`** | Local model compatibility facades, versioned exact-value Auto/fixed context policy and migration, 64K local Auto target, custom server-managed capacity, native/requested/observed/fallback capacity resolution, usable-input and compaction thresholds, coalesced OpenCode gateway/models.dev discovery, Quick Choices, provider detection, reasoning-aware model factories, and legacy model APIs |
 | **`prompt_context.py`** + **`prompt_cache.py`** | Prompt section assembly, stable/ephemeral section inventory, direct-Anthropic prompt-cache marker gating, stable fingerprint reporting, and provider cache usage normalization |
-| **`providers/`** | Provider-scoped auth/secret resolution, normalized model catalogs, provider-isolated last-known-good catalog refresh, native Ollama capability precedence, capability resolution, Gemini tool-schema compatibility, Atlas Cloud, Requesty, Claude Subscription, xAI Grok OAuth, xAI media/catalog helpers, provider-qualified resolution, readiness evaluation, custom endpoint profiles/probes, cancellable runtime construction, phased OpenAI-compatible timeout/pre-stream retry, and display-safe provider status |
+| **`providers/`** | Provider-scoped auth/secret resolution, normalized model catalogs, provider-isolated last-known-good catalog refresh, native Ollama capability precedence, exact-model capability/reasoning resolution, OpenCode native route metadata, Gemini tool-schema compatibility, Atlas Cloud, Requesty, Claude Subscription, xAI Grok OAuth, xAI media/catalog helpers, provider-qualified resolution, model-scoped readiness/probes, custom endpoint profiles, cancellable reasoning-aware runtime construction, one-shot explicit-reasoning fallback, phased OpenAI-compatible timeout/pre-stream retry, and display-safe provider status |
 | **`embedding_config.py`** + **`embedding_providers.py`** | Embedding provider selection, strict cache-only local loading with download-matching snapshot filters, explicit download/repair, shared asynchronous provider state, structured recall fallback, local/cloud backends, vector metadata, and stale-index detection |
 | **`documents.py`** | Document loading/chunking facade, bounded shard build/publication, retrieval compatibility, document records, source retirement, per-document cleanup, and vector reset/rebuild |
 | **`voice/__init__.py`** | Classic local microphone state machine, faster-whisper and selected SenseVoice dispatch, explicit local model loading, and persisted local voice settings |
@@ -1849,7 +1941,7 @@ All user data is stored under `~/.row-bot/` (or `%USERPROFILE%\\.row-bot\\` on W
 
 ```text
 ~/.row-bot/
-├── threads.db                     # Conversation history, LangGraph checkpoints, context usage/summary state, and presentation-only thread events
+├── threads.db                     # Conversation history, LangGraph checkpoints, per-model reasoning choices, context usage/summary state, and presentation-only thread events
 ├── media/                         # Per-thread media files and sidecar metadata
 ├── tasks.db                       # Workflows, schedules, Agent Profiles/Runs/orchestrations, thread goals, Developer worktree ownership, write locks, run history, approvals, and durable channel notification intents
 ├── memory.db                      # Knowledge graph entities and relations
@@ -1868,7 +1960,7 @@ All user data is stored under `~/.row-bot/` (or `%USERPROFILE%\\.row-bot\\` on W
 ├── api_keys.json                  # API key metadata only; raw key values live in the OS credential store when available
 ├── cloud_config.json              # Legacy provider-model pinning compatibility data
 ├── providers.json                 # Provider metadata, Quick Choices, compatibility profiles, runtime/vision probe results, OAuth client-id diagnostics, model-count status, and credential fingerprints only
-├── model_settings.json            # Current model, context policy v2 Auto/fixed modes, advanced provider override, and compatibility state
+├── model_settings.json            # Current model, context policy v3 exact Auto/fixed modes, advanced provider/custom cap, and compatibility state
 ├── model_catalog_cache.json        # Background-refreshed provider/local-runtime model catalog rows and refresh diagnostics
 ├── context_catalog_cache.json      # Cached context-window metadata used before live provider refresh
 ├── embedding_config.json           # Active embedding provider/model settings
@@ -1957,13 +2049,13 @@ Most open-source AI assistants are still **developer tools disguised as products
 | | ChatGPT / Claude / Gemini | Row-Bot |
 |---|---|---|
 | **Your data** | Stored on provider servers, subject to their privacy policies | Stays on your machine. With opt-in provider/custom models, only the current conversation and model-visible tool context go to the selected endpoint; memories, files, designer projects, and history remain local unless explicitly included |
-| **Conversations** | Provider-owned chat history | Local SQLite-backed threads with complete-input metering, capacity-aware rolling compaction, durable presentation events, and export anytime |
+| **Conversations** | Provider-owned chat history | Local SQLite-backed threads with per-model reasoning controls, complete-input metering, fixed-envelope checks, recoverable rolling compaction, durable presentation events, and export anytime |
 | **Remote access** | Provider-hosted account and cloud relay | Direct connection to your running Row-Bot desktop/server through local, Tailscale, SSH, assigned-interface, or exact trusted HTTP(S) routes, protected by one-time invitations, revocable owner sessions, runtime-updated exact-origin gates, and local auth storage |
 | **Cost** | Subscription or provider billing | Free with local models; provider/custom usage is upstream API billing, self-hosted infrastructure, or ChatGPT / Claude / xAI Grok subscription access only when you opt in |
 | **Memory** | Limited, opaque, provider-controlled | Personal knowledge graph with entities, relations, bounded recall, audit/review states, visualization, wiki export, and background refinement |
 | **Agent orchestration** | One assistant persona with limited delegation visibility | Goal Mode, Agent Profiles, one authoritative parent with required/detached children, dependencies, live multi-wave joins, folder-scoped parallel writers, steering, approvals, orphan-only parent repair, retry/recovery, exactly-once finals, checkpoint-safe budgets, configurable capacity limits, and promoted Agent-run workflows stay local and reviewable |
 | **Tools** | Limited app integrations and provider-defined plug-ins | 30+ directly bound core tools plus locally searched enabled MCP, plugin, Custom Tool, channel, and skill catalogs under unchanged profile/approval/workspace boundaries; eager compatibility remains available |
-| **Customization** | Pick a model and maybe a custom instruction | Swap provider-qualified models per thread, profile, workflow, child-agent run, or Developer workspace, configure name and personality, choose Auto/eager external capability loading, pin or progressively load task skills, build workflows, install Skills Hub packages, create Custom Tools, and use controlled self-evolution proposals |
+| **Customization** | Pick a model and maybe a custom instruction | Swap provider-qualified models per thread, profile, workflow, child-agent run, or Developer workspace, choose each model's exact reasoning mode and context cap, configure name and personality, choose Auto/eager external capability loading, pin or progressively load task skills, build workflows, install Skills Hub packages, create Custom Tools, and use controlled self-evolution proposals |
 | **Voice** | Usually cloud-processed | Local faster-whisper or explicitly installed offline FunASR/SenseVoice STT plus Kokoro TTS, with a separate realtime voice runtime for provider-backed conversational sessions |
 | **Availability** | Internet required | Local models work offline; hosted providers and custom endpoints are optional |
 
@@ -1976,7 +2068,7 @@ Most open-source AI assistants are still **developer tools disguised as products
 | | Row-Bot | OpenClaw |
 |---|---|---|
 | **Getting started** | One-click installers and GUI-first setup on Windows and macOS, plus one-line Linux install with browser-first launch | CLI-oriented install flow and heavier terminal expectations |
-| **Model routing** | Local-first data with local, hosted, OpenCode, OpenRouter, Atlas Cloud, xAI Grok OAuth, ChatGPT / Codex, Claude Subscription, Ollama Cloud, provider-scoped live catalogs, explicit context capacity, chat-only fallbacks, and phased OpenAI-compatible transport limits in one GUI | More cloud-first in typical setups |
+| **Model routing** | Local-first data with local, hosted, OpenCode, OpenRouter, Atlas Cloud, xAI Grok OAuth, ChatGPT / Codex, Claude Subscription, Ollama Cloud, provider-scoped live catalogs, native OpenCode transport discovery, exact reasoning/context controls, model-scoped probes, chat-only fallbacks, and phased OpenAI-compatible transport limits in one GUI | More cloud-first in typical setups |
 | **Agent orchestration** | Goal Mode, Agent Profiles, durable parent-led required/detached child groups, dependencies, live joins, folder-scoped writer locks, steering, approvals, orphan-only checkpoint repair, retry/recovery, checkpoint-safe limits, profile/tool allowlists, and Agent-run workflow promotion | Different orchestration model with less desktop-first profile/goal visibility |
 | **Memory** | Typed personal knowledge graph with bounded recall, audit/review states, visualization, wiki export, and structured relations | Simpler text-centric memory patterns |
 | **Knowledge refinement** | 5-phase Dream Cycle with merge, enrich, decay, infer, and insight passes | Experimental dreaming-style memory promotion flows |
@@ -1986,7 +2078,7 @@ Most open-source AI assistants are still **developer tools disguised as products
 | **Tools** | 30+ core tools plus Agent/Goal tools, Developer-native tools, opt-in native Computer Use, Skills Hub, Custom Tool Builder, promoted Custom Tools, and auto-generated channel tools, with local progressive discovery for enabled MCP/plugin/Custom Tool/channel capabilities and per-task skills | Broad built-in toolset with different emphasis |
 | **Messaging channels** | 5 bundled channels with platform-aware live streaming/edit fallback, media handling, interactive/text approvals, durable terminal notices, and a sidebar monitor | Wider channel catalog and gateway focus |
 | **Autonomous workflows** | Step-based workflows with approvals, conditions, triggers, concurrency groups, safety modes, Agent Profile overrides, and promotion from completed Agent Runs | Strong channel routing and automation, different orchestration model |
-| **Desktop and server experience** | Native Windows/macOS app with tray, setup, context meter, and opt-in Computer Use; Linux browser-first package; authenticated full/compact remote layouts with exact trusted-address management; and an official hardened multi-architecture Docker/VPS path | More developer-first and channel-first in practice |
+| **Desktop and server experience** | Native Windows/macOS app with tray, setup, responsive Model/Thinking/Approval composer controls, context meter, and opt-in Computer Use; Linux browser-first package; authenticated full/compact remote layouts with exact trusted-address management; and an official hardened multi-architecture Docker/VPS path | More developer-first and channel-first in practice |
 | **Privacy posture** | All durable state local; no Row-Bot servers or first-party telemetry; optional Cua Driver telemetry is separately disclosed and consent-gated | Self-hostable and privacy-conscious, but with a different operational model |
 
 > **In short:** OpenClaw is an excellent multi-channel gateway for developer-heavy setups. Row-Bot is optimized for **personal AI sovereignty** — local-first memory, structured knowledge, visible goals, reusable Agent Profiles, durable parent-led orchestration, integrated design and code workspaces, authenticated owner access, user-created tools, configurable self-knowledge, and native desktop plus optional server operation without requiring the terminal as the primary product surface.
