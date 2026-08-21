@@ -236,7 +236,9 @@ def evaluate_agent_readiness(
 
     if resolved.provider_id.startswith("custom_openai_"):
         endpoint = resolved.endpoint or {}
-        probe = endpoint.get("last_probe") if isinstance(endpoint.get("last_probe"), dict) else {}
+        from row_bot.providers.custom import custom_probe_for_model
+
+        probe = custom_probe_for_model(endpoint, resolved.model_id)
         tool_calling = probe.get("tool_calling") if probe else None
         tool_round_trip = probe.get("tool_round_trip") if probe else None
         streaming = probe.get("streaming_ok", streaming) if probe else streaming
@@ -544,7 +546,9 @@ def evaluate_chat_readiness(
 
     if resolved.provider_id.startswith("custom_openai_"):
         endpoint = resolved.endpoint or {}
-        probe = endpoint.get("last_probe") if isinstance(endpoint.get("last_probe"), dict) else {}
+        from row_bot.providers.custom import custom_probe_for_model
+
+        probe = custom_probe_for_model(endpoint, resolved.model_id)
         if probe:
             streaming = probe.get("streaming_ok", streaming)
             source = "probe"

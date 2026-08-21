@@ -2614,6 +2614,7 @@ def _record_compaction_event(
     event_type: str,
     boundary: int,
     boundary_digest: str,
+    display_copy: str = "",
 ) -> dict:
     thread_id = _current_thread_id_var.get() or ""
     if not thread_id:
@@ -2638,6 +2639,7 @@ def _record_compaction_event(
             after_message_count=boundary,
             source_revision=inputs.checkpoint_revision or "",
             boundary_digest_prefix=boundary_digest[:16],
+            display_copy=display_copy,
         )
     except Exception:
         logger.debug("Context timeline event persistence failed", exc_info=True)
@@ -2657,12 +2659,25 @@ def _terminal_compaction_failure(
     inputs: PreparationInputs,
     prepared: PreparedModelInput,
     reason: str,
+    *,
+    required_input_tokens: int | None = None,
+    fixed_envelope: bool = False,
 ) -> ContextCompactionError:
+    estimated = int(required_input_tokens or prepared.usage.estimated_input_tokens)
+    usable = int(prepared.usage.usable_input_tokens or 0)
+    selected = int(prepared.usage.effective_limit_tokens or 0)
+    subject = "The fixed prompt and tool schemas require" if fixed_envelope else "The request requires"
+    message = (
+        f"{subject} an estimated {estimated:,} input tokens, but the selected "
+        f"{selected:,}-token context provides {usable:,} usable input tokens. "
+        "Reduce enabled tools, increase the context setting, or choose a larger-context model."
+    )
     event = _record_compaction_event(
         inputs,
         event_type="context_compaction_failed",
         boundary=0,
         boundary_digest=_compaction_failure_boundary_digest(inputs),
+        display_copy=message,
     )
     payload = {
         **_usage_event_payload(prepared.usage),
@@ -2673,10 +2688,17 @@ def _terminal_compaction_failure(
         "display_copy": str((event.get("payload") or {}).get("display_copy") or ""),
     }
     _emit_context_event("compaction_failed", payload)
-    return ContextCompactionError(
-        "Context compaction failed. Retry, choose a larger-context model, or adjust "
-        "the context override before continuing."
-    )
+    return ContextCompactionError(message)
+
+
+def _fixed_prompt_tool_envelope_tokens(inputs: PreparationInputs) -> int:
+    """Count the non-compactable system prompt and bound tool schemas."""
+    fixed_messages = [
+        message
+        for message in inputs.complete_messages
+        if isinstance(message, SystemMessage)
+    ]
+    return _count_prepared_tokens(fixed_messages, inputs.canonical_tools)
 
 
 def _prepare_with_compaction(inputs: PreparationInputs) -> PreparedModelInput:
@@ -2702,6 +2724,19 @@ def _prepare_with_compaction(inputs: PreparationInputs) -> PreparedModelInput:
         )
         _emit_context_event("context_usage", _usage_event_payload(unavailable.usage))
         return unavailable
+    fixed_envelope = _fixed_prompt_tool_envelope_tokens(inputs)
+    if fixed_envelope > usable:
+        failed = PreparedModelInput(
+            messages=prepared.messages,
+            usage=ContextUsage(**{**prepared.usage.to_dict(), "status": "failed"}),
+        )
+        raise _terminal_compaction_failure(
+            inputs,
+            failed,
+            "The fixed prompt and tool schema envelope exceeds the usable input limit.",
+            required_input_tokens=fixed_envelope,
+            fixed_envelope=True,
+        )
     if prepared.usage.estimated_input_tokens < compact_at:
         _emit_context_event("context_usage", _usage_event_payload(prepared.usage))
         return prepared

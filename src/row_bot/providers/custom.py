@@ -111,8 +111,8 @@ CUSTOM_ENDPOINT_PROFILES: dict[str, dict[str, Any]] = {
         "tool_history_mode": "native_required",
         "message_content_mode": "string_text",
         "drop_unsupported_params": True,
-        "supports_runtime_context_override": True,
-        "context_param_name": "n_ctx",
+        "supports_runtime_context_override": False,
+        "context_param_name": "",
         "unknown_context_fallback": DEFAULT_CUSTOM_ENDPOINT_CONTEXT_FALLBACK,
     },
     "localai": {
@@ -205,7 +205,9 @@ def normalize_custom_endpoint(endpoint: dict[str, Any]) -> dict[str, Any]:
         endpoint.get("supports_runtime_context_override", profile_defaults.get("supports_runtime_context_override", False))
     )
     context_param_name = str(endpoint.get("context_param_name") or profile_defaults.get("context_param_name") or "")
-    if profile in {"vllm", "sglang"} and context_param_name in {"max_model_len", "context_length"}:
+    if profile == "llama_cpp" or (
+        profile in {"vllm", "sglang"} and context_param_name in {"max_model_len", "context_length"}
+    ):
         supports_runtime_context_override = False
         context_param_name = ""
 
@@ -387,6 +389,42 @@ def custom_endpoint_models(endpoint_or_provider_id: str) -> list[dict[str, Any]]
     return [dict(item) for item in models if isinstance(item, dict)] if isinstance(models, list) else []
 
 
+def custom_probe_for_model(
+    endpoint_or_provider_id: dict[str, Any] | str,
+    model_id: str,
+) -> dict[str, Any]:
+    """Return persisted probe evidence only when it belongs to *model_id*."""
+    endpoint = (
+        normalize_custom_endpoint(endpoint_or_provider_id)
+        if isinstance(endpoint_or_provider_id, dict)
+        else get_custom_endpoint(endpoint_or_provider_id)
+    )
+    if not endpoint:
+        return {}
+    probe = endpoint.get("last_probe")
+    if not isinstance(probe, dict) or not probe:
+        return {}
+    requested_model = str(model_id or "").strip()
+    if not requested_model:
+        return {}
+    probed_model = str(probe.get("model_id") or probe.get("vision_model") or "").strip()
+    if probed_model:
+        return dict(probe) if probed_model == requested_model else {}
+
+    # Older probes did not record their model. Preserve them only when the
+    # endpoint catalog cannot identify more than one possible target.
+    model_ids = {
+        str(item.get("model_id") or item.get("id") or "").strip()
+        for item in endpoint.get("models", [])
+        if isinstance(item, dict) and str(item.get("model_id") or item.get("id") or "").strip()
+    }
+    if len(model_ids) > 1:
+        return {}
+    if model_ids and requested_model not in model_ids:
+        return {}
+    return dict(probe)
+
+
 def custom_model_cache_entries() -> dict[str, dict[str, Any]]:
     entries: dict[str, dict[str, Any]] = {}
     for endpoint in list_custom_endpoints():
@@ -494,6 +532,7 @@ def probe_custom_endpoint(endpoint_or_provider_id: str, model_id: str | None = N
         "vision_probe_response": "",
         "vision_model": "",
         "vision_content_format": "",
+        "model_id": "",
         "context_window": 0,
         "profile": endpoint.get("profile") or DEFAULT_CUSTOM_ENDPOINT_PROFILE,
         "transport": endpoint.get("transport") or TransportMode.OPENAI_CHAT.value,
@@ -521,6 +560,8 @@ def probe_custom_endpoint(endpoint_or_provider_id: str, model_id: str | None = N
             "; ".join(str(error) for error in result.get("errors", [])) or "unknown error",
         )
         return result
+
+    result["model_id"] = target_model
 
     matched = next((info for info in infos if info.model_id == target_model), None)
     result["vision_model"] = target_model
@@ -1111,7 +1152,10 @@ def model_infos_from_openai_compatible_catalog(
         manual = normalized.get("manual_capabilities")
         if isinstance(manual, dict):
             metadata.update(manual)
-        context_window = _metadata_context_window(metadata, fallback=_positive_int(normalized.get("unknown_context_fallback")))
+        # A profile fallback is useful compatibility metadata, not evidence of
+        # the server's loaded capacity. Auto must remain unknown until the
+        # endpoint reports a value or the user declares one manually.
+        context_window = _metadata_context_window(metadata)
         if context_window:
             metadata["context_window"] = context_window
         results.append(model_info_from_metadata(

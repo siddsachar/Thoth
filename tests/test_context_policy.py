@@ -88,14 +88,14 @@ def test_context_setters_coerce_ui_string_values(monkeypatch):
     saved = {}
     monkeypatch.setattr(models, "_save_settings", lambda payload: saved.update(payload))
 
-    models.set_cloud_context_size("262144")
-    models.set_context_size("65536")
+    models.set_cloud_context_size("190000")
+    models.set_context_size("48000")
 
-    assert models.get_cloud_context_size() == 262_144
-    assert models.get_user_context_size() == 65_536
-    assert saved["cloud_context_size"] == 262_144
-    assert saved["cloud_context_override"] == 262_144
-    assert saved["context_size"] == 65_536
+    assert models.get_cloud_context_size() == 190_000
+    assert models.get_user_context_size() == 48_000
+    assert saved["cloud_context_size"] == 190_000
+    assert saved["cloud_context_override"] == 190_000
+    assert saved["context_size"] == 48_000
     assert models._llm_instance is None
 
 
@@ -172,7 +172,7 @@ def test_local_thinking_model_enables_reasoning(monkeypatch):
     assert captured["reasoning"] is True
 
 
-def test_context_policy_uses_local_cap_for_local_custom_endpoint(tmp_path, monkeypatch):
+def test_context_policy_uses_server_capacity_for_local_custom_endpoint(tmp_path, monkeypatch):
     import row_bot.models as models
 
     monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
@@ -199,19 +199,20 @@ def test_context_policy_uses_local_cap_for_local_custom_endpoint(tmp_path, monke
     policy = models.get_context_policy(f"model:{custom_provider_id('omlx')}:qwen-local")
 
     assert policy.provider_id == custom_provider_id("omlx")
-    assert policy.policy_kind == "local"
-    assert policy.user_cap == 65_536
+    assert policy.policy_kind == "provider"
+    assert policy.user_cap == 131_072
     assert policy.effective_context == 32_768
     assert policy.request_application == "trim_only"
 
 
-def test_context_policy_uses_profile_fallback_for_unknown_local_custom_endpoint(tmp_path, monkeypatch):
+def test_context_policy_keeps_unknown_local_custom_capacity_unavailable(tmp_path, monkeypatch):
     import row_bot.models as models
 
     monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
     monkeypatch.setattr(models, "_num_ctx", 65_536)
     monkeypatch.setattr(models, "_local_context_mode", "fixed")
     monkeypatch.setattr(models, "_cloud_num_ctx", 131_072)
+    monkeypatch.setattr(models, "_cloud_context_override", None)
     save_custom_endpoint({
         "id": "lm-studio",
         "name": "LM Studio",
@@ -231,10 +232,11 @@ def test_context_policy_uses_profile_fallback_for_unknown_local_custom_endpoint(
     policy = models.get_context_policy(f"model:{custom_provider_id('lm-studio')}:qwen-local")
 
     assert policy.provider_id == custom_provider_id("lm-studio")
-    assert policy.policy_kind == "local"
-    assert policy.native_max == 32_768
-    assert policy.cap_source == "profile_default"
-    assert policy.effective_context == 32_768
+    assert policy.policy_kind == "provider"
+    assert policy.native_max is None
+    assert policy.cap_source == "unknown"
+    assert policy.effective_limit_tokens is None
+    assert policy.capacity_state == "unavailable"
 
 
 def test_context_policy_uses_provider_cap_for_remote_custom_endpoint(tmp_path, monkeypatch):
@@ -268,6 +270,66 @@ def test_context_policy_uses_provider_cap_for_remote_custom_endpoint(tmp_path, m
     assert policy.effective_context == 131_072
 
 
+def test_custom_endpoint_auto_uses_exact_reported_server_capacity(tmp_path, monkeypatch):
+    import row_bot.models as models
+
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    monkeypatch.setattr(models, "_cloud_context_override", None)
+    save_custom_endpoint({
+        "id": "exact-server",
+        "name": "Exact server",
+        "base_url": "http://127.0.0.1:8080/v1",
+        "execution_location": "local",
+        "auth_required": False,
+        "models": [{
+            "id": "qwen",
+            "model_id": "qwen",
+            "ctx": 190_000,
+            "provider": custom_provider_id("exact-server"),
+            "capabilities_snapshot": {"tasks": ["chat"]},
+        }],
+    })
+
+    policy = models.get_context_policy(
+        f"model:{custom_provider_id('exact-server')}:qwen"
+    )
+
+    assert policy.native_limit_tokens == 190_000
+    assert policy.requested_limit_tokens is None
+    assert policy.effective_limit_tokens == 190_000
+    assert policy.capacity_source == "server_metadata"
+
+
+def test_custom_endpoint_exact_cap_is_preserved_against_manual_server_capacity(tmp_path, monkeypatch):
+    import row_bot.models as models
+
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    monkeypatch.setattr(models, "_cloud_context_override", 190_000)
+    save_custom_endpoint({
+        "id": "manual-server",
+        "name": "Manual server",
+        "base_url": "https://server.example.test/v1",
+        "execution_location": "remote",
+        "auth_required": False,
+        "manual_capabilities": {"context_window": 262_144},
+        "models": [{
+            "id": "qwen",
+            "model_id": "qwen",
+            "provider": custom_provider_id("manual-server"),
+            "capabilities_snapshot": {"tasks": ["chat"]},
+        }],
+    })
+
+    policy = models.get_context_policy(
+        f"model:{custom_provider_id('manual-server')}:qwen"
+    )
+
+    assert policy.native_limit_tokens == 262_144
+    assert policy.requested_limit_tokens == 190_000
+    assert policy.effective_limit_tokens == 190_000
+    assert policy.capacity_source == "advanced_override"
+
+
 def test_context_policy_marks_custom_runtime_context_param(tmp_path, monkeypatch):
     import row_bot.models as models
 
@@ -294,12 +356,12 @@ def test_context_policy_marks_custom_runtime_context_param(tmp_path, monkeypatch
     policy = models.get_context_policy(f"model:{custom_provider_id('llamacpp')}:qwen-local")
 
     assert policy.provider_id == custom_provider_id("llamacpp")
-    assert policy.policy_kind == "local"
+    assert policy.policy_kind == "provider"
     assert policy.effective_context == 32_768
-    assert policy.request_application == "request_param:n_ctx"
+    assert policy.request_application == "trim_only"
 
 
-def test_local_auto_requests_32k_and_caps_to_observed_allocation(monkeypatch):
+def test_local_auto_requests_64k_and_caps_to_observed_allocation(monkeypatch):
     import row_bot.models as models
 
     monkeypatch.setattr(models, "_local_context_mode", "auto")
@@ -309,11 +371,40 @@ def test_local_auto_requests_32k_and_caps_to_observed_allocation(monkeypatch):
 
     policy = models.get_context_policy("model:ollama:qwen3:14b")
 
-    assert policy.requested_limit_tokens == 32_768
+    assert policy.requested_limit_tokens == 65_536
     assert policy.observed_limit_tokens == 24_576
     assert policy.effective_limit_tokens == 24_576
     assert policy.compact_at_tokens == int(24_576 * 0.75)
     assert policy.usable_input_tokens == int(24_576 * 0.85)
+
+
+def test_local_auto_is_capped_by_smaller_native_capacity(monkeypatch):
+    import row_bot.models as models
+
+    monkeypatch.setattr(models, "_local_context_mode", "auto")
+    monkeypatch.setattr(models, "_num_ctx", 32_768)
+    monkeypatch.setattr(models, "get_model_max_context", lambda model_name=None: 48_000)
+    monkeypatch.setattr(models, "_observed_local_context", {})
+
+    policy = models.get_context_policy("model:ollama:qwen3:14b")
+
+    assert policy.requested_limit_tokens == 65_536
+    assert policy.native_limit_tokens == 48_000
+    assert policy.effective_limit_tokens == 48_000
+
+
+def test_exact_fixed_local_value_reaches_policy_without_snapping(monkeypatch):
+    import row_bot.models as models
+
+    monkeypatch.setattr(models, "_local_context_mode", "fixed")
+    monkeypatch.setattr(models, "_num_ctx", 190_000)
+    monkeypatch.setattr(models, "get_model_max_context", lambda model_name=None: 262_144)
+    monkeypatch.setattr(models, "_observed_local_context", {})
+
+    policy = models.get_context_policy("model:ollama:qwen3:14b")
+
+    assert policy.requested_limit_tokens == 190_000
+    assert policy.effective_limit_tokens == 190_000
 
 
 def test_unknown_remote_auto_capacity_uses_disclosed_128k_application_fallback(monkeypatch):
@@ -372,7 +463,7 @@ def test_fresh_context_settings_keep_cloud_auto_and_local_auto():
 
     assert migrated["cloud_context_override"] is None
     assert migrated["local_context_mode"] == "auto"
-    assert migrated["context_size"] == 32_768
+    assert migrated["context_size"] == 65_536
 
 
 def test_capacity_tables_and_catalogs_are_provider_qualified(monkeypatch):
@@ -415,7 +506,7 @@ def test_context_settings_v2_migration_preserves_unrelated_keys(
     })
 
     assert changed
-    assert migrated["context_policy_version"] == 2
+    assert migrated["context_policy_version"] == 3
     assert migrated["local_context_mode"] == local_mode
     assert migrated["cloud_context_override"] == cloud_override
     assert migrated["unrelated_feature"] == {"enabled": True}
@@ -435,4 +526,107 @@ def test_settings_writer_merges_instead_of_overwriting(tmp_path, monkeypatch):
     saved = json.loads(settings_path.read_text())
     assert saved["unrelated"] == "keep"
     assert saved["cloud_context_override"] == 65_536
-    assert saved["context_policy_version"] == 2
+    assert saved["context_policy_version"] == 3
+
+
+@pytest.mark.parametrize("exact", [48_000, 190_000, "190000", "190,000"])
+def test_exact_context_values_survive_migration_without_preset_snapping(exact):
+    import row_bot.models as models
+
+    migrated, _changed = models._migrate_context_settings({
+        "context_policy_version": 2,
+        "local_context_mode": "fixed",
+        "context_size": exact,
+        "cloud_context_override": exact,
+    })
+
+    expected = int(str(exact).replace(",", ""))
+    assert migrated["context_size"] == expected
+    assert migrated["cloud_context_override"] == expected
+
+
+def test_context_v3_migration_updates_auto_target_but_preserves_fixed_32k():
+    import row_bot.models as models
+
+    auto, _changed = models._migrate_context_settings({
+        "context_policy_version": 2,
+        "local_context_mode": "auto",
+        "context_size": 32_768,
+    })
+    fixed, _changed = models._migrate_context_settings({
+        "context_policy_version": 2,
+        "local_context_mode": "fixed",
+        "context_size": 32_768,
+    })
+    legacy, _changed = models._migrate_context_settings({"context_size": 32_768})
+
+    assert auto["context_size"] == 65_536
+    assert auto["local_context_mode"] == "auto"
+    assert fixed["context_size"] == 32_768
+    assert fixed["local_context_mode"] == "fixed"
+    assert legacy["context_size"] == 65_536
+    assert legacy["local_context_mode"] == "auto"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "nope", "190000.5", 190000.5, True, -1, 16_383, 4_194_305],
+)
+def test_context_validation_rejects_malformed_or_out_of_range_values(value):
+    import row_bot.models as models
+
+    with pytest.raises(ValueError):
+        models.validate_context_size(value)
+
+
+@pytest.mark.parametrize("value", [16_384, 4_194_304, "190000"])
+def test_context_validation_accepts_exact_bounds_and_custom_value(value):
+    import row_bot.models as models
+
+    assert models.validate_context_size(value) == int(value)
+
+
+def test_invalid_context_setters_do_not_mutate_or_persist(monkeypatch):
+    import row_bot.models as models
+
+    monkeypatch.setattr(models, "_num_ctx", 65_536)
+    monkeypatch.setattr(models, "_local_context_mode", "fixed")
+    monkeypatch.setattr(models, "_cloud_context_override", 131_072)
+    monkeypatch.setattr(
+        models,
+        "_save_settings",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid values must not be persisted")
+        ),
+    )
+
+    with pytest.raises(ValueError):
+        models.set_context_size("190000.5")
+    with pytest.raises(ValueError):
+        models.set_cloud_context_size(4_194_305)
+
+    assert models._num_ctx == 65_536
+    assert models._local_context_mode == "fixed"
+    assert models._cloud_context_override == 131_072
+
+
+def test_exact_context_value_saves_and_reloads_with_unrelated_settings(tmp_path, monkeypatch):
+    import json
+    import row_bot.models as models
+
+    settings_path = tmp_path / "model_settings.json"
+    settings_path.write_text(json.dumps({"unrelated": {"keep": True}}))
+    monkeypatch.setattr(models, "_SETTINGS_PATH", settings_path)
+    monkeypatch.setattr(models, "_DATA_DIR", tmp_path)
+
+    models._save_settings({
+        "context_policy_version": 3,
+        "local_context_mode": "fixed",
+        "context_size": 190_000,
+        "cloud_context_override": 190_000,
+    })
+    reloaded = models._load_settings()
+
+    assert reloaded["context_size"] == 190_000
+    assert reloaded["cloud_context_override"] == 190_000
+    assert reloaded["unrelated"] == {"keep": True}

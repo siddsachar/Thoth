@@ -767,6 +767,14 @@ def build_file_upload(
 
 def _context_token_text(value: int | None) -> str:
     tokens = max(0, int(value or 0))
+    try:
+        from row_bot.models import CONTEXT_SIZE_LABELS
+
+        preset_label = CONTEXT_SIZE_LABELS.get(tokens)
+    except Exception:
+        preset_label = None
+    if preset_label and tokens <= 131_072:
+        return preset_label
     if tokens >= 1_000_000:
         return f"{tokens / 1_000_000:.1f}M"
     if tokens >= 1_000:
@@ -813,10 +821,18 @@ def context_policy_presentation(policy: Any) -> dict[str, Any]:
             or getattr(policy, "model_ref", "")
             or "selected model"
         )
+        custom_endpoint = str(getattr(policy, "provider_id", "") or "").startswith("custom_openai_")
         notification = (
-            f"Context limit unknown for {model_name}. Cloud Context is Auto, so Row-Bot "
-            "will not send requests to this model. Refresh the provider catalog, set an "
-            "Advanced override in Settings → Models → Advanced context, or choose another model."
+            f"Context limit unknown for {model_name}. "
+            + (
+                "The custom server context cap is Auto, so Row-Bot will not send requests to this model. "
+                "Refresh or probe the endpoint, declare its native context in Provider settings, set a "
+                "Custom cap in Settings → Models → Advanced context, or choose another model."
+                if custom_endpoint
+                else "Cloud Context is Auto, so Row-Bot will not send requests to this model. Refresh the "
+                "provider catalog, set an Advanced override in Settings → Models → Advanced context, or "
+                "choose another model."
+            )
         )
         return {
             "category": "unknown_auto",
@@ -843,11 +859,14 @@ def context_policy_presentation(policy: Any) -> dict[str, Any]:
     if provider_policy and native_limit:
         native_text = _context_token_text(native_limit)
         effective_text = _context_token_text(effective_limit or native_limit)
+        custom_endpoint = str(getattr(policy, "provider_id", "") or "").startswith("custom_openai_")
+        capacity_label = "Server capacity" if custom_endpoint else "Native max"
         if advanced_override and requested_limit:
             requested_text = _context_token_text(requested_limit)
-            note = f"Native max {native_text} · effective {effective_text} from {requested_text} override"
+            suffix = "cap" if custom_endpoint else "override"
+            note = f"{capacity_label} {native_text} · effective {effective_text} from {requested_text} {suffix}"
         else:
-            note = f"Native max {native_text} · effective {effective_text} Auto"
+            note = f"{capacity_label} {native_text} · effective {effective_text} Auto"
         return {
             "category": "known",
             "settings_note": note,

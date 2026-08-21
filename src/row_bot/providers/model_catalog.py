@@ -378,6 +378,7 @@ def _catalog_row(
     if "chat" in categories and runtime_ready:
         runtime_ready, availability, status_reason = _catalog_runtime_summary(
             provider_id=provider_id,
+            model_id=model_id,
             snapshot=capabilities_snapshot,
             context_window=context_window,
             availability=availability,
@@ -410,6 +411,7 @@ def _catalog_row(
 def _catalog_runtime_summary(
     *,
     provider_id: str,
+    model_id: str,
     snapshot: dict[str, Any],
     context_window: int,
     availability: str,
@@ -427,6 +429,19 @@ def _catalog_runtime_summary(
         return False, availability or "blocked", "Context window is too small for chat."
     if context_window and context_window < _AGENT_MODE_MIN_CONTEXT:
         return True, availability or "chat_only", "Chat Only: tools and actions are off."
+    if provider_id.startswith("custom_openai_"):
+        try:
+            from row_bot.providers.custom import custom_probe_for_model
+
+            probe = custom_probe_for_model(provider_id, model_id)
+        except Exception:
+            probe = {}
+        if probe.get("chat_ok") is False:
+            return False, "blocked", "Endpoint probe did not verify chat completions."
+        if probe.get("chat_ok") is True:
+            if probe.get("tool_calling") is True and probe.get("tool_round_trip") is True:
+                return True, "agent", status_reason
+            return True, "chat_only", "Chat Only: endpoint probe did not verify a tool round trip."
     if provider_id in {"openrouter", "requesty"} and tool_calling is not True:
         return True, availability or "chat_only", "Chat Only: tools and actions are off."
     if tool_calling is False:

@@ -609,6 +609,127 @@ def test_model_catalog_keeps_agent_incompatible_models_visible_as_chat_only(monk
     assert "Chat Only" in rows[0].status_reason
 
 
+def test_custom_catalog_uses_matching_probe_without_promoting_sibling(tmp_path, monkeypatch):
+    import row_bot.providers.config as provider_config
+    import row_bot.providers.model_catalog as catalog_view
+    from row_bot.providers.custom import custom_provider_id, save_custom_endpoint
+
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    provider_id = custom_provider_id("llama-live")
+    save_custom_endpoint({
+        "id": "llama-live",
+        "name": "llama.cpp Live",
+        "profile": "llama_cpp",
+        "base_url": "http://127.0.0.1:1235/v1",
+        "execution_location": "local",
+        "auth_required": False,
+        "models": [
+            {"model_id": "probed-model", "display_name": "Probed", "context_window": 65_536},
+            {"model_id": "unprobed-model", "display_name": "Unprobed", "context_window": 65_536},
+        ],
+        "last_probe": {
+            "model_id": "probed-model",
+            "classification": "agent_ready",
+            "chat_ok": True,
+            "tool_calling": True,
+            "tool_round_trip": True,
+        },
+    })
+    monkeypatch.setattr(
+        catalog_view,
+        "_provider_status_by_id",
+        lambda: {provider_id: {"configured": True, "runtime_enabled": True}},
+    )
+    monkeypatch.setattr(catalog_view, "_codex_model_infos", lambda: [])
+    monkeypatch.setattr(catalog_view, "_curated_media_entries", lambda surface: {})
+
+    rows = build_model_catalog_rows(cloud_cache={}, ollama_rows=[], quick_choices=[])
+    custom_rows = {row.model_id: row for row in rows if row.provider_id == provider_id}
+
+    assert custom_rows["probed-model"].runtime_mode == "agent"
+    assert custom_rows["probed-model"].status_reason == ""
+    assert custom_rows["unprobed-model"].runtime_mode == "chat_only"
+
+
+def test_custom_catalog_preserves_chat_only_and_failed_probe_results(tmp_path, monkeypatch):
+    import row_bot.providers.config as provider_config
+    import row_bot.providers.model_catalog as catalog_view
+    from row_bot.providers.custom import custom_provider_id, save_custom_endpoint
+
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    provider_id = custom_provider_id("custom-live")
+    monkeypatch.setattr(
+        catalog_view,
+        "_provider_status_by_id",
+        lambda: {provider_id: {"configured": True, "runtime_enabled": True}},
+    )
+    monkeypatch.setattr(catalog_view, "_codex_model_infos", lambda: [])
+    monkeypatch.setattr(catalog_view, "_curated_media_entries", lambda surface: {})
+
+    def _row_for_probe(probe):
+        save_custom_endpoint({
+            "id": "custom-live",
+            "base_url": "http://127.0.0.1:1235/v1",
+            "auth_required": False,
+            "models": [{"model_id": "model-a", "context_window": 65_536}],
+            "last_probe": {"model_id": "model-a", **probe},
+        })
+        return next(
+            row
+            for row in build_model_catalog_rows(cloud_cache={}, ollama_rows=[], quick_choices=[])
+            if row.provider_id == provider_id
+        )
+
+    chat_only = _row_for_probe({"classification": "chat_only", "chat_ok": True, "tool_calling": False})
+    failed = _row_for_probe({"classification": "unavailable", "chat_ok": False})
+
+    assert chat_only.runtime_ready is True
+    assert chat_only.runtime_mode == "chat_only"
+    assert "tool round trip" in chat_only.status_reason
+    assert failed.runtime_ready is False
+    assert failed.runtime_mode == "blocked"
+    assert "did not verify chat" in failed.status_reason
+
+
+def test_custom_catalog_probe_cannot_bypass_agent_context_floor(tmp_path, monkeypatch):
+    import row_bot.providers.config as provider_config
+    import row_bot.providers.model_catalog as catalog_view
+    from row_bot.providers.custom import custom_provider_id, save_custom_endpoint
+
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    provider_id = custom_provider_id("small-context")
+    save_custom_endpoint({
+        "id": "small-context",
+        "base_url": "http://127.0.0.1:1235/v1",
+        "auth_required": False,
+        "models": [{"model_id": "model-a", "context_window": 20_000}],
+        "last_probe": {
+            "model_id": "model-a",
+            "classification": "agent_ready",
+            "chat_ok": True,
+            "tool_calling": True,
+            "tool_round_trip": True,
+        },
+    })
+    monkeypatch.setattr(
+        catalog_view,
+        "_provider_status_by_id",
+        lambda: {provider_id: {"configured": True, "runtime_enabled": True}},
+    )
+    monkeypatch.setattr(catalog_view, "_codex_model_infos", lambda: [])
+    monkeypatch.setattr(catalog_view, "_curated_media_entries", lambda surface: {})
+
+    row = next(
+        row
+        for row in build_model_catalog_rows(cloud_cache={}, ollama_rows=[], quick_choices=[])
+        if row.provider_id == provider_id
+    )
+
+    assert row.runtime_ready is True
+    assert row.runtime_mode == "chat_only"
+    assert "Chat Only" in row.status_reason
+
+
 def test_openrouter_cached_tool_metadata_makes_agent_ready(monkeypatch):
     import row_bot.providers.model_catalog as catalog_view
 

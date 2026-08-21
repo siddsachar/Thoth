@@ -33,10 +33,10 @@ def test_context_size_change_clears_override_llm_cache(monkeypatch):
     monkeypatch.setattr(models, "_chat_ollama", lambda **kwargs: created.append(kwargs) or object())
     monkeypatch.setattr(models, "_save_settings", lambda settings: None)
 
-    models.set_context_size(65_536)
+    models.set_context_size(190_000)
 
     assert models._override_llm_cache == {}
-    assert created[-1]["num_ctx"] == 65_536
+    assert created[-1]["num_ctx"] == 190_000
 
 
 def test_agent_graph_cache_uses_override_context(monkeypatch):

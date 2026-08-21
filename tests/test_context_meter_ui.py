@@ -207,6 +207,51 @@ def test_context_policy_presentation_and_notice_deduplication(monkeypatch):
     assert len(notices) == 2
 
 
+def test_custom_server_context_presentation_distinguishes_capacity_and_effective_cap():
+    from types import SimpleNamespace
+
+    from row_bot.ui.chat_components import context_policy_presentation
+
+    auto = SimpleNamespace(
+        model_ref="model:custom_openai_llama-cpp:qwen",
+        provider_id="custom_openai_llama-cpp",
+        runtime_model="qwen",
+        policy_kind="provider",
+        native_limit_tokens=190_000,
+        requested_limit_tokens=None,
+        effective_limit_tokens=190_000,
+        capacity_source="server_metadata",
+    )
+    capped = SimpleNamespace(
+        **{
+            **auto.__dict__,
+            "requested_limit_tokens": 128_000,
+            "effective_limit_tokens": 128_000,
+            "capacity_source": "advanced_override",
+        }
+    )
+
+    assert context_policy_presentation(auto)["settings_note"] == (
+        "Server capacity 190K · effective 190K Auto"
+    )
+    assert context_policy_presentation(capped)["settings_note"] == (
+        "Server capacity 190K · effective 128K from 128K cap"
+    )
+
+    preset = SimpleNamespace(
+        **{
+            **auto.__dict__,
+            "native_limit_tokens": 65_536,
+            "requested_limit_tokens": 32_768,
+            "effective_limit_tokens": 32_768,
+            "capacity_source": "advanced_override",
+        }
+    )
+    assert context_policy_presentation(preset)["settings_note"] == (
+        "Server capacity 64K · effective 32K from 32K cap"
+    )
+
+
 def test_meter_marks_compatible_older_snapshot_as_last_measured() -> None:
     from row_bot.ui.chat_components import ContextMeterController
 
