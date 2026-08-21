@@ -191,6 +191,74 @@ def test_compaction_failure_above_usable_aborts_without_middle_trim(monkeypatch)
         agent._prepare_with_compaction(inputs)
 
 
+def test_approximately_40k_fixed_agent_envelope_fails_at_32k_and_fits_at_64k(monkeypatch):
+    messages = [SystemMessage(content="fixed agent prompt"), HumanMessage(content="run the task")]
+    tools = ({"type": "function", "function": {"name": "large_tool_schema"}},)
+    at_32k = _inputs(
+        messages,
+        raw=messages[1:],
+        effective=32_768,
+        usable=int(32_768 * 0.85),
+        compact_at=int(32_768 * 0.75),
+        model_ref="model:ollama:agent-32k",
+        tools=tools,
+    )
+    at_64k = _inputs(
+        messages,
+        raw=messages[1:],
+        effective=65_536,
+        usable=int(65_536 * 0.85),
+        compact_at=int(65_536 * 0.75),
+        model_ref="model:ollama:agent-64k",
+        tools=tools,
+    )
+    monkeypatch.setattr(agent, "_count_prepared_tokens", lambda *args, **kwargs: 40_000)
+    emitted = []
+    recorded = []
+    monkeypatch.setattr(agent, "_emit_context_event", lambda *args: emitted.append(args))
+    monkeypatch.setattr(
+        agent,
+        "_record_compaction_event",
+        lambda *args, **kwargs: recorded.append(kwargs)
+        or {"payload": {"display_copy": kwargs.get("display_copy", "")}},
+    )
+
+    with pytest.raises(agent.ContextCompactionError) as exc_info:
+        agent._prepare_with_compaction(at_32k)
+
+    message = str(exc_info.value)
+    assert "fixed prompt and tool schemas require an estimated 40,000 input tokens" in message
+    assert "selected 32,768-token context provides 27,852 usable input tokens" in message
+    assert "Reduce enabled tools, increase the context setting" in message
+    assert recorded[0]["display_copy"] == message
+    assert emitted[0][0] == "compaction_failed"
+    assert emitted[0][1]["display_copy"] == message
+
+    prepared = agent._prepare_with_compaction(at_64k)
+    assert prepared.usage.estimated_input_tokens == 40_000
+    assert prepared.usage.status == "ready"
+
+
+def test_reduced_agent_envelope_can_fit_explicit_32k_context(monkeypatch):
+    messages = [SystemMessage(content="reduced prompt"), HumanMessage(content="hello")]
+    inputs = _inputs(
+        messages,
+        raw=messages[1:],
+        effective=32_768,
+        usable=int(32_768 * 0.85),
+        compact_at=int(32_768 * 0.75),
+        model_ref="model:ollama:reduced-tools",
+        tools=(),
+    )
+    monkeypatch.setattr(agent, "_count_prepared_tokens", lambda *args, **kwargs: 10_000)
+    monkeypatch.setattr(agent, "_emit_context_event", lambda *args, **kwargs: None)
+
+    prepared = agent._prepare_with_compaction(inputs)
+
+    assert prepared.usage.estimated_input_tokens == 10_000
+    assert prepared.usage.status == "ready"
+
+
 def test_context_overflow_classifier_is_terminal_and_specific():
     assert agent._is_context_overflow_error("context_length_exceeded")
     assert agent._is_context_overflow_error("prompt is too long for maximum context")

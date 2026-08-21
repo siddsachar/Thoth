@@ -125,14 +125,41 @@ def test_models_tab_uses_collected_current_model_snapshot():
 
 def test_models_advanced_context_explains_auto_and_unknown_capacity() -> None:
     render_src = _function_source("_render_models_tab_content")
+    settings_src = SETTINGS.read_text(encoding="utf-8")
 
-    assert "Auto uses the provider/model limit when known." in render_src
-    assert "uses Row-Bot's disclosed 128K application fallback" in render_src
-    assert '"Auto (recommended)"' in render_src
-    assert 'label="Cloud Context"' in render_src
+    assert "Auto - 64K target (recommended)" in settings_src
+    assert "Auto - use detected server context" in settings_src
+    assert '"Custom…"' in render_src
+    assert '"Custom context tokens"' in render_src
+    assert "_on_cloud_custom_change" in render_src
+    assert "_on_local_custom_change" in render_src
     assert "context_policy_presentation" in render_src
     assert 'presentation.get("settings_note")' in render_src
     assert 'presentation.get("warning")' in render_src
+
+
+def test_context_ui_helpers_preserve_custom_values_and_validate_inline() -> None:
+    from row_bot.ui.settings import (
+        _CUSTOM_CONTEXT_CHOICE,
+        _context_choice,
+        _context_control_copy,
+        _context_validation_error,
+        _provider_status_allows_selection,
+    )
+
+    presets = [16_384, 32_768, 65_536, 131_072, 262_144]
+    assert _context_choice(65_536, presets) == 65_536
+    assert _context_choice(190_000, presets) == _CUSTOM_CONTEXT_CHOICE
+    assert _context_validation_error("190000") == ""
+    assert "whole number" in _context_validation_error("190000.5")
+    assert "between 16,384 and 4,194,304" in _context_validation_error("100")
+    assert _context_control_copy("ollama")["auto_label"] == "Auto - 64K target (recommended)"
+    custom = _context_control_copy("custom_openai_llama-cpp")
+    assert custom["auto_label"] == "Auto - use detected server context"
+    assert "configure the server's context separately" in custom["help"]
+    assert _provider_status_allows_selection({"configured": True}) is True
+    assert _provider_status_allows_selection({"configured": True, "runtime_enabled": False}) is False
+    assert _provider_status_allows_selection({"configured": False, "runtime_enabled": True}) is True
 
 
 def test_settings_shell_preserves_all_registered_tabs():

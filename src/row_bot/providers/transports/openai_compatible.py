@@ -114,7 +114,11 @@ class ChatOpenAICompatible(BaseChatModel):
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
         tools = kwargs.get("tools") or []
-        if not _endpoint_streaming_supported(self.endpoint, has_tools=bool(tools)):
+        if not _endpoint_streaming_supported(
+            self.endpoint,
+            model_name=self.model_name,
+            has_tools=bool(tools),
+        ):
             yield from self._stream_via_non_stream(messages, stop=stop, **kwargs)
             return
         body = self._request_body(messages, stream=True, stop=stop, **kwargs)
@@ -522,18 +526,22 @@ class ChatOpenAICompatible(BaseChatModel):
         return headers
 
     def _apply_context_override(self, body: dict[str, Any]) -> None:
+        # llama.cpp selects context when the server starts (normally with
+        # --ctx-size); n_ctx is not a documented chat-completions parameter.
+        if str(self.endpoint.get("profile") or "").strip().lower() == "llama_cpp":
+            return
         if not self.endpoint.get("supports_runtime_context_override"):
             return
         param_name = str(self.endpoint.get("context_param_name") or "").strip()
         if not param_name:
             return
         try:
-            from row_bot.models import get_context_size
+            from row_bot.models import get_context_policy
             from row_bot.providers.selection import model_ref
 
             provider_id = str(self.endpoint.get("provider_id") or "").strip()
             model_name = model_ref(provider_id, self.model_name) if provider_id else self.model_name
-            context_size = get_context_size(model_name)
+            context_size = get_context_policy(model_name).effective_limit_tokens
         except Exception:
             return
         if context_size and context_size > 0:
@@ -756,8 +764,18 @@ def _use_native_tool_history(endpoint: dict[str, Any], model_name: str) -> bool:
     return mode in {"", "native_required", "native"}
 
 
-def _endpoint_streaming_supported(endpoint: dict[str, Any], *, has_tools: bool = False) -> bool:
-    probe = endpoint.get("last_probe") if isinstance(endpoint.get("last_probe"), dict) else {}
+def _endpoint_streaming_supported(
+    endpoint: dict[str, Any],
+    *,
+    model_name: str,
+    has_tools: bool = False,
+) -> bool:
+    try:
+        from row_bot.providers.custom import custom_probe_for_model
+
+        probe = custom_probe_for_model(endpoint, model_name)
+    except Exception:
+        probe = {}
     if probe.get("streaming_ok") is False:
         return False
     provider_id = str(endpoint.get("provider_id") or "")

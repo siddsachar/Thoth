@@ -8,8 +8,8 @@ import row_bot.providers.config as provider_config
 from row_bot.providers.capabilities import model_supports_surface
 from row_bot.providers.custom import (
     CUSTOM_ENDPOINT_PROFILES,
-    DEFAULT_CUSTOM_ENDPOINT_CONTEXT_FALLBACK,
     custom_model_cache_entries,
+    custom_probe_for_model,
     custom_provider_id,
     delete_custom_endpoint,
     get_custom_endpoint,
@@ -175,7 +175,7 @@ def test_custom_endpoint_catalog_reads_llamacpp_nested_context(tmp_path, monkeyp
     assert infos[0].context_window == 32768
 
 
-def test_custom_endpoint_catalog_defaults_unknown_context_to_agent_floor(tmp_path, monkeypatch):
+def test_custom_endpoint_catalog_keeps_unknown_context_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
     endpoint = {
         "id": "generic",
@@ -188,7 +188,7 @@ def test_custom_endpoint_catalog_defaults_unknown_context_to_agent_floor(tmp_pat
 
     infos = model_infos_from_openai_compatible_catalog(endpoint, payload)
 
-    assert infos[0].context_window == DEFAULT_CUSTOM_ENDPOINT_CONTEXT_FALLBACK
+    assert infos[0].context_window == 0
 
 
 def test_custom_endpoint_catalog_merges_lmstudio_native_context_and_tools(tmp_path, monkeypatch):
@@ -296,7 +296,7 @@ def test_custom_endpoint_save_no_auth_removes_stored_secret(tmp_path, monkeypatc
     assert deleted == [("custom_openai_dummy", "api_key")]
 
 
-def test_vllm_and_sglang_profiles_do_not_send_server_context_as_request_param(tmp_path, monkeypatch):
+def test_server_managed_profiles_do_not_send_context_as_request_param(tmp_path, monkeypatch):
     monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
 
     save_custom_endpoint({
@@ -320,16 +320,29 @@ def test_vllm_and_sglang_profiles_do_not_send_server_context_as_request_param(tm
                 "auth_required": False,
                 "execution_location": "local",
             },
+            {
+                "id": "llama-cpp",
+                "name": "llama.cpp",
+                "base_url": "http://127.0.0.1:8080/v1",
+                "profile": "llama_cpp",
+                "supports_runtime_context_override": True,
+                "context_param_name": "n_ctx",
+                "auth_required": False,
+                "execution_location": "local",
+            },
         ]
     })
 
     vllm = get_custom_endpoint("vllm")
     sglang = get_custom_endpoint("sglang")
+    llama_cpp = get_custom_endpoint("llama-cpp")
 
     assert vllm["supports_runtime_context_override"] is False
     assert vllm["context_param_name"] == ""
     assert sglang["supports_runtime_context_override"] is False
     assert sglang["context_param_name"] == ""
+    assert llama_cpp["supports_runtime_context_override"] is False
+    assert llama_cpp["context_param_name"] == ""
 
 
 def test_litellm_profile_uses_system_first_for_local_proxy_templates(tmp_path, monkeypatch):
@@ -903,11 +916,40 @@ def test_custom_endpoint_probe_persists_models_and_probe_result(tmp_path, monkey
     assert probe["tool_round_trip"] is True
     assert probe["streaming_ok"] is True
     assert probe["streaming_tool_calling"] is True
+    assert probe["model_id"] == "row-bot-dummy-chat"
     assert probe["context_window"] == 16384
     assert endpoint["last_probe"]["ok"] is True
     assert endpoint["last_probe"]["streaming_tool_calling"] is True
     assert endpoint["last_probe"]["classification"] == "agent_ready"
+    assert endpoint["last_probe"]["model_id"] == "row-bot-dummy-chat"
     assert endpoint["models"][0]["context_window"] == 16384
+
+
+def test_custom_probe_lookup_is_model_scoped_and_supports_legacy_single_model():
+    endpoint = {
+        "id": "lab",
+        "models": [
+            {"model_id": "model-a"},
+            {"model_id": "model-b"},
+        ],
+        "last_probe": {
+            "model_id": "model-a",
+            "chat_ok": True,
+            "tool_calling": True,
+            "tool_round_trip": True,
+        },
+    }
+
+    assert custom_probe_for_model(endpoint, "model-a")["tool_round_trip"] is True
+    assert custom_probe_for_model(endpoint, "model-b") == {}
+
+    legacy = {
+        "id": "legacy",
+        "models": [{"model_id": "only-model"}],
+        "last_probe": {"chat_ok": True, "tool_calling": False},
+    }
+    assert custom_probe_for_model(legacy, "only-model")["chat_ok"] is True
+    assert custom_probe_for_model(legacy, "different-model") == {}
 
 
 def test_custom_endpoint_probe_records_vision_success_for_vision_model(tmp_path, monkeypatch):

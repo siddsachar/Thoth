@@ -277,6 +277,9 @@ _trending_fetched: bool = False
 
 DEFAULT_MODEL = "qwen3:14b"
 DEFAULT_CONTEXT_SIZE = 32768
+LOCAL_AUTO_TARGET_CONTEXT = 65_536
+MIN_CONTEXT_SIZE = 16_384
+MAX_CONTEXT_SIZE = 4_194_304
 
 CONTEXT_SIZE_OPTIONS = [16384, 32768, 65536, 131072, 262144]
 CONTEXT_SIZE_LABELS = {16384: "16K", 32768: "32K",
@@ -284,9 +287,9 @@ CONTEXT_SIZE_LABELS = {16384: "16K", 32768: "32K",
 
 # Cloud-model context options (user-selectable cap — reduces cost / rate-limit pressure)
 DEFAULT_CLOUD_CONTEXT_SIZE = 131072   # 128K — safe default for most API tiers
-CLOUD_CONTEXT_SIZE_OPTIONS = [32768, 65536, 131072, 262144, 524288, 1048576]
+CLOUD_CONTEXT_SIZE_OPTIONS = [16384, 32768, 65536, 131072, 262144, 524288, 1048576]
 CLOUD_CONTEXT_SIZE_LABELS = {
-    32768: "32K", 65536: "64K", 131072: "128K",
+    16384: "16K", 32768: "32K", 65536: "64K", 131072: "128K",
     262144: "256K", 524288: "512K", 1048576: "1M",
 }
 
@@ -329,19 +332,47 @@ def _coerce_context_size(
     return parsed if parsed > 0 else fallback
 
 
+def validate_context_size(value: object) -> int:
+    """Return an exact user context value or raise a user-facing error."""
+    if isinstance(value, bool):
+        raise ValueError("Enter a whole number of context tokens.")
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str):
+        text = value.strip().replace(",", "").replace("_", "")
+        if not text or not text.isdigit():
+            raise ValueError("Enter a whole number of context tokens.")
+        parsed = int(text)
+    else:
+        raise ValueError("Enter a whole number of context tokens.")
+    if not MIN_CONTEXT_SIZE <= parsed <= MAX_CONTEXT_SIZE:
+        raise ValueError(
+            f"Context must be between {MIN_CONTEXT_SIZE:,} and {MAX_CONTEXT_SIZE:,} tokens."
+        )
+    return parsed
+
+
 _DATA_DIR = get_row_bot_data_dir()
 _SETTINGS_PATH = _DATA_DIR / "model_settings.json"
 _CLOUD_CACHE_PATH = _DATA_DIR / "cloud_models_cache.json"
 _CONTEXT_CATALOG_PATH = _DATA_DIR / "context_catalog_cache.json"
-_CONTEXT_POLICY_VERSION = 2
+_CONTEXT_POLICY_VERSION = 3
 
 
-def _valid_context_value(value, *, allowed: list[int], default: int) -> int:
-    return _coerce_context_size(value, default, allowed=allowed)
+def _valid_context_value(value, *, default: int) -> int:
+    """Normalize persisted legacy values without snapping exact integers."""
+    try:
+        return validate_context_size(value)
+    except ValueError:
+        legacy_value = _coerce_context_size(value, default)
+        try:
+            return validate_context_size(legacy_value)
+        except ValueError:
+            return validate_context_size(default)
 
 
 def _migrate_context_settings(settings: dict | None) -> tuple[dict, bool]:
-    """Return merge-preserving v2 context settings and whether they changed.
+    """Return merge-preserving context settings and whether they changed.
 
     Historical 32K local and 128K cloud defaults are intentionally interpreted
     as Auto because old files cannot distinguish a default from an explicit
@@ -356,27 +387,24 @@ def _migrate_context_settings(settings: dict | None) -> tuple[dict, bool]:
 
     old_local = _valid_context_value(
         migrated.get("context_size", DEFAULT_CONTEXT_SIZE),
-        allowed=CONTEXT_SIZE_OPTIONS,
         default=DEFAULT_CONTEXT_SIZE,
     )
     local_mode = str(migrated.get("local_context_mode") or "").strip().lower()
-    if version < _CONTEXT_POLICY_VERSION or local_mode not in {"auto", "fixed"}:
+    if version < 2 or local_mode not in {"auto", "fixed"}:
         local_mode = "auto" if old_local == DEFAULT_CONTEXT_SIZE else "fixed"
     migrated["local_context_mode"] = local_mode
-    migrated["context_size"] = old_local
+    migrated["context_size"] = LOCAL_AUTO_TARGET_CONTEXT if local_mode == "auto" else old_local
 
     override = migrated.get("cloud_context_override")
-    if version < _CONTEXT_POLICY_VERSION or "cloud_context_override" not in migrated:
+    if version < 2 or "cloud_context_override" not in migrated:
         old_cloud = _valid_context_value(
             migrated.get("cloud_context_size", DEFAULT_CLOUD_CONTEXT_SIZE),
-            allowed=CLOUD_CONTEXT_SIZE_OPTIONS,
             default=DEFAULT_CLOUD_CONTEXT_SIZE,
         )
         override = None if old_cloud == DEFAULT_CLOUD_CONTEXT_SIZE else old_cloud
     elif override is not None:
         override = _valid_context_value(
             override,
-            allowed=CLOUD_CONTEXT_SIZE_OPTIONS,
             default=DEFAULT_CLOUD_CONTEXT_SIZE,
         )
     migrated["cloud_context_override"] = override
@@ -521,20 +549,17 @@ except Exception:
 _num_ctx = _coerce_context_size(
     _saved.get("context_size", DEFAULT_CONTEXT_SIZE),
     DEFAULT_CONTEXT_SIZE,
-    allowed=CONTEXT_SIZE_OPTIONS,
 )
 _local_context_mode = str(_saved.get("local_context_mode") or "auto")
 _cloud_num_ctx = _coerce_context_size(
     _saved.get("cloud_context_override") or DEFAULT_CLOUD_CONTEXT_SIZE,
     DEFAULT_CLOUD_CONTEXT_SIZE,
-    allowed=CLOUD_CONTEXT_SIZE_OPTIONS,
 )
 _cloud_context_override = _saved.get("cloud_context_override")
 if _cloud_context_override is not None:
     _cloud_context_override = _coerce_context_size(
         _cloud_context_override,
         DEFAULT_CLOUD_CONTEXT_SIZE,
-        allowed=CLOUD_CONTEXT_SIZE_OPTIONS,
     )
 _llm_instance = None
 _model_max_ctx_cache: dict[str, int | None] = {}  # model_name → max context
@@ -685,7 +710,7 @@ def clear_llm_cache() -> None:
 def _local_num_ctx_for(model_name: str | None) -> int:
     """Return the Ollama ``num_ctx`` after applying native model caps."""
     model_max = get_model_max_context(model_name)
-    requested = DEFAULT_CONTEXT_SIZE if _local_context_mode == "auto" else _num_ctx
+    requested = LOCAL_AUTO_TARGET_CONTEXT if _local_context_mode == "auto" else _num_ctx
     user_ctx = _coerce_context_size(requested, DEFAULT_CONTEXT_SIZE, minimum=CONTEXT_SIZE_OPTIONS[0])
     model_ctx = _coerce_context_size(model_max, 0) if model_max else None
     runtime_model = _ollama_runtime_model_name(model_name)
@@ -735,6 +760,13 @@ def get_model_max_context(model_name: str | None = None) -> int | None:
     resolved = _resolved_context_identity(raw_name)
     if resolved and resolved.provider_id.startswith("custom_openai_"):
         endpoint = resolved.endpoint or {}
+        manual = endpoint.get("manual_capabilities") if isinstance(endpoint, dict) else {}
+        manual_ctx = _coerce_context_size(
+            manual.get("context_window") if isinstance(manual, dict) else None,
+            0,
+        )
+        if manual_ctx > 0:
+            return manual_ctx
         models = endpoint.get("models") if isinstance(endpoint, dict) else []
         if isinstance(models, list):
             for item in models:
@@ -844,24 +876,36 @@ def get_context_policy(model_name: str | None = None) -> ContextPolicy:
     provider_id = resolved.provider_id if resolved else (get_cloud_provider(name) or "ollama")
     runtime_model = resolved.runtime_model if resolved else _runtime_model_name(name)
     model_ref_value = resolved.selection_ref if resolved else name
-    remote_policy = bool(resolved and resolved.execution_location != "local") or is_cloud_model(name)
-    if resolved and resolved.execution_location == "local" and provider_id.startswith("custom_openai_"):
-        remote_policy = False
+    custom_endpoint_policy = provider_id.startswith("custom_openai_")
+    remote_policy = (
+        custom_endpoint_policy
+        or bool(resolved and resolved.execution_location != "local")
+        or is_cloud_model(name)
+    )
 
     model_max = get_model_max_context(name)
     model_max_int = _coerce_context_size(model_max, 0) if model_max else 0
     native_max = model_max_int if model_max_int > 0 else None
     cache_entry = _cloud_cache_entry_for(name, provider_id) if remote_policy else None
-    capacity_source = "provider_metadata" if native_max else "unknown"
+    capacity_source = (
+        "server_metadata"
+        if native_max and custom_endpoint_policy
+        else "provider_metadata"
+        if native_max
+        else "unknown"
+    )
     endpoint = resolved.endpoint if resolved and isinstance(resolved.endpoint, dict) else {}
-    if native_max is None and provider_id.startswith("custom_openai_"):
-        profile_default = _coerce_context_size(endpoint.get("unknown_context_fallback"), 0)
-        if profile_default > 0:
-            native_max = profile_default
-            capacity_source = "profile_default"
-    if native_max and cache_entry:
+    manual = endpoint.get("manual_capabilities") if isinstance(endpoint.get("manual_capabilities"), dict) else {}
+    manual_context = _coerce_context_size(manual.get("context_window"), 0)
+    if native_max and manual_context == native_max:
+        capacity_source = "manual_declaration"
+    if native_max and cache_entry and not custom_endpoint_policy:
         capacity_source = str(cache_entry.get("source") or "provider_catalog")
-    elif native_max and _maintained_context_limit(provider_id, runtime_model) == native_max:
+    elif (
+        native_max
+        and not custom_endpoint_policy
+        and _maintained_context_limit(provider_id, runtime_model) == native_max
+    ):
         capacity_source = "maintained_table"
 
     explicit_endpoint_override = _coerce_context_size(
@@ -878,7 +922,7 @@ def get_context_policy(model_name: str | None = None) -> ContextPolicy:
         )
     else:
         requested_limit = _coerce_context_size(
-            DEFAULT_CONTEXT_SIZE if _local_context_mode == "auto" else _num_ctx,
+            LOCAL_AUTO_TARGET_CONTEXT if _local_context_mode == "auto" else _num_ctx,
             DEFAULT_CONTEXT_SIZE,
             minimum=CONTEXT_SIZE_OPTIONS[0],
         )
@@ -892,7 +936,7 @@ def get_context_policy(model_name: str | None = None) -> ContextPolicy:
         for value in (requested_limit, native_max, observed_limit)
         if value is not None and int(value) > 0
     ]
-    if remote_policy and requested_limit is None and native_max is None:
+    if remote_policy and not custom_endpoint_policy and requested_limit is None and native_max is None:
         # Keep the persisted setting on Auto, but give unknown remote models a
         # conservative, explicitly disclosed application limit.  This is trim
         # and compaction authority only; it is never presented as provider
@@ -998,7 +1042,7 @@ def get_tool_budget(fraction: float, *,
 
 def get_user_context_size() -> int:
     """Return the raw user-selected context size (before model capping)."""
-    requested = DEFAULT_CONTEXT_SIZE if _local_context_mode == "auto" else _num_ctx
+    requested = LOCAL_AUTO_TARGET_CONTEXT if _local_context_mode == "auto" else _num_ctx
     return _coerce_context_size(requested, DEFAULT_CONTEXT_SIZE, minimum=CONTEXT_SIZE_OPTIONS[0])
 
 
@@ -1022,7 +1066,7 @@ def get_cloud_context_override() -> int | None:
 def set_cloud_context_size(size: int):
     """Deprecated compatibility setter which creates an advanced override."""
     global _cloud_context_override, _cloud_num_ctx, _llm_instance
-    coerced = _coerce_context_size(size, DEFAULT_CLOUD_CONTEXT_SIZE, allowed=CLOUD_CONTEXT_SIZE_OPTIONS)
+    coerced = validate_context_size(size)
     logger.info("Cloud context override changed: %s → %s", _cloud_context_override, coerced)
     _cloud_context_override = coerced
     _cloud_num_ctx = coerced
@@ -1049,7 +1093,7 @@ def clear_cloud_context_override() -> None:
 def set_context_size(size: int):
     """Change the local context window and invalidate the active LLM."""
     global _local_context_mode, _num_ctx, _llm_instance
-    coerced = _coerce_context_size(size, DEFAULT_CONTEXT_SIZE, allowed=CONTEXT_SIZE_OPTIONS)
+    coerced = validate_context_size(size)
     logger.info("Context size changed: %s → %s", _num_ctx, coerced)
     _local_context_mode = "fixed"
     _num_ctx = coerced
@@ -1065,10 +1109,10 @@ def set_context_size(size: int):
 
 
 def set_context_size_auto() -> None:
-    """Use Row-Bot's deterministic 32K local request, capped when observed."""
+    """Use Row-Bot's 64K local target, capped by known or observed capacity."""
     global _local_context_mode, _num_ctx, _llm_instance
     _local_context_mode = "auto"
-    _num_ctx = DEFAULT_CONTEXT_SIZE
+    _num_ctx = LOCAL_AUTO_TARGET_CONTEXT
     _override_llm_cache.clear()
     if not is_cloud_model(_current_model):
         _llm_instance = _chat_ollama(

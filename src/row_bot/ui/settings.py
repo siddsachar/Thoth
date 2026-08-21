@@ -40,6 +40,65 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_CUSTOM_CONTEXT_CHOICE = "custom"
+
+
+def _context_choice(value: int | None, presets: list[int] | tuple[int, ...]) -> int | str:
+    """Return the select value for an exact persisted context setting."""
+    exact = int(value or 0)
+    return exact if exact in presets else _CUSTOM_CONTEXT_CHOICE
+
+
+def _context_validation_error(value: object) -> str:
+    """Return inline validation copy for one exact context value."""
+    from row_bot.models import validate_context_size
+
+    try:
+        validate_context_size(value)
+    except ValueError as exc:
+        return str(exc)
+    return ""
+
+
+def _context_control_copy(provider_id: str) -> dict[str, str]:
+    """Describe Auto according to who owns the context allocation."""
+    provider = str(provider_id or "")
+    if provider == "ollama":
+        return {
+            "auto_label": "Auto - 64K target (recommended)",
+            "field_label": "Local model context",
+            "help": (
+                "Auto targets 65,536 tokens and is capped by the model's known native or observed "
+                "Ollama allocation. Larger allocations use more memory; 32K remains available for "
+                "compatible reduced-tool setups."
+            ),
+        }
+    if provider.startswith("custom_openai_"):
+        return {
+            "auto_label": "Auto - use detected server context",
+            "field_label": "Custom server context cap",
+            "help": (
+                "Auto uses the server's detected or manually declared capacity. Row-Bot plans and "
+                "caps requests to that value; configure the server's context separately."
+            ),
+        }
+    return {
+        "auto_label": "Auto - use provider/model context",
+        "field_label": "Cloud Context",
+        "help": (
+            "Auto uses the provider/model limit when known. If Row-Bot cannot determine it, "
+            "it uses Row-Bot's disclosed 128K application fallback."
+        ),
+    }
+
+
+def _provider_status_allows_selection(status: dict[str, Any]) -> bool:
+    """Treat configured providers without a runtime gate as selectable."""
+    runtime_enabled = status.get("runtime_enabled")
+    if runtime_enabled is None:
+        return bool(status.get("configured"))
+    return bool(runtime_enabled)
+
 _DOCUMENT_JOB_STATUS_LABELS = {
     "staging": "Queued",
     "queued": "Queued",
@@ -382,8 +441,8 @@ def open_settings(
         CONTEXT_SIZE_LABELS,
         CLOUD_CONTEXT_SIZE_OPTIONS,
         CLOUD_CONTEXT_SIZE_LABELS,
-        _coerce_context_size,
-        get_cloud_context_size,
+        LOCAL_AUTO_TARGET_CONTEXT,
+        validate_context_size,
         get_cloud_context_override,
         set_cloud_context_size,
         clear_cloud_context_override,
@@ -1774,7 +1833,7 @@ def open_settings(
                 status = provider_status(provider_id, refresh_tokens=False)
             except Exception:
                 return f"Current {surface} default is unavailable. Connect the provider or choose another model."
-            if bool(status.get("runtime_enabled")):
+            if _provider_status_allows_selection(status):
                 return ""
             if provider_id == "xai_oauth" and surface == "Brain":
                 return "Current Brain default is unavailable because xAI Grok is disconnected. Connect the provider or choose another model."
@@ -1824,36 +1883,81 @@ def open_settings(
                 controls = ui.row().classes("items-end gap-2 w-full")
             return header_actions, controls
 
-        def _on_cloud_ctx_change(e):
-            if str(e.value or "").lower() == "auto":
-                clear_cloud_context_override()
-                clear_agent_cache()
-                _policy_ref[0] = _load_context_policy(state.current_model)
-                _update_ctx_note()
-                _render_brain_readiness_badge(state.current_model)
-                return
-            value = _coerce_context_size(e.value, get_cloud_context_size(), allowed=CLOUD_CONTEXT_SIZE_OPTIONS)
-            set_cloud_context_size(value)
+        cloud_custom_input_ref = [None]
+        cloud_custom_error_ref = [None]
+        cloud_custom_hint_ref = [None]
+        local_custom_input_ref = [None]
+        local_custom_error_ref = [None]
+        local_custom_hint_ref = [None]
+
+        def _refresh_context_policy() -> None:
             clear_agent_cache()
             _policy_ref[0] = _load_context_policy(state.current_model)
             _update_ctx_note()
             _render_brain_readiness_badge(state.current_model)
 
-        def _on_ctx_change(e):
-            if str(e.value or "").lower() == "auto":
-                set_context_size_auto()
-                state.context_size = 32_768
-                clear_agent_cache()
-                _policy_ref[0] = _load_context_policy(state.current_model)
-                _update_ctx_note()
-                _render_brain_readiness_badge(state.current_model)
+        def _set_custom_visibility(kind: str, visible: bool) -> None:
+            refs = (
+                (cloud_custom_input_ref, cloud_custom_error_ref, cloud_custom_hint_ref)
+                if kind == "cloud"
+                else (local_custom_input_ref, local_custom_error_ref, local_custom_hint_ref)
+            )
+            for ref in refs:
+                if ref[0] is not None:
+                    ref[0].visible = visible and (ref is refs[0] or bool(getattr(ref[0], "text", "")))
+
+        def _custom_context_value(kind: str, raw_value: object) -> int | None:
+            error = _context_validation_error(raw_value)
+            error_ref = cloud_custom_error_ref if kind == "cloud" else local_custom_error_ref
+            hint_ref = cloud_custom_hint_ref if kind == "cloud" else local_custom_hint_ref
+            if error_ref[0] is not None:
+                error_ref[0].text = error
+                error_ref[0].visible = bool(error)
+            if error:
+                if hint_ref[0] is not None:
+                    hint_ref[0].text = ""
+                    hint_ref[0].visible = False
+                return None
+            value = validate_context_size(raw_value)
+            if hint_ref[0] is not None:
+                hint_ref[0].text = f"{value:,} tokens"
+                hint_ref[0].visible = True
+            return value
+
+        def _on_cloud_ctx_change(e):
+            choice = str(e.value or "").lower()
+            _set_custom_visibility("cloud", choice == _CUSTOM_CONTEXT_CHOICE)
+            if choice == _CUSTOM_CONTEXT_CHOICE:
                 return
-            value = _coerce_context_size(e.value, state.context_size, allowed=CONTEXT_SIZE_OPTIONS)
+            if choice == "auto":
+                clear_cloud_context_override()
+                _refresh_context_policy()
+                return
+            value = validate_context_size(e.value)
+            set_cloud_context_size(value)
+            _refresh_context_policy()
+
+        def _on_cloud_custom_change(e):
+            value = _custom_context_value("cloud", e.value)
+            if value is None:
+                return
+            set_cloud_context_size(value)
+            _refresh_context_policy()
+
+        def _on_ctx_change(e):
+            choice = str(e.value or "").lower()
+            _set_custom_visibility("local", choice == _CUSTOM_CONTEXT_CHOICE)
+            if choice == _CUSTOM_CONTEXT_CHOICE:
+                return
+            if choice == "auto":
+                set_context_size_auto()
+                state.context_size = LOCAL_AUTO_TARGET_CONTEXT
+                _refresh_context_policy()
+                return
+            value = validate_context_size(e.value)
             set_context_size(value)
             state.context_size = value
-            clear_agent_cache()
-            _policy_ref[0] = _load_context_policy(state.current_model)
-            _update_ctx_note()
+            _refresh_context_policy()
             policy = _policy_ref[0]
             if policy is not None and policy.native_max is not None and value > policy.native_max:
                 max_lbl = CONTEXT_SIZE_LABELS.get(policy.native_max, f"{policy.native_max:,}")
@@ -1862,7 +1966,14 @@ def open_settings(
                     f"Context capped: model max is {max_lbl} (you selected {usr_lbl}).",
                     type="warning", close_button=True, timeout=8000,
                 )
-            _render_brain_readiness_badge(state.current_model)
+
+        def _on_local_custom_change(e):
+            value = _custom_context_value("local", e.value)
+            if value is None:
+                return
+            set_context_size(value)
+            state.context_size = value
+            _refresh_context_policy()
 
         vsvc = state.vision_service
         vision_value = model_choice_value(vsvc.model)
@@ -1983,31 +2094,70 @@ def open_settings(
             ctx_note = ui.label("").classes("text-xs text-grey-6 q-ml-lg")
             ctx_note.visible = False
             with ui.expansion("Advanced context", icon="tune").classes("w-full"):
-                ui.label(
-                    "Auto uses the provider/model limit when known. If Row-Bot cannot determine it, "
-                    "it uses Row-Bot's disclosed 128K application fallback. Set an Advanced override "
-                    "after verifying the model's actual limit."
-                ).classes("text-grey-6 text-xs q-mb-sm")
-                cloud_advanced_options = {"auto": "Auto (recommended)", **cloud_ctx_opts}
+                initial_context_copy = _context_control_copy(
+                    str(getattr(initial_policy, "provider_id", "ollama") or "ollama")
+                )
+                context_help = ui.label(initial_context_copy["help"]).classes("text-grey-6 text-xs q-mb-sm")
+                cloud_override = get_cloud_context_override()
+                cloud_choice = "auto" if cloud_override is None else _context_choice(
+                    cloud_override,
+                    CLOUD_CONTEXT_SIZE_OPTIONS,
+                )
+                cloud_advanced_options = {
+                    "auto": initial_context_copy["auto_label"],
+                    **cloud_ctx_opts,
+                    _CUSTOM_CONTEXT_CHOICE: "Custom…",
+                }
                 cloud_ctx_select = ui.select(
-                    label="Cloud Context",
+                    label=initial_context_copy["field_label"],
                     options=cloud_advanced_options,
-                    value=get_cloud_context_override() or "auto",
+                    value=cloud_choice,
                     on_change=_on_cloud_ctx_change,
-                ).classes("min-w-[220px]").props("dense outlined").tooltip(
-                    "Optional verified cap. Auto prefers provider metadata and otherwise uses the 128K fallback."
-                )
+                ).classes("min-w-[260px]").props("dense outlined")
                 cloud_ctx_select.visible = _is_cloud_ctx
-                local_advanced_options = {"auto": "Auto (requested 32K)", **ctx_opts}
-                ctx_select = ui.select(
-                    label="Local model context",
-                    options=local_advanced_options,
-                    value="auto" if get_local_context_mode() == "auto" else state.context_size,
-                    on_change=_on_ctx_change,
-                ).classes("min-w-[220px]").props("dense outlined").tooltip(
-                    "Auto requests 32K and is capped by the native or observed Ollama allocation."
+                cloud_custom_input_ref[0] = ui.input(
+                    "Custom context tokens",
+                    value=str(cloud_override or "") if cloud_choice == _CUSTOM_CONTEXT_CHOICE else "",
+                    on_change=_on_cloud_custom_change,
+                ).classes("min-w-[260px]").props("dense outlined inputmode=numeric")
+                cloud_custom_input_ref[0].visible = _is_cloud_ctx and cloud_choice == _CUSTOM_CONTEXT_CHOICE
+                cloud_custom_error_ref[0] = ui.label("").classes("text-negative text-xs")
+                cloud_custom_error_ref[0].visible = False
+                cloud_custom_hint_ref[0] = ui.label(
+                    f"{cloud_override:,} tokens" if cloud_override and cloud_choice == _CUSTOM_CONTEXT_CHOICE else ""
+                ).classes("text-grey-6 text-xs")
+                cloud_custom_hint_ref[0].visible = _is_cloud_ctx and cloud_choice == _CUSTOM_CONTEXT_CHOICE
+
+                local_choice = (
+                    "auto"
+                    if get_local_context_mode() == "auto"
+                    else _context_choice(state.context_size, CONTEXT_SIZE_OPTIONS)
                 )
+                local_copy = _context_control_copy("ollama")
+                local_advanced_options = {
+                    "auto": local_copy["auto_label"],
+                    **ctx_opts,
+                    _CUSTOM_CONTEXT_CHOICE: "Custom…",
+                }
+                ctx_select = ui.select(
+                    label=local_copy["field_label"],
+                    options=local_advanced_options,
+                    value=local_choice,
+                    on_change=_on_ctx_change,
+                ).classes("min-w-[260px]").props("dense outlined")
                 ctx_select.visible = not _is_cloud_ctx
+                local_custom_input_ref[0] = ui.input(
+                    "Custom context tokens",
+                    value=str(state.context_size) if local_choice == _CUSTOM_CONTEXT_CHOICE else "",
+                    on_change=_on_local_custom_change,
+                ).classes("min-w-[260px]").props("dense outlined inputmode=numeric")
+                local_custom_input_ref[0].visible = not _is_cloud_ctx and local_choice == _CUSTOM_CONTEXT_CHOICE
+                local_custom_error_ref[0] = ui.label("").classes("text-negative text-xs")
+                local_custom_error_ref[0].visible = False
+                local_custom_hint_ref[0] = ui.label(
+                    f"{state.context_size:,} tokens" if local_choice == _CUSTOM_CONTEXT_CHOICE else ""
+                ).classes("text-grey-6 text-xs")
+                local_custom_hint_ref[0].visible = not _is_cloud_ctx and local_choice == _CUSTOM_CONTEXT_CHOICE
 
             vision_actions, vision_controls = _surface_row("visibility", "Vision", "Camera and screen capture analysis")
             with vision_actions:
@@ -2250,11 +2400,31 @@ def open_settings(
             if policy is None:
                 cloud_ctx_select.visible = False
                 ctx_select.visible = True
+                context_help.text = _context_control_copy("ollama")["help"]
+                _set_custom_visibility("cloud", False)
+                _set_custom_visibility("local", ctx_select.value == _CUSTOM_CONTEXT_CHOICE)
                 ctx_note.visible = False
                 return
             provider_policy = policy.policy_kind == "provider"
+            control_copy = _context_control_copy(policy.provider_id)
+            context_help.text = control_copy["help"]
+            if provider_policy:
+                cloud_ctx_select.label = control_copy["field_label"]
+                cloud_ctx_select.options = {
+                    "auto": control_copy["auto_label"],
+                    **cloud_ctx_opts,
+                    _CUSTOM_CONTEXT_CHOICE: "Custom…",
+                }
             cloud_ctx_select.visible = provider_policy
             ctx_select.visible = not provider_policy
+            _set_custom_visibility(
+                "cloud",
+                provider_policy and cloud_ctx_select.value == _CUSTOM_CONTEXT_CHOICE,
+            )
+            _set_custom_visibility(
+                "local",
+                not provider_policy and ctx_select.value == _CUSTOM_CONTEXT_CHOICE,
+            )
             if provider_policy:
                 presentation = context_policy_presentation(policy)
                 ctx_note.text = str(presentation.get("settings_note") or "")

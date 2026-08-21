@@ -1,5 +1,6 @@
 import json
 import threading
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -665,13 +666,41 @@ def test_atlascloud_non_anthropic_preserves_native_tool_history():
 
 
 def test_openai_compatible_transport_applies_runtime_context_param(monkeypatch):
-    monkeypatch.setattr("row_bot.models.get_context_size", lambda model_name=None: 32_768)
+    monkeypatch.setattr(
+        "row_bot.models.get_context_policy",
+        lambda model_name=None: SimpleNamespace(effective_limit_tokens=190_000),
+    )
+    client = _Client()
+    model = ChatOpenAICompatible(
+        model_name="qwen",
+        base_url="http://127.0.0.1:8080/v1",
+        endpoint={
+            "provider_id": "custom_openai_documented",
+            "profile": "generic_openai",
+            "supports_runtime_context_override": True,
+            "context_param_name": "context_length",
+        },
+        http_client=client,
+    )
+
+    model.invoke([HumanMessage(content="hi")])
+
+    body = client.calls[0][1]["json"]
+    assert body["context_length"] == 190_000
+
+
+def test_llamacpp_transport_never_sends_request_time_n_ctx(monkeypatch):
+    monkeypatch.setattr(
+        "row_bot.models.get_context_policy",
+        lambda model_name=None: SimpleNamespace(effective_limit_tokens=190_000),
+    )
     client = _Client()
     model = ChatOpenAICompatible(
         model_name="qwen",
         base_url="http://127.0.0.1:8080/v1",
         endpoint={
             "provider_id": "custom_openai_llamacpp",
+            "profile": "llama_cpp",
             "supports_runtime_context_override": True,
             "context_param_name": "n_ctx",
         },
@@ -680,8 +709,30 @@ def test_openai_compatible_transport_applies_runtime_context_param(monkeypatch):
 
     model.invoke([HumanMessage(content="hi")])
 
-    body = client.calls[0][1]["json"]
-    assert body["n_ctx"] == 32_768
+    assert "n_ctx" not in client.calls[0][1]["json"]
+
+
+def test_documented_context_param_is_not_sent_when_capacity_is_unknown(monkeypatch):
+    monkeypatch.setattr(
+        "row_bot.models.get_context_policy",
+        lambda model_name=None: SimpleNamespace(effective_limit_tokens=None),
+    )
+    client = _Client()
+    model = ChatOpenAICompatible(
+        model_name="qwen",
+        base_url="http://127.0.0.1:8080/v1",
+        endpoint={
+            "provider_id": "custom_openai_documented",
+            "profile": "generic_openai",
+            "supports_runtime_context_override": True,
+            "context_param_name": "context_length",
+        },
+        http_client=client,
+    )
+
+    model.invoke([HumanMessage(content="hi")])
+
+    assert "context_length" not in client.calls[0][1]["json"]
 
 
 def test_openai_compatible_transport_preserves_reasoning_content():
@@ -1096,6 +1147,37 @@ def test_openai_compatible_transport_tool_requests_fallback_when_streaming_tool_
 
     assert client.calls[0][1]["json"]["stream"] is False
     assert chunks[0].tool_calls[0]["name"] == "lookup"
+
+
+def test_openai_compatible_transport_does_not_reuse_other_models_streaming_probe():
+    client = _Client()
+    client.post = lambda url, **kwargs: client.calls.append((url, kwargs)) or _Response({
+        "choices": [{"message": {"content": "fallback"}}],
+    })
+    model = ChatOpenAICompatible(
+        model_name="model-b",
+        base_url="http://127.0.0.1:1234/v1",
+        endpoint={
+            "id": "tools",
+            "provider_id": "custom_openai_tools",
+            "models": [{"model_id": "model-a"}, {"model_id": "model-b"}],
+            "last_probe": {
+                "model_id": "model-a",
+                "streaming_ok": True,
+                "tool_calling": True,
+                "streaming_tool_calling": True,
+            },
+        },
+        http_client=client,
+    )
+
+    chunks = list(model.stream(
+        [HumanMessage(content="lookup")],
+        tools=[{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+    ))
+
+    assert client.calls[0][1]["json"]["stream"] is False
+    assert chunks[0].content == "fallback"
 
 
 def test_openai_compatible_transport_tool_requests_fallback_when_streaming_tool_probe_missing():

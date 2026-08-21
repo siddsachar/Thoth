@@ -152,6 +152,22 @@ def test_terminal_failure_event_is_persistent_actionable_and_distinct(isolated_t
     assert "larger-context model" in event["payload"]["display_copy"]
     assert event["payload"]["display_copy"] != threads.CONTEXT_COMPACTED_COPY
 
+    actionable = (
+        "The fixed prompt and tool schemas require an estimated 40,000 input tokens, "
+        "but the selected 32,768-token context provides 27,852 usable input tokens. "
+        "Reduce enabled tools, increase the context setting, or choose a larger-context model."
+    )
+    actionable_event = threads.append_thread_event(
+        "thread-1",
+        "context_compaction_failed",
+        "actionable-failure-key",
+        source_revision="rev-1",
+        display_copy=actionable,
+    )
+
+    assert actionable_event["payload"]["display_copy"] == actionable
+    assert "Reduce enabled tools" in actionable_event["payload"]["display_copy"]
+
 
 def test_channel_delivery_claim_is_atomic_and_durable(isolated_thread_db):
     event = threads.append_thread_event(

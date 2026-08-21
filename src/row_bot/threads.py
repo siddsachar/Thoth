@@ -1522,11 +1522,12 @@ def append_thread_event(
     after_message_count: int = 0,
     source_revision: str = "",
     boundary_digest_prefix: str = "",
+    display_copy: str = "",
 ) -> dict:
     """Append one bounded presentation-only context event idempotently."""
     if event_type not in {"context_compacted", "context_compaction_failed"}:
         raise ValueError("unsupported thread event type")
-    display_copy = (
+    display_copy = str(display_copy or "").strip() or (
         CONTEXT_COMPACTED_COPY
         if event_type == "context_compacted"
         else CONTEXT_COMPACTION_FAILED_COPY
