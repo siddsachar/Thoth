@@ -209,10 +209,12 @@ def restore_snapshot(project: DesignerProject, snapshot_id: str) -> bool:
 
 def delete_history(project_id: str) -> None:
     """Delete all snapshots for a project."""
-    d = HISTORY_DIR / project_id
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    d = resolve_managed_path(HISTORY_DIR, str(project_id or ""))
     if d.exists():
         import shutil
-        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(d)
 
 
 # ═══════════════════════════════════════════════════════════════════════

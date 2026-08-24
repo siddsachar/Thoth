@@ -1091,7 +1091,7 @@ def open_agent_peek_dialog(
                                 "border-left: 2px solid rgba(96, 165, 250, 0.35); padding-left: 8px;"
                             )
                 if child_messages:
-                    ui.label("Child Thread Snippets").classes("text-xs font-bold text-grey-5 q-mt-sm")
+                    ui.label("Agent Run Transcript").classes("text-xs font-bold text-grey-5 q-mt-sm")
                     for child_msg in child_messages:
                         role = str(child_msg.get("role") or "message")
                         content = child_msg.get("content", "")
@@ -1104,7 +1104,7 @@ def open_agent_peek_dialog(
                 with ui.row().classes("gap-1"):
                     if thread_id and callable(on_open_agent_thread):
                         ui.button(
-                            "Open thread",
+                            "Open run detail",
                             icon="open_in_new",
                             on_click=lambda row=run_row: (dlg.close(), on_open_agent_thread(row)),
                         ).props("flat dense no-caps")

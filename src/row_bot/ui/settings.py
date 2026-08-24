@@ -4876,7 +4876,11 @@ def open_settings(
         ui.separator()
 
         if total > 0:
-            from row_bot.ui.bulk_select import BulkSelect, render_bulk_action_bar
+            from row_bot.ui.bulk_select import (
+                BulkSelect,
+                _bind_bulk_selection_checkbox,
+                render_bulk_action_bar,
+            )
             from row_bot.ui.confirm import confirm_destructive
             from row_bot.ui import knowledge_audit as audit
             import row_bot.memory_evolution as memory_evolution
@@ -5119,11 +5123,10 @@ def open_settings(
                                     _cb = ui.checkbox(
                                         value=_bulk_mem.is_selected(_mem_id),
                                     )
-                                    _cb.on(
-                                        "update:model-value",
-                                        lambda e, i=_mem_id: _bulk_mem.toggle_item(
-                                            i, bool(e.args),
-                                        ),
+                                    _bind_bulk_selection_checkbox(
+                                        _cb,
+                                        _bulk_mem,
+                                        _mem_id,
                                     )
                                     _entry_container = ui.expansion(
                                         _header_label,

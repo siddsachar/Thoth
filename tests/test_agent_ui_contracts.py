@@ -485,28 +485,47 @@ def test_sidebar_uses_responsive_drawer_with_narrow_screen_toggle():
     assert "aria-label='Toggle navigation'" in sidebar
 
 
-def test_sidebar_hides_child_agent_threads_by_default():
+def test_sidebar_uses_one_parent_only_dataset_without_an_agents_filter():
     src = _read("ui/sidebar.py")
 
-    assert '"agents"' in src
     assert 'thread_type == "agent_child"' in src
     assert "def _is_hidden_agent_child_run" in src
     assert 'agent_run.get("kind") or "") != "subagent"' in src
-    assert '{"key": "agents"' not in src
-    assert '"label": "Agents"' not in src
+    assert '{"key": "agents", "label": "Agents", "icon": "badge"}' not in src
+    assert '"agents": "Agent conversations"' not in src
     assert "parent_child_counts" not in src
     assert "_SIDEBAR_AGENT_EXPANDED" not in src
     assert 'payload["agent_parent_expanded"]' not in src
     assert 'payload.pop("agent_parent_expanded", None)' in src
-    assert "for agent_run in _agent_run_rows" in src
-    assert "for run in _agent_run_rows" not in src
+    assert "agent_runs=_agent_run_rows" in src
     assert "_is_hidden_agent_child_run(agent_run)" in src
-    assert '_SIDEBAR_FILTER == "all"' in src
+    assert "_classify_visible_thread_rows" in src
+    assert "_visible_conversation_counts" in src
+    assert "_normalize_conversation_filter" in src
     assert "def _filter_classified_thread_rows" in src
-    assert 'item[1] != "agents"' in src
-    assert "_filter_classified_thread_rows(classified, _SIDEBAR_FILTER)" in src
+    assert "_filter_classified_thread_rows(all_classified, _SIDEBAR_FILTER)" in src
+    assert 'f"Show all ({counts[\'all\']})"' in src
+    assert "Show all ({len(" not in src
     assert "Show child Agent threads" not in src
-    assert "valid_modal_keys" in src
+    assert "valid_modal_keys" not in src
+
+
+def test_child_agent_detail_is_parent_owned_and_has_no_rename_affordance():
+    chat = _read("ui/chat.py")
+    drawer = _read("ui/agent_drawer.py")
+    render = _read("ui/render.py")
+
+    child_header = chat.split("if child_parent_context:", 1)[1].split(
+        "# Model selection now lives in the composer",
+        1,
+    )[0]
+    assert "Agent run ·" in chat
+    assert "Child Agent of" in child_header
+    assert "Back to Parent" in child_header
+    assert "show_rename_thread_dialog" not in child_header.split("else:", 1)[0]
+    assert "Open Agent run detail" in drawer
+    assert "Agent Run Transcript" in render
+    assert "Open run detail" in render
 
 
 def test_agent_card_uses_compact_peek_contract():
@@ -522,7 +541,7 @@ def test_agent_card_uses_compact_peek_contract():
     )[0]
 
     assert "open_agent_peek_dialog" in agent_card
-    assert "Open thread" in src
+    assert "Open run detail" in src
     assert "Open worktree" in src
     assert "Compare" in src
     assert "agent_lifecycle" in src

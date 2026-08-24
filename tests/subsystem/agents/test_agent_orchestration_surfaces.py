@@ -150,9 +150,12 @@ def test_default_synthesis_uses_a_disposable_thread(monkeypatch, tmp_path):
         seen["config"] = config
         return "Consolidated final"
 
-    monkeypatch.setattr("row_bot.agent.invoke_agent", fake_invoke)
+    agent_module = importlib.import_module("row_bot.agent")
+    cleanup_module = importlib.import_module("row_bot.thread_cleanup")
+    monkeypatch.setattr(agent_module, "invoke_agent", fake_invoke)
     monkeypatch.setattr(
-        "row_bot.threads.delete_threads",
+        cleanup_module,
+        "delete_threads",
         lambda thread_ids: cleaned.extend(thread_ids) or (len(thread_ids), []),
     )
 

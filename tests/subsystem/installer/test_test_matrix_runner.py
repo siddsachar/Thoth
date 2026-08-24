@@ -67,6 +67,26 @@ def test_changed_tier_expands_source_test_map() -> None:
     assert changed.env["ROW_BOT_TEST_MODE"] == "1"
 
 
+def test_changed_files_include_committed_worktree_and_untracked_changes(monkeypatch) -> None:
+    outputs = {
+        ("git", "diff", "--name-only", "origin/main...HEAD"): "committed.py\nshared.py\n",
+        ("git", "diff", "--name-only", "HEAD"): "working.py\nshared.py\n",
+        ("git", "ls-files", "--others", "--exclude-standard"): "untracked.py\n",
+    }
+
+    def fake_run(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, stdout=outputs[tuple(argv)], stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert matrix.changed_files_from_git("origin/main") == [
+        "committed.py",
+        "shared.py",
+        "working.py",
+        "untracked.py",
+    ]
+
+
 def test_dry_run_main_does_not_execute(monkeypatch, capsys) -> None:
     monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: pytest.fail("dry-run should not execute commands"))
 

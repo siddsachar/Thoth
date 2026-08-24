@@ -57,6 +57,21 @@ def get_snapshot(workspace_id: str, thread_id: str | None) -> InspectorSnapshot 
     return _snapshots.get((workspace_id, thread_id))
 
 
+def clear_thread_snapshots(thread_id: str) -> int:
+    """Drop cached Inspector snapshots and pending refreshes for one thread."""
+
+    clean = str(thread_id or "").strip()
+    if not clean:
+        return 0
+    keys = {key for key in (*_snapshots.keys(), *_states.keys()) if key[1] == clean}
+    for key in keys:
+        _snapshots.pop(key, None)
+        state = _states.pop(key, None)
+        if state is not None and state.task is not None and not state.task.done():
+            state.task.cancel()
+    return len(keys)
+
+
 def request_snapshot_refresh(
     workspace_id: str,
     thread_id: str | None,

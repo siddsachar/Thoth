@@ -175,7 +175,7 @@ def _get_or_create_thread(chat_id: int) -> dict:
     existing = _list_threads()
     for tid, name, _, _, *rest in existing:
         if tid == prefix or tid.startswith(prefix + "_"):
-            _save_thread_meta(tid, name)  # bump updated_at
+            _save_thread_meta(tid, name, allow_recreate=True)  # bump updated_at
             try:
                 from row_bot.tasks import record_thread_channel_ref
 
@@ -197,7 +197,12 @@ def _get_or_create_thread(chat_id: int) -> dict:
     suffix = uuid.uuid4().hex[:6]
     thread_id = f"tg_{chat_id}_{suffix}"
     name = f"✈️ Telegram – {chat_id}"
-    _save_thread_meta(thread_id, name, seed_default_skills=True)
+    _save_thread_meta(
+        thread_id,
+        name,
+        seed_default_skills=True,
+        allow_recreate=True,
+    )
     try:
         from row_bot.tasks import record_thread_channel_ref
 
@@ -218,7 +223,12 @@ def _new_thread(chat_id: int) -> dict:
     suffix = uuid.uuid4().hex[:6]
     thread_id = f"tg_{chat_id}_{suffix}"
     name = f"✈️ Telegram – {chat_id} ({suffix})"
-    _save_thread_meta(thread_id, name, seed_default_skills=True)
+    _save_thread_meta(
+        thread_id,
+        name,
+        seed_default_skills=True,
+        allow_recreate=True,
+    )
     try:
         from row_bot.tasks import record_thread_channel_ref
 

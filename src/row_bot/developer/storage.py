@@ -138,6 +138,61 @@ def remove_workspace(workspace_id: str) -> DeveloperWorkspace:
     return save_workspace(workspace)
 
 
+def delete_workspace_record(workspace_id: str) -> bool:
+    """Delete only a Row-Bot workspace registry row; never touch its files."""
+
+    clean = str(workspace_id or "").strip()
+    if not clean:
+        return False
+    payload = _load_payload()
+    rows = [
+        raw
+        for raw in payload.get("workspaces", [])
+        if not (isinstance(raw, dict) and str(raw.get("id") or "") == clean)
+    ]
+    if len(rows) == len(payload.get("workspaces", [])):
+        return False
+    payload["workspaces"] = rows
+    _save_payload(payload)
+    return True
+
+
+def clear_thread_references(
+    thread_id: str,
+    *,
+    recovery_workspace_id: str = "",
+) -> int:
+    """Clear stale default-thread pointers and optionally expose recovery."""
+
+    clean_thread_id = str(thread_id or "").strip()
+    clean_recovery_id = str(recovery_workspace_id or "").strip()
+    if not clean_thread_id and not clean_recovery_id:
+        return 0
+    payload = _load_payload()
+    changed = 0
+    rows: list[dict] = []
+    for raw in payload.get("workspaces", []):
+        if not isinstance(raw, dict):
+            continue
+        next_raw = dict(raw)
+        row_changed = False
+        if clean_thread_id and str(next_raw.get("default_thread_id") or "") == clean_thread_id:
+            next_raw["default_thread_id"] = ""
+            row_changed = True
+        if clean_recovery_id and str(next_raw.get("id") or "") == clean_recovery_id:
+            if bool(next_raw.get("hidden")):
+                next_raw["hidden"] = False
+                row_changed = True
+        if row_changed:
+            next_raw["updated_at"] = datetime.now().isoformat()
+            changed += 1
+        rows.append(next_raw)
+    if changed:
+        payload["workspaces"] = rows
+        _save_payload(payload)
+    return changed
+
+
 def set_workspace_approval_mode(workspace_id: str, approval_mode: str) -> DeveloperWorkspace:
     workspace = get_workspace(workspace_id)
     if workspace is None:

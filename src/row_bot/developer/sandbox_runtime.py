@@ -274,6 +274,54 @@ def mark_pending_change_imported(change_id: str) -> None:
     _save_pending_payload(payload)
 
 
+def cleanup_thread_pending_changes(thread_id: str) -> dict[str, int]:
+    """Drop imported records for a thread and retain every unimported change."""
+
+    clean = str(thread_id or "").strip()
+    stats = {"imported_removed": 0, "unimported_retained": 0}
+    if not clean:
+        return stats
+    payload = _load_pending_payload()
+    retained: list[dict] = []
+    changed = False
+    for raw in payload.get("changes", []):
+        if not isinstance(raw, dict) or str(raw.get("thread_id") or "") != clean:
+            retained.append(raw)
+            continue
+        if bool(raw.get("imported")):
+            stats["imported_removed"] += 1
+            changed = True
+        else:
+            stats["unimported_retained"] += 1
+            retained.append(raw)
+    if changed:
+        payload["changes"] = retained
+        _save_pending_payload(payload)
+    return stats
+
+
+def cleanup_orphaned_imported_changes(owner_thread_ids: set[str]) -> int:
+    """Remove imported pending-change rows whose conversation no longer exists."""
+
+    owners = {str(thread_id) for thread_id in owner_thread_ids}
+    payload = _load_pending_payload()
+    existing = list(payload.get("changes", []))
+    retained = [
+        raw
+        for raw in existing
+        if not (
+            isinstance(raw, dict)
+            and bool(raw.get("imported"))
+            and str(raw.get("thread_id") or "") not in owners
+        )
+    ]
+    removed = len(existing) - len(retained)
+    if removed:
+        payload["changes"] = retained
+        _save_pending_payload(payload)
+    return removed
+
+
 def run_docker_sandbox_command(
     workspace: DeveloperWorkspace,
     command: str,

@@ -73,6 +73,18 @@ def save_todos(thread_id: str, todos: list[DeveloperTodo]) -> None:
     _write_json_atomic(_todo_path(thread_id), {"todos": [todo.to_dict() for todo in todos]})
 
 
+def delete_todos(thread_id: str) -> bool:
+    """Remove the managed todo sidecar for one conversation."""
+
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    path = resolve_managed_path(TODOS_DIR, _todo_path(thread_id))
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
 def replace_todos_from_labels(thread_id: str, labels: list[str]) -> list[DeveloperTodo]:
     todos = [
         DeveloperTodo(id=uuid.uuid4().hex[:10], label=label.strip())

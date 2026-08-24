@@ -14,9 +14,13 @@ and the list itself.
 
 from __future__ import annotations
 
-from typing import Callable
+import asyncio
+from typing import Any, Callable, TypeVar
 
-from nicegui import ui
+from nicegui import run, ui
+
+
+_ResultT = TypeVar("_ResultT")
 
 
 class BulkSelect:
@@ -91,8 +95,60 @@ class BulkSelect:
         self._emit()
 
     def select_many(self, ids: list[str] | set[str]) -> None:
-        self._selected.update(ids)
+        previous = len(self._selected)
+        self._selected.update(str(item_id) for item_id in ids)
+        if len(self._selected) == previous:
+            return
         self._emit()
+
+    def deselect_many(self, ids: list[str] | set[str]) -> None:
+        previous = len(self._selected)
+        self._selected.difference_update(str(item_id) for item_id in ids)
+        if len(self._selected) == previous:
+            return
+        self._emit()
+
+
+def _bind_bulk_selection_checkbox(
+    checkbox: Any,
+    bulk: BulkSelect,
+    item_id: str,
+) -> None:
+    """Keep a checkbox, selection count, and destructive target in sync."""
+
+    checkbox.on_value_change(
+        lambda event: bulk.toggle_item(item_id, bool(event.value))
+    )
+    checkbox.on("click", js_handler="(event) => event.stopPropagation()")
+
+
+async def _run_bulk_operation(
+    operation: Callable[[], _ResultT],
+    *,
+    progress_label: str,
+) -> _ResultT:
+    """Run blocking bulk work off the UI loop behind a progress dialog."""
+
+    with ui.dialog().props(
+        "persistent no-esc-dismiss no-backdrop-dismiss"
+    ) as progress_dialog:
+        with ui.card().classes("items-center gap-3 q-pa-lg").style(
+            "min-width: 300px;"
+        ):
+            ui.spinner("oval", size="lg", color="primary")
+            ui.label(progress_label).classes("text-sm font-medium")
+            ui.label("Please keep Row-Bot open while cleanup finishes.").classes(
+                "text-xs text-grey-6"
+            )
+
+    progress_dialog.open()
+    # Give NiceGUI a scheduling turn to paint the dialog before starting work.
+    await asyncio.sleep(0)
+    try:
+        return await run.io_bound(operation)
+    finally:
+        progress_dialog.close()
+        progress_dialog.delete()
 
 
 def render_bulk_action_bar(
@@ -143,10 +199,10 @@ def render_bulk_action_bar(
     with container:
         count_lbl = ui.label("").classes("text-sm")
         with ui.row().classes("gap-2 items-center"):
-            clear_btn = ui.button("Clear", on_click=_do_clear).props(
+            ui.button("Clear", on_click=_do_clear).props(
                 "flat dense no-caps size=sm"
             )
-            del_btn = ui.button(
+            ui.button(
                 delete_label,
                 icon="delete",
                 on_click=lambda: on_delete(sorted(bulk.selected)),

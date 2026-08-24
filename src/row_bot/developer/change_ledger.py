@@ -140,3 +140,23 @@ def mark_reverted(change_set_id: str) -> None:
         if isinstance(raw, dict) and raw.get("id") == change_set_id:
             raw["reverted"] = True
     _save(data)
+
+
+def delete_thread_change_sets(thread_id: str) -> int:
+    """Remove obsolete per-thread Developer ledger records, not file changes."""
+
+    clean = str(thread_id or "").strip()
+    if not clean:
+        return 0
+    data = _load()
+    existing = list(data.get("change_sets", []))
+    retained = [
+        raw
+        for raw in existing
+        if not (isinstance(raw, dict) and str(raw.get("thread_id") or "") == clean)
+    ]
+    removed = len(existing) - len(retained)
+    if removed:
+        data["change_sets"] = retained
+        _save(data)
+    return removed

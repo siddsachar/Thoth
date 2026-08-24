@@ -464,7 +464,12 @@ def _ensure_thread_meta(thread_id: str, message: ChannelInboundMessage) -> None:
         channel_name = str(message.channel_name or "Plugin channel").replace("_", " ").title()
         sender = str(message.sender_display_name or message.sender_id or "").strip()
         title = f"{channel_name} - {sender}" if sender else f"{channel_name} conversation"
-        _save_thread_meta(thread_id, title, seed_default_skills=True)
+        _save_thread_meta(
+            thread_id,
+            title,
+            seed_default_skills=True,
+            allow_recreate=True,
+        )
         target = (
             message.external_conversation_id
             or message.platform_thread_id

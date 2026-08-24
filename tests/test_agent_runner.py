@@ -97,6 +97,56 @@ def test_spawn_agent_run_creates_child_thread_and_completes(tmp_path, monkeypatc
     assert {"run.created", "run.started", "turn.started", "turn.completed", "run.completed"} <= event_types
 
 
+def test_child_creation_rolls_back_when_parent_deletion_wins_the_race(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    agent_runner, agent_runs, _profiles, _context, threads = _fresh_agent_runner_modules(
+        tmp_path,
+        monkeypatch,
+    )
+    cleanup = importlib.reload(importlib.import_module("row_bot.thread_cleanup"))
+    parent_thread_id = threads.create_thread("Parent being deleted")
+    deletion_token = ""
+    original_create_agent_run = agent_runs.create_agent_run
+
+    def _create_then_start_parent_delete(**kwargs):
+        nonlocal deletion_token
+        run = original_create_agent_run(**kwargs)
+        deletion_token = cleanup._mark_thread_deleting(parent_thread_id)
+        return run
+
+    monkeypatch.setattr(
+        agent_runs,
+        "create_agent_run",
+        _create_then_start_parent_delete,
+    )
+    monkeypatch.setattr(
+        agent_runner,
+        "_invoke_agent",
+        lambda *_args, **_kwargs: pytest.fail("The child executor must not start"),
+    )
+
+    with pytest.raises(agent_runner.AgentRunnerError, match="parent conversation was deleted"):
+        agent_runner.spawn_agent_run(
+            "Do not start after parent deletion.",
+            parent_thread_id=parent_thread_id,
+            profile="quality_reviewer",
+            enabled_tool_names=["filesystem"],
+            wait=True,
+        )
+
+    child_rows = [
+        row
+        for row in threads._list_threads(include_details=True)
+        if len(row) > 6 and row[6] == "agent_child"
+    ]
+    assert child_rows == []
+    assert agent_runs.list_agent_runs(parent_thread_id=parent_thread_id) == []
+    cleanup.finish_thread_deletion(parent_thread_id, deletion_token)
+    assert threads._thread_exists(parent_thread_id) is False
+
+
 def test_child_dispatcher_queues_fifo_at_global_and_parent_capacity(tmp_path, monkeypatch):
     agent_runner, agent_runs, _profiles, _context, threads = _fresh_agent_runner_modules(
         tmp_path, monkeypatch

@@ -448,6 +448,21 @@ def spawn_agent_run(
     if not objective:
         raise AgentRunnerError("Child Agent objective cannot be empty.")
 
+    def _parent_deletion_started() -> bool:
+        if not parent_thread_id:
+            return False
+        from row_bot.thread_cleanup import is_thread_deleting
+        from row_bot.threads import _thread_exists
+
+        return is_thread_deleting(parent_thread_id) or not _thread_exists(
+            parent_thread_id
+        )
+
+    if _parent_deletion_started():
+        raise AgentRunnerError(
+            "The parent conversation was deleted before the child Agent could start."
+        )
+
     parent_defaults = _parent_thread_defaults(parent_thread_id)
     parent_approval = normalize_approval_mode(
         approval_mode or parent_defaults["approval_mode"],
@@ -639,6 +654,15 @@ def spawn_agent_run(
         workspace_mode=effective_workspace_mode,
         write_lock_key=write_lock_key,
     )
+    if _parent_deletion_started():
+        from row_bot.agent_runs import cleanup_thread_agent_runs
+        from row_bot.thread_cleanup import delete_thread
+
+        delete_thread(child_thread_id)
+        cleanup_thread_agent_runs(parent_thread_id)
+        raise AgentRunnerError(
+            "The parent conversation was deleted before the child Agent could start."
+        )
     if parent_run_id:
         create_agent_run_edge(parent_run_id, run_id, "spawned_by_tool")
     if worktree_allocation:

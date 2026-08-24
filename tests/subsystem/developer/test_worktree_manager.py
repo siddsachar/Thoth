@@ -11,23 +11,27 @@ def _fresh_modules(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ROW_BOT_DATA_DIR", str(data_dir))
-    for name in (
-        "row_bot.tasks",
-        "row_bot.threads",
-        "row_bot.developer.storage",
-        "row_bot.developer.worktrees",
-    ):
-        sys.modules.pop(name, None)
-    import row_bot.tasks as tasks
-    import row_bot.threads as threads
-    import row_bot.developer.storage as storage
-    import row_bot.developer.worktrees as worktrees
+    previous_threads = sys.modules.get("row_bot.threads")
+    if previous_threads is not None:
+        try:
+            previous_threads.conn.close()
+        except Exception:
+            pass
+    tasks = importlib.reload(importlib.import_module("row_bot.tasks"))
+    threads = importlib.reload(importlib.import_module("row_bot.threads"))
+    storage = importlib.reload(importlib.import_module("row_bot.developer.storage"))
+    importlib.reload(importlib.import_module("row_bot.developer.todos"))
+    importlib.reload(importlib.import_module("row_bot.developer.change_ledger"))
+    importlib.reload(importlib.import_module("row_bot.developer.sandbox_runtime"))
+    importlib.reload(importlib.import_module("row_bot.developer.inspector_snapshot"))
+    worktrees = importlib.reload(importlib.import_module("row_bot.developer.worktrees"))
+    importlib.reload(importlib.import_module("row_bot.thread_cleanup"))
 
     return (
-        importlib.reload(tasks),
-        importlib.reload(threads),
-        importlib.reload(storage),
-        importlib.reload(worktrees),
+        tasks,
+        threads,
+        storage,
+        worktrees,
     )
 
 
@@ -122,6 +126,111 @@ def test_allocate_thread_worktree_creates_hidden_workspace_and_preserves_metadat
     preserved = worktrees.mark_worktree_preserved("thread", thread_id, reason="test complete")
     assert preserved["status"] == "preserved"
     assert worktree_path.exists()
+
+
+def test_thread_deletion_removes_clean_worktree_but_retains_branch_and_repository(tmp_path, monkeypatch):
+    _tasks, threads, storage, worktrees = _fresh_modules(tmp_path, monkeypatch)
+    from row_bot.thread_cleanup import delete_thread
+
+    repo = _create_repo(tmp_path)
+    parent = storage.add_or_update_local_workspace(str(repo))
+    thread_id = threads.create_thread(
+        "Clean worktree",
+        thread_type="code",
+        developer_workspace_id=parent.id,
+        project_workspace_id=parent.id,
+    )
+    allocated = worktrees.allocate_thread_worktree(
+        thread_id,
+        parent.id,
+        objective="Clean branch",
+        seed_mode="last_commit",
+    )
+    worktree_path = Path(allocated["worktree_path"])
+    branch_name = allocated["branch_name"]
+
+    result = delete_thread(thread_id)
+
+    assert result.retained_worktree_path == ""
+    assert repo.exists()
+    assert not worktree_path.exists()
+    assert worktrees.get_worktree_for_thread(thread_id) is None
+    assert storage.get_workspace(allocated["worktree_workspace_id"]) is None
+    assert _git_out(repo, "branch", "--list", branch_name).strip()
+
+
+def test_thread_deletion_preserves_dirty_worktree_and_exposes_recovery_workspace(tmp_path, monkeypatch):
+    _tasks, threads, storage, worktrees = _fresh_modules(tmp_path, monkeypatch)
+    from row_bot.thread_cleanup import delete_thread
+
+    repo = _create_repo(tmp_path)
+    parent = storage.add_or_update_local_workspace(str(repo))
+    thread_id = threads.create_thread(
+        "Dirty worktree",
+        thread_type="code",
+        developer_workspace_id=parent.id,
+        project_workspace_id=parent.id,
+    )
+    allocated = worktrees.allocate_thread_worktree(
+        thread_id,
+        parent.id,
+        objective="Dirty branch",
+        seed_mode="last_commit",
+    )
+    worktree_path = Path(allocated["worktree_path"])
+    (worktree_path / "recovery.txt").write_text("unimported work\n", encoding="utf-8")
+
+    result = delete_thread(thread_id)
+
+    assert result.retained_worktree_path == str(worktree_path)
+    assert worktree_path.exists()
+    assert worktrees.get_worktree_for_thread(thread_id)["status"] == "preserved"
+    recovery = storage.get_workspace(allocated["worktree_workspace_id"])
+    assert recovery is not None
+    assert recovery.hidden is False
+    assert recovery.default_thread_id == ""
+
+
+def test_thread_deletion_preserves_clean_worktree_with_unimported_sandbox_changes(tmp_path, monkeypatch):
+    _tasks, threads, storage, worktrees = _fresh_modules(tmp_path, monkeypatch)
+    from row_bot.thread_cleanup import delete_thread
+    sandbox_runtime = importlib.import_module("row_bot.developer.sandbox_runtime")
+
+    repo = _create_repo(tmp_path)
+    parent = storage.add_or_update_local_workspace(str(repo))
+    thread_id = threads.create_thread(
+        "Sandbox worktree",
+        thread_type="code",
+        developer_workspace_id=parent.id,
+        project_workspace_id=parent.id,
+    )
+    allocated = worktrees.allocate_thread_worktree(
+        thread_id,
+        parent.id,
+        objective="Sandbox branch",
+        seed_mode="last_commit",
+    )
+    worktree_path = Path(allocated["worktree_path"])
+    pending = sandbox_runtime.SandboxPendingChange(
+        id="pending-recovery",
+        workspace_id=allocated["worktree_workspace_id"],
+        thread_id=thread_id,
+        command="edit",
+        patch="diff --git a/a.txt b/a.txt\n",
+        files=["a.txt"],
+        created_at="2026-08-24T00:00:00",
+    )
+    sandbox_runtime._save_pending_payload({"changes": [pending.to_dict()]})
+
+    result = delete_thread(thread_id)
+
+    assert result.retained_sandbox is True
+    assert result.retained_worktree_path == str(worktree_path)
+    assert worktree_path.exists()
+    assert sandbox_runtime.list_pending_changes(
+        workspace_id=allocated["worktree_workspace_id"],
+        thread_id=thread_id,
+    )
 
 
 def test_dirty_current_changes_seed_into_worktree_without_mutating_parent(tmp_path, monkeypatch):

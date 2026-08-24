@@ -148,7 +148,12 @@ def _get_or_create_thread(phone: str) -> str:
     except Exception:
         log.debug("SMS thread channel ref skipped", exc_info=True)
     name = f"📱 SMS – {phone}"
-    _save_thread_meta(thread_id, name, seed_default_skills=True)  # creates or bumps updated_at
+    _save_thread_meta(
+        thread_id,
+        name,
+        seed_default_skills=True,
+        allow_recreate=True,
+    )  # creates or bumps updated_at
     return thread_id
 
 
@@ -168,7 +173,12 @@ def _new_thread(phone: str) -> str:
         )
     except Exception:
         log.debug("SMS thread channel ref skipped", exc_info=True)
-    _save_thread_meta(thread_id, f"📱 SMS – {phone}", seed_default_skills=True)
+    _save_thread_meta(
+        thread_id,
+        f"📱 SMS – {phone}",
+        seed_default_skills=True,
+        allow_recreate=True,
+    )
     return thread_id
 
 

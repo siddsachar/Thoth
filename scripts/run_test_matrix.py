@@ -286,16 +286,29 @@ def _dedupe_commands(names: tuple[str, ...]) -> list[CommandSpec]:
 
 
 def changed_files_from_git(base: str) -> list[str]:
-    candidates = [
-        ("git", "diff", "--name-only", f"{base}...HEAD"),
-        ("git", "diff", "--name-only", base),
-        ("git", "diff", "--name-only"),
-    ]
-    for argv in candidates:
-        result = subprocess.run(argv, cwd=REPO_ROOT, text=True, capture_output=True, check=False)
-        if result.returncode == 0:
-            return [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    return []
+    changed: list[str] = []
+
+    def _append_names(argv: tuple[str, ...]) -> bool:
+        result = subprocess.run(
+            argv,
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return False
+        for line in result.stdout.splitlines():
+            name = line.strip()
+            if name and name not in changed:
+                changed.append(name)
+        return True
+
+    if not _append_names(("git", "diff", "--name-only", f"{base}...HEAD")):
+        _append_names(("git", "diff", "--name-only", base))
+    _append_names(("git", "diff", "--name-only", "HEAD"))
+    _append_names(("git", "ls-files", "--others", "--exclude-standard"))
+    return changed
 
 
 def changed_commands(changed_files: list[str]) -> list[CommandSpec]:

@@ -8,9 +8,20 @@ dialogs; this module unifies them without changing visual behaviour.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Awaitable, Callable
+import inspect
 
 from nicegui import ui
+
+
+async def _invoke_confirmation_callback(
+    callback: Callable[[], None | Awaitable[None]],
+) -> None:
+    """Invoke a confirmation callback and await asynchronous work."""
+
+    result = callback()
+    if inspect.isawaitable(result):
+        await result
 
 
 def confirm_destructive(
@@ -19,7 +30,7 @@ def confirm_destructive(
     *,
     confirm_label: str = "Delete",
     cancel_label: str = "Cancel",
-    on_confirm: Callable[[], None],
+    on_confirm: Callable[[], None | Awaitable[None]],
     min_width: str = "320px",
 ) -> None:
     """Open a modal asking the user to confirm a destructive action.
@@ -50,10 +61,10 @@ def confirm_destructive(
                 "flat dense no-caps"
             )
 
-            def _go():
+            async def _go() -> None:
                 dlg.close()
                 try:
-                    on_confirm()
+                    await _invoke_confirmation_callback(on_confirm)
                 except Exception:  # pragma: no cover — logged by caller
                     import logging
                     logging.getLogger(__name__).exception(

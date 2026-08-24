@@ -145,7 +145,7 @@ def open_agent_thread(
     rebuild_main: Callable[..., None],
     rebuild_thread_list: Callable[[], None] | None = None,
 ) -> None:
-    """Open a child Agent's full thread in the current app shell."""
+    """Open parent-owned Agent run detail in the current app shell."""
     _open_agent_thread(
         agent_run,
         state=state,
@@ -460,7 +460,7 @@ def build_parent_agent_drawer(
                             rebuild_main=rebuild_main,
                             rebuild_thread_list=rebuild_thread_list,
                         ),
-                    ).props("flat dense round size=xs").tooltip("Open full Agent thread")
+                    ).props("flat dense round size=xs").tooltip("Open Agent run detail")
                 if workspace_mode == "worktree":
                     ui.button(
                         icon="folder_open",

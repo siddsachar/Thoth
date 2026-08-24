@@ -1879,11 +1879,10 @@ def delete_task(task_id: str) -> None:
     # Cascade thread cleanup (LangGraph checkpoints, media, external state).
     if linked_thread_ids:
         try:
-            from row_bot.threads import _delete_thread, purge_external_state
+            from row_bot.thread_cleanup import delete_thread
             for tid in linked_thread_ids:
                 try:
-                    purge_external_state(tid)
-                    _delete_thread(tid)
+                    delete_thread(tid)
                 except Exception:
                     logger.exception(
                         "Failed to cascade thread deletion for task %s (thread %s)",
@@ -2464,6 +2463,104 @@ def stop_task(thread_id: str) -> bool:
             )
             return True
     return False
+
+
+@_schema_retry
+def cleanup_thread_state(thread_id: str) -> dict[str, int]:
+    """Remove queued/thread-owned workflow state while retaining run audits."""
+
+    clean_thread_id = str(thread_id or "").strip()
+    stats = {
+        "pipeline_state": 0,
+        "approvals": 0,
+        "channel_refs": 0,
+        "notifications": 0,
+        "task_links": 0,
+    }
+    if not clean_thread_id:
+        return stats
+    now = datetime.now().isoformat()
+    conn = _get_conn()
+    try:
+        pipeline_run_ids = [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT run_id FROM pipeline_state WHERE thread_id = ?",
+                (clean_thread_id,),
+            ).fetchall()
+            if str(row[0] or "")
+        ]
+        approval_clauses = ["source_thread_id = ?", "parent_thread_id = ?"]
+        approval_params: list[Any] = [clean_thread_id, clean_thread_id]
+        if pipeline_run_ids:
+            approval_clauses.append(
+                f"run_id IN ({', '.join('?' for _ in pipeline_run_ids)})"
+            )
+            approval_params.extend(pipeline_run_ids)
+        approvals = conn.execute(
+            "SELECT id, COALESCE(task_id, '') FROM approval_requests WHERE "
+            + " OR ".join(approval_clauses),
+            approval_params,
+        ).fetchall()
+        delete_approval_ids = [str(row[0]) for row in approvals if not str(row[1] or "")]
+        audit_approval_ids = [str(row[0]) for row in approvals if str(row[1] or "")]
+
+        before = conn.total_changes
+        affected_approval_ids = [*delete_approval_ids, *audit_approval_ids]
+        if affected_approval_ids:
+            placeholders = ", ".join("?" for _ in affected_approval_ids)
+            conn.execute(
+                f"DELETE FROM approval_channel_refs WHERE approval_id IN ({placeholders})",
+                affected_approval_ids,
+            )
+        if delete_approval_ids:
+            placeholders = ", ".join("?" for _ in delete_approval_ids)
+            conn.execute(
+                f"DELETE FROM approval_requests WHERE id IN ({placeholders})",
+                delete_approval_ids,
+            )
+        if audit_approval_ids:
+            placeholders = ", ".join("?" for _ in audit_approval_ids)
+            conn.execute(
+                "UPDATE approval_requests SET "
+                "status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END, "
+                "responded_at = CASE WHEN status = 'pending' THEN ? ELSE responded_at END, "
+                "message = '', channel = '', source_thread_id = '', parent_thread_id = '', "
+                "approval_payload_json = '{}' "
+                f"WHERE id IN ({placeholders})",
+                [now, *audit_approval_ids],
+            )
+        stats["approvals"] = max(0, conn.total_changes - before)
+
+        before = conn.total_changes
+        conn.execute("DELETE FROM pipeline_state WHERE thread_id = ?", (clean_thread_id,))
+        stats["pipeline_state"] = max(0, conn.total_changes - before)
+
+        before = conn.total_changes
+        conn.execute("DELETE FROM channel_thread_refs WHERE thread_id = ?", (clean_thread_id,))
+        stats["channel_refs"] = max(0, conn.total_changes - before)
+
+        before = conn.total_changes
+        conn.execute(
+            "DELETE FROM channel_thread_notifications WHERE thread_id = ?",
+            (clean_thread_id,),
+        )
+        stats["notifications"] = max(0, conn.total_changes - before)
+
+        before = conn.total_changes
+        conn.execute(
+            "UPDATE tasks SET persistent_thread_id = NULL WHERE persistent_thread_id = ?",
+            (clean_thread_id,),
+        )
+        conn.execute(
+            "UPDATE task_runs SET pipeline_state_id = NULL WHERE thread_id = ?",
+            (clean_thread_id,),
+        )
+        stats["task_links"] = max(0, conn.total_changes - before)
+        conn.commit()
+    finally:
+        conn.close()
+    return stats
 
 
 def get_running_task_thread(task_id: str) -> str | None:
