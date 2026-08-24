@@ -1111,6 +1111,7 @@ def build_sidebar(
                     from row_bot.ui.bulk_select import (
                         BulkSelect,
                         _bind_bulk_selection_checkbox,
+                        _run_bulk_operation,
                         render_bulk_action_bar,
                     )
                     from row_bot.ui.confirm import confirm_destructive
@@ -1451,8 +1452,13 @@ def build_sidebar(
                         action_slot = ui.column().classes("w-full")
 
                         def _do_bulk_delete(ids: list[str]) -> None:
-                            def _commit():
-                                result = delete_threads(ids)
+                            noun = "conversation" if len(ids) == 1 else "conversations"
+
+                            async def _commit() -> None:
+                                result = await _run_bulk_operation(
+                                    lambda: delete_threads(ids),
+                                    progress_label=f"Deleting {len(ids)} {noun}…",
+                                )
                                 if state.thread_id in ids:
                                     from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
 
@@ -1474,7 +1480,6 @@ def build_sidebar(
                                 rebuild_main()
                                 _rebuild_thread_list_ref[0]()
 
-                            noun = "conversation" if len(ids) == 1 else "conversations"
                             confirm_destructive(
                                 f"Delete {len(ids)} {noun}?",
                                 body=(
@@ -1508,8 +1513,13 @@ def build_sidebar(
                                               type="warning")
                                     return
 
-                                def _commit():
-                                    result = delete_threads(all_ids)
+                                async def _commit() -> None:
+                                    result = await _run_bulk_operation(
+                                        lambda: delete_threads(all_ids),
+                                        progress_label=(
+                                            f"Deleting {len(all_ids)} conversations…"
+                                        ),
+                                    )
                                     from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
 
                                     stop_voice_for_thread_change(state, p, reason="bulk_delete_all_threads")

@@ -1,7 +1,16 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from row_bot.ui.bulk_select import BulkSelect, _bind_bulk_selection_checkbox
+import pytest
+
+from row_bot.ui import bulk_select as bulk_select_module
+from row_bot.ui.bulk_select import (
+    BulkSelect,
+    _bind_bulk_selection_checkbox,
+    _run_bulk_operation,
+)
+from row_bot.ui.confirm import _invoke_confirmation_callback
 from row_bot.ui import sidebar
 from row_bot.ui.sidebar import selectable_thread_ids_for_filter
 
@@ -24,6 +33,57 @@ class _FakeCheckbox:
     def emit_value(self, value: bool) -> None:
         assert self._value_handler is not None
         self._value_handler(SimpleNamespace(value=value))
+
+
+class _FakeElement:
+    def __init__(self, kind: str, events: list[str]) -> None:
+        self.kind = kind
+        self.events = events
+        self.properties = ""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def props(self, value: str):
+        self.properties = value
+        return self
+
+    def classes(self, _value: str):
+        return self
+
+    def style(self, _value: str):
+        return self
+
+    def open(self) -> None:
+        self.events.append(f"{self.kind}:open")
+
+    def close(self) -> None:
+        self.events.append(f"{self.kind}:close")
+
+    def delete(self) -> None:
+        self.events.append(f"{self.kind}:delete")
+
+
+class _FakeUi:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.dialog_element: _FakeElement | None = None
+
+    def dialog(self) -> _FakeElement:
+        self.dialog_element = _FakeElement("dialog", self.events)
+        return self.dialog_element
+
+    def card(self) -> _FakeElement:
+        return _FakeElement("card", self.events)
+
+    def spinner(self, *_args, **_kwargs) -> _FakeElement:
+        return _FakeElement("spinner", self.events)
+
+    def label(self, _text: str) -> _FakeElement:
+        return _FakeElement("label", self.events)
 
 
 def _row(thread_id: str) -> tuple:
@@ -80,6 +140,99 @@ def test_all_bulk_checkbox_surfaces_use_typed_value_change_binding() -> None:
         source = (ROOT / relative_path).read_text(encoding="utf-8")
         assert "_bind_bulk_selection_checkbox" in source
         assert "bool(e.args)" not in source
+
+
+def test_confirmation_callback_awaits_async_handler() -> None:
+    events: list[str] = []
+
+    async def _handler() -> None:
+        await asyncio.sleep(0)
+        events.append("finished")
+
+    asyncio.run(_invoke_confirmation_callback(_handler))
+
+    assert events == ["finished"]
+
+
+def test_bulk_operation_opens_persistent_progress_before_offloading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    fake_ui = _FakeUi(events)
+
+    async def _io_bound(operation):
+        events.append("io_bound")
+        assert events[0] == "dialog:open"
+        return operation()
+
+    monkeypatch.setattr(bulk_select_module, "ui", fake_ui)
+    monkeypatch.setattr(bulk_select_module.run, "io_bound", _io_bound)
+
+    result = asyncio.run(
+        _run_bulk_operation(
+            lambda: events.append("operation") or "done",
+            progress_label="Deleting conversations…",
+        )
+    )
+
+    assert result == "done"
+    assert events == [
+        "dialog:open",
+        "io_bound",
+        "operation",
+        "dialog:close",
+        "dialog:delete",
+    ]
+    assert fake_ui.dialog_element is not None
+    assert "persistent" in fake_ui.dialog_element.properties
+
+
+def test_bulk_operation_always_removes_progress_after_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    fake_ui = _FakeUi(events)
+
+    async def _io_bound(_operation):
+        events.append("io_bound")
+        raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(bulk_select_module, "ui", fake_ui)
+    monkeypatch.setattr(bulk_select_module.run, "io_bound", _io_bound)
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        asyncio.run(
+            _run_bulk_operation(
+                lambda: None,
+                progress_label="Deleting conversations…",
+            )
+        )
+
+    assert events == [
+        "dialog:open",
+        "io_bound",
+        "dialog:close",
+        "dialog:delete",
+    ]
+
+
+def test_all_reported_bulk_delete_surfaces_use_background_progress() -> None:
+    bulk_source = (ROOT / "src/row_bot/ui/bulk_select.py").read_text(encoding="utf-8")
+    sidebar_source = (ROOT / "src/row_bot/ui/sidebar.py").read_text(encoding="utf-8")
+    workflow_source = (ROOT / "src/row_bot/ui/home.py").read_text(encoding="utf-8")
+    designer_source = (ROOT / "src/row_bot/designer/home_tab.py").read_text(encoding="utf-8")
+
+    assert "await run.io_bound(operation)" in bulk_source
+    assert "async def _commit()" in sidebar_source
+    assert sidebar_source.count("await _run_bulk_operation(") >= 2
+    assert "result = delete_threads(ids)" not in sidebar_source
+    assert "result = delete_threads(all_ids)" not in sidebar_source
+    assert "async def _commit()" in workflow_source
+    assert "await _run_bulk_operation(" in workflow_source
+    assert "deleted, failures = delete_tasks(ids)" not in workflow_source
+    assert "async def _commit()" in designer_source
+    assert "await _run_bulk_operation(" in designer_source
+    assert "deleted, failures = delete_projects(ids)" not in designer_source
 
 
 def test_select_many_and_deselect_many_preserve_other_filter_selections() -> None:

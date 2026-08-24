@@ -222,6 +222,7 @@ def build_home(
                 from row_bot.ui.bulk_select import (
                     BulkSelect,
                     _bind_bulk_selection_checkbox,
+                    _run_bulk_operation,
                     render_bulk_action_bar,
                 )
                 from row_bot.ui.confirm import confirm_destructive
@@ -558,22 +559,26 @@ def build_home(
                                             run_btn.disable()
 
                     def _do_wf_bulk_delete(ids: list[str]) -> None:
-                        def _commit():
+                        noun = "workflow" if len(ids) == 1 else "workflows"
+
+                        async def _commit() -> None:
                             from row_bot.tasks import delete_tasks
-                            deleted, failures = delete_tasks(ids)
+                            deleted, failures = await _run_bulk_operation(
+                                lambda: delete_tasks(ids),
+                                progress_label=f"Deleting {len(ids)} {noun}…",
+                            )
                             msg = f"Deleted {deleted} workflow{'s' if deleted != 1 else ''}."
                             if failures:
                                 msg += f" {len(failures)} failed."
                             ui.notify(msg, type="negative" if failures else "info")
                             _refresh_home_tiles()
 
-                        noun = "workflow" if len(ids) == 1 else "workflows"
                         confirm_destructive(
                             f"Delete {len(ids)} {noun}?",
                             body=(
-                                "This cannot be undone. Scheduled runs, run "
-                                "history, and the linked conversations will "
-                                "be removed."
+                                "This cannot be undone. The schedule, live state, "
+                                "and linked conversations will be removed. Completed "
+                                "run records remain in audit history."
                             ),
                             on_confirm=_commit,
                         )

@@ -35,6 +35,8 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "src/row_bot/ui/sidebar.py",
             "src/row_bot/ui/agent_drawer.py",
             "src/row_bot/ui/chat.py",
+            "src/row_bot/ui/confirm.py",
+            "src/row_bot/ui/home.py",
             "src/row_bot/ui/render.py",
             "src/row_bot/ui/bulk_select.py",
             "src/row_bot/ui/state.py",

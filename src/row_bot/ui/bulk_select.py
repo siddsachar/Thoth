@@ -14,9 +14,13 @@ and the list itself.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import asyncio
+from typing import Any, Callable, TypeVar
 
-from nicegui import ui
+from nicegui import run, ui
+
+
+_ResultT = TypeVar("_ResultT")
 
 
 class BulkSelect:
@@ -116,6 +120,35 @@ def _bind_bulk_selection_checkbox(
         lambda event: bulk.toggle_item(item_id, bool(event.value))
     )
     checkbox.on("click", js_handler="(event) => event.stopPropagation()")
+
+
+async def _run_bulk_operation(
+    operation: Callable[[], _ResultT],
+    *,
+    progress_label: str,
+) -> _ResultT:
+    """Run blocking bulk work off the UI loop behind a progress dialog."""
+
+    with ui.dialog().props(
+        "persistent no-esc-dismiss no-backdrop-dismiss"
+    ) as progress_dialog:
+        with ui.card().classes("items-center gap-3 q-pa-lg").style(
+            "min-width: 300px;"
+        ):
+            ui.spinner("oval", size="lg", color="primary")
+            ui.label(progress_label).classes("text-sm font-medium")
+            ui.label("Please keep Row-Bot open while cleanup finishes.").classes(
+                "text-xs text-grey-6"
+            )
+
+    progress_dialog.open()
+    # Give NiceGUI a scheduling turn to paint the dialog before starting work.
+    await asyncio.sleep(0)
+    try:
+        return await run.io_bound(operation)
+    finally:
+        progress_dialog.close()
+        progress_dialog.delete()
 
 
 def render_bulk_action_bar(

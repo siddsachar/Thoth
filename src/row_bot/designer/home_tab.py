@@ -32,6 +32,7 @@ def build_designer_tab(
     """
     from row_bot.ui.bulk_select import (
         BulkSelect,
+        _run_bulk_operation,
         render_bulk_action_bar,
     )
     from row_bot.ui.confirm import confirm_destructive
@@ -102,8 +103,13 @@ def build_designer_tab(
                 _rebuild_grid()
 
                 def _do_bulk_delete(ids: list[str]) -> None:
-                    def _commit():
-                        deleted, failures = delete_projects(ids)
+                    noun = "design" if len(ids) == 1 else "designs"
+
+                    async def _commit() -> None:
+                        deleted, failures = await _run_bulk_operation(
+                            lambda: delete_projects(ids),
+                            progress_label=f"Deleting {len(ids)} {noun}…",
+                        )
                         msg = f"🗑️ Deleted {deleted} design{'s' if deleted != 1 else ''}."
                         if failures:
                             msg += f" {len(failures)} failed."
@@ -111,7 +117,6 @@ def build_designer_tab(
                         if on_refresh:
                             on_refresh()
 
-                    noun = "design" if len(ids) == 1 else "designs"
                     confirm_destructive(
                         f"Delete {len(ids)} {noun}?",
                         body=(
