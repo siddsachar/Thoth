@@ -359,7 +359,7 @@ def test_parent_thread_delete_cascades_chat_agent_state_but_keeps_workflows(tmp_
         ).fetchone()
     finally:
         conn.close()
-    assert row["status"] == "cancelled"
+    assert row is None
 
 
 def test_get_agent_run_for_child_thread(tmp_path, monkeypatch):

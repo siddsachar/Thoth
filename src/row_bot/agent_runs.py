@@ -1724,9 +1724,9 @@ def cleanup_thread_agent_runs(thread_id: str) -> dict[str, int]:
     threads_deleted = 0
     for child_thread_id in child_thread_ids:
         try:
-            from row_bot.threads import _delete_thread
+            from row_bot.thread_cleanup import delete_thread
 
-            _delete_thread(child_thread_id)
+            delete_thread(child_thread_id)
             threads_deleted += 1
         except Exception:
             pass

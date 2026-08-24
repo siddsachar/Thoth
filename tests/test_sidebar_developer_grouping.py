@@ -84,7 +84,7 @@ def test_sidebar_thread_filters_are_icon_descriptors_not_wrapping_labels():
     source = (ROOT / "src" / "row_bot" / "ui" / "sidebar.py").read_text(encoding="utf-8")
 
     assert "THREAD_FILTER_DESCRIPTORS" in source
-    for icon in ("forum", "chat_bubble_outline", "brush", "code", "task_alt"):
+    for icon in ("forum", "chat_bubble_outline", "brush", "code", "task_alt", "badge"):
         assert f'"icon": "{icon}"' in source
     assert "_render_filter_button" in source
     assert "aria-label" in source

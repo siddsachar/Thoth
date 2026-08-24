@@ -193,7 +193,9 @@ def load_asset_bytes(project_id: str, stored_name: str) -> Optional[bytes]:
 
 def delete_reference_bytes(project_id: str, stored_name: str) -> bool:
     """Delete a persisted reference file. Returns True if removed."""
-    path = _project_reference_dir(project_id) / stored_name
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    path = resolve_managed_path(REFERENCES_DIR, _project_reference_dir(project_id) / stored_name)
     if not path.exists():
         return False
     path.unlink()
@@ -202,7 +204,9 @@ def delete_reference_bytes(project_id: str, stored_name: str) -> bool:
 
 def delete_asset_bytes(project_id: str, stored_name: str) -> bool:
     """Delete a persisted asset file. Returns True if removed."""
-    path = _project_asset_dir(project_id) / stored_name
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    path = resolve_managed_path(ASSETS_DIR, _project_asset_dir(project_id) / stored_name)
     if not path.exists():
         return False
     path.unlink()
@@ -211,19 +215,23 @@ def delete_asset_bytes(project_id: str, stored_name: str) -> bool:
 
 def delete_project_references(project_id: str) -> bool:
     """Delete the entire persisted reference directory for a project."""
-    ref_dir = _project_reference_dir(project_id)
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    ref_dir = resolve_managed_path(REFERENCES_DIR, str(project_id or ""))
     if not ref_dir.exists():
         return False
-    shutil.rmtree(ref_dir, ignore_errors=True)
+    shutil.rmtree(ref_dir)
     return True
 
 
 def delete_project_assets(project_id: str) -> bool:
     """Delete the entire persisted asset directory for a project."""
-    asset_dir = _project_asset_dir(project_id)
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    asset_dir = resolve_managed_path(ASSETS_DIR, str(project_id or ""))
     if not asset_dir.exists():
         return False
-    shutil.rmtree(asset_dir, ignore_errors=True)
+    shutil.rmtree(asset_dir)
     return True
 
 
@@ -316,40 +324,106 @@ def list_projects() -> list[dict]:
     return summaries
 
 
-def delete_project(project_id: str) -> bool:
-    """Delete a project file. Returns True if deleted.
+def detach_thread(project_id: str, thread_id: str) -> bool:
+    """Atomically clear a project's matching conversation binding."""
 
-    Cascades to the linked conversation thread: the associated
-    ``thread_meta`` row, LangGraph checkpoints, media, and external
-    state (shell/browser sessions, generation stop) are also removed.
-    """
-    # Fetch linked thread_id BEFORE unlinking the JSON file.
-    linked_thread_id = ""
-    path = PROJECTS_DIR / f"{project_id}.json"
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    clean_project_id = str(project_id or "").strip()
+    clean_thread_id = str(thread_id or "").strip()
+    if not clean_project_id or not clean_thread_id:
+        return False
+    path = resolve_managed_path(PROJECTS_DIR, f"{clean_project_id}.json")
+    if not path.exists():
+        return False
+    with _project_save_lock(clean_project_id):
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict) or str(data.get("thread_id") or "") != clean_thread_id:
+            return False
+        project = DesignerProject.from_dict(data)
+        project._row_bot_persisted_updated_at = str(data.get("updated_at") or "")
+        project.thread_id = None
+        save_project(project)
+    try:
+        from row_bot.designer.session import clear_thread_session
+
+        clear_thread_session(clean_thread_id)
+    except Exception:
+        logger.debug("Could not clear Designer thread session", exc_info=True)
+    return True
+
+
+def delete_project(project_id: str) -> bool:
+    """Delete a design, all owned files, and every linked conversation."""
+
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    clean_project_id = str(project_id or "").strip()
+    path = resolve_managed_path(PROJECTS_DIR, f"{clean_project_id}.json")
+    linked_thread_ids: set[str] = set()
     if path.exists():
         try:
             with open(path, "r", encoding="utf-8") as f:
-                linked_thread_id = (json.load(f) or {}).get("thread_id", "") or ""
+                linked = str((json.load(f) or {}).get("thread_id", "") or "")
+                if linked:
+                    linked_thread_ids.add(linked)
         except Exception:
             logger.debug("Could not read thread_id from %s", path, exc_info=True)
+    try:
+        from row_bot.threads import _list_project_thread_ids
+
+        linked_thread_ids.update(_list_project_thread_ids(clean_project_id))
+    except Exception:
+        logger.debug("Could not enumerate linked Designer threads", exc_info=True)
+
     deleted = False
+    try:
+        from row_bot.designer.publish import delete_published_project
+
+        deleted = delete_published_project(clean_project_id) or deleted
+    except Exception:
+        logger.exception("Failed to remove published design %s", clean_project_id)
+        raise
+    try:
+        from row_bot.designer.history import delete_history
+
+        history_path = pathlib.Path(DESIGNER_DIR) / "history" / clean_project_id
+        history_existed = history_path.exists()
+        delete_history(clean_project_id)
+        deleted = history_existed or deleted
+    except Exception:
+        logger.exception("Failed to remove design history %s", clean_project_id)
+        raise
+    try:
+        from row_bot.designer.session import clear_project_session
+
+        clear_project_session(clean_project_id)
+    except Exception:
+        logger.debug("Failed to clear Designer session for %s", clean_project_id, exc_info=True)
     if path.exists():
         path.unlink()
         deleted = True
-    if delete_project_references(project_id):
+    if delete_project_references(clean_project_id):
         deleted = True
-    if delete_project_assets(project_id):
+    if delete_project_assets(clean_project_id):
         deleted = True
-    # Cascade thread cleanup
-    if linked_thread_id:
+
+    if linked_thread_ids:
         try:
-            from row_bot.threads import _delete_thread, purge_external_state
-            purge_external_state(linked_thread_id)
-            _delete_thread(linked_thread_id)
+            from row_bot.thread_cleanup import delete_threads
+
+            result = delete_threads(sorted(linked_thread_ids))
+            if result.failures:
+                logger.warning(
+                    "Designer project %s thread cleanup had %d failure(s)",
+                    clean_project_id,
+                    len(result.failures),
+                )
         except Exception:
             logger.exception(
-                "Failed to cascade thread deletion for project %s (thread %s)",
-                project_id, linked_thread_id,
+                "Failed to cascade thread deletion for project %s",
+                clean_project_id,
             )
     return deleted
 

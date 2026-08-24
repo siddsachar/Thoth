@@ -34,6 +34,7 @@ THREAD_FILTER_DESCRIPTORS: tuple[dict[str, str], ...] = (
     {"key": "designer", "label": "Designs", "icon": "brush"},
     {"key": "code", "label": "Code", "icon": "code"},
     {"key": "workflow", "label": "Workflows", "icon": "task_alt"},
+    {"key": "agents", "label": "Agents", "icon": "badge"},
 )
 _THREAD_DETAIL_PINNED_AT_INDEX = 13
 _SIDEBAR_PINNED_VISIBLE_LIMIT = 5
@@ -180,6 +181,46 @@ def _filter_classified_thread_rows(rows: list[tuple], filter_key: str) -> list[t
     if filter_key == "all":
         return [item for item in rows if item[1] != "agents"]
     return [item for item in rows if item[1] == filter_key]
+
+
+def selectable_thread_ids_for_filter(rows: list[tuple], filter_key: str) -> list[str]:
+    """Return every selectable row id for an All Conversations filter."""
+
+    return [
+        str(row[0])
+        for row, _category in _filter_classified_thread_rows(rows, filter_key)
+        if row and str(row[0] or "")
+    ]
+
+
+def _thread_delete_confirmation_body(row: tuple) -> str:
+    project_id = str(row[5] or "") if len(row) > 5 else ""
+    thread_type = str(row[6] or "") if len(row) > 6 else ""
+    developer_workspace_id = str(row[7] or "") if len(row) > 7 else ""
+    if project_id:
+        return "Delete this conversation? The design will remain."
+    if thread_type == "code" or developer_workspace_id:
+        try:
+            from row_bot.developer.worktrees import (
+                get_worktree_for_thread,
+                get_worktree_for_workspace,
+                worktree_diff_summary,
+            )
+
+            worktree = get_worktree_for_thread(str(row[0]))
+            if worktree is None and developer_workspace_id:
+                worktree = get_worktree_for_workspace(developer_workspace_id)
+            if worktree:
+                summary = worktree_diff_summary(
+                    str(worktree.get("owner_kind") or "thread"),
+                    str(worktree.get("owner_id") or row[0]),
+                )
+                if summary.get("dirty") or summary.get("status_lines"):
+                    return "Delete this conversation? Its worktree has changes and will be kept."
+        except Exception:
+            logger.debug("Could not inspect Developer worktree before delete", exc_info=True)
+        return "Delete this conversation? Repository files will not be affected."
+    return "Delete this conversation and its attachments? This cannot be undone."
 
 
 def _sidebar_visible_classified_sections(
@@ -403,8 +444,9 @@ def build_sidebar(
         ``load_thread_messages(thread_id) -> list[dict]`` used to hydrate
         a thread when the user clicks it.
     """
-    from row_bot.threads import _list_threads, _save_thread_meta, _delete_thread, _get_thread_project_id, _get_thread_approval_mode
-    from row_bot.tasks import get_running_tasks, stop_task
+    from row_bot.threads import _get_thread_approval_mode, _list_threads, _save_thread_meta
+    from row_bot.tasks import get_running_tasks
+    from row_bot.thread_cleanup import delete_thread, delete_threads
     from row_bot.memory_extraction import set_active_thread
     from row_bot.ui.thread_actions import apply_thread_pin, show_rename_thread_dialog
 
@@ -907,35 +949,40 @@ def build_sidebar(
                     rebuild_main()
                     _rebuild_thread_list_ref[0]()
 
-                def _delete(t=tid):
-                    _del_gen = _active_generations.get(t)
-                    if _del_gen:
-                        _del_gen.stop_event.set()
-                    stop_task(t)
-                    _delete_thread(t)
-                    from row_bot.tools.shell_tool import get_session_manager, clear_shell_history
-                    get_session_manager().kill_session(t)
-                    clear_shell_history(t)
-                    from row_bot.tools.browser_tool import (
-                        get_session_manager as get_browser_session_manager,
-                        clear_browser_history,
-                    )
-                    get_browser_session_manager().kill_session(t)
-                    clear_browser_history(t)
-                    set_active_thread(None, previous_id=t)
-                    state.invalidate_thread_cache(t)
-                    if state.thread_id == t:
-                        from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
+                delete_confirmation_body = _thread_delete_confirmation_body(row)
 
-                        stop_voice_for_thread_change(state, p, reason="delete_active_thread")
-                        state.thread_id = None
-                        state.thread_name = None
-                        from row_bot.approval_policy import DEFAULT_APPROVAL_MODE
-                        state.thread_approval_mode = DEFAULT_APPROVAL_MODE
-                        state.messages = []
-                        state.active_developer_workspace_id = None
-                        rebuild_main()
-                    _rebuild_thread_list_ref[0]()
+                def _delete(t=tid, body=delete_confirmation_body):
+                    from row_bot.ui.confirm import confirm_destructive
+
+                    def _commit() -> None:
+                        result = delete_thread(t)
+                        set_active_thread(None, previous_id=t)
+                        state.invalidate_thread_cache(t)
+                        if state.thread_id == t:
+                            from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
+
+                            stop_voice_for_thread_change(state, p, reason="delete_active_thread")
+                            state.thread_id = None
+                            state.thread_name = None
+                            from row_bot.approval_policy import DEFAULT_APPROVAL_MODE
+                            state.thread_approval_mode = DEFAULT_APPROVAL_MODE
+                            state.messages = []
+                            state.active_designer_project = None
+                            state.active_developer_workspace_id = None
+                            rebuild_main()
+                        notice = "Conversation deleted."
+                        if result.retained_worktree_path:
+                            notice = "Conversation deleted. A Developer worktree with changes was kept."
+                        elif result.retained_sandbox:
+                            notice = "Conversation deleted. A Developer sandbox with unimported changes was kept."
+                        ui.notify(notice, type="warning" if result.warnings else "info")
+                        _rebuild_thread_list_ref[0]()
+
+                    confirm_destructive(
+                        "Delete conversation?",
+                        body=body,
+                        on_confirm=_commit,
+                    )
 
                 def _rename(t=tid, n=name):
                     show_rename_thread_dialog(
@@ -1022,43 +1069,10 @@ def build_sidebar(
                 def _show_all():
                     from row_bot.ui.bulk_select import BulkSelect, render_bulk_action_bar
                     from row_bot.ui.confirm import confirm_destructive
-                    from row_bot.threads import delete_threads as _bulk_delete_threads
 
                     bulk = BulkSelect()
                     modal_threads = list(threads)
                     modal_pin_changed = False
-
-                    def _purge_external(t: str) -> None:
-                        """Cleanup outside threads.py: session kills, history,
-                        active generation stop, task stop. Safe on missing ids.
-                        """
-                        try:
-                            gen = _active_generations.get(t)
-                            if gen:
-                                gen.stop_event.set()
-                        except Exception:
-                            pass
-                        try:
-                            stop_task(t)
-                        except Exception:
-                            pass
-                        try:
-                            from row_bot.tools.shell_tool import (
-                                get_session_manager, clear_shell_history,
-                            )
-                            get_session_manager().kill_session(t)
-                            clear_shell_history(t)
-                        except Exception:
-                            pass
-                        try:
-                            from row_bot.tools.browser_tool import (
-                                get_session_manager as get_browser_session_manager,
-                                clear_browser_history,
-                            )
-                            get_browser_session_manager().kill_session(t)
-                            clear_browser_history(t)
-                        except Exception:
-                            pass
 
                     with ui.dialog() as dlg, ui.card().style("width: min(840px, 94vw); max-width: 94vw;"):
                         def _refresh_after_modal_hide(_event=None) -> None:
@@ -1073,14 +1087,20 @@ def build_sidebar(
 
                         with ui.row().classes("w-full items-center justify-between"):
                             ui.label("All Conversations").classes("text-h6")
-                            select_btn = ui.button("Select").props(
-                                "flat dense no-caps size=sm"
-                            )
+                            with ui.row().classes("items-center gap-1"):
+                                select_all_btn = ui.button("Select all").props(
+                                    "flat dense no-caps size=sm"
+                                )
+                                select_all_btn.set_visibility(False)
+                                select_btn = ui.button("Select").props(
+                                    "flat dense no-caps size=sm"
+                                )
 
                         def _toggle_mode():
                             bulk.toggle_mode()
                             select_btn.text = "Done" if bulk.active else "Select"
                             _rebuild_dialog_list()
+                            _refresh_select_all_control()
 
                         select_btn.on("click", _toggle_mode)
 
@@ -1102,6 +1122,7 @@ def build_sidebar(
                         _modal_counts = {"all": 0, "chat": 0,
                                          "designer": 0, "code": 0, "workflow": 0,
                                          "agents": 0}
+                        _modal_classified: list[tuple] = []
                         for _r in modal_threads:
                             _pid = _r[5] if len(_r) > 5 else ""
                             _tt = _r[6] if len(_r) > 6 else ""
@@ -1110,6 +1131,33 @@ def build_sidebar(
                             _modal_counts[_cat_key] += 1
                             if _cat_key != "agents":
                                 _modal_counts["all"] += 1
+                            _modal_classified.append((_r, _cat_key))
+
+                        def _current_filter_ids() -> list[str]:
+                            return selectable_thread_ids_for_filter(
+                                _modal_classified,
+                                _MODAL_FILTER,
+                            )
+
+                        def _refresh_select_all_control() -> None:
+                            ids = _current_filter_ids()
+                            select_all_btn.set_visibility(bool(bulk.active and ids))
+                            select_all_btn.text = (
+                                "Clear all"
+                                if ids and all(bulk.is_selected(thread_id) for thread_id in ids)
+                                else "Select all"
+                            )
+
+                        def _toggle_current_filter_selection() -> None:
+                            ids = _current_filter_ids()
+                            if not ids:
+                                return
+                            if all(bulk.is_selected(thread_id) for thread_id in ids):
+                                bulk.deselect_many(ids)
+                            else:
+                                bulk.select_many(ids)
+
+                        select_all_btn.on("click", _toggle_current_filter_selection)
 
                         filter_row = ui.row().classes(
                             "w-full gap-1 items-center q-mb-xs"
@@ -1138,6 +1186,7 @@ def build_sidebar(
                                         _MODAL_FILTER = k
                                         _render_modal_pills()
                                         _rebuild_dialog_list()
+                                        _refresh_select_all_control()
 
                                     _render_modal_filter_button(
                                         key=key,
@@ -1263,18 +1312,35 @@ def build_sidebar(
                                             rebuild_main()
                                             _rebuild_thread_list_ref[0]()
 
-                                        def _del(t=tid):
-                                            _purge_external(t)
-                                            _delete_thread(t)
-                                            if state.thread_id == t:
-                                                from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
+                                        delete_confirmation_body = _thread_delete_confirmation_body(row)
 
-                                                stop_voice_for_thread_change(state, p, reason="delete_active_thread_modal")
-                                                state.thread_id = None
-                                                state.messages = []
-                                            dlg.close()
-                                            rebuild_main()
-                                            _rebuild_thread_list_ref[0]()
+                                        def _del(t=tid, body=delete_confirmation_body):
+                                            def _commit() -> None:
+                                                result = delete_thread(t)
+                                                if state.thread_id == t:
+                                                    from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
+
+                                                    stop_voice_for_thread_change(state, p, reason="delete_active_thread_modal")
+                                                    state.thread_id = None
+                                                    state.thread_name = None
+                                                    state.messages = []
+                                                    state.active_designer_project = None
+                                                    state.active_developer_workspace_id = None
+                                                notice = "Conversation deleted."
+                                                if result.retained_worktree_path:
+                                                    notice = "Conversation deleted. A Developer worktree with changes was kept."
+                                                elif result.retained_sandbox:
+                                                    notice = "Conversation deleted. A Developer sandbox with unimported changes was kept."
+                                                ui.notify(notice, type="warning" if result.warnings else "info")
+                                                dlg.close()
+                                                rebuild_main()
+                                                _rebuild_thread_list_ref[0]()
+
+                                            confirm_destructive(
+                                                "Delete conversation?",
+                                                body=body,
+                                                on_confirm=_commit,
+                                            )
 
                                         def _ren(t=tid, n=name):
                                             show_rename_thread_dialog(
@@ -1376,9 +1442,7 @@ def build_sidebar(
 
                         def _do_bulk_delete(ids: list[str]) -> None:
                             def _commit():
-                                for t in ids:
-                                    _purge_external(t)
-                                deleted, failures = _bulk_delete_threads(ids)
+                                result = delete_threads(ids)
                                 if state.thread_id in ids:
                                     from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
 
@@ -1386,10 +1450,16 @@ def build_sidebar(
                                     state.thread_id = None
                                     state.thread_name = None
                                     state.messages = []
-                                msg = f"Deleted {deleted} conversation{'s' if deleted != 1 else ''}."
-                                if failures:
-                                    msg += f" {len(failures)} failed."
-                                ui.notify(msg, type="negative" if failures else "info")
+                                    state.active_designer_project = None
+                                    state.active_developer_workspace_id = None
+                                msg = f"Deleted {result.deleted} conversation{'s' if result.deleted != 1 else ''}."
+                                if result.retained_worktrees:
+                                    msg += f" Kept {len(result.retained_worktrees)} Developer worktree{'s' if len(result.retained_worktrees) != 1 else ''} with changes."
+                                if result.retained_sandboxes:
+                                    msg += f" Kept {result.retained_sandboxes} Developer sandbox{'es' if result.retained_sandboxes != 1 else ''} with unimported changes."
+                                if result.failures:
+                                    msg += f" {len(result.failures)} failed."
+                                ui.notify(msg, type="negative" if result.failures else "info")
                                 dlg.close()
                                 rebuild_main()
                                 _rebuild_thread_list_ref[0]()
@@ -1405,6 +1475,11 @@ def build_sidebar(
                             )
 
                         with action_slot:
+                            def _refresh_bulk_selection() -> None:
+                                _refresh_select_all_control()
+                                _rebuild_dialog_list()
+
+                            bulk.on_change(_refresh_bulk_selection)
                             render_bulk_action_bar(
                                 bulk,
                                 on_delete=_do_bulk_delete,
@@ -1417,31 +1492,30 @@ def build_sidebar(
                         with ui.row().classes("w-full gap-2"):
                             def _delete_all():
                                 # Respect current filter: only nuke what's visible.
-                                all_ids = []
-                                for r in modal_threads:
-                                    cat = _cat_modal(
-                                        r[5] if len(r) > 5 else "",
-                                        r[0],
-                                        r[6] if len(r) > 6 else "",
-                                        r[7] if len(r) > 7 else "",
-                                    )
-                                    if (_MODAL_FILTER == "all" and cat != "agents") or cat == _MODAL_FILTER:
-                                        all_ids.append(r[0])
+                                all_ids = _current_filter_ids()
                                 if not all_ids:
                                     ui.notify("Nothing to delete in this filter.",
                                               type="warning")
                                     return
 
                                 def _commit():
-                                    for t in all_ids:
-                                        _purge_external(t)
-                                    _bulk_delete_threads(all_ids)
+                                    result = delete_threads(all_ids)
                                     from row_bot.ui.voice_lifecycle import stop_voice_for_thread_change
 
                                     stop_voice_for_thread_change(state, p, reason="bulk_delete_all_threads")
                                     state.thread_id = None
                                     state.thread_name = None
                                     state.messages = []
+                                    state.active_designer_project = None
+                                    state.active_developer_workspace_id = None
+                                    msg = f"Deleted {result.deleted} conversations."
+                                    if result.retained_worktrees:
+                                        msg += f" Kept {len(result.retained_worktrees)} Developer worktree{'s' if len(result.retained_worktrees) != 1 else ''} with changes."
+                                    if result.retained_sandboxes:
+                                        msg += f" Kept {result.retained_sandboxes} Developer sandbox{'es' if result.retained_sandboxes != 1 else ''} with unimported changes."
+                                    if result.failures:
+                                        msg += f" {len(result.failures)} failed."
+                                    ui.notify(msg, type="negative" if result.failures else "info")
                                     dlg.close()
                                     rebuild_main()
                                     _rebuild_thread_list_ref[0]()
@@ -1451,11 +1525,12 @@ def build_sidebar(
                                     if _MODAL_FILTER == "all"
                                     else {
                                         "chat": "chats",
-                                        "designer": "design conversations",
-                                        "code": "code conversations",
-                                        "workflow": "workflow conversations",
-                                    }[_MODAL_FILTER]
-                                )
+                                            "designer": "design conversations",
+                                            "code": "code conversations",
+                                            "workflow": "workflow conversations",
+                                            "agents": "Agent conversations",
+                                        }[_MODAL_FILTER]
+                                    )
                                 confirm_destructive(
                                     f"Delete all {len(all_ids)} {scope}?",
                                     body="This cannot be undone.",

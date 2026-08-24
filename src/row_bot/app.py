@@ -1019,7 +1019,7 @@ async def _run_startup_sequence():
     try:
         from datetime import datetime, timedelta
         from row_bot.tasks import _get_scheduler
-        from row_bot.threads import cleanup_old_checkpoints
+        from row_bot.thread_cleanup import run_idle_maintenance
 
         def _run_checkpoint_cleanup() -> None:
             try:
@@ -1027,7 +1027,9 @@ async def _run_startup_sequence():
                 if not is_app_idle():
                     logger.info("Checkpoint cleanup deferred; app is active")
                     return
-                cleanup_old_checkpoints()
+                # Includes cleanup_old_checkpoints, safe orphan repair, and
+                # thresholded SQLite reclamation in one serialized idle pass.
+                run_idle_maintenance()
             except Exception:
                 logger.debug("Checkpoint cleanup failed", exc_info=True)
 

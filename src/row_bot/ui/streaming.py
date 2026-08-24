@@ -4220,6 +4220,22 @@ async def consume_generation(
                 )
             )
 
+    try:
+        from row_bot.thread_cleanup import finish_thread_deletion, is_thread_deleting
+
+        if gen.deletion_token and is_thread_deleting(gen.thread_id):
+            await run.io_bound(
+                finish_thread_deletion,
+                gen.thread_id,
+                gen.deletion_token,
+            )
+    except Exception:
+        logger.warning(
+            "Late conversation deletion purge failed for thread %s",
+            gen.thread_id,
+            exc_info=True,
+        )
+
     gen.consumer_finalized_at = time.perf_counter()
     gen.finalization_ms = (gen.consumer_finalized_at - _finalization_started) * 1000.0
     if gen.producer_thread_started_at and gen.first_producer_event_at:

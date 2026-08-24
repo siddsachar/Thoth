@@ -3065,7 +3065,7 @@ def _default_synthesis_executor(
         result = invoke_agent(prompt, list(enabled_tools), config)
     finally:
         try:
-            from row_bot.threads import delete_threads
+            from row_bot.thread_cleanup import delete_threads
 
             delete_threads([synthesis_thread_id])
         except Exception:

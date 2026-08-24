@@ -210,6 +210,7 @@ class GenerationState:
     enabled_tools: list
     cancel_scope: Any = None
     generation_id: str = ""
+    deletion_token: str = ""
     orchestration_id: str = ""
     orchestration_required: bool = False
     orchestration_suspended: bool = False

@@ -485,15 +485,15 @@ def test_sidebar_uses_responsive_drawer_with_narrow_screen_toggle():
     assert "aria-label='Toggle navigation'" in sidebar
 
 
-def test_sidebar_hides_child_agent_threads_by_default():
+def test_sidebar_hides_child_agent_threads_from_all_and_exposes_agents_filter():
     src = _read("ui/sidebar.py")
 
     assert '"agents"' in src
     assert 'thread_type == "agent_child"' in src
     assert "def _is_hidden_agent_child_run" in src
     assert 'agent_run.get("kind") or "") != "subagent"' in src
-    assert '{"key": "agents"' not in src
-    assert '"label": "Agents"' not in src
+    assert '{"key": "agents", "label": "Agents", "icon": "badge"}' in src
+    assert '"agents": "Agent conversations"' in src
     assert "parent_child_counts" not in src
     assert "_SIDEBAR_AGENT_EXPANDED" not in src
     assert 'payload["agent_parent_expanded"]' not in src

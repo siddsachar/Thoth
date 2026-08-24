@@ -33,6 +33,18 @@ def resolve_publish_path(project: DesignerProject) -> pathlib.Path:
     return ensure_published_dir() / f"{project.id}.html"
 
 
+def delete_published_project(project_id: str) -> bool:
+    """Remove a project's local published HTML without stopping shared tunnels."""
+
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    path = resolve_managed_path(PUBLISHED_DIR, f"{str(project_id or '')}.html")
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
 def resolve_publish_base_url(ensure_public: bool = True) -> tuple[str, bool]:
     """Return the base URL for published links and whether it is public."""
     app_port = get_app_port()

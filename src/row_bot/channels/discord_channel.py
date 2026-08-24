@@ -116,6 +116,7 @@ def _get_or_create_thread(channel_id: int | str) -> str:
         thread_id,
         "🎮 Discord conversation",
         seed_default_skills=True,
+        allow_recreate=True,
     )  # creates or bumps updated_at
     return thread_id
 
@@ -135,7 +136,12 @@ def _new_thread(channel_id: int | str) -> str:
         )
     except Exception:
         log.debug("Discord thread channel ref skipped", exc_info=True)
-    _save_thread_meta(thread_id, "Discord conversation", seed_default_skills=True)
+    _save_thread_meta(
+        thread_id,
+        "Discord conversation",
+        seed_default_skills=True,
+        allow_recreate=True,
+    )
     return thread_id
 
 

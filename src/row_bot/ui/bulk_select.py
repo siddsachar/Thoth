@@ -91,7 +91,17 @@ class BulkSelect:
         self._emit()
 
     def select_many(self, ids: list[str] | set[str]) -> None:
-        self._selected.update(ids)
+        previous = len(self._selected)
+        self._selected.update(str(item_id) for item_id in ids)
+        if len(self._selected) == previous:
+            return
+        self._emit()
+
+    def deselect_many(self, ids: list[str] | set[str]) -> None:
+        previous = len(self._selected)
+        self._selected.difference_update(str(item_id) for item_id in ids)
+        if len(self._selected) == previous:
+            return
         self._emit()
 
 
@@ -143,10 +153,10 @@ def render_bulk_action_bar(
     with container:
         count_lbl = ui.label("").classes("text-sm")
         with ui.row().classes("gap-2 items-center"):
-            clear_btn = ui.button("Clear", on_click=_do_clear).props(
+            ui.button("Clear", on_click=_do_clear).props(
                 "flat dense no-caps size=sm"
             )
-            del_btn = ui.button(
+            ui.button(
                 delete_label,
                 icon="delete",
                 on_click=lambda: on_delete(sorted(bulk.selected)),

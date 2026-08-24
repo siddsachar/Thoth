@@ -695,3 +695,161 @@ def source_dirty_missing_from_worktree(owner_kind: str, owner_id: str) -> dict[s
         "source_path": str(source_path),
         "worktree_path": str(worktree_path),
     }
+
+
+def _delete_worktree_record(row_id: str) -> bool:
+    _ensure_schema()
+    from row_bot import tasks
+
+    conn = tasks._get_conn()  # noqa: SLF001
+    try:
+        cursor = conn.execute("DELETE FROM developer_worktrees WHERE id = ?", (row_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return bool(cursor.rowcount)
+
+
+def cleanup_thread_developer_state(
+    thread_id: str,
+    *,
+    workspace_id: str = "",
+    project_workspace_id: str = "",
+) -> dict[str, Any]:
+    """Remove thread-owned Developer state while preserving recoverable work."""
+
+    from row_bot.developer.change_ledger import delete_thread_change_sets
+    from row_bot.developer.inspector_snapshot import clear_thread_snapshots
+    from row_bot.developer.sandbox_runtime import (
+        cleanup_thread_pending_changes,
+        cleanup_workspace_sandbox,
+        list_pending_changes,
+        sandbox_shadow_path,
+    )
+    from row_bot.developer.storage import (
+        clear_thread_references,
+        delete_workspace_record,
+        get_workspace,
+    )
+    from row_bot.developer.todos import delete_todos
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    clean_thread_id = str(thread_id or "").strip()
+    result: dict[str, Any] = {
+        "changed": 0,
+        "retained_worktree_path": "",
+        "retained_sandbox": False,
+        "warnings": [],
+    }
+    if not clean_thread_id:
+        return result
+
+    result["changed"] += int(delete_todos(clean_thread_id))
+    result["changed"] += int(delete_thread_change_sets(clean_thread_id))
+    pending_stats = cleanup_thread_pending_changes(clean_thread_id)
+    result["changed"] += int(pending_stats["imported_removed"])
+    result["changed"] += clear_thread_snapshots(clean_thread_id)
+
+    worktree = get_worktree_for_thread(clean_thread_id)
+    if worktree is None and workspace_id:
+        candidate = get_worktree_for_workspace(workspace_id)
+        if candidate is not None:
+            worktree = candidate
+
+    recovery_workspace_id = ""
+    if worktree is None:
+        if pending_stats["unimported_retained"]:
+            recovery_workspace_id = str(workspace_id or project_workspace_id or "")
+            result["retained_sandbox"] = True
+        result["changed"] += clear_thread_references(
+            clean_thread_id,
+            recovery_workspace_id=recovery_workspace_id,
+        )
+        return result
+
+    worktree_workspace_id = str(worktree.get("worktree_workspace_id") or "")
+    worktree_path = pathlib.Path(str(worktree.get("worktree_path") or ""))
+    project_path = pathlib.Path(str(worktree.get("project_path") or ""))
+    unimported = list_pending_changes(workspace_id=worktree_workspace_id)
+    retained_sandbox = bool(unimported or pending_stats["unimported_retained"])
+    summary = worktree_diff_summary(
+        str(worktree.get("owner_kind") or "thread"),
+        str(worktree.get("owner_id") or clean_thread_id),
+    )
+    dirty = bool(summary.get("dirty") or summary.get("status_lines"))
+    unsafe_reason = ""
+    try:
+        managed_root = project_path.parent / ".row-bot-worktrees"
+        safe_worktree_path = resolve_managed_path(managed_root, worktree_path)
+    except ValueError as exc:
+        safe_worktree_path = worktree_path
+        unsafe_reason = str(exc)
+
+    if not unsafe_reason and not safe_worktree_path.exists() and not retained_sandbox:
+        result["changed"] += int(delete_workspace_record(worktree_workspace_id))
+        result["changed"] += int(_delete_worktree_record(str(worktree.get("id") or "")))
+        result["changed"] += clear_thread_references(clean_thread_id)
+        return result
+
+    if dirty or retained_sandbox or not bool(summary.get("ok")) or unsafe_reason:
+        reason_parts = []
+        if dirty:
+            reason_parts.append("worktree has changes")
+        if retained_sandbox:
+            reason_parts.append("sandbox has unimported changes")
+        if not bool(summary.get("ok")):
+            reason_parts.append(str(summary.get("error") or "worktree status is unknown"))
+        if unsafe_reason:
+            reason_parts.append(unsafe_reason)
+        reason = "; ".join(dict.fromkeys(reason_parts))
+        mark_worktree_preserved(
+            str(worktree.get("owner_kind") or "thread"),
+            str(worktree.get("owner_id") or clean_thread_id),
+            reason=reason,
+        )
+        recovery_workspace_id = worktree_workspace_id
+        result["retained_worktree_path"] = str(worktree_path)
+        result["retained_sandbox"] = retained_sandbox
+        if dirty:
+            result["warnings"].append("A Developer worktree with changes was kept.")
+        if retained_sandbox:
+            result["warnings"].append("A Developer sandbox with unimported changes was kept.")
+        if unsafe_reason:
+            result["warnings"].append("An unsafe Developer worktree path was kept.")
+        result["changed"] += clear_thread_references(
+            clean_thread_id,
+            recovery_workspace_id=recovery_workspace_id,
+        )
+        return result
+
+    try:
+        if safe_worktree_path.exists():
+            subprocess.run(
+                ["git", "-C", str(project_path), "worktree", "remove", str(safe_worktree_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        workspace = get_workspace(worktree_workspace_id) if worktree_workspace_id else None
+        if workspace is not None and (
+            workspace.execution_mode == "docker" or sandbox_shadow_path(workspace.id).exists()
+        ):
+            cleanup_workspace_sandbox(workspace.id)
+        result["changed"] += int(delete_workspace_record(worktree_workspace_id))
+        result["changed"] += int(_delete_worktree_record(str(worktree.get("id") or "")))
+    except Exception as exc:
+        mark_worktree_preserved(
+            str(worktree.get("owner_kind") or "thread"),
+            str(worktree.get("owner_id") or clean_thread_id),
+            reason=f"automatic clean-worktree removal failed: {exc}",
+        )
+        recovery_workspace_id = worktree_workspace_id
+        result["retained_worktree_path"] = str(worktree_path)
+        result["warnings"].append("A Developer worktree could not be removed and was kept.")
+
+    result["changed"] += clear_thread_references(
+        clean_thread_id,
+        recovery_workspace_id=recovery_workspace_id,
+    )
+    return result

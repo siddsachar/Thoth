@@ -17,6 +17,25 @@ def test_source_test_rules_have_unique_names_and_actionable_tests() -> None:
         assert rule.reason.strip()
 
 
+def test_thread_cleanup_change_selects_cross_subsystem_deletion_contracts() -> None:
+    selection = select_tests_for_changes(
+        [
+            "src/row_bot/thread_cleanup.py",
+            "src/row_bot/channels/telegram.py",
+            "src/row_bot/ui/state.py",
+        ]
+    )
+
+    assert "thread_deletion_cleanup" in selection.matched_rules
+    assert "tests/subsystem/threads" in selection.test_paths
+    assert "tests/subsystem/designer" in selection.test_paths
+    assert "tests/subsystem/developer" in selection.test_paths
+    assert "tests/subsystem/workflows" in selection.test_paths
+    assert "tests/subsystem/channels" in selection.test_paths
+    assert "tests/test_bulk_select.py" in selection.test_paths
+    assert not selection.unmatched_files
+
+
 def test_provider_change_selects_provider_contract_and_focused_regressions() -> None:
     selection = select_tests_for_changes(["src/row_bot/providers/runtime.py"])
 

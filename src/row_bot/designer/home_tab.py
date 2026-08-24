@@ -11,7 +11,7 @@ from nicegui import ui
 from row_bot.designer.state import BrandConfig
 from row_bot.designer.storage import list_projects, load_project, delete_project, duplicate_project, delete_projects
 from row_bot.designer.thumbnail import compute_thumbnail_dimensions, render_static_page_thumbnail
-from row_bot.designer.ui_theme import dialog_card_style, style_destructive_button, style_ghost_button, style_primary_button
+from row_bot.designer.ui_theme import style_primary_button
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +112,8 @@ def build_designer_tab(
                     confirm_destructive(
                         f"Delete {len(ids)} {noun}?",
                         body=(
-                            "This cannot be undone. Pages, assets, and the "
-                            "linked conversation will be removed."
+                            "Delete these designs, their assets, history, published copies, "
+                            "and linked conversations?"
                         ),
                         on_confirm=_commit,
                     )
@@ -252,23 +252,19 @@ def _render_project_card(
             ).props("flat dense round size=sm").tooltip("Duplicate")
 
             def _del(pid=proj_id, pname=name):
-                with ui.dialog() as confirm_dlg, ui.card().style(dialog_card_style(min_width="300px")):
-                    ui.label(f"Delete '{pname}'?").classes("font-bold")
-                    ui.label("This cannot be undone.").classes("text-grey-6 text-xs")
-                    with ui.row().classes("w-full justify-end mt-2"):
-                        cancel_btn = ui.button("Cancel", on_click=confirm_dlg.close)
-                        style_ghost_button(cancel_btn, compact=True)
+                from row_bot.ui.confirm import confirm_destructive
 
-                        def _confirm(d=confirm_dlg, p=pid):
-                            delete_project(p)
-                            d.close()
-                            ui.notify("🗑️ Project deleted.", type="negative")
-                            if on_refresh:
-                                on_refresh()
+                def _confirm(p=pid):
+                    delete_project(p)
+                    ui.notify("🗑️ Project deleted.", type="negative")
+                    if on_refresh:
+                        on_refresh()
 
-                        delete_btn = ui.button("Delete", on_click=_confirm)
-                        style_destructive_button(delete_btn, compact=True)
-                confirm_dlg.open()
+                confirm_destructive(
+                    f"Delete '{pname}'?",
+                    body="Delete this design, its assets, history, published copy, and linked conversation?",
+                    on_confirm=_confirm,
+                )
 
             ui.button(icon="delete").on(
                 "click.stop", _del

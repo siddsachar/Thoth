@@ -58,6 +58,17 @@ _DEFAULT_AUTO_NAME_PREFIXES = (
 )
 
 
+def _thread_write_blocked(thread_id: str | None) -> bool:
+    """Return whether an in-process deletion owns this thread id."""
+
+    try:
+        from row_bot.thread_cleanup import is_thread_deleting
+
+        return is_thread_deleting(thread_id)
+    except Exception:
+        return False
+
+
 def _init_thread_db(*, raise_on_error: bool = False):
     """Create and migrate the thread metadata table."""
     try:
@@ -461,6 +472,12 @@ def create_thread(
     """Create or replace the metadata row for a conversation thread."""
     _ensure_thread_db()
     tid = str(thread_id or uuid.uuid4().hex[:12])
+    try:
+        from row_bot.thread_cleanup import allow_thread_recreation
+
+        allow_thread_recreation(tid)
+    except Exception:
+        logger.debug("Could not clear deletion guard for new thread %s", tid, exc_info=True)
     safe_name = _normalize_thread_name(name, fallback="Untitled")
     safe_source = _normalize_thread_name_source(name_source)
     safe_approval = (
@@ -678,7 +695,19 @@ def _seed_thread_default_skills_safe(thread_id: str, *, surface: str = "chat") -
         )
 
 
-def _save_thread_meta(thread_id: str, name: str, *, seed_default_skills: bool = False):
+def _save_thread_meta(
+    thread_id: str,
+    name: str,
+    *,
+    seed_default_skills: bool = False,
+    allow_recreate: bool = False,
+):
+    if _thread_write_blocked(thread_id):
+        if not allow_recreate:
+            return
+        from row_bot.thread_cleanup import allow_thread_recreation
+
+        allow_thread_recreation(thread_id)
     _ensure_thread_db()
     now = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
@@ -710,7 +739,7 @@ def _thread_ui_draft_path(thread_id: str) -> pathlib.Path:
 def save_thread_draft(thread_id: str, text: str, *, source: str = "") -> None:
     """Persist a composer draft for a thread until it is sent or replaced."""
 
-    if not thread_id:
+    if not thread_id or _thread_write_blocked(thread_id):
         return
     try:
         payload = {
@@ -755,6 +784,8 @@ def delete_thread_draft(thread_id: str) -> None:
 
 def _thread_media_dir(thread_id: str) -> pathlib.Path:
     """Return (and lazily create) the per-thread media directory."""
+    if _thread_write_blocked(thread_id):
+        raise RuntimeError("Conversation is being deleted.")
     d = _MEDIA_DIR / thread_id
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -762,6 +793,8 @@ def _thread_media_dir(thread_id: str) -> pathlib.Path:
 
 def save_thread_media(thread_id: str, payload: dict) -> None:
     """Persist media sidecar (v2 — file paths, not base64)."""
+    if _thread_write_blocked(thread_id):
+        return
     try:
         path = _thread_ui_media_path(thread_id)
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -787,6 +820,8 @@ def save_media_file(thread_id: str, filename: str, data: bytes) -> pathlib.Path:
 
     Returns the absolute path to the saved file.
     """
+    if _thread_write_blocked(thread_id):
+        raise RuntimeError("Conversation is being deleted.")
     d = _thread_media_dir(thread_id)
     dest = d / filename
     dest.write_bytes(data)
@@ -826,155 +861,91 @@ def _next_media_filename(thread_id: str, prefix: str, ext: str) -> str:
 
 _init_thread_db()
 
-def _delete_thread(thread_id: str):
-    """Remove a thread's metadata, checkpoints, and writes from the database."""
+def _get_thread_cleanup_context(thread_id: str) -> dict[str, object]:
+    """Read deletion ownership in one snapshot before metadata is removed."""
+
     _ensure_thread_db()
-    try:
-        from row_bot.computer_use.service import get_computer_use_service
+    with sqlite3.connect(DB_PATH) as cleanup_conn:
+        row = cleanup_conn.execute(
+            "SELECT COALESCE(project_id, ''), COALESCE(thread_type, ''), "
+            "COALESCE(developer_workspace_id, ''), COALESCE(project_workspace_id, '') "
+            "FROM thread_meta WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    if not row:
+        return {
+            "exists": False,
+            "project_id": "",
+            "thread_type": "",
+            "developer_workspace_id": "",
+            "project_workspace_id": "",
+        }
+    return {
+        "exists": True,
+        "project_id": str(row[0] or ""),
+        "thread_type": str(row[1] or ""),
+        "developer_workspace_id": str(row[2] or ""),
+        "project_workspace_id": str(row[3] or ""),
+    }
 
-        get_computer_use_service().close_for_thread(thread_id)
-    except Exception:
-        logger.warning("Failed to clean up Computer Use state for thread %s", thread_id, exc_info=True)
-    try:
-        from row_bot.agent_runs import cleanup_thread_agent_runs
 
-        cleanup_thread_agent_runs(thread_id)
-    except Exception:
-        logger.warning("Failed to clean up Agent Run state for thread %s", thread_id, exc_info=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("DELETE FROM thread_meta WHERE thread_id = ?", (thread_id,))
-    try:
-        conn.execute("DELETE FROM thread_events WHERE thread_id = ?", (thread_id,))
-    except sqlite3.OperationalError:
-        pass
-    # Purge LangGraph checkpoint data to prevent zombie threads
-    # Tables are created by LangGraph at runtime — may not exist yet
-    try:
-        conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
-        conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
-    except sqlite3.OperationalError:
-        pass
-    conn.commit()
-    conn.close()
-    # Clean up media sidecar and non-persistent media files
-    try:
-        sidecar = _thread_ui_media_path(thread_id)
-        media_dir = _MEDIA_DIR / thread_id
-        # Read sidecar to find which files to keep (persist=true)
-        persist_files: set[str] = set()
-        if sidecar.exists():
-            try:
-                payload = json.loads(sidecar.read_text(encoding="utf-8"))
-                for entry in payload.get("entries", []):
-                    for item in entry.get("media", []):
-                        if item.get("persist"):
-                            persist_files.add(item.get("path", ""))
-            except Exception:
-                logger.debug("Failed to parse media sidecar during delete", exc_info=True)
-            sidecar.unlink(missing_ok=True)
-        # Delete non-persistent files; leave persistent ones
-        if media_dir.exists():
-            for f in list(media_dir.iterdir()):
-                if f.name not in persist_files:
-                    try:
-                        f.unlink()
-                    except Exception:
-                        logger.debug("Failed to delete media file %s", f, exc_info=True)
-            # Remove dir only if empty
-            try:
-                if not any(media_dir.iterdir()):
-                    media_dir.rmdir()
-            except Exception:
-                pass
-    except Exception:
-        logger.warning("Failed to clean up media for thread %s", thread_id, exc_info=True)
-    # Also clean up legacy sidecar if present
-    try:
-        legacy = _THREAD_UI_DIR / f"{thread_id}.images.json"
-        legacy.unlink(missing_ok=True)
-    except Exception:
-        pass
-    try:
-        delete_thread_draft(thread_id)
-    except Exception:
-        pass
-    try:
-        from row_bot.skills_activation import delete_thread_activation_state
+def _list_project_thread_ids(project_id: str) -> list[str]:
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH) as cleanup_conn:
+        rows = cleanup_conn.execute(
+            "SELECT thread_id FROM thread_meta WHERE project_id = ?",
+            (str(project_id or ""),),
+        ).fetchall()
+    return [str(row[0]) for row in rows if str(row[0] or "")]
 
-        delete_thread_activation_state(thread_id)
-    except Exception:
-        logger.debug("Failed to clean up skill activation state for thread %s", thread_id, exc_info=True)
+
+def _purge_thread_rows(thread_id: str) -> int:
+    """Idempotently remove core metadata, events, checkpoints, and writes."""
+
+    _ensure_thread_db()
+    with sqlite3.connect(DB_PATH, timeout=30) as cleanup_conn:
+        tables = {
+            str(row[0])
+            for row in cleanup_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        before = cleanup_conn.total_changes
+        if "thread_events" in tables:
+            cleanup_conn.execute("DELETE FROM thread_events WHERE thread_id = ?", (thread_id,))
+        if "checkpoints" in tables:
+            cleanup_conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+        if "writes" in tables:
+            cleanup_conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
+        cleanup_conn.execute("DELETE FROM thread_meta WHERE thread_id = ?", (thread_id,))
+        changed = max(0, cleanup_conn.total_changes - before)
+        cleanup_conn.commit()
+    return changed
+
+
+def _delete_thread(thread_id: str):
+    """Compatibility wrapper for the shared product deletion service."""
+
+    from row_bot.thread_cleanup import delete_thread
+
+    return delete_thread(thread_id)
 
 
 def delete_threads(thread_ids: list[str]) -> tuple[int, list[tuple[str, str]]]:
-    """Delete several threads at once.
+    """Compatibility wrapper returning the historical tuple surface."""
 
-    Loops over :func:`_delete_thread` so all existing side effects
-    (checkpoint purge, media cleanup, summary cache invalidation) are
-    preserved per thread. Returns ``(deleted_count, failures)`` where
-    ``failures`` is a list of ``(thread_id, error_message)``.
+    from row_bot.thread_cleanup import delete_threads as cleanup_threads
 
-    The UI layer is responsible for additional cleanup that lives
-    outside this module (shell/browser session kills, active-generation
-    stops, state invalidation) — this helper only touches the same
-    surfaces that :func:`_delete_thread` does.
-    """
-    deleted = 0
-    failures: list[tuple[str, str]] = []
-    for tid in thread_ids:
-        try:
-            _delete_thread(tid)
-            deleted += 1
-        except Exception as exc:  # pragma: no cover — defensive
-            failures.append((tid, str(exc)))
-            logger.exception("Bulk delete failed for thread %s", tid)
-    return deleted, failures
+    result = cleanup_threads(thread_ids)
+    return result.deleted, list(result.failures)
 
 
 def purge_external_state(thread_id: str) -> None:
-    """Best-effort cleanup of state that lives outside threads.py.
+    """Compatibility cancellation wrapper; deletion itself is centralized."""
 
-    Covers: active-generation stop, task-run stop, agent summary cache,
-    shell/browser tool sessions + histories. Every step is guarded so a
-    partial environment (e.g. tests without tools loaded) won't crash.
-    Safe to call before or after :func:`_delete_thread`.
-    """
-    if not thread_id:
-        return
-    # Active generation
-    try:
-        from row_bot.ui.state import _active_generations  # lazy import
-        gen = _active_generations.get(thread_id)
-        if gen:
-            try:
-                gen.stop_event.set()
-            except Exception:
-                pass
-    except Exception:
-        pass
-    # Background task run
-    try:
-        from row_bot.tasks import stop_task
-        stop_task(thread_id)
-    except Exception:
-        pass
-    # Shell tool
-    try:
-        from row_bot.tools.shell_tool import get_session_manager, clear_shell_history
-        get_session_manager().kill_session(thread_id)
-        clear_shell_history(thread_id)
-    except Exception:
-        pass
-    # Browser tool
-    try:
-        from row_bot.tools.browser_tool import (
-            get_session_manager as get_browser_session_manager,
-            clear_browser_history,
-        )
-        get_browser_session_manager().kill_session(thread_id)
-        clear_browser_history(thread_id)
-    except Exception:
-        pass
+    from row_bot.thread_cleanup import _request_thread_cancellation
+
+    _request_thread_cancellation(thread_id)
 
 
 def get_workflow_thread_ids() -> set[str]:
@@ -1056,10 +1027,11 @@ def sweep_orphan_project_ids() -> int:
         conn.close()
         orphans = [tid for tid, pid in rows
                    if not (PROJECTS_DIR / f"{pid}.json").exists()]
+        from row_bot.thread_cleanup import delete_thread
+
         for tid in orphans:
             try:
-                purge_external_state(tid)
-                _delete_thread(tid)
+                delete_thread(tid)
                 removed += 1
             except Exception:
                 logger.exception("Failed to purge orphan thread %s", tid)
@@ -1330,6 +1302,8 @@ def save_summary_state_cas(
     expected_revision: str,
 ) -> bool:
     """Persist validated rolling-summary state if the checkpoint is unchanged."""
+    if _thread_write_blocked(thread_id):
+        return False
     _ensure_thread_db()
     payload = dict(state or {})
     if int(payload.get("schema_version") or 0) != SUMMARY_STATE_SCHEMA_VERSION:
@@ -1406,7 +1380,7 @@ def load_validated_summary_state(
 
 def save_context_usage(thread_id: str, usage: dict) -> None:
     """Persist a settled display snapshot; it is never request authority."""
-    if not thread_id:
+    if not thread_id or _thread_write_blocked(thread_id):
         return
     _ensure_thread_db()
     payload = dict(usage or {})
@@ -1525,6 +1499,8 @@ def append_thread_event(
     display_copy: str = "",
 ) -> dict:
     """Append one bounded presentation-only context event idempotently."""
+    if _thread_write_blocked(thread_id):
+        return {}
     if event_type not in {"context_compacted", "context_compaction_failed"}:
         raise ValueError("unsupported thread event type")
     display_copy = str(display_copy or "").strip() or (
@@ -1752,8 +1728,37 @@ class _ManagedSqliteConnection:
         gc.collect()
 
 
+def _checkpoint_config_thread_id(config: dict | None) -> str:
+    configurable = (config or {}).get("configurable", {})
+    return str(configurable.get("thread_id") or "")
+
+
+class _DeletionAwareSqliteSaver(SqliteSaver):
+    """Block checkpoint writes while the deletion service owns a thread id."""
+
+    def put(self, config, checkpoint, metadata, new_versions):
+        if _thread_write_blocked(_checkpoint_config_thread_id(config)):
+            return config
+        return super().put(config, checkpoint, metadata, new_versions)
+
+    def put_writes(self, config, writes, task_id, task_path="") -> None:
+        if _thread_write_blocked(_checkpoint_config_thread_id(config)):
+            return
+        super().put_writes(config, writes, task_id, task_path)
+
+    async def aput(self, config, checkpoint, metadata, new_versions):
+        if _thread_write_blocked(_checkpoint_config_thread_id(config)):
+            return config
+        return await super().aput(config, checkpoint, metadata, new_versions)
+
+    async def aput_writes(self, config, writes, task_id, task_path="") -> None:
+        if _thread_write_blocked(_checkpoint_config_thread_id(config)):
+            return
+        await super().aput_writes(config, writes, task_id, task_path)
+
+
 conn = _ManagedSqliteConnection(DB_PATH)
-checkpointer = SqliteSaver(conn)
+checkpointer = _DeletionAwareSqliteSaver(conn)
 
 
 def _version_to_int(value) -> int:
@@ -1904,7 +1909,7 @@ def get_latest_checkpoint_revision(thread_id: str) -> str:
 
 def append_checkpoint_messages(thread_id: str, messages: list) -> bool:
     """Append simple chat messages to checkpoint storage without constructing a graph."""
-    if not thread_id or not messages:
+    if not thread_id or not messages or _thread_write_blocked(thread_id):
         return False
     try:
         from langgraph.checkpoint.base import empty_checkpoint

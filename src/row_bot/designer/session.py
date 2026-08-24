@@ -109,6 +109,41 @@ def bind_project_to_thread(thread_id: str, project_id: str) -> DesignerProject:
     return project
 
 
+def clear_thread_session(thread_id: str) -> None:
+    """Drop cached Designer and undo state owned by one conversation."""
+
+    global _ui_active_key
+    clean = str(thread_id or "").strip()
+    if not clean:
+        return
+    _active_projects_by_key.pop(clean, None)
+    _undo_stacks_by_key.pop(clean, None)
+    if _ui_active_key == clean:
+        _ui_active_key = None
+        _clear_agent_cache()
+
+
+def clear_project_session(project_id: str) -> None:
+    """Drop every cached binding and undo stack for a deleted project."""
+
+    global _ui_active_key
+    clean = str(project_id or "").strip()
+    if not clean:
+        return
+    keys = {
+        key
+        for key, project in _active_projects_by_key.items()
+        if str(getattr(project, "id", "") or "") == clean
+    }
+    keys.add(f"project:{clean}")
+    for key in keys:
+        _active_projects_by_key.pop(key, None)
+        _undo_stacks_by_key.pop(key, None)
+    if _ui_active_key in keys:
+        _ui_active_key = None
+        _clear_agent_cache()
+
+
 def get_ui_active_project() -> DesignerProject | None:
     """Return the project currently bound to the visible designer UI."""
 

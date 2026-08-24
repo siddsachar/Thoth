@@ -420,6 +420,7 @@ def _get_or_create_thread(chat_id: str) -> str:
         thread_id,
         "📲 WhatsApp conversation",
         seed_default_skills=True,
+        allow_recreate=True,
     )  # creates or bumps updated_at
     return thread_id
 
@@ -440,7 +441,12 @@ def _new_thread(chat_id: str) -> str:
         )
     except Exception:
         log.debug("WhatsApp thread channel ref skipped", exc_info=True)
-    _save_thread_meta(thread_id, "WhatsApp conversation", seed_default_skills=True)
+    _save_thread_meta(
+        thread_id,
+        "WhatsApp conversation",
+        seed_default_skills=True,
+        allow_recreate=True,
+    )
     return thread_id
 
 
