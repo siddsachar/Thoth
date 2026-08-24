@@ -1635,7 +1635,7 @@ def recover_stale_agent_runs() -> dict[str, int]:
     }
 
 
-def cleanup_thread_agent_runs(thread_id: str) -> dict[str, int]:
+def cleanup_thread_agent_runs(thread_id: str) -> dict[str, Any]:
     """Delete chat-created subagent/goal run state for a parent thread.
 
     Workflow mirrors are intentionally preserved as task audit history.
@@ -1644,8 +1644,74 @@ def cleanup_thread_agent_runs(thread_id: str) -> dict[str, int]:
     ensure_agent_run_schema()
     thread_id = str(thread_id or "").strip()
     if not thread_id:
-        return {"runs_deleted": 0, "threads_deleted": 0, "approvals_cancelled": 0, "locks_released": 0}
-    now = _now()
+        return {
+            "runs_deleted": 0,
+            "threads_deleted": 0,
+            "approvals_cancelled": 0,
+            "locks_released": 0,
+            "warnings": (),
+        }
+    warnings: list[str] = []
+
+    # Read direct ownership first, then stop and recursively delete children
+    # before removing the rows that prove their lineage.
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM agent_runs WHERE "
+            "(kind = 'subagent' AND parent_thread_id = ?) "
+            "OR (kind = 'goal' AND thread_id = ?)",
+            (thread_id, thread_id),
+        ).fetchall()
+        runs = [_run_from_row(row) for row in rows]
+        runs = [run for run in runs if run]
+        child_thread_ids = sorted({
+            str(run.get("thread_id") or "")
+            for run in runs
+            if str(run.get("thread_id") or "") and str(run.get("thread_id") or "") != thread_id
+        })
+    finally:
+        conn.close()
+
+    try:
+        from row_bot.agent_runner import (
+            list_active_agent_run_ids,
+            stop_agent_run as stop_live_agent_run,
+        )
+
+        active_runtime_run_ids = set(list_active_agent_run_ids())
+    except Exception:
+        active_runtime_run_ids = set()
+        stop_live_agent_run = stop_agent_run
+
+    for run in runs:
+        if str(run.get("status") or "") in TERMINAL_STATUSES:
+            continue
+        run_id = str(run.get("id") or "")
+        try:
+            stop_live_agent_run(run_id)
+        except Exception as exc:
+            warnings.append(f"Agent run {run_id} could not be stopped: {exc}")
+
+    threads_deleted = 0
+    for child_thread_id in child_thread_ids:
+        try:
+            from row_bot.thread_cleanup import delete_thread
+
+            result = delete_thread(child_thread_id)
+            if result.deleted:
+                threads_deleted += 1
+            warnings.extend(
+                f"Agent child {child_thread_id}: {warning}"
+                for warning in result.warnings
+            )
+        except Exception as exc:
+            warnings.append(
+                f"Agent child {child_thread_id} could not be deleted: {exc}"
+            )
+
+    # Re-read after recursive deletion so a deterministic late cleanup pass
+    # also catches state written before the parent's deletion guard took hold.
     conn = _get_conn()
     try:
         orchestration_rows = conn.execute(
@@ -1672,69 +1738,91 @@ def cleanup_thread_agent_runs(thread_id: str) -> dict[str, int]:
                 f"WHERE id IN ({orchestration_placeholders})",
                 orchestration_ids,
             )
-        rows = conn.execute(
-            "SELECT * FROM agent_runs WHERE "
+        current_rows = conn.execute(
+            "SELECT id FROM agent_runs WHERE "
             "(kind = 'subagent' AND parent_thread_id = ?) "
             "OR (kind = 'goal' AND thread_id = ?)",
             (thread_id, thread_id),
         ).fetchall()
-        runs = [_run_from_row(row) for row in rows]
-        runs = [run for run in runs if run]
-        run_ids = [str(run.get("id") or "") for run in runs if run.get("id")]
-        child_thread_ids = sorted({
-            str(run.get("thread_id") or "")
+        run_ids = sorted({
+            str(run.get("id") or "")
             for run in runs
-            if str(run.get("thread_id") or "") and str(run.get("thread_id") or "") != thread_id
+            if str(run.get("id") or "")
+        } | {
+            str(row["id"] or "")
+            for row in current_rows
+            if str(row["id"] or "")
         })
-        locks_released = 0
+        try:
+            from row_bot.agent_runner import list_active_agent_run_ids
+
+            active_runtime_run_ids.update(list_active_agent_run_ids())
+        except Exception:
+            pass
+        deferred_run_ids = sorted(set(run_ids) & active_runtime_run_ids)
+        deletable_run_ids = sorted(set(run_ids) - set(deferred_run_ids))
+        locks_released = conn.execute(
+            "DELETE FROM agent_write_locks WHERE thread_id = ?",
+            (thread_id,),
+        ).rowcount
         approvals_cancelled = 0
-        if run_ids:
-            placeholders = _sql_placeholders(run_ids)
+        if deletable_run_ids:
+            placeholders = _sql_placeholders(deletable_run_ids)
             locks_released += conn.execute(
                 f"DELETE FROM agent_write_locks WHERE run_id IN ({placeholders})",
-                run_ids,
+                deletable_run_ids,
             ).rowcount
-            approvals_cancelled += conn.execute(
-                f"UPDATE approval_requests SET status = 'cancelled', responded_at = ? "
-                f"WHERE status = 'pending' AND agent_run_id IN ({placeholders})",
-                [now, *run_ids],
-            ).rowcount
+            approval_rows = conn.execute(
+                f"SELECT id, status FROM approval_requests "
+                f"WHERE agent_run_id IN ({placeholders})",
+                deletable_run_ids,
+            ).fetchall()
+            approval_ids = [
+                str(row["id"] or "") for row in approval_rows if str(row["id"] or "")
+            ]
+            approvals_cancelled = sum(
+                1 for row in approval_rows if str(row["status"] or "") == "pending"
+            )
+            if approval_ids:
+                approval_placeholders = _sql_placeholders(approval_ids)
+                conn.execute(
+                    f"DELETE FROM approval_channel_refs "
+                    f"WHERE approval_id IN ({approval_placeholders})",
+                    approval_ids,
+                )
+                conn.execute(
+                    f"DELETE FROM approval_requests "
+                    f"WHERE id IN ({approval_placeholders})",
+                    approval_ids,
+                )
             conn.execute(
                 f"DELETE FROM agent_run_events WHERE run_id IN ({placeholders})",
-                run_ids,
+                deletable_run_ids,
             )
             conn.execute(
                 f"DELETE FROM agent_run_edges WHERE parent_run_id IN ({placeholders}) "
                 f"OR child_run_id IN ({placeholders})",
-                [*run_ids, *run_ids],
+                [*deletable_run_ids, *deletable_run_ids],
             )
             conn.execute(
                 f"DELETE FROM thread_goals WHERE active_run_id IN ({placeholders})",
-                run_ids,
+                deletable_run_ids,
             )
             conn.execute(
                 f"DELETE FROM agent_runs WHERE id IN ({placeholders})",
-                run_ids,
+                deletable_run_ids,
             )
         conn.execute("DELETE FROM thread_goals WHERE thread_id = ?", (thread_id,))
         conn.commit()
     finally:
         conn.close()
-
-    threads_deleted = 0
-    for child_thread_id in child_thread_ids:
-        try:
-            from row_bot.thread_cleanup import delete_thread
-
-            delete_thread(child_thread_id)
-            threads_deleted += 1
-        except Exception:
-            pass
     return {
-        "runs_deleted": len(run_ids),
+        "runs_deleted": len(deletable_run_ids),
+        "runs_deferred": len(deferred_run_ids),
         "threads_deleted": threads_deleted,
         "approvals_cancelled": approvals_cancelled,
         "locks_released": locks_released,
+        "warnings": tuple(dict.fromkeys(warnings)),
     }
 
 

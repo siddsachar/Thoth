@@ -211,28 +211,11 @@ def build_chat(
             ).tooltip("Stop task")
         else:
             with ui.row().classes("items-center gap-1 no-wrap flex-grow").style("min-width: 0;"):
-                p.chat_header_label = ui.label(str(state.thread_name or "Untitled")).classes("text-h5 ellipsis").style("min-width: 0;")
+                header_title = str(state.thread_name or "Untitled")
+                if child_parent_context:
+                    header_title = f"Agent run · {header_title}"
+                p.chat_header_label = ui.label(header_title).classes("text-h5 ellipsis").style("min-width: 0;")
                 if state.thread_id:
-                    ui.button(
-                        icon="edit",
-                        on_click=lambda: show_rename_thread_dialog(
-                            thread_id=state.thread_id or "",
-                            current_name=str(state.thread_name or ""),
-                            state=state,
-                            rebuild_thread_list=rebuild_thread_list,
-                            rebuild_main=rebuild_main,
-                        ),
-                    ).props("flat dense round size=sm").tooltip("Rename")
-                    from row_bot.ui.profile_picker import build_profile_picker
-
-                    build_profile_picker(
-                        state,
-                        p=p,
-                        rebuild_main=rebuild_main,
-                        rebuild_thread_list=rebuild_thread_list,
-                        label="Profile",
-                        surface="chat",
-                    )
                     if child_parent_context:
                         ui.badge(
                             f"Child Agent of {child_parent_context['parent_name']}",
@@ -243,6 +226,27 @@ def build_chat(
                             icon="arrow_back",
                             on_click=lambda pid=child_parent_context["parent_thread_id"]: _open_parent_thread(pid),
                         ).props("flat dense no-caps")
+                    else:
+                        ui.button(
+                            icon="edit",
+                            on_click=lambda: show_rename_thread_dialog(
+                                thread_id=state.thread_id or "",
+                                current_name=str(state.thread_name or ""),
+                                state=state,
+                                rebuild_thread_list=rebuild_thread_list,
+                                rebuild_main=rebuild_main,
+                            ),
+                        ).props("flat dense round size=sm").tooltip("Rename")
+                        from row_bot.ui.profile_picker import build_profile_picker
+
+                        build_profile_picker(
+                            state,
+                            p=p,
+                            rebuild_main=rebuild_main,
+                            rebuild_thread_list=rebuild_thread_list,
+                            label="Profile",
+                            surface="chat",
+                        )
 
             # Model selection now lives in the composer, matching Designer.
 

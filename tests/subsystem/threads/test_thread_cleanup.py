@@ -6,6 +6,7 @@ import os
 import sqlite3
 import sys
 import threading
+import queue
 
 import pytest
 
@@ -94,6 +95,23 @@ def _insert_thread_task_state(tasks, thread_id: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _insert_thread_checkpoint(threads, thread_id: str, checkpoint_id: str) -> None:
+    threads.checkpointer.setup()
+    with sqlite3.connect(threads.DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO checkpoints "
+            "(thread_id, checkpoint_ns, checkpoint_id) VALUES (?, '', ?)",
+            (thread_id, checkpoint_id),
+        )
+        conn.execute(
+            "INSERT INTO writes "
+            "(thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel) "
+            "VALUES (?, '', ?, ?, 0, ?)",
+            (thread_id, checkpoint_id, "task", "messages"),
+        )
+        conn.commit()
 
 
 def test_normal_thread_deletion_removes_owned_state_and_persistent_media(tmp_path, monkeypatch) -> None:
@@ -245,6 +263,232 @@ def test_workflow_audits_survive_with_deleted_thread_links_scrubbed(tmp_path, mo
         ).fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_parent_delete_recursively_removes_direct_and_nested_agent_child_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    stack = _fresh_stack(tmp_path, monkeypatch)
+    threads = stack["threads"]
+    tasks = stack["tasks"]
+    cleanup = stack["cleanup"]
+    agent_runs = importlib.import_module("row_bot.agent_runs")
+
+    parent_id = threads.create_thread("Parent", thread_id="agent-parent")
+    child_id = threads.create_thread(
+        "Direct child",
+        thread_id="agent-child-direct",
+        thread_type="agent_child",
+    )
+    nested_id = threads.create_thread(
+        "Nested child",
+        thread_id="agent-child-nested",
+        thread_type="agent_child",
+    )
+    direct_run = agent_runs.create_agent_run(
+        run_id="agent-run-direct",
+        kind="subagent",
+        status="completed",
+        parent_thread_id=parent_id,
+        thread_id=child_id,
+        display_name="Direct child",
+    )
+    nested_run = agent_runs.create_agent_run(
+        run_id="agent-run-nested",
+        kind="subagent",
+        status="completed",
+        parent_run_id=direct_run["id"],
+        parent_thread_id=child_id,
+        thread_id=nested_id,
+        display_name="Nested child",
+    )
+    workflow_run = agent_runs.create_agent_run(
+        run_id="workflow-audit-run",
+        kind="workflow",
+        status="completed",
+        thread_id=parent_id,
+        task_id="workflow-audit-task",
+        display_name="Workflow audit",
+    )
+    for run in (direct_run, nested_run, workflow_run):
+        agent_runs.append_agent_event(
+            run["id"],
+            "summary.updated",
+            {"summary": run["display_name"]},
+        )
+    agent_runs.create_agent_run_edge(direct_run["id"], nested_run["id"])
+    assert agent_runs.acquire_agent_write_lock(
+        "thread:direct",
+        direct_run["id"],
+        thread_id=child_id,
+    )
+    assert agent_runs.acquire_agent_write_lock(
+        "thread:nested",
+        nested_run["id"],
+        parent_run_id=direct_run["id"],
+        thread_id=nested_id,
+    )
+    approval_ids = []
+    for run, source_thread_id in (
+        (direct_run, child_id),
+        (nested_run, nested_id),
+    ):
+        _token, approval_id = tasks.create_approval_request(
+            run_id=f"approval-{run['id']}",
+            task_id="",
+            step_id="agent_interrupt",
+            message="Approve child",
+            agent_run_id=run["id"],
+            resume_kind="agent_run",
+            source_thread_id=source_thread_id,
+            parent_thread_id=parent_id,
+        )
+        approval_ids.append(approval_id)
+
+    now = datetime.now().isoformat()
+    conn = tasks._get_conn()
+    try:
+        for goal_id, thread_id, run_id in (
+            ("goal-direct", child_id, direct_run["id"]),
+            ("goal-nested", nested_id, nested_run["id"]),
+        ):
+            conn.execute(
+                "INSERT INTO thread_goals "
+                "(id, thread_id, objective, status, created_at, updated_at, active_run_id) "
+                "VALUES (?, ?, ?, 'active', ?, ?, ?)",
+                (goal_id, thread_id, goal_id, now, now, run_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    killed_shell: list[str] = []
+    killed_browser: list[str] = []
+
+    class _SessionManager:
+        def __init__(self, calls: list[str]):
+            self.calls = calls
+
+        def kill_session(self, thread_id: str) -> None:
+            self.calls.append(thread_id)
+
+    shell_tool = importlib.import_module("row_bot.tools.shell_tool")
+    browser_tool = importlib.import_module("row_bot.tools.browser_tool")
+    monkeypatch.setattr(shell_tool, "get_session_manager", lambda: _SessionManager(killed_shell))
+    monkeypatch.setattr(shell_tool, "clear_shell_history", lambda _thread_id: None)
+    monkeypatch.setattr(browser_tool, "get_session_manager", lambda: _SessionManager(killed_browser))
+    monkeypatch.setattr(browser_tool, "clear_browser_history", lambda _thread_id: None)
+
+    for index, thread_id in enumerate((child_id, nested_id), start=1):
+        _insert_thread_checkpoint(threads, thread_id, f"checkpoint-{index}")
+        threads.save_thread_draft(thread_id, f"draft-{index}")
+        threads.save_media_file(thread_id, f"media-{index}.bin", b"owned")
+        threads.save_thread_media(thread_id, {"entries": []})
+        (threads._THREAD_UI_DIR / f"{thread_id}.images.json").write_text(
+            "{}",
+            encoding="utf-8",
+        )
+
+    result = cleanup.delete_thread(parent_id)
+
+    assert result.deleted is True
+    assert result.warnings == ()
+    assert all(not threads._thread_exists(thread_id) for thread_id in (parent_id, child_id, nested_id))
+    with sqlite3.connect(threads.DB_PATH) as conn:
+        for thread_id in (child_id, nested_id):
+            assert conn.execute(
+                "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()[0] == 0
+            assert conn.execute(
+                "SELECT COUNT(*) FROM writes WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()[0] == 0
+    for thread_id in (child_id, nested_id):
+        assert not (threads._MEDIA_DIR / thread_id).exists()
+        assert not (threads._THREAD_UI_DIR / f"{thread_id}.media.json").exists()
+        assert not (threads._THREAD_UI_DIR / f"{thread_id}.images.json").exists()
+        assert not (threads._THREAD_UI_DIR / f"{thread_id}.draft.json").exists()
+    assert agent_runs.get_agent_run(direct_run["id"]) is None
+    assert agent_runs.get_agent_run(nested_run["id"]) is None
+    assert agent_runs.get_agent_run(workflow_run["id"]) is not None
+    assert agent_runs.get_agent_events(workflow_run["id"])
+    assert agent_runs.list_agent_write_locks() == []
+    conn = tasks._get_conn()
+    try:
+        remaining_event_run_ids = {
+            str(row[0])
+            for row in conn.execute("SELECT run_id FROM agent_run_events").fetchall()
+        }
+        assert remaining_event_run_ids == {workflow_run["id"]}
+        assert conn.execute("SELECT COUNT(*) FROM agent_run_edges").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM thread_goals").fetchone()[0] == 0
+        for approval_id in approval_ids:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM approval_requests WHERE id = ?",
+                (approval_id,),
+            ).fetchone()[0] == 0
+    finally:
+        conn.close()
+    assert set((parent_id, child_id, nested_id)) <= set(killed_shell)
+    assert set((parent_id, child_id, nested_id)) <= set(killed_browser)
+
+
+def test_parent_delete_cancels_active_child_and_blocks_late_child_writes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    stack = _fresh_stack(tmp_path, monkeypatch)
+    threads = stack["threads"]
+    cleanup = stack["cleanup"]
+    agent_runs = importlib.import_module("row_bot.agent_runs")
+    state_module = importlib.import_module("row_bot.ui.state")
+
+    parent_id = threads.create_thread("Parent", thread_id="active-agent-parent")
+    child_id = threads.create_thread(
+        "Active child",
+        thread_id="active-agent-child",
+        thread_type="agent_child",
+    )
+    child_run = agent_runs.create_agent_run(
+        run_id="active-agent-run",
+        kind="subagent",
+        status="running",
+        parent_thread_id=parent_id,
+        thread_id=child_id,
+        display_name="Active child",
+    )
+    stop_order: list[tuple[str, bool]] = []
+    original_stop = agent_runs.stop_agent_run
+
+    def _record_stop(run_id: str):
+        stop_order.append((run_id, agent_runs.get_agent_run(run_id) is not None))
+        return original_stop(run_id)
+
+    monkeypatch.setattr(agent_runs, "stop_agent_run", _record_stop)
+    generation = state_module.GenerationState(
+        thread_id=child_id,
+        q=queue.Queue(),
+        stop_event=threading.Event(),
+        config={"configurable": {"thread_id": child_id}},
+        enabled_tools=[],
+    )
+    state_module._active_generations[child_id] = generation
+    try:
+        cleanup.delete_thread(parent_id)
+
+        assert stop_order == [(child_run["id"], True)]
+        assert generation.stop_event.is_set()
+        assert cleanup.is_thread_deleting(child_id) is True
+        threads._save_thread_meta(child_id, "Late child resurrection")
+        assert threads._thread_exists(child_id) is False
+    finally:
+        state_module._active_generations.pop(child_id, None)
+        cleanup.finish_thread_deletion(child_id, generation.deletion_token)
+
+    assert cleanup.is_thread_deleting(child_id) is False
+    assert agent_runs.get_agent_run(child_run["id"]) is None
 
 
 def test_repeated_deletion_cleans_late_sidecars_and_write_guard_blocks_active_thread(tmp_path, monkeypatch) -> None:
@@ -529,6 +773,132 @@ def test_idle_orphan_sweep_removes_only_unowned_managed_artifacts(tmp_path, monk
     assert not orphan_draft.exists()
     assert not orphan_history.exists()
     assert not orphan_publish.exists()
+
+
+def test_idle_repair_deletes_only_provable_historical_agent_child_orphans(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    stack = _fresh_stack(tmp_path, monkeypatch)
+    threads = stack["threads"]
+    tasks = stack["tasks"]
+    cleanup = stack["cleanup"]
+    agent_runs = importlib.import_module("row_bot.agent_runs")
+
+    parent_id = threads.create_thread("Parent", thread_id="repair-parent")
+    owned_id = threads.create_thread(
+        "Owned child",
+        thread_id="repair-owned",
+        thread_type="agent_child",
+    )
+    orphan_id = threads.create_thread(
+        "Orphan child",
+        thread_id="repair-orphan",
+        thread_type="agent_child",
+    )
+    recent_id = threads.create_thread(
+        "Recent child",
+        thread_id="repair-recent",
+        thread_type="agent_child",
+    )
+    malformed_owner_id = threads.create_thread(
+        "Malformed owner child",
+        thread_id="repair-malformed-owner",
+        thread_type="agent_child",
+    )
+    locked_id = threads.create_thread(
+        "Locked child",
+        thread_id="repair-locked",
+        thread_type="agent_child",
+    )
+    agent_runs.create_agent_run(
+        run_id="repair-owned-run",
+        kind="subagent",
+        status="completed",
+        parent_thread_id=parent_id,
+        thread_id=owned_id,
+        display_name="Owned child",
+    )
+
+    old = (datetime.now() - timedelta(days=3)).isoformat()
+    with sqlite3.connect(threads.DB_PATH) as conn:
+        conn.execute(
+            "UPDATE thread_meta SET created_at = ?, updated_at = ? "
+            "WHERE thread_id != ?",
+            (old, old, recent_id),
+        )
+        conn.commit()
+    conn = tasks._get_conn()
+    try:
+        now = datetime.now().isoformat()
+        conn.execute(
+            "INSERT INTO agent_runs "
+            "(id, kind, status, thread_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "malformed-owner-run",
+                "not-a-valid-kind",
+                "not-a-valid-status",
+                malformed_owner_id,
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO agent_write_locks "
+            "(lock_key, run_id, thread_id, acquired_at) VALUES (?, ?, ?, ?)",
+            ("repair-unknown-lock", "missing-run", locked_id, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    threads.save_media_file(orphan_id, "orphan.bin", b"orphan")
+
+    first = cleanup.sweep_orphaned_thread_artifacts(now=datetime.now())
+
+    assert first["agent_child_candidates"] == 5
+    assert first["agent_child_deleted"] == 1
+    assert first["agent_child_owned"] == 2
+    assert first["agent_child_unknown"] == 1
+    assert first["agent_child_recent"] == 1
+    assert first["agent_child_failures"] == 0
+    assert threads._thread_exists(orphan_id) is False
+    assert not (threads._MEDIA_DIR / orphan_id).exists()
+    for retained_id in (owned_id, recent_id, malformed_owner_id, locked_id):
+        assert threads._thread_exists(retained_id) is True
+
+    second = cleanup.sweep_orphaned_thread_artifacts(now=datetime.now())
+
+    assert second["agent_child_deleted"] == 0
+    assert threads._thread_exists(orphan_id) is False
+
+
+def test_idle_agent_child_repair_retains_everything_when_ownership_is_unavailable(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    stack = _fresh_stack(tmp_path, monkeypatch)
+    threads = stack["threads"]
+    cleanup = stack["cleanup"]
+    child_id = threads.create_thread(
+        "Unknown child",
+        thread_id="repair-ownership-unavailable",
+        thread_type="agent_child",
+    )
+    old = (datetime.now() - timedelta(days=3)).isoformat()
+    with sqlite3.connect(threads.DB_PATH) as conn:
+        conn.execute(
+            "UPDATE thread_meta SET created_at = ?, updated_at = ? WHERE thread_id = ?",
+            (old, old, child_id),
+        )
+        conn.commit()
+    monkeypatch.setattr(cleanup, "_agent_child_ownership_states", lambda _ids: None)
+
+    stats = cleanup.sweep_orphaned_thread_artifacts(now=datetime.now())
+
+    assert stats["agent_child_deleted"] == 0
+    assert stats["agent_child_unknown"] == 1
+    assert threads._thread_exists(child_id) is True
 
 
 def test_sqlite_compaction_is_thresholded_and_reclaims_file_space(tmp_path, monkeypatch) -> None:

@@ -235,9 +235,9 @@ def test_sidebar_and_all_conversations_pin_affordances_are_wired():
     assert 'js_handler="(e) => e.stopPropagation()"' in source
     assert "_pin_modal" in modal_block
     assert 'dlg.on("hide", _refresh_after_modal_hide)' in modal_block
-    assert "modal_threads = _list_threads(include_details=True)" in modal_block
+    assert "_classify_visible_thread_rows(" in modal_block
     assert "if not bulk.active:" in modal_block
-    assert '_MODAL_FILTER == "all" and _cat != "agents"' in modal_block
+    assert "_filter_classified_thread_rows(" in modal_block
     assert "_sort_classified_thread_rows_pinned_first(_filtered)" in modal_block
     pin_modal_block = modal_block.split("def _pin_modal", 1)[1].split("item_classes =", 1)[0]
     assert "_rebuild_dialog_list()" in pin_modal_block

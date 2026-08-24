@@ -21,6 +21,8 @@ def test_thread_cleanup_change_selects_cross_subsystem_deletion_contracts() -> N
     selection = select_tests_for_changes(
         [
             "src/row_bot/thread_cleanup.py",
+            "src/row_bot/agent_runner.py",
+            "src/row_bot/ui/agent_drawer.py",
             "src/row_bot/channels/telegram.py",
             "src/row_bot/ui/state.py",
         ]

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 SQLITE_COMPACT_MIN_FREE_BYTES = 32 * 1024 * 1024
 SQLITE_COMPACT_MIN_FREE_RATIO = 0.20
 STALE_TEMP_FILE_AGE = timedelta(days=1)
+AGENT_CHILD_ORPHAN_GRACE = timedelta(days=1)
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class BulkThreadDeletionResult:
 
 _deletion_lock = threading.RLock()
 _deleting_threads: dict[str, str] = {}
+_deleting_generations: dict[str, str] = {}
 _maintenance_lock = threading.Lock()
 
 
@@ -128,6 +130,7 @@ def allow_thread_recreation(thread_id: str | None) -> None:
         return
     with _deletion_lock:
         _deleting_threads.pop(clean, None)
+        _deleting_generations.pop(clean, None)
 
 
 def _mark_thread_deleting(thread_id: str) -> str:
@@ -173,6 +176,8 @@ def _request_thread_cancellation(thread_id: str, *, deletion_token: str = "") ->
         active = generation is not None
         if generation is not None:
             generation.deletion_token = deletion_token
+            with _deletion_lock:
+                _deleting_generations[thread_id] = deletion_token
         from row_bot.ui.streaming import request_generation_stop
 
         request_generation_stop(thread_id, reason="conversation deleted")
@@ -290,6 +295,7 @@ def _purge_owned_state(thread_id: str) -> tuple[int, tuple[str, ...]]:
         stats = cleanup_thread_agent_runs(thread_id)
         changed += int(stats.get("runs_deleted", 0))
         changed += int(stats.get("threads_deleted", 0))
+        warnings.extend(str(item) for item in stats.get("warnings", ()) if item)
     except Exception:
         warnings.append("Some Agent state could not be removed.")
         logger.warning("Agent cleanup failed for thread %s", thread_id, exc_info=True)
@@ -324,14 +330,35 @@ def finish_thread_deletion(thread_id: str, token: str | None = None) -> None:
         with _deletion_lock:
             if _deleting_threads.get(clean) == current:
                 _deleting_threads.pop(clean, None)
+                _deleting_generations.pop(clean, None)
 
 
 def _thread_has_active_producer(thread_id: str) -> bool:
+    with _deletion_lock:
+        if thread_id in _deleting_generations:
+            return True
     try:
         from row_bot.ui.state import _active_generations
 
         if thread_id in _active_generations:
             return True
+    except Exception:
+        pass
+    try:
+        from row_bot.agent_runner import list_active_agent_run_ids
+        from row_bot.agent_runs import get_agent_run_for_thread, list_agent_runs
+
+        active_run_ids = set(list_active_agent_run_ids())
+        if active_run_ids:
+            owned_run_ids = {
+                str(run.get("id") or "")
+                for run in list_agent_runs(parent_thread_id=thread_id, limit=500)
+            }
+            owner_run = get_agent_run_for_thread(thread_id)
+            if owner_run:
+                owned_run_ids.add(str(owner_run.get("id") or ""))
+            if active_run_ids & owned_run_ids:
+                return True
     except Exception:
         pass
     try:
@@ -370,7 +397,13 @@ def delete_thread(thread_id: str) -> ThreadDeletionResult:
     from row_bot import threads
 
     context = threads._get_thread_cleanup_context(clean)  # noqa: SLF001
-    token = _mark_thread_deleting(clean)
+    with _deletion_lock:
+        if clean in _deleting_threads:
+            return ThreadDeletionResult(
+                thread_id=clean,
+                deleted=bool(context.get("exists")),
+            )
+        token = _mark_thread_deleting(clean)
     active_work = False
     warnings: list[str] = []
     retained_worktree_path = ""
@@ -532,6 +565,176 @@ def _project_ids() -> set[str]:
     return {candidate.stem for candidate in PROJECTS_DIR.glob("*.json")}
 
 
+def _historical_agent_child(row: tuple, *, now: datetime) -> bool:
+    timestamps = [str(row[index] or "") for index in (2, 3) if len(row) > index]
+    parsed: list[datetime] = []
+    for value in timestamps:
+        if not value:
+            continue
+        try:
+            candidate = datetime.fromisoformat(value)
+            if candidate.tzinfo is not None and now.tzinfo is None:
+                candidate = candidate.replace(tzinfo=None)
+            parsed.append(candidate)
+        except (TypeError, ValueError):
+            return False
+    return bool(parsed) and max(parsed) <= now - AGENT_CHILD_ORPHAN_GRACE
+
+
+def _agent_child_ownership_states(
+    thread_ids: Iterable[str],
+) -> dict[str, str] | None:
+    """Return owned/unknown/orphan states, or ``None`` when proof is unavailable."""
+
+    candidates = sorted({str(thread_id or "").strip() for thread_id in thread_ids})
+    candidates = [thread_id for thread_id in candidates if thread_id]
+    if not candidates:
+        return {}
+    try:
+        from row_bot.agent_runs import ensure_agent_run_schema
+        from row_bot.tasks import _get_conn
+
+        ensure_agent_run_schema()
+        placeholders = ", ".join("?" for _ in candidates)
+        conn = _get_conn()
+        try:
+            states = {thread_id: "orphan" for thread_id in candidates}
+            run_rows = conn.execute(
+                f"SELECT thread_id, parent_thread_id FROM agent_runs "
+                f"WHERE thread_id IN ({placeholders}) "
+                f"OR parent_thread_id IN ({placeholders})",
+                [*candidates, *candidates],
+            ).fetchall()
+            for row in run_rows:
+                for column in ("thread_id", "parent_thread_id"):
+                    thread_id = str(row[column] or "")
+                    if thread_id in states:
+                        # Any raw row is ownership evidence, including a row
+                        # whose other fields are too malformed to parse.
+                        states[thread_id] = "owned"
+            orchestration_rows = conn.execute(
+                f"SELECT parent_thread_id FROM agent_orchestrations "
+                f"WHERE parent_thread_id IN ({placeholders})",
+                candidates,
+            ).fetchall()
+            for row in orchestration_rows:
+                thread_id = str(row["parent_thread_id"] or "")
+                if thread_id in states:
+                    states[thread_id] = "owned"
+
+            unknown_queries = (
+                (
+                    f"SELECT thread_id FROM agent_write_locks "
+                    f"WHERE thread_id IN ({placeholders})",
+                    candidates,
+                    ("thread_id",),
+                ),
+                (
+                    f"SELECT source_thread_id, parent_thread_id FROM approval_requests "
+                    f"WHERE source_thread_id IN ({placeholders}) "
+                    f"OR parent_thread_id IN ({placeholders})",
+                    [*candidates, *candidates],
+                    ("source_thread_id", "parent_thread_id"),
+                ),
+                (
+                    f"SELECT thread_id FROM pipeline_state "
+                    f"WHERE thread_id IN ({placeholders})",
+                    candidates,
+                    ("thread_id",),
+                ),
+                (
+                    f"SELECT thread_id FROM task_runs "
+                    f"WHERE thread_id IN ({placeholders})",
+                    candidates,
+                    ("thread_id",),
+                ),
+                (
+                    f"SELECT thread_id FROM channel_thread_refs "
+                    f"WHERE thread_id IN ({placeholders})",
+                    candidates,
+                    ("thread_id",),
+                ),
+                (
+                    f"SELECT thread_id FROM channel_thread_notifications "
+                    f"WHERE thread_id IN ({placeholders})",
+                    candidates,
+                    ("thread_id",),
+                ),
+            )
+            for sql, params, columns in unknown_queries:
+                for row in conn.execute(sql, params).fetchall():
+                    for column in columns:
+                        thread_id = str(row[column] or "")
+                        if thread_id in states and states[thread_id] == "orphan":
+                            states[thread_id] = "unknown"
+            return states
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error):
+        logger.info("Agent-child orphan ownership is unavailable; retaining candidates", exc_info=True)
+        return None
+    except Exception:
+        logger.warning("Agent-child orphan ownership is malformed; retaining candidates", exc_info=True)
+        return None
+
+
+def _sweep_orphaned_agent_child_threads(
+    rows: list[tuple],
+    *,
+    now: datetime,
+) -> dict[str, int]:
+    candidates = [
+        row
+        for row in rows
+        if len(row) > 6 and str(row[6] or "") == "agent_child"
+    ]
+    stats = {
+        "agent_child_candidates": len(candidates),
+        "agent_child_deleted": 0,
+        "agent_child_owned": 0,
+        "agent_child_unknown": 0,
+        "agent_child_recent": 0,
+        "agent_child_failures": 0,
+    }
+    historical: list[str] = []
+    for row in candidates:
+        if _historical_agent_child(row, now=now):
+            historical.append(str(row[0]))
+        else:
+            stats["agent_child_recent"] += 1
+    ownership = _agent_child_ownership_states(historical)
+    if ownership is None:
+        stats["agent_child_unknown"] += len(historical)
+        return stats
+
+    for thread_id in historical:
+        state = ownership.get(thread_id, "unknown")
+        if state == "owned":
+            stats["agent_child_owned"] += 1
+            continue
+        if state != "orphan" or _thread_has_active_producer(thread_id):
+            stats["agent_child_unknown"] += 1
+            continue
+        # Confirm the empty ownership snapshot immediately before deletion.
+        confirmation = _agent_child_ownership_states([thread_id])
+        if confirmation is None or confirmation.get(thread_id) != "orphan":
+            if confirmation and confirmation.get(thread_id) == "owned":
+                stats["agent_child_owned"] += 1
+            else:
+                stats["agent_child_unknown"] += 1
+            continue
+        try:
+            result = delete_thread(thread_id)
+            if result.deleted:
+                stats["agent_child_deleted"] += 1
+            if result.warnings:
+                stats["agent_child_failures"] += 1
+        except Exception:
+            stats["agent_child_failures"] += 1
+            logger.warning("Could not repair orphan Agent child %s", thread_id, exc_info=True)
+    return stats
+
+
 def _remove_stale_temp_files(
     roots: Iterable[pathlib.Path],
     *,
@@ -567,7 +770,11 @@ def sweep_orphaned_thread_artifacts(
     from row_bot.developer.storage import DEVELOPER_DIR
     from row_bot.developer.todos import TODOS_DIR, _todo_path
 
-    owners = _thread_ids()
+    maintenance_now = now or datetime.now()
+    from row_bot.threads import _list_threads
+
+    thread_rows = _list_threads(include_details=True)
+    owners = {str(row[0]) for row in thread_rows}
     projects = _project_ids()
     stats = {
         "media_dirs": 0,
@@ -578,6 +785,12 @@ def sweep_orphaned_thread_artifacts(
         "pending_changes": 0,
         "temp_files": 0,
     }
+    stats.update(
+        _sweep_orphaned_agent_child_threads(
+            thread_rows,
+            now=maintenance_now,
+        )
+    )
 
     if threads._MEDIA_DIR.exists():  # noqa: SLF001
         for child in list(threads._MEDIA_DIR.iterdir()):  # noqa: SLF001
@@ -647,7 +860,7 @@ def sweep_orphaned_thread_artifacts(
     except Exception:
         logger.debug("Could not clean imported sandbox orphans", exc_info=True)
 
-    cutoff = (now or datetime.now()) - STALE_TEMP_FILE_AGE
+    cutoff = maintenance_now - STALE_TEMP_FILE_AGE
     stats["temp_files"] = _remove_stale_temp_files(
         (
             PROJECTS_DIR,

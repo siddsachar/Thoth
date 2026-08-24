@@ -34,7 +34,9 @@ THREAD_FILTER_DESCRIPTORS: tuple[dict[str, str], ...] = (
     {"key": "designer", "label": "Designs", "icon": "brush"},
     {"key": "code", "label": "Code", "icon": "code"},
     {"key": "workflow", "label": "Workflows", "icon": "task_alt"},
-    {"key": "agents", "label": "Agents", "icon": "badge"},
+)
+_USER_MANAGED_THREAD_CATEGORIES = frozenset(
+    {"chat", "designer", "code", "workflow"}
 )
 _THREAD_DETAIL_PINNED_AT_INDEX = 13
 _SIDEBAR_PINNED_VISIBLE_LIMIT = 5
@@ -117,6 +119,64 @@ def _is_hidden_agent_child_run(agent_run: dict) -> bool:
     return bool(thread_id) and thread_id != parent_thread_id
 
 
+def _normalize_conversation_filter(filter_key: str) -> str:
+    valid = {descriptor["key"] for descriptor in THREAD_FILTER_DESCRIPTORS}
+    clean = str(filter_key or "").strip().lower()
+    return clean if clean in valid else "all"
+
+
+def _classify_visible_thread_rows(
+    rows: list[tuple],
+    *,
+    workflow_thread_ids: set[str] | None = None,
+    agent_runs: list[dict] | None = None,
+) -> list[tuple]:
+    """Return only user-managed conversations with one visible category each."""
+
+    workflow_ids = {str(thread_id) for thread_id in (workflow_thread_ids or set())}
+    child_thread_ids = {
+        str(agent_run.get("thread_id") or "")
+        for agent_run in (agent_runs or [])
+        if _is_hidden_agent_child_run(agent_run)
+    }
+    classified: list[tuple] = []
+    for row in rows:
+        if not row:
+            continue
+        thread_id = str(row[0] or "")
+        project_id = str(row[5] or "") if len(row) > 5 else ""
+        thread_type = str(row[6] or "") if len(row) > 6 else ""
+        developer_workspace_id = str(row[7] or "") if len(row) > 7 else ""
+        if thread_type == "agent_child" or thread_id in child_thread_ids:
+            continue
+        if project_id:
+            category = "designer"
+        elif thread_type == "code" or developer_workspace_id:
+            category = "code"
+        elif thread_id in workflow_ids:
+            category = "workflow"
+        else:
+            category = "chat"
+        classified.append((row, category))
+    return classified
+
+
+def _visible_conversation_counts(rows: list[tuple]) -> dict[str, int]:
+    counts = {
+        "all": 0,
+        "chat": 0,
+        "designer": 0,
+        "code": 0,
+        "workflow": 0,
+    }
+    for _row, category in rows:
+        if category not in _USER_MANAGED_THREAD_CATEGORIES:
+            continue
+        counts[category] += 1
+        counts["all"] += 1
+    return counts
+
+
 def _thread_row_pinned_at(row: tuple) -> str:
     return str(row[_THREAD_DETAIL_PINNED_AT_INDEX] or "") if len(row) > _THREAD_DETAIL_PINNED_AT_INDEX else ""
 
@@ -178,9 +238,14 @@ def _sort_classified_thread_rows_pinned_first(rows: list[tuple]) -> list[tuple]:
 
 
 def _filter_classified_thread_rows(rows: list[tuple], filter_key: str) -> list[tuple]:
+    visible_rows = [
+        item for item in rows if item[1] in _USER_MANAGED_THREAD_CATEGORIES
+    ]
     if filter_key == "all":
-        return [item for item in rows if item[1] != "agents"]
-    return [item for item in rows if item[1] == filter_key]
+        return visible_rows
+    if filter_key not in _USER_MANAGED_THREAD_CATEGORIES:
+        return []
+    return [item for item in visible_rows if item[1] == filter_key]
 
 
 def selectable_thread_ids_for_filter(rows: list[tuple], filter_key: str) -> list[str]:
@@ -604,17 +669,8 @@ def build_sidebar(
         p.thread_container.clear()
         if p.thread_filter_container is not None:
             p.thread_filter_container.clear()
-        threads = _list_threads(include_details=True)
+        thread_rows = _list_threads(include_details=True)
         running_tids = get_running_tasks()
-        try:
-            from row_bot.agent_orchestrator import get_thread_orchestration_activity
-
-            orchestration_activity = get_thread_orchestration_activity(
-                [str(row[0]) for row in threads]
-            )
-        except Exception:
-            logger.debug("Could not load sidebar Agent activity", exc_info=True)
-            orchestration_activity = {}
 
         # Classify every thread once so pills + list share the same data.
         from row_bot.threads import get_workflow_thread_ids
@@ -625,40 +681,25 @@ def build_sidebar(
             _agent_run_rows = list_agent_runs(limit=500)
         except Exception:
             _agent_run_rows = []
-        child_thread_ids = {
-            str(agent_run.get("thread_id") or "")
-            for agent_run in _agent_run_rows
-            if _is_hidden_agent_child_run(agent_run)
-        }
-        def _cat_of(pid: str, tid: str, thread_type: str = "", dev_ws: str = "") -> str:
-            if thread_type == "agent_child" or tid in child_thread_ids:
-                return "agents"
-            if pid:
-                return "designer"
-            if thread_type == "code" or dev_ws:
-                return "code"
-            if tid in workflow_tids:
-                return "workflow"
-            return "chat"
+        all_classified = _classify_visible_thread_rows(
+            thread_rows,
+            workflow_thread_ids=workflow_tids,
+            agent_runs=_agent_run_rows,
+        )
+        counts = _visible_conversation_counts(all_classified)
+        try:
+            from row_bot.agent_orchestrator import get_thread_orchestration_activity
 
-        classified: list[tuple] = []
-        counts = {"all": 0, "chat": 0, "designer": 0, "code": 0, "workflow": 0, "agents": 0}
-        for row in threads:
-            tid = row[0]
-            _pid = row[5] if len(row) > 5 else ""
-            _thread_type = row[6] if len(row) > 6 else ""
-            _dev_ws = row[7] if len(row) > 7 else ""
-            cat = _cat_of(_pid, tid, _thread_type, _dev_ws)
-            counts[cat] += 1
-            if cat != "agents":
-                counts["all"] += 1
-            classified.append((row, cat))
+            orchestration_activity = get_thread_orchestration_activity(
+                [str(row[0]) for row, _category in all_classified]
+            )
+        except Exception:
+            logger.debug("Could not load sidebar Agent activity", exc_info=True)
+            orchestration_activity = {}
 
         # ── Filter pill row ─────────────────────────────────────────
         global _SIDEBAR_FILTER
-        valid_filter_keys = {descriptor["key"] for descriptor in THREAD_FILTER_DESCRIPTORS}
-        if _SIDEBAR_FILTER not in valid_filter_keys:
-            _SIDEBAR_FILTER = "all"
+        _SIDEBAR_FILTER = _normalize_conversation_filter(_SIDEBAR_FILTER)
         if p.thread_filter_container is not None and counts["all"] > 0:
             with p.thread_filter_container:
                 for descriptor in THREAD_FILTER_DESCRIPTORS:
@@ -684,7 +725,7 @@ def build_sidebar(
                         on_click=_set_filter,
                     )
 
-        classified = _filter_classified_thread_rows(classified, _SIDEBAR_FILTER)
+        classified = _filter_classified_thread_rows(all_classified, _SIDEBAR_FILTER)
 
         def _workspace_display(dev_ws: str) -> tuple[str, str]:
             try:
@@ -1065,13 +1106,13 @@ def build_sidebar(
                                         icon_classes="text-negative",
                                     )
 
-            if len(threads) > SIDEBAR_MAX_THREADS:
+            if counts["all"] > SIDEBAR_MAX_THREADS:
                 def _show_all():
                     from row_bot.ui.bulk_select import BulkSelect, render_bulk_action_bar
                     from row_bot.ui.confirm import confirm_destructive
 
                     bulk = BulkSelect()
-                    modal_threads = list(threads)
+                    _modal_classified = list(all_classified)
                     modal_pin_changed = False
 
                     with ui.dialog() as dlg, ui.card().style("width: min(840px, 94vw); max-width: 94vw;"):
@@ -1104,34 +1145,7 @@ def build_sidebar(
 
                         select_btn.on("click", _toggle_mode)
 
-                        # Classify once for filter + pills
-                        from row_bot.threads import get_workflow_thread_ids as _gwf
-                        _wf_tids = _gwf()
-
-                        def _cat_modal(pid: str, tid: str, thread_type: str = "", dev_ws: str = "") -> str:
-                            if thread_type == "agent_child" or tid in child_thread_ids:
-                                return "agents"
-                            if pid:
-                                return "designer"
-                            if thread_type == "code" or dev_ws:
-                                return "code"
-                            if tid in _wf_tids:
-                                return "workflow"
-                            return "chat"
-
-                        _modal_counts = {"all": 0, "chat": 0,
-                                         "designer": 0, "code": 0, "workflow": 0,
-                                         "agents": 0}
-                        _modal_classified: list[tuple] = []
-                        for _r in modal_threads:
-                            _pid = _r[5] if len(_r) > 5 else ""
-                            _tt = _r[6] if len(_r) > 6 else ""
-                            _dw = _r[7] if len(_r) > 7 else ""
-                            _cat_key = _cat_modal(_pid, _r[0], _tt, _dw)
-                            _modal_counts[_cat_key] += 1
-                            if _cat_key != "agents":
-                                _modal_counts["all"] += 1
-                            _modal_classified.append((_r, _cat_key))
+                        _modal_counts = _visible_conversation_counts(_modal_classified)
 
                         def _current_filter_ids() -> list[str]:
                             return selectable_thread_ids_for_filter(
@@ -1169,9 +1183,7 @@ def build_sidebar(
                         def _render_modal_pills():
                             filter_row.clear()
                             global _MODAL_FILTER
-                            valid_modal_keys = {descriptor["key"] for descriptor in THREAD_FILTER_DESCRIPTORS}
-                            if _MODAL_FILTER not in valid_modal_keys:
-                                _MODAL_FILTER = "all"
+                            _MODAL_FILTER = _normalize_conversation_filter(_MODAL_FILTER)
                             with filter_row:
                                 for descriptor in THREAD_FILTER_DESCRIPTORS:
                                     key = descriptor["key"]
@@ -1203,20 +1215,10 @@ def build_sidebar(
 
                         def _rebuild_dialog_list() -> None:
                             list_container.clear()
-                            # Filtered view of threads
-                            _filtered = []
-                            for r in modal_threads:
-                                _cat = _cat_modal(
-                                    r[5] if len(r) > 5 else "",
-                                    r[0],
-                                    r[6] if len(r) > 6 else "",
-                                    r[7] if len(r) > 7 else "",
-                                )
-                                if (
-                                    (_MODAL_FILTER == "all" and _cat != "agents")
-                                    or _cat == _MODAL_FILTER
-                                ):
-                                    _filtered.append((r, _cat))
+                            _filtered = _filter_classified_thread_rows(
+                                _modal_classified,
+                                _MODAL_FILTER,
+                            )
                             _filtered = _sort_classified_thread_rows_pinned_first(_filtered)
                             with list_container:
                                 if not _filtered:
@@ -1353,19 +1355,28 @@ def build_sidebar(
                                             )
 
                                         def _pin_modal(t=tid, pinned=not is_pinned):
-                                            nonlocal modal_threads
+                                            nonlocal _modal_classified
+                                            nonlocal _modal_counts
                                             nonlocal modal_pin_changed
                                             try:
                                                 apply_thread_pin(t, pinned)
                                             except Exception as exc:
                                                 ui.notify(str(exc), type="negative", close_button=True)
                                                 return
-                                            modal_threads = _list_threads(include_details=True)
+                                            _modal_classified = _classify_visible_thread_rows(
+                                                _list_threads(include_details=True),
+                                                workflow_thread_ids=workflow_tids,
+                                                agent_runs=_agent_run_rows,
+                                            )
+                                            _modal_counts = _visible_conversation_counts(
+                                                _modal_classified
+                                            )
                                             modal_pin_changed = True
                                             ui.notify(
                                                 "Pinned conversation" if pinned else "Unpinned conversation",
                                                 type="positive" if pinned else "info",
                                             )
+                                            _render_modal_pills()
                                             _rebuild_dialog_list()
 
                                         item_classes = "row-bot-thread-row"
@@ -1525,11 +1536,10 @@ def build_sidebar(
                                     if _MODAL_FILTER == "all"
                                     else {
                                         "chat": "chats",
-                                            "designer": "design conversations",
-                                            "code": "code conversations",
-                                            "workflow": "workflow conversations",
-                                            "agents": "Agent conversations",
-                                        }[_MODAL_FILTER]
+                                        "designer": "design conversations",
+                                        "code": "code conversations",
+                                        "workflow": "workflow conversations",
+                                    }[_MODAL_FILTER]
                                     )
                                 confirm_destructive(
                                     f"Delete all {len(all_ids)} {scope}?",
@@ -1546,7 +1556,7 @@ def build_sidebar(
                     dlg.open()
 
                 ui.button(
-                    f"Show all ({len(threads)})", on_click=_show_all
+                    f"Show all ({counts['all']})", on_click=_show_all
                 ).classes("w-full q-mt-xs").props("flat dense size=sm")
 
     _rebuild_thread_list_ref[0] = _rebuild_thread_list
