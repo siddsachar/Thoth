@@ -14,7 +14,7 @@ and the list itself.
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
 from nicegui import ui
 
@@ -103,6 +103,19 @@ class BulkSelect:
         if len(self._selected) == previous:
             return
         self._emit()
+
+
+def _bind_bulk_selection_checkbox(
+    checkbox: Any,
+    bulk: BulkSelect,
+    item_id: str,
+) -> None:
+    """Keep a checkbox, selection count, and destructive target in sync."""
+
+    checkbox.on_value_change(
+        lambda event: bulk.toggle_item(item_id, bool(event.value))
+    )
+    checkbox.on("click", js_handler="(event) => event.stopPropagation()")
 
 
 def render_bulk_action_bar(

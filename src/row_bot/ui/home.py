@@ -219,7 +219,11 @@ def build_home(
                 def _refresh_home_tiles():
                     rebuild_main()
 
-                from row_bot.ui.bulk_select import BulkSelect, render_bulk_action_bar
+                from row_bot.ui.bulk_select import (
+                    BulkSelect,
+                    _bind_bulk_selection_checkbox,
+                    render_bulk_action_bar,
+                )
                 from row_bot.ui.confirm import confirm_destructive
                 global _BULK_WF
                 if _BULK_WF is None:
@@ -412,15 +416,10 @@ def build_home(
                                         _cb = ui.checkbox(
                                             value=_bulk_wf.is_selected(tk["id"]),
                                         )
-                                        _cb.on(
-                                            "update:model-value",
-                                            lambda e, i=tk["id"]: _bulk_wf.toggle_item(
-                                                i, bool(e.args),
-                                            ),
-                                        )
-                                        _cb.on(
-                                            "click",
-                                            js_handler="(e) => e.stopPropagation()",
+                                        _bind_bulk_selection_checkbox(
+                                            _cb,
+                                            _bulk_wf,
+                                            tk["id"],
                                         )
                                 # Icon in a subtle circular badge
                                 with ui.element("div").classes("w-full flex justify-center q-mb-xs"):

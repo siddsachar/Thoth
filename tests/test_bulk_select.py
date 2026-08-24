@@ -1,6 +1,29 @@
-from row_bot.ui.bulk_select import BulkSelect
+from pathlib import Path
+from types import SimpleNamespace
+
+from row_bot.ui.bulk_select import BulkSelect, _bind_bulk_selection_checkbox
 from row_bot.ui import sidebar
 from row_bot.ui.sidebar import selectable_thread_ids_for_filter
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class _FakeCheckbox:
+    def __init__(self) -> None:
+        self._value_handler = None
+        self.stops_click_propagation = False
+
+    def on_value_change(self, handler) -> None:
+        self._value_handler = handler
+
+    def on(self, event: str, *, js_handler: str) -> None:
+        assert event == "click"
+        self.stops_click_propagation = "stopPropagation" in js_handler
+
+    def emit_value(self, value: bool) -> None:
+        assert self._value_handler is not None
+        self._value_handler(SimpleNamespace(value=value))
 
 
 def _row(thread_id: str) -> tuple:
@@ -24,6 +47,39 @@ def _detail_row(
         thread_type,
         developer_workspace_id,
     )
+
+
+def test_checkbox_uncheck_updates_count_and_destructive_target() -> None:
+    bulk = BulkSelect()
+    bulk.set_mode(True)
+    first = _FakeCheckbox()
+    second = _FakeCheckbox()
+    _bind_bulk_selection_checkbox(first, bulk, "first")
+    _bind_bulk_selection_checkbox(second, bulk, "second")
+
+    first.emit_value(True)
+    second.emit_value(True)
+    assert bulk.count == 2
+    assert bulk.selected == {"first", "second"}
+
+    first.emit_value(False)
+    assert bulk.count == 1
+    assert sorted(bulk.selected) == ["second"]
+    assert first.stops_click_propagation is True
+    assert second.stops_click_propagation is True
+
+
+def test_all_bulk_checkbox_surfaces_use_typed_value_change_binding() -> None:
+    paths = (
+        "src/row_bot/ui/sidebar.py",
+        "src/row_bot/ui/home.py",
+        "src/row_bot/designer/home_tab.py",
+        "src/row_bot/ui/settings.py",
+    )
+    for relative_path in paths:
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert "_bind_bulk_selection_checkbox" in source
+        assert "bool(e.args)" not in source
 
 
 def test_select_many_and_deselect_many_preserve_other_filter_selections() -> None:

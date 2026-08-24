@@ -30,7 +30,10 @@ def build_designer_tab(
     on_refresh : Callable | None
         Called to rebuild the whole home view (after delete, etc.).
     """
-    from row_bot.ui.bulk_select import BulkSelect, render_bulk_action_bar
+    from row_bot.ui.bulk_select import (
+        BulkSelect,
+        render_bulk_action_bar,
+    )
     from row_bot.ui.confirm import confirm_destructive
 
     bulk = BulkSelect()
@@ -150,6 +153,8 @@ def _render_project_card(
     When ``bulk`` is provided and active, the card shows a checkbox
     overlay and card clicks toggle selection instead of opening.
     """
+    from row_bot.ui.bulk_select import _bind_bulk_selection_checkbox
+
     proj_id = summary["id"]
     name = summary.get("name", "Untitled")
     page_count = summary.get("page_count", 0)
@@ -193,11 +198,7 @@ def _render_project_card(
                 "padding: 2px;"
             ):
                 cb = ui.checkbox(value=bulk.is_selected(proj_id))
-                cb.on(
-                    "update:model-value",
-                    lambda e, p=proj_id: bulk.toggle_item(p, bool(e.args)),
-                )
-                cb.on("click", js_handler="(e) => e.stopPropagation()")
+                _bind_bulk_selection_checkbox(cb, bulk, proj_id)
         # Use the cached summary preview (updated on every save_project).
         preview_html = summary.get("preview_html", "")
         preview_title = summary.get("preview_title", name)

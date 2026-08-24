@@ -1108,7 +1108,11 @@ def build_sidebar(
 
             if counts["all"] > SIDEBAR_MAX_THREADS:
                 def _show_all():
-                    from row_bot.ui.bulk_select import BulkSelect, render_bulk_action_bar
+                    from row_bot.ui.bulk_select import (
+                        BulkSelect,
+                        _bind_bulk_selection_checkbox,
+                        render_bulk_action_bar,
+                    )
                     from row_bot.ui.confirm import confirm_destructive
 
                     bulk = BulkSelect()
@@ -1389,15 +1393,10 @@ def build_sidebar(
                                             if bulk.active:
                                                 with ui.item_section().props("avatar").style("min-width: 28px;"):
                                                     cb = ui.checkbox(value=bulk.is_selected(tid))
-                                                    cb.on(
-                                                        "update:model-value",
-                                                        lambda e, t=tid: bulk.toggle_item(
-                                                            t, bool(e.args),
-                                                        ),
-                                                    )
-                                                    cb.on(
-                                                        "click",
-                                                        js_handler="(e) => e.stopPropagation()",
+                                                    _bind_bulk_selection_checkbox(
+                                                        cb,
+                                                        bulk,
+                                                        tid,
                                                     )
                                             else:
                                                 with ui.item_section().props("avatar").style("min-width: 28px;"):
