@@ -7,6 +7,7 @@ import io
 import secrets
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
@@ -147,19 +148,86 @@ class StaleObservationError(ComputerUseError):
         super().__init__(message, code="stale_observation", retryable=True)
 
 
-_PYTHON_HOST_APPS = frozenset({"python", "python.exe", "pythonw", "pythonw.exe"})
+_PYTHON_HOST_APPS = frozenset({"python", "pythonw"})
+_BROWSER_CANONICAL_BY_ALIAS = {
+    "microsoftedge": "msedge.exe",
+    "edge": "msedge.exe",
+    "msedge": "msedge.exe",
+    "googlechrome": "chrome.exe",
+    "chrome": "chrome.exe",
+    "mozillafirefox": "firefox.exe",
+    "firefox": "firefox.exe",
+    "bravebrowser": "brave.exe",
+    "brave": "brave.exe",
+    "safari": "Safari.app",
+}
+
+
+def _normalize_app_identity(value: object) -> str:
+    """Normalize an app identity without introducing fuzzy matching."""
+
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+    for suffix in (".exe", ".app"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+            break
+    return "".join(character for character in text if character.isalnum())
+
+
+def _canonical_browser_identity(value: object) -> str:
+    return _BROWSER_CANONICAL_BY_ALIAS.get(_normalize_app_identity(value), "")
+
+
+def _app_identities_match(requested: object, candidate: object) -> bool:
+    requested_normalized = _normalize_app_identity(requested)
+    candidate_normalized = _normalize_app_identity(candidate)
+    if not requested_normalized or not candidate_normalized:
+        return False
+    requested_browser = _canonical_browser_identity(requested)
+    candidate_browser = _canonical_browser_identity(candidate)
+    if requested_browser or candidate_browser:
+        return bool(requested_browser and requested_browser == candidate_browser)
+    return requested_normalized == candidate_normalized
+
+
+def _permission_scope_name(app_name: object) -> str:
+    return _canonical_browser_identity(app_name) or str(app_name or "").strip()[:128]
+
+
+def _permission_key(app_name: object) -> str:
+    return _normalize_app_identity(_permission_scope_name(app_name))
+
+
+def _resolve_app_identity(requested: str, candidates: list[str]) -> str | None:
+    """Resolve exact identities plus the explicit browser groups only."""
+
+    known_browser = _canonical_browser_identity(requested)
+    matches: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not _app_identities_match(requested, candidate):
+            continue
+        resolved = known_browser or str(candidate).strip()[:128]
+        key = _permission_key(resolved)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        matches.append(resolved)
+    if known_browser:
+        return known_browser
+    return matches[0] if len(matches) == 1 else None
 
 
 def _is_protected_controller_target(app_name: str, window_title: str = "") -> bool:
     """Return True for Row-Bot/Cua control surfaces that must never self-target."""
 
-    app = " ".join(str(app_name or "").strip().casefold().replace("_", "-").split())
-    title = " ".join(str(window_title or "").strip().casefold().replace("_", "-").split())
-    if "cua-driver" in app or "cua driver" in app:
+    app = _normalize_app_identity(app_name)
+    title = _normalize_app_identity(window_title)
+    if "cuadriver" in app:
         return True
-    if app in {"row-bot", "row-bot.exe", "row bot", "row bot.exe"}:
+    if app == "rowbot":
         return True
-    return app in _PYTHON_HOST_APPS and ("row-bot" in title or "row bot" in title)
+    return app in _PYTHON_HOST_APPS and "rowbot" in title
 
 
 def current_owner() -> LeaseOwner:
@@ -210,6 +278,7 @@ class ComputerUseService:
         self._preview_observation: Observation | None = None
         self._observation_generation = 0
         self._approved_apps: set[str] = set()
+        self._app_display_names: dict[str, str] = {}
         self._paused_at = 0.0
         self._lease_id = ""
         self._takeover_token = ""
@@ -355,6 +424,7 @@ class ComputerUseService:
                 self._observation = None
                 self._preview_observation = None
                 self._approved_apps.clear()
+                self._app_display_names.clear()
                 self._paused_at = 0.0
                 self._lease_id = secrets.token_urlsafe(24)
                 self._takeover_token = ""
@@ -458,6 +528,7 @@ class ComputerUseService:
             self._target_hint = None
             self._app_hint = ""
             self._approved_apps.clear()
+            self._app_display_names.clear()
             self._observation = None
             self._preview_observation = None
             self._observation_generation += 1
@@ -475,7 +546,18 @@ class ComputerUseService:
     @staticmethod
     def _safe_app_rows(response: CuaResponse) -> list[dict[str, Any]]:
         rows = response.structured.get("apps") if isinstance(response.structured.get("apps"), list) else []
-        return [{"name": str(row.get("name") or "")[:128], "running": bool(row.get("running"))} for row in rows if isinstance(row, dict)]
+        output: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "")[:128]
+            key = _permission_key(name)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            output.append({"name": name, "running": bool(row.get("running"))})
+        return output
 
     def list_apps(self, owner: LeaseOwner | None = None) -> list[dict[str, Any]]:
         self._require_owner(owner)
@@ -508,6 +590,11 @@ class ComputerUseService:
             self._app_hint = app[:128]
         with self._mutation_lock:
             response = self._driver_call("list_windows", {})
+        if response.is_error:
+            raise ComputerUseError(
+                response.text or response.error_code or "Cua window discovery failed",
+                code=response.error_code or "driver_failed",
+            )
         rows = response.structured.get("windows") if isinstance(response.structured.get("windows"), list) else []
         return self._register_window_rows(
             rows,
@@ -523,16 +610,18 @@ class ComputerUseService:
         window_filter: str = "",
         fallback_app: str = "",
         fallback_pid: int = 0,
+        display_app: str = "",
     ) -> list[dict[str, Any]]:
         """Convert reviewed driver window rows to private task-scoped target ids."""
 
         output: list[dict[str, Any]] = []
+        seen_rows: set[tuple[Any, ...]] = set()
         with self._lock:
             for row in rows:
                 if not isinstance(row, dict):
                     continue
                 app_name = str(row.get("app_name") or row.get("name") or fallback_app)[:128]
-                if app_filter and app_filter.casefold() not in app_name.casefold():
+                if app_filter and not _app_identities_match(app_filter, app_name):
                     continue
                 window_title = str(row.get("title") or "")[:160]
                 if _is_protected_controller_target(app_name, window_title):
@@ -540,11 +629,33 @@ class ComputerUseService:
                 if window_filter and window_filter.casefold() not in window_title.casefold():
                     continue
                 bounds = row.get("bounds") if isinstance(row.get("bounds"), dict) else {}
+                pid = int(row.get("pid") or fallback_pid)
+                window_id = int(row.get("window_id") or 0)
+                identity = _permission_key(app_name)
+                row_key = (
+                    (identity, pid, window_id)
+                    if window_id
+                    else (
+                        identity,
+                        pid,
+                        window_title.casefold(),
+                        float(bounds.get("x") or 0),
+                        float(bounds.get("y") or 0),
+                        float(bounds.get("width") or 0),
+                        float(bounds.get("height") or 0),
+                    )
+                )
+                if row_key in seen_rows:
+                    continue
+                seen_rows.add(row_key)
+                friendly_name = str(display_app or app_filter or app_name).strip()[:128]
+                if identity and friendly_name:
+                    self._app_display_names[identity] = friendly_name
                 target_id = f"target_{secrets.token_urlsafe(18)}"
                 target = Target(
                     target_id=target_id,
-                    pid=int(row.get("pid") or fallback_pid),
-                    window_id=int(row.get("window_id") or 0),
+                    pid=pid,
+                    window_id=window_id,
                     app_name=app_name,
                     window_title=window_title,
                     bounds=(float(bounds.get("x") or 0), float(bounds.get("y") or 0), float(bounds.get("width") or 0), float(bounds.get("height") or 0)),
@@ -693,9 +804,12 @@ class ComputerUseService:
         *,
         approval_mode: object = "approve",
     ) -> None:
+        permission_scope = _permission_scope_name(target.app_name)
+        permission_key = _permission_key(permission_scope)
         with self._lock:
-            if target.app_name in self._approved_apps:
+            if permission_key in self._approved_apps:
                 return
+            display_name = self._app_display_names.get(permission_key, target.app_name)
         from row_bot.approval_policy import decision_for_action, normalize_approval_mode
 
         policy_decision = decision_for_action(normalize_approval_mode(approval_mode))
@@ -713,9 +827,9 @@ class ComputerUseService:
         self._notify()
         outcome = self._gate_optional_approval({
             "tool": "computer_use",
-            "label": f"Allow Computer · {target.app_name}",
+            "label": f"Allow Computer · {display_name}",
             "action": "task_session_app_permission",
-            "app": target.app_name,
+            "app": permission_scope,
             "window": "Selected app window (title hidden)",
             "choices": ["Allow once", "Take over", "Deny"],
         }, approval_mode=approval_mode)
@@ -737,7 +851,7 @@ class ComputerUseService:
             from row_bot.approval_policy import normalize_approval_mode
 
             if normalize_approval_mode(approval_mode) == "approve":
-                self._approved_apps.add(target.app_name)
+                self._approved_apps.add(permission_key)
             self._state = SessionState.OBSERVING
         self._notify()
 
@@ -746,10 +860,16 @@ class ComputerUseService:
         app_name: str,
         *,
         approval_mode: object = "approve",
+        display_name: str = "",
     ) -> None:
+        permission_scope = _permission_scope_name(app_name)
+        permission_key = _permission_key(permission_scope)
+        friendly_name = str(display_name or app_name).strip()[:128]
         with self._lock:
-            if app_name in self._approved_apps:
+            if permission_key in self._approved_apps:
                 return
+            if permission_key and friendly_name:
+                self._app_display_names[permission_key] = friendly_name
         from row_bot.approval_policy import decision_for_action, normalize_approval_mode
 
         policy_decision = decision_for_action(normalize_approval_mode(approval_mode))
@@ -767,9 +887,9 @@ class ComputerUseService:
         self._notify()
         outcome = self._gate_optional_approval({
             "tool": "computer_use",
-            "label": f"Allow Computer · {app_name}",
+            "label": f"Allow Computer · {friendly_name}",
             "action": "task_session_app_permission",
-            "app": app_name,
+            "app": permission_scope,
             "window": "App launch",
             "choices": ["Allow once", "Take over", "Deny"],
         }, approval_mode=approval_mode)
@@ -791,7 +911,7 @@ class ComputerUseService:
             from row_bot.approval_policy import normalize_approval_mode
 
             if normalize_approval_mode(approval_mode) == "approve":
-                self._approved_apps.add(app_name)
+                self._approved_apps.add(permission_key)
             self._state = SessionState.OBSERVING
         self._notify()
 
@@ -801,7 +921,7 @@ class ComputerUseService:
         with self._lock:
             if self._owner is None or self._owner.key != owner.key:
                 raise ComputerUseError("The local UI does not own this Computer session.")
-            self._approved_apps.add(str(app_name))
+            self._approved_apps.add(_permission_key(app_name))
 
     def capture(
         self,
@@ -1789,30 +1909,58 @@ class ComputerUseService:
                 "Row-Bot and its Computer control surfaces cannot be targeted.",
                 code="hard_blocked",
             )
-        decision = classify_action("launch_app", app_name=name)
+        self._require_owner(owner)
+        try:
+            inventory = self.list_apps(owner)
+        except ComputerUseError:
+            if not _canonical_browser_identity(name):
+                raise
+            inventory = []
+        resolved_name = _resolve_app_identity(
+            name,
+            [str(row.get("name") or "") for row in inventory],
+        )
+        if not resolved_name:
+            raise ComputerUseError(
+                f"Could not resolve the native app identity for {name!r} from the reviewed app inventory.",
+                code="target_gone",
+            )
+        if _is_protected_controller_target(resolved_name, name):
+            raise ComputerUseError(
+                "Row-Bot and its Computer control surfaces cannot be targeted.",
+                code="hard_blocked",
+            )
+        decision = classify_action("launch_app", app_name=resolved_name)
         if decision.outcome is PolicyOutcome.BLOCKED:
             raise ComputerUseError(
                 f"BLOCKED: {decision.reason}",
                 code="hard_blocked",
             )
-        self._require_owner(owner)
         with self._lock:
             self._app_hint = name
-        self._ensure_named_app_permission(name, approval_mode=approval_mode)
+        self._ensure_named_app_permission(
+            resolved_name,
+            approval_mode=approval_mode,
+            display_name=name,
+        )
         with self._mutation_lock:
             self._state = SessionState.ACTING
             self._last_action = "launch app"
             self._notify()
-            response = self._driver_call("launch_app", {"name": name})
+            response = self._driver_call("launch_app", {"name": resolved_name})
             self._state = SessionState.OBSERVING
             self._notify()
         if response.is_error:
-            raise ComputerUseError(response.text)
+            raise ComputerUseError(
+                response.text or response.error_code or "Cua app launch failed",
+                code=response.error_code or "driver_failed",
+            )
         launch_rows = response.structured.get("windows") if isinstance(response.structured.get("windows"), list) else []
         windows = self._register_window_rows(
             launch_rows,
-            fallback_app=name,
+            fallback_app=resolved_name,
             fallback_pid=int(response.structured.get("pid") or 0),
+            display_app=name,
         )
         if not windows:
             windows = self.list_windows(owner, app=name)
@@ -1954,6 +2102,7 @@ class ComputerUseService:
                 self._target_hint = None
                 self._app_hint = ""
                 self._approved_apps.clear()
+                self._app_display_names.clear()
                 self._observation = None
                 self._preview_observation = None
                 self._observation_generation += 1

@@ -878,7 +878,7 @@ def _install_in_app_buddy_drag_js(element_id: str, dock_id: str) -> str:
                         targetDock.classList.remove('row-bot-buddy-dock-empty', 'row-bot-buddy-dock-hover');
                         if (target.parentElement !== targetDock) targetDock.appendChild(target);
                     }};
-                    const beginPreview = (rect) => {{
+                    const beginPreview = (rect, active) => {{
                         target.style.left = rect.left + 'px';
                         target.style.top = rect.top + 'px';
                         target.style.right = 'auto';
@@ -887,80 +887,139 @@ def _install_in_app_buddy_drag_js(element_id: str, dock_id: str) -> str:
                         target.classList.remove('row-bot-buddy-docked');
                         targetDock.classList.add('row-bot-buddy-dock-empty');
                         if (target.parentElement !== document.body) document.body.appendChild(target);
+                        try {{ target.setPointerCapture(active.pointerId); }} catch (error) {{}}
                     }};
                     target.__rowBotBuddyDockHome = dockHome;
-                    let drag = null;
-                    let moved = false;
-                    let committed = false;
+                    let gesture = null;
                     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+                    const containsPoint = (rect, event) => Boolean(
+                        rect
+                        && event.clientX >= rect.left
+                        && event.clientX <= rect.right
+                        && event.clientY >= rect.top
+                        && event.clientY <= rect.bottom
+                    );
+                    const isOverDock = (active, event) => (
+                        containsPoint(active.dockRect, event)
+                        || containsPoint(targetDock.getBoundingClientRect(), event)
+                    );
+                    const releaseCapture = (active) => {{
+                        if (!active || !target.hasPointerCapture) return;
+                        try {{
+                            if (target.hasPointerCapture(active.pointerId)) target.releasePointerCapture(active.pointerId);
+                        }} catch (error) {{}}
+                    }};
+                    const finishGesture = (active, phase, restoreHome = false) => {{
+                        if (!active) return;
+                        active.phase = phase;
+                        releaseCapture(active);
+                        target.classList.remove('row-bot-buddy-dragging');
+                        if (restoreHome) dockHome();
+                        if (gesture === active) gesture = null;
+                    }};
                     const notify = (message, type) => {{
                         if (window.Quasar && window.Quasar.Notify) {{
                             window.Quasar.Notify.create({{message, type: type || 'info', timeout: 3000}});
                         }}
                     }};
-                    const commitTearOff = (event) => {{
-                        if (committed) return;
-                        committed = true;
+                    const cancelGesture = (active) => {{
+                        if (!active || active.phase === 'committing' || active.phase === 'completed' || active.phase === 'cancelled') return;
+                        finishGesture(active, 'cancelled', active.phase === 'previewing');
+                    }};
+                    const commitTearOff = (event, active = gesture) => {{
+                        if (!active || active.phase !== 'previewing') return;
+                        active.phase = 'committing';
+                        active.screenX = Number.isFinite(event.screenX) ? event.screenX : active.screenX;
+                        active.screenY = Number.isFinite(event.screenY) ? event.screenY : active.screenY;
                         const api = window.pywebview && window.pywebview.api ? window.pywebview.api : null;
                         if (!api || !api.tear_off_buddy) {{
-                            committed = false;
-                            dockHome();
+                            finishGesture(active, 'cancelled', true);
                             notify('Drag-to-desktop is available in the native Row-Bot window', 'warning');
                             return;
                         }}
                         const port = Number(window.location.port || 8080);
-                        Promise.resolve(api.tear_off_buddy(event.screenX, event.screenY, port)).then((ok) => {{
+                        Promise.resolve(api.tear_off_buddy(active.screenX, active.screenY, port)).then((ok) => {{
                             if (!ok) {{
-                                committed = false;
-                                dockHome();
+                                finishGesture(active, 'cancelled', true);
                                 notify('Buddy could not be torn off', 'negative');
                                 return;
                             }}
+                            active.phase = 'completed';
+                            releaseCapture(active);
+                            target.classList.remove('row-bot-buddy-dragging');
                             target.style.display = 'none';
                             targetDock.classList.add('row-bot-buddy-dock-empty');
+                            if (gesture === active) gesture = null;
                         }}).catch(() => {{
-                            committed = false;
-                            dockHome();
+                            finishGesture(active, 'cancelled', true);
                             notify('Buddy could not be torn off', 'negative');
                         }});
                     }};
                     target.addEventListener('pointerdown', (event) => {{
-                        if (event.button !== 0) return;
+                        if (event.button !== 0 || gesture) return;
                         const rect = target.getBoundingClientRect();
-                        drag = {{ pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top }};
-                        moved = false;
-                        committed = false;
+                        gesture = {{
+                            phase: 'pressed',
+                            moved: false,
+                            pointerId: event.pointerId,
+                            startX: event.clientX,
+                            startY: event.clientY,
+                            screenX: event.screenX,
+                            screenY: event.screenY,
+                            offsetX: event.clientX - rect.left,
+                            offsetY: event.clientY - rect.top,
+                            dockRect: null,
+                        }};
                         target.classList.add('row-bot-buddy-dragging');
                         try {{ target.setPointerCapture(event.pointerId); }} catch (error) {{}}
                         event.preventDefault();
                     }});
                     target.addEventListener('pointermove', (event) => {{
-                        if (!drag || drag.pointerId !== event.pointerId) return;
+                        const active = gesture;
+                        if (!active || active.pointerId !== event.pointerId || active.phase === 'committing') return;
+                        active.screenX = event.screenX;
+                        active.screenY = event.screenY;
                         const rect = target.getBoundingClientRect();
-                        if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 6) {{
-                            moved = true;
-                            if (!target.classList.contains('row-bot-buddy-drag-preview')) beginPreview(rect);
+                        if (active.phase === 'pressed' && Math.hypot(event.clientX - active.startX, event.clientY - active.startY) > 6) {{
+                            active.moved = true;
+                            active.dockRect = targetDock.getBoundingClientRect();
+                            active.phase = 'previewing';
+                            beginPreview(rect, active);
                         }}
-                        if (!moved) return;
+                        if (active.phase !== 'previewing') return;
                         const width = target.offsetWidth;
                         const height = target.offsetHeight;
-                        target.style.left = clamp(event.clientX - drag.offsetX, 8, window.innerWidth - width - 8) + 'px';
-                        target.style.top = clamp(event.clientY - drag.offsetY, 8, window.innerHeight - height - 8) + 'px';
+                        target.style.left = clamp(event.clientX - active.offsetX, 8, window.innerWidth - width - 8) + 'px';
+                        target.style.top = clamp(event.clientY - active.offsetY, 8, window.innerHeight - height - 8) + 'px';
                         target.style.right = 'auto';
                         target.style.bottom = 'auto';
                         const atClientEdge = event.clientX <= 1 || event.clientY <= 1 || event.clientX >= window.innerWidth - 1 || event.clientY >= window.innerHeight - 1;
-                        if (atClientEdge) commitTearOff(event);
+                        if (atClientEdge && !isOverDock(active, event)) commitTearOff(event, active);
                     }});
-                    const finish = (event) => {{
-                        if (!drag || drag.pointerId !== event.pointerId) return;
-                        const wasClick = !moved;
-                        drag = null;
-                        target.classList.remove('row-bot-buddy-dragging');
-                        if (!wasClick) commitTearOff(event);
-                        if (wasClick) target.dispatchEvent(new CustomEvent('buddy-click', {{ bubbles: true }}));
+                    const pointerUp = (event) => {{
+                        const active = gesture;
+                        if (!active || active.pointerId !== event.pointerId || active.phase === 'committing') return;
+                        if (active.phase === 'pressed') {{
+                            finishGesture(active, 'completed');
+                            target.dispatchEvent(new CustomEvent('buddy-click', {{ bubbles: true }}));
+                            return;
+                        }}
+                        if (active.phase !== 'previewing') return;
+                        if (isOverDock(active, event)) cancelGesture(active);
+                        else commitTearOff(event, active);
                     }};
-                    target.addEventListener('pointerup', finish);
-                    target.addEventListener('pointercancel', finish);
+                    target.addEventListener('pointerup', pointerUp);
+                    target.addEventListener('pointercancel', (event) => {{
+                        if (gesture && gesture.pointerId === event.pointerId) cancelGesture(gesture);
+                    }});
+                    target.addEventListener('lostpointercapture', (event) => {{
+                        const active = gesture;
+                        if (!active || active.pointerId !== event.pointerId || active.phase === 'committing') return;
+                        try {{
+                            if (target.hasPointerCapture && target.hasPointerCapture(event.pointerId)) return;
+                        }} catch (error) {{}}
+                        cancelGesture(active);
+                    }});
                     target.addEventListener('keydown', (event) => {{
                         if (event.key !== 'Enter' && event.key !== ' ') return;
                         event.preventDefault();

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 _RUNTIME_FILES = {"app.py", "launcher.py", "notifications.py", "tasks.py"}
@@ -15,6 +18,40 @@ def _read(relative: str) -> str:
     if relative in _RUNTIME_FILES or relative.startswith(_RUNTIME_PREFIXES):
         relative = f"src/row_bot/{relative}"
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "click_below_threshold",
+        "first_drag",
+        "edge_idempotent",
+        "release_over_dock",
+        "pointer_cancel",
+        "capture_loss",
+        "native_failure_retry",
+        "native_unavailable",
+        "native_rejection",
+    ],
+)
+def test_docked_buddy_drag_runtime_is_one_terminal_gesture(tmp_path, scenario: str) -> None:
+    from row_bot.ui.buddy import _install_in_app_buddy_drag_js
+
+    generated = tmp_path / "buddy_drag.js"
+    generated.write_text(
+        _install_in_app_buddy_drag_js("buddy", "dock"),
+        encoding="utf-8",
+    )
+    harness = ROOT / "tests" / "fixtures" / "buddy_drag_runtime_test.cjs"
+    result = subprocess.run(
+        ["node", str(harness), scenario, str(generated)],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_buddy_ui_surfaces_are_wired():

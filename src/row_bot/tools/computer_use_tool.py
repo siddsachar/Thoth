@@ -282,8 +282,9 @@ class ComputerUseTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Control native desktop apps in a visible, task-scoped session. Prefer structured tools first and Browser for websites; "
-            "use Computer only for native apps, OS dialogs, or visual-only surfaces. launch_app already returns a fresh observation, "
+            "Control native desktop apps and already-open native browser windows in a visible, task-scoped session. Prefer structured tools first and Row-Bot Browser for ordinary website navigation. "
+            "When the user refers to this browser, the browser below, or an existing named browser window, use Computer: call list_windows with app and any title hint, then capture or focus that target. Do not call launch_app merely to focus an app that is already open, and never attach to a personal browser profile through CDP. "
+            "For other native apps, OS dialogs, or visual-only surfaces, use Computer. launch_app already returns a fresh observation, "
             "so do not capture again. For coordinate-only visual work, pass a visual_question to launch_app or capture once before the first coordinate action; never guess coordinates from semantic element text. Do not attach visual_question to token-based semantic clicks; they intentionally stay on the fast native path. "
             "Prefer semantic element tokens and one native drag for a simple stroke. Unverifiable coordinate mutations are captured and checked locally; "
             "unchanged or unverified is not completion, and three no-effect mutations stop the session. Never blind-retry an error. "
@@ -291,7 +292,7 @@ class ComputerUseTool(BaseTool):
             "A hard_blocked result is terminal: do not enumerate aliases or try another Computer action to bypass it. "
             "The bounded Calculator key_sequence remains an app-specific optimization, not the general action protocol. "
             "Use wait only when the user explicitly requests a delay or the latest observation shows the selected app is still loading; never wait between ordinary actions. "
-            "list_windows requires app and should include window_hint when the user names a specific same-app window. Stop and Take over remain local controls."
+            "list_windows requires app and should include window_hint when the user names a specific same-app window. Follow structured native-window errors without silently switching to the managed Browser or claiming native browsers are unsupported. Stop and Take over remain local controls."
         )
 
     @property
@@ -305,7 +306,21 @@ class ComputerUseTool(BaseTool):
 
     @property
     def inference_keywords(self) -> list[str]:
-        return ["desktop", "native app", "calculator", "notepad", "textedit", "computer use"]
+        return [
+            "desktop",
+            "native app",
+            "calculator",
+            "notepad",
+            "textedit",
+            "computer use",
+            "this browser",
+            "browser below",
+            "browser window",
+            "microsoft edge",
+            "google chrome",
+            "mozilla firefox",
+            "safari window",
+        ]
 
     def as_langchain_tools(self) -> list:
         service = get_computer_use_service()

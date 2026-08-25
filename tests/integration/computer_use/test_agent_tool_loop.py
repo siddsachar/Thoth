@@ -47,6 +47,89 @@ def test_single_tool_runs_discovery_capture_and_verified_action(tmp_path, monkey
     assert transport.calls[-1][0] == "get_window_state"
 
 
+def test_existing_edge_window_tool_loop_preserves_scope_approval_and_target(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path))
+    from row_bot.computer_use.readiness import ReadinessCode, acknowledge_disclosure
+
+    acknowledge_disclosure()
+    scenario = FakeScenario(
+        apps=({"name": "msedge.exe", "running": True},),
+        capture_pid=2501,
+        capture_window_id=501,
+        windows=(
+            {
+                "window_id": 501,
+                "pid": 2501,
+                "app_name": "msedge.exe",
+                "title": "YouTube - Microsoft Edge",
+                "bounds": {"x": 0, "y": 0, "width": 1280, "height": 720},
+                "is_on_screen": True,
+            },
+            {
+                "window_id": 502,
+                "pid": 2501,
+                "app_name": "msedge.exe",
+                "title": "Private mail - Microsoft Edge",
+                "bounds": {"x": 0, "y": 0, "width": 1280, "height": 720},
+                "is_on_screen": True,
+            },
+        ),
+    )
+    transport = FakeCuaTransport(scenario)
+    client = CuaClient(
+        "fake.exe",
+        session_id="native-browser",
+        transport_factory=lambda *_args: transport,
+    )
+    approvals: list[dict] = []
+    service = ComputerUseService(
+        client_factory=lambda: client,
+        approval_callback=lambda payload: approvals.append(payload) or True,
+    )
+    owner = LeaseOwner("thread", "generation", "task")
+    service.acquire(owner, validate_context=False)
+    monkeypatch.setattr("row_bot.computer_use.service.current_owner", lambda: owner)
+    monkeypatch.setattr(computer_use_tool, "get_computer_use_service", lambda: service)
+    monkeypatch.setattr(
+        "row_bot.computer_use.readiness.readiness",
+        lambda **_kwargs: SimpleNamespace(
+            code=ReadinessCode.READY,
+            message="ready",
+            remediation="",
+        ),
+    )
+    tool = ComputerUseTool().as_langchain_tools()[0]
+
+    listed = json.loads(tool.invoke({
+        "action": "list_windows",
+        "app": "Microsoft Edge",
+        "window_hint": "YouTube",
+    }))
+    assert len(listed["windows"]) == 1
+    target_id = listed["windows"][0]["target_id"]
+    captured = json.loads(tool.invoke({"action": "capture", "target_id": target_id}))
+    scrolled = json.loads(tool.invoke({
+        "action": "scroll",
+        "target_id": target_id,
+        "direction": "down",
+        "amount": 240,
+    }))
+
+    assert f"Target ID: {target_id}" in captured["fresh_observation"]
+    assert scrolled["target_id"] == target_id
+    assert len(approvals) == 1
+    assert approvals[0]["app"] == "msedge.exe"
+    assert "Microsoft Edge" in approvals[0]["label"]
+    names = [name for name, _args in transport.calls]
+    assert names.count("list_windows") == 1
+    assert names.count("get_window_state") == 1
+    assert names.count("scroll") == 1
+    assert "launch_app" not in names
+
+
 def test_calculator_fast_path_needs_only_three_model_tool_calls(tmp_path, monkeypatch) -> None:
     natural_prompt = (
         "Use Computer Use only. Open Calculator, calculate 7 × 8, verify that the "

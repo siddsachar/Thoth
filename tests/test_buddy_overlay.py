@@ -26,6 +26,7 @@ from row_bot.buddy.overlay import (
     project_approval,
     screen_areas_from_native,
     should_defer_native_show,
+    _WindowsForegroundBackend,
 )
 
 
@@ -382,6 +383,78 @@ class FakeForegroundBackend:
     def activate(self, window):
         self.activated.append(window)
         return True
+
+
+class FakeWindowsUser32:
+    def __init__(self, *, valid: bool = True, minimized: bool = False, activated: bool = True) -> None:
+        self.valid = valid
+        self.minimized = minimized
+        self.activated = activated
+        self.calls: list[tuple] = []
+
+    def IsWindow(self, handle):  # noqa: N802
+        self.calls.append(("IsWindow", handle))
+        return self.valid
+
+    def IsIconic(self, handle):  # noqa: N802
+        self.calls.append(("IsIconic", handle))
+        return self.minimized
+
+    def ShowWindow(self, handle, command):  # noqa: N802
+        self.calls.append(("ShowWindow", handle, command))
+        return True
+
+    def SetForegroundWindow(self, handle):  # noqa: N802
+        self.calls.append(("SetForegroundWindow", handle))
+        return self.activated
+
+
+def _windows_foreground_backend(user32: FakeWindowsUser32) -> _WindowsForegroundBackend:
+    backend = _WindowsForegroundBackend.__new__(_WindowsForegroundBackend)
+    backend.user32 = user32
+    return backend
+
+
+def test_windows_foreground_rejects_invalid_handle_without_restore_or_activation():
+    user32 = FakeWindowsUser32(valid=False)
+    backend = _windows_foreground_backend(user32)
+
+    assert backend.activate(ForegroundWindow(44, 700)) is False
+    assert user32.calls == [("IsWindow", 44)]
+
+
+@pytest.mark.parametrize("placement", ["normal", "maximized"])
+def test_windows_foreground_visible_window_is_activated_without_placement_change(placement):
+    user32 = FakeWindowsUser32(minimized=False)
+    backend = _windows_foreground_backend(user32)
+
+    assert backend.activate(ForegroundWindow(44, 700, placement, "Edge")) is True
+    assert user32.calls == [
+        ("IsWindow", 44),
+        ("IsIconic", 44),
+        ("SetForegroundWindow", 44),
+    ]
+
+
+def test_windows_foreground_minimized_window_restores_once_before_activation():
+    user32 = FakeWindowsUser32(minimized=True)
+    backend = _windows_foreground_backend(user32)
+
+    assert backend.activate(ForegroundWindow(44, 700, "Edge", "Edge")) is True
+    assert user32.calls == [
+        ("IsWindow", 44),
+        ("IsIconic", 44),
+        ("ShowWindow", 44, 9),
+        ("SetForegroundWindow", 44),
+    ]
+
+
+def test_windows_foreground_failed_activation_is_not_retried():
+    user32 = FakeWindowsUser32(activated=False)
+    backend = _windows_foreground_backend(user32)
+
+    assert backend.activate(ForegroundWindow(44, 700)) is False
+    assert [name for name, *_args in user32.calls].count("SetForegroundWindow") == 1
 
 
 def test_foreground_tracker_filters_row_bot_and_restores_external_app_once_per_send():

@@ -42,6 +42,9 @@ class FakeScenario:
     injection_label: str = ""
     calculator_semantics: bool = False
     windows: tuple[dict[str, Any], ...] = ()
+    apps: tuple[dict[str, Any], ...] = ()
+    list_apps_error_code: str = ""
+    launch_error_code: str = ""
     action_error_code: str = ""
     capture_pid: int = 0
     capture_window_id: int = 0
@@ -110,10 +113,16 @@ class FakeCuaTransport:
         if name == "check_permissions":
             return self._result({"accessibility": not self.scenario.permission_denied, "screen_recording": True})
         if name == "list_apps":
-            return self._result({"apps": [
+            if self.scenario.list_apps_error_code:
+                return self._error(
+                    "fake app inventory warning",
+                    self.scenario.list_apps_error_code,
+                )
+            apps = list(self.scenario.apps) if self.scenario.apps else [
                 {"name": "Calculator", "pid": 4242, "running": True, "active": False},
                 {"name": "Notepad", "pid": 4343, "running": True, "active": False},
-            ]})
+            ]
+            return self._result({"apps": apps})
         if name == "list_windows":
             windows = list(self.scenario.windows) if self.scenario.windows else [
                 {"window_id": 101, "pid": 4242, "app_name": "Calculator", "title": "Calculator", "bounds": {"x": -100, "y": 20, "width": 800, "height": 600}, "is_on_screen": True},
@@ -121,6 +130,8 @@ class FakeCuaTransport:
             ]
             return self._result({"windows": windows})
         if name == "launch_app":
+            if self.scenario.launch_error_code:
+                return self._error("fake launch failure", self.scenario.launch_error_code)
             return self._result({"pid": 4242, "name": str(args.get("name") or "Calculator"), "windows": [{"window_id": 101, "title": "Calculator"}]})
         if name == "get_window_state":
             if self.scenario.permission_denied:

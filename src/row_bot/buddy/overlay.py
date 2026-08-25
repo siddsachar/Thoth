@@ -697,7 +697,8 @@ class _WindowsForegroundBackend:
     def activate(self, window: ForegroundWindow) -> bool:
         if not window.handle or not self.user32.IsWindow(window.handle):
             return False
-        self.user32.ShowWindow(window.handle, 9)  # SW_RESTORE
+        if self.user32.IsIconic(window.handle):
+            self.user32.ShowWindow(window.handle, 9)  # SW_RESTORE
         return bool(self.user32.SetForegroundWindow(window.handle))
 
 
