@@ -790,14 +790,18 @@ owner, so keep invitation links and public origins private and revoke devices or
 sessions you no longer trust. In Docker, saved provider credentials are
 encrypted locally with the key from the separate secrets volume.
 
-Computer Use is also opt-in. Row-Bot downloads the reviewed Cua Driver 0.7.1
-asset only after a separate Install action, verifies its SHA-256, and keeps the
-runtime private with upstream update checks disabled. Cua Driver has separately
-disclosed third-party telemetry; Row-Bot requires acceptance before any Cua
-process starts and does not send prompts, memories, secrets, screenshots, tool
-arguments, typed content, or channel data to that telemetry. Target-window
-screenshots are ephemeral, and typed values are excluded from durable history,
-logs, checkpoints, approvals, memory, and media.
+Computer Use is also opt-in. Row-Bot downloads only the reviewed Cua Driver
+0.19.3 full archive after a separate Install action, verifies its SHA-256, and
+keeps the runtime private with upstream update checks disabled. The expanded
+version-2 disclosure requires fresh acceptance before the upgraded process can
+start. Reviewed upstream telemetry can include pseudonymous installation and
+process-session identifiers plus bounded product/platform/client/tool/outcome,
+duration/output, aggregate usage, permission, and lifecycle categories. Its
+tagged event builders exclude prompts, tool arguments/results, typed content,
+screenshots, accessibility trees, app/window names, URLs, paths, raw values,
+and raw errors. Target-window screenshots remain ephemeral, and typed values
+are excluded from durable history, logs, checkpoints, approvals, memory, and
+media.
 
 Provider and custom models are opt-in. When selected, the current conversation, model-visible tool context, and tool results are sent to that endpoint. Memories, documents, files, graph data, and other conversations stay local unless you explicitly include them in the current conversation or expose them through a tool result. Memory recall happens locally before any selected memory is inserted into the active turn.
 

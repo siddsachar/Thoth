@@ -118,7 +118,7 @@ def test_failed_action_never_performs_post_action_capture(service, fake_transpor
     fake_transport.scenario.action_error_code = "action_failed"
     calls_before = len(fake_transport.calls)
 
-    with pytest.raises(ComputerUseError, match="fake action failure"):
+    with pytest.raises(ComputerUseError, match="refused the requested action safely"):
         service.act(
             "click",
             target,
@@ -140,7 +140,7 @@ def test_three_consecutive_driver_failures_end_with_computer_no_progress(
     for attempt in range(3):
         if attempt:
             observation = service.capture(target, OWNER)
-        expected = "no progress" if attempt == 2 else "fake action failure"
+        expected = "no progress" if attempt == 2 else "refused the requested action safely"
         with pytest.raises(ComputerUseError, match=expected):
             service.act(
                 "click",
@@ -366,3 +366,117 @@ def test_compact_routine_key_sequence_stays_bounded_and_non_navigational(keys: s
 
     with pytest.raises(ComputerUseError):
         ComputerUseService.normalize_routine_keys(keys)
+
+
+def _capability_service(fake_transport, *capabilities: str):
+    from row_bot.computer_use.client import CuaClient
+    from row_bot.computer_use.service import ComputerUseService
+
+    client = CuaClient(
+        "fake-cua-driver.exe",
+        session_id="capability-session",
+        contract_version="0.19.3",
+        capabilities=frozenset(capabilities),
+        transport_factory=lambda *_args: fake_transport,
+    )
+    return ComputerUseService(
+        client_factory=lambda: client,
+        approval_callback=lambda _payload: True,
+    )
+
+
+def test_service_derived_verify_state_is_exact_bounded_and_screenshot_free(fake_transport) -> None:
+    service = _capability_service(fake_transport, "verify_state")
+    fake_transport.scenario.apps = (
+        {"name": "Notepad", "running": True, "active": False},
+    )
+    service.acquire(OWNER, validate_context=False)
+    service.list_apps(OWNER)
+    target = service.list_windows(OWNER, app="Notepad")[0]["target_id"]
+    service.capture(target, OWNER)
+
+    service.act("key", target, OWNER, keys="a", approval_mode="allow_all")
+
+    verify_calls = [args for name, args in fake_transport.calls if name == "verify_state"]
+    assert verify_calls == [
+        {
+            "pid": 4343,
+            "window_id": 102,
+            "expect": [{"window": {"exists": True}}],
+            "timeout_ms": 0,
+            "stable_samples": 1,
+            "include_screenshot": False,
+            "session": "capability-session",
+        }
+    ]
+
+
+def test_exact_menu_is_capability_gated_and_never_falls_back_to_coordinates(
+    service,
+    fake_transport,
+) -> None:
+    target, _observation = _target_and_capture(service)
+    with pytest.raises(ComputerUseError) as unavailable:
+        service.act_menu(target, ["View", "Zoom In"], OWNER)
+    assert unavailable.value.code == "unsupported_capability"
+    assert not any(name == "invoke_menu" for name, _args in fake_transport.calls)
+
+
+def test_exact_safe_menu_invocation_returns_standard_receipt(fake_transport) -> None:
+    service = _capability_service(fake_transport, "invoke_menu")
+    target, observation = _target_and_capture(service)
+
+    receipt = service.act_menu(
+        target,
+        ["View", "Zoom In"],
+        OWNER,
+        approval_mode="allow_all",
+    )
+
+    assert isinstance(receipt, ActionReceipt)
+    assert receipt.action == "menu"
+    assert receipt.driver_effect == "confirmed"
+    assert receipt.route == "accessibility"
+    assert receipt.delivery_mode == "foreground"
+    assert [
+        args for name, args in fake_transport.calls if name == "invoke_menu"
+    ] == [
+        {
+            "pid": 4242,
+            "window_id": 101,
+            "path": ["View", "Zoom In"],
+            "session": "capability-session",
+        }
+    ]
+    assert service.current_observation(target) is None
+    assert all(name not in {"click", "double_click", "right_click"} for name, _args in fake_transport.calls)
+    assert observation.elements
+
+
+def test_consequential_menu_reproves_exact_target_and_refusal_has_no_pixel_fallback(
+    fake_transport,
+) -> None:
+    approvals: list[dict] = []
+    from row_bot.computer_use.client import CuaClient
+    from row_bot.computer_use.service import ComputerUseService
+
+    client = CuaClient(
+        "fake-cua-driver.exe",
+        contract_version="0.19.3",
+        capabilities=frozenset({"invoke_menu"}),
+        transport_factory=lambda *_args: fake_transport,
+    )
+    service = ComputerUseService(
+        client_factory=lambda: client,
+        approval_callback=lambda payload: approvals.append(payload) or True,
+    )
+    target, _observation = _target_and_capture(service)
+    fake_transport.scenario.menu_error_code = "menu_item_disabled"
+
+    with pytest.raises(ComputerUseError, match="unavailable or refused"):
+        service.act_menu(target, ["File", "Save"], OWNER, approval_mode="approve")
+
+    assert approvals[-1]["target"] == "File > Save"
+    assert [name for name, _args in fake_transport.calls].count("list_windows") == 2
+    assert [name for name, _args in fake_transport.calls].count("invoke_menu") == 1
+    assert all(name not in {"click", "double_click", "right_click"} for name, _args in fake_transport.calls)

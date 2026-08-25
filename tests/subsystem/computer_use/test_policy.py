@@ -13,6 +13,8 @@ def test_policy_covers_routine_consequential_handoff_and_blocked() -> None:
     assert classify_action("key", app_name="Notepad", keys="ctrl+alt+delete").outcome is PolicyOutcome.BLOCKED
     assert classify_action("key_sequence", app_name="Calculator").outcome is PolicyOutcome.ROUTINE
     assert classify_action("key_sequence", app_name="Notepad").outcome is PolicyOutcome.BLOCKED
+    assert classify_action("menu", app_name="Notepad", label="View > Zoom In").outcome is PolicyOutcome.ROUTINE
+    assert classify_action("menu", app_name="Notepad", label="File > Save").outcome is PolicyOutcome.CONSEQUENTIAL
 
 
 def test_approval_payload_redacts_typed_values_and_has_no_media_identifier() -> None:

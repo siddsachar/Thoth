@@ -375,6 +375,8 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "tests/subsystem/browser",
             "tests/test_browser_cancellation.py",
             "tests/test_chat_tool_trace_ui.py",
+            "tests/test_mcp_client.py",
+            "tests/contracts/installers/test_remote_access_deployment_contract.py",
             "tests/subsystem/mobile",
         ),
         "Persistent Browser/Computer controls affect desktop, shared, and mobile chat shells plus engine-specific cancellation and privacy.",
@@ -504,6 +506,22 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
         "MCP changes need fake transport, safety, and client coverage.",
     ),
     SourceTestRule(
+        "automation_contracts",
+        (
+            "src/row_bot/automation/**",
+            "src/row_bot/ui/live_control.py",
+            "src/row_bot/ui/tool_trace.py",
+        ),
+        (
+            "tests/contracts/test_automation_contract.py",
+            "tests/contracts/test_computer_use_contract.py",
+            "tests/subsystem/browser",
+            "tests/subsystem/computer_use",
+            "tests/integration/computer_use",
+        ),
+        "Shared automation vocabulary needs compatibility coverage on both independent surfaces.",
+    ),
+    SourceTestRule(
         "computer_use",
         (
             "src/row_bot/computer_use/**",
@@ -521,7 +539,11 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
     ),
     SourceTestRule(
         "browser_automation",
-        ("src/row_bot/tools/browser_tool.py", "src/row_bot/ui/live_control.py"),
+        (
+            "src/row_bot/browser/**",
+            "src/row_bot/tools/browser_tool.py",
+            "src/row_bot/ui/live_control.py",
+        ),
         (
             "tests/subsystem/browser",
             "tests/test_browser_cancellation.py",

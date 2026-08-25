@@ -141,8 +141,8 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 |----------------|--------------------------------------|
 | Python 3.13 embeddable runtime | Ollama installer is optional for local models |
 | App source code, authenticated access/server package, Remote Access UI, automatic Agent orchestration, Agent Profiles, Goal Mode, checkpointed Agent budgets and settings, child-agent runner, generation cancellation, provider-aware reasoning controls, exact context/compaction policy, native OpenCode routing, local Whisper and SenseVoice runtimes, durable document ingestion and sharded retrieval, Computer Use integration and pinned manifest, cache-only embedding fallback, responsive desktop/mobile owner UI, channel streaming, tools, providers, plugins, MCP client, migration wizard, UI, Designer, Developer Studio, bundled skills/tool guides, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use; SenseVoice Small is an explicit approximately 940 MB ModelScope download |
-| Python packages from locked `requirements.txt` export | Playwright Chromium is bundled during build when available, otherwise installed on first browser use |
-| Computer Use policy, private client, installer metadata, and platform checks | Pinned Cua Driver 0.7.1 is downloaded only after disclosure and explicit user consent |
+| Python packages from locked `requirements.txt` export and its matching Playwright Chromium when the platform build supports bundling | A missing source-install Browser runtime is installed only after the user's explicit Browser Automation install/repair action; Browser startup never downloads it |
+| Computer Use policy, private client, installer metadata, and platform checks | Pinned Cua Driver 0.19.3 is downloaded only after the version-2 disclosure and explicit user consent |
 
 ## Prerequisites
 

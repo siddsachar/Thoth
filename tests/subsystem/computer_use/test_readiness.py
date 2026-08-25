@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from row_bot.computer_use import readiness as readiness_module
-from row_bot.computer_use.readiness import ReadinessCode, acknowledge_disclosure, cancel_disclosure, configure_system_cua, disclosure_acknowledged, readiness, verify_system_cua
+from row_bot.computer_use.readiness import DISCLOSURE_TEXT, ReadinessCode, acknowledge_disclosure, cancel_disclosure, configure_system_cua, disclosure_acknowledged, readiness, verify_system_cua
 from row_bot.mcp_client import requirements
 
 
@@ -14,6 +14,32 @@ def test_disclosure_acknowledgement_is_local_and_versioned(tmp_path, monkeypatch
     assert readiness(enabled=True).code is ReadinessCode.DISCLOSURE_REQUIRED
     acknowledge_disclosure()
     assert disclosure_acknowledged() is True
+
+
+def test_old_notice_acknowledgement_requires_consent_again(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path))
+    (tmp_path / "computer_use_settings.json").write_text(
+        '{"acknowledged_notice_version": 1}',
+        encoding="utf-8",
+    )
+    assert disclosure_acknowledged() is False
+    assert readiness(enabled=True).code is ReadinessCode.DISCLOSURE_REQUIRED
+
+
+def test_notice_describes_expanded_0193_telemetry_and_exclusions() -> None:
+    lowered = DISCLOSURE_TEXT.casefold()
+    for expected in (
+        "process-session",
+        "tool/operation",
+        "duration bucket",
+        "aggregate session",
+        "permission-gate",
+        "tool arguments or results",
+        "accessibility trees",
+        "raw errors",
+        "not row-bot telemetry",
+    ):
+        assert expected in lowered
 
 
 def test_linux_is_unavailable_without_import_or_process_failure(tmp_path, monkeypatch) -> None:
@@ -50,7 +76,7 @@ def test_verified_system_override_must_match_exact_reviewed_version(tmp_path, mo
     acknowledge_disclosure()
     class _Completed:
         returncode = 0
-        stdout = "cua-driver 0.7.1"
+        stdout = "cua-driver 0.19.3"
         stderr = ""
     monkeypatch.setattr(readiness_module.subprocess, "run", lambda *_args, **_kwargs: _Completed())
     assert verify_system_cua().code is ReadinessCode.READY
@@ -66,8 +92,8 @@ def test_failed_managed_doctor_rolls_back_to_retained_known_good(tmp_path, monke
     asset = readiness_module.selected_asset()
     assert asset is not None
     runtime_root = requirements.RUNTIMES_DIR / "cua-driver"
-    old_root = runtime_root / "0.7.0"
-    new_root = runtime_root / "0.7.1"
+    old_root = runtime_root / "0.7.1"
+    new_root = runtime_root / "0.19.3"
     old_root.mkdir(parents=True)
     new_root.mkdir()
     old_executable = old_root / "cua-driver.exe"
@@ -76,13 +102,13 @@ def test_failed_managed_doctor_rolls_back_to_retained_known_good(tmp_path, monke
     new_executable.write_bytes(b"new")
     requirements._write_manifest("cua-driver", {
         "installed": True,
-        "version": "0.7.1",
+        "version": "0.19.3",
         "archive_sha256": asset["sha256"],
         "root": str(new_root),
         "executable_path": str(new_executable),
         "previous_manifest": {
             "installed": True,
-            "version": "0.7.0",
+            "version": "0.7.1",
             "archive_sha256": "old",
             "root": str(old_root),
             "executable_path": str(old_executable),
@@ -91,7 +117,7 @@ def test_failed_managed_doctor_rolls_back_to_retained_known_good(tmp_path, monke
     })
 
     class _FailingDoctor:
-        def __init__(self, _executable):
+        def __init__(self, _executable, **_kwargs):
             pass
 
         def start(self):
@@ -108,7 +134,7 @@ def test_failed_managed_doctor_rolls_back_to_retained_known_good(tmp_path, monke
     monkeypatch.setattr(client_module, "CuaClient", _FailingDoctor)
     result = readiness_module.run_cua_diagnostics()
     assert result.code is ReadinessCode.FAILED
-    assert requirements._read_manifest("cua-driver")["version"] == "0.7.0"
+    assert requirements._read_manifest("cua-driver")["version"] == "0.7.1"
     assert old_root.exists()
     assert not new_root.exists()
 
@@ -121,7 +147,7 @@ def test_macos_legacy_flattened_bundle_requires_repair_before_diagnostics(tmp_pa
     acknowledge_disclosure()
     asset = readiness_module.selected_asset()
     assert asset is not None
-    version_root = requirements.RUNTIMES_DIR / "cua-driver" / "0.7.1"
+    version_root = requirements.RUNTIMES_DIR / "cua-driver" / "0.19.3"
     executable = version_root / "Contents" / "MacOS" / "cua-driver"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"reviewed")
@@ -129,7 +155,7 @@ def test_macos_legacy_flattened_bundle_requires_repair_before_diagnostics(tmp_pa
         "cua-driver",
         {
             "installed": True,
-            "version": "0.7.1",
+            "version": "0.19.3",
             "archive_sha256": asset["sha256"],
             "root": str(version_root),
             "executable_path": str(executable),
@@ -177,7 +203,7 @@ def test_macos_permission_diagnostics_do_not_expose_upstream_internal_hints(
     acknowledge_disclosure()
     asset = readiness_module.selected_asset()
     assert asset is not None
-    version_root = requirements.RUNTIMES_DIR / "cua-driver" / "0.7.1"
+    version_root = requirements.RUNTIMES_DIR / "cua-driver" / "0.19.3"
     executable = version_root / "CuaDriver.app" / "Contents" / "MacOS" / "cua-driver"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"reviewed")
@@ -185,7 +211,7 @@ def test_macos_permission_diagnostics_do_not_expose_upstream_internal_hints(
         "cua-driver",
         {
             "installed": True,
-            "version": "0.7.1",
+            "version": "0.19.3",
             "archive_sha256": asset["sha256"],
             "root": str(version_root),
             "executable_path": str(executable),
@@ -195,7 +221,7 @@ def test_macos_permission_diagnostics_do_not_expose_upstream_internal_hints(
     )
 
     class _PermissionDoctor:
-        def __init__(self, _executable):
+        def __init__(self, _executable, **_kwargs):
             pass
 
         def start(self):

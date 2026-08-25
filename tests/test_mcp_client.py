@@ -539,11 +539,29 @@ class McpClientFoundationTests(unittest.TestCase):
         self.assertEqual([check.requirement.id for check in playwright_checks], ["node", "playwright-chrome"])
         self.assertTrue(playwright_checks[1].installable)
 
-        browsers_dir = Path(requirements.playwright_browsers_path())
-        browsers_dir.mkdir(parents=True)
-        browser_exe = Path(self._tmp.name, "managed-chromium.exe" if os.name == "nt" else "managed-chromium")
-        browser_exe.write_text("ok", encoding="utf-8")
-        requirements._write_manifest("playwright-chrome", {"installed": True, "browsers_dir": str(browsers_dir), "executable_path": str(browser_exe)})
+        from row_bot.browser import runtime as browser_runtime
+
+        contract = browser_runtime.installed_playwright_contract()
+
+        def _fake_browser_install(command, *, env, cwd):
+            browsers = Path(env["PLAYWRIGHT_BROWSERS_PATH"])
+            if os.name == "nt":
+                executable = browsers / f"chromium-{contract.chromium_revision}" / "chrome-win" / "chrome.exe"
+            elif requirements.platform.system().lower() == "darwin":
+                executable = browsers / f"chromium-{contract.chromium_revision}" / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
+            else:
+                executable = browsers / f"chromium-{contract.chromium_revision}" / "chrome-linux" / "chrome"
+            executable.parent.mkdir(parents=True, exist_ok=True)
+            executable.write_text("ok", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="installed", stderr="")
+
+        installed = browser_runtime.install_managed_browser_runtime(
+            runner=_fake_browser_install,
+            smoke_validator=lambda executable, browsers: None,
+        )
+        self.assertTrue(installed.ok)
+        browsers_dir = Path(installed.browsers_dir)
+        browser_exe = Path(installed.executable_path)
         original_process_env = {
             "PLAYWRIGHT_BROWSERS_PATH": os.environ.get("PLAYWRIGHT_BROWSERS_PATH"),
             "PLAYWRIGHT_MCP_EXECUTABLE_PATH": os.environ.get("PLAYWRIGHT_MCP_EXECUTABLE_PATH"),
@@ -618,36 +636,43 @@ class McpClientFoundationTests(unittest.TestCase):
             result = requirements.install_managed_runtime("playwright-chrome")
 
         self.assertFalse(result.ok)
-        self.assertIn("Playwright install exited with code 1", result.message)
+        self.assertIn("candidate failed to install", result.message)
+        self.assertNotIn(str(npx_path), result.message)
 
     def test_playwright_browser_install_uses_user_space_chromium(self) -> None:
         self._reload_config()
         import row_bot.mcp_client.requirements as requirements
         requirements = importlib.reload(requirements)
 
-        npx_path = str(Path(self._tmp.name, "npx.cmd" if os.name == "nt" else "npx"))
-
         def _fake_run(command, **kwargs):
             browsers_dir = Path(kwargs["env"]["PLAYWRIGHT_BROWSERS_PATH"])
+            from row_bot.browser.runtime import installed_playwright_contract
+
+            revision = installed_playwright_contract().chromium_revision
             system = requirements.platform.system().lower()
             if system == "windows":
-                browser_exe = browsers_dir / "chromium-1234" / "chrome-win" / "chrome.exe"
+                browser_exe = browsers_dir / f"chromium-{revision}" / "chrome-win" / "chrome.exe"
             elif system == "darwin":
-                browser_exe = browsers_dir / "chromium-1234" / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
+                browser_exe = browsers_dir / f"chromium-{revision}" / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
             else:
-                browser_exe = browsers_dir / "chromium-1234" / "chrome-linux" / "chrome"
+                browser_exe = browsers_dir / f"chromium-{revision}" / "chrome-linux" / "chrome"
             browser_exe.parent.mkdir(parents=True, exist_ok=True)
             browser_exe.write_text("ok", encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, stdout="installed", stderr="")
 
-        with patch.object(requirements, "resolve_command", return_value=(npx_path, {}, None)), patch.object(requirements.subprocess, "run", side_effect=_fake_run) as run_mock:
+        from row_bot.browser import runtime as browser_runtime
+
+        with patch.object(requirements.subprocess, "run", side_effect=_fake_run) as run_mock, patch.object(browser_runtime, "_default_smoke", return_value=None):
             result = requirements.install_managed_runtime("playwright-chrome")
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.version, "chromium")
+        self.assertIn("playwright-1.62.0/chromium-1234", result.version)
         run_command = run_mock.call_args.args[0]
-        self.assertEqual(run_command[-2:], ["install", "chromium"])
-        self.assertEqual(requirements._read_manifest("playwright-chrome")["browser"], "chromium")
+        self.assertEqual(run_command, [sys.executable, "-m", "playwright", "install", "chromium"])
+        manifest = browser_runtime.read_runtime_manifest()
+        self.assertEqual(manifest["browser"], "chromium")
+        self.assertEqual(manifest["package_version"], "1.62.0")
+        self.assertEqual(manifest["chromium_revision"], "1234")
         self.assertTrue(Path(requirements.playwright_browser_executable_path()).exists())
 
     def test_settings_rows_include_configured_tools_without_live_catalog(self) -> None:

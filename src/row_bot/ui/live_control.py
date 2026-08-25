@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from nicegui import run, ui
 
+from row_bot.automation.contracts import ActivitySnapshot
 
 @dataclass(frozen=True)
 class LiveControlView:
@@ -29,35 +30,22 @@ class LiveControlView:
     generation_id: str = ""
 
 
-_STATE_LABELS = {
-    "acquiring": "Starting",
-    "observing": "Observing",
-    "acting": "Acting",
-    "verifying": "Verifying",
-    "waiting_approval": "Waiting for approval",
-    "waiting_user": "Waiting for you",
-    "resuming": "Resuming",
-    "stopping": "Stopping",
-    "needs_attention": "Needs attention",
-    "failed": "Needs attention",
-}
-
-
 def computer_live_control_view(snapshot: dict[str, Any], thread_id: str) -> LiveControlView:
-    active = bool(snapshot.get("active")) and str(snapshot.get("thread_id") or "") == str(thread_id or "")
+    activity = ActivitySnapshot.from_mapping(snapshot, surface="computer")
+    active = activity.active and activity.thread_id == str(thread_id or "")
     if not active:
-        return LiveControlView(revision=int(snapshot.get("revision") or 0))
-    state = str(snapshot.get("state") or "observing")
+        return LiveControlView(revision=activity.revision)
+    state = activity.state
     app = str(snapshot.get("app") or "Computer Use")
     window = str(snapshot.get("window") or "")
     return LiveControlView(
         engine="computer",
         active=True,
         state=state,
-        state_label=_STATE_LABELS.get(state, state.replace("_", " ").title()),
+        state_label=activity.state_label,
         target=f"{app} · {window}" if window and window.casefold() != app.casefold() else app,
         scope="This app only",
-        last_action=str(snapshot.get("last_action") or "")[:160],
+        last_action=activity.last_action,
         can_take_over=state not in {"waiting_user", "resuming", "stopping", "failed"},
         can_resume=state == "waiting_user",
         can_preview=True,
@@ -65,30 +53,31 @@ def computer_live_control_view(snapshot: dict[str, Any], thread_id: str) -> Live
         preview_shielded=state in {"waiting_user", "waiting_approval"},
         frame_width=int(snapshot.get("frame_width") or 0),
         frame_height=int(snapshot.get("frame_height") or 0),
-        revision=int(snapshot.get("revision") or 0),
-        generation_id=str(snapshot.get("generation_id") or ""),
+        revision=activity.revision,
+        generation_id=activity.generation_id,
     )
 
 
 def browser_live_control_view(snapshot: dict[str, Any], thread_id: str) -> LiveControlView:
-    active = bool(snapshot.get("active")) and str(snapshot.get("thread_id") or "") == str(thread_id or "")
+    activity = ActivitySnapshot.from_mapping(snapshot, surface="browser")
+    active = activity.active and activity.thread_id == str(thread_id or "")
     if not active:
-        return LiveControlView(revision=int(snapshot.get("revision") or 0))
-    state = str(snapshot.get("state") or "observing")
+        return LiveControlView(revision=activity.revision)
+    state = activity.state
     return LiveControlView(
         engine="browser",
         active=True,
         state=state,
-        state_label=_STATE_LABELS.get(state, state.replace("_", " ").title()),
-        target=str(snapshot.get("target") or snapshot.get("site") or "Browser")[:160],
+        state_label=activity.state_label,
+        target=activity.target or "Browser",
         scope="This task tab only",
-        last_action=str(snapshot.get("last_action") or "")[:160],
+        last_action=activity.last_action,
         can_take_over=state not in {"waiting_user", "stopping", "needs_attention"},
         can_resume=False,
         can_preview=True,
         has_preview=bool(snapshot.get("has_thumbnail")) and state != "waiting_user",
-        preview_shielded=bool(snapshot.get("preview_shielded")) or state == "waiting_user",
-        revision=int(snapshot.get("revision") or 0),
+        preview_shielded=activity.preview_shielded or state == "waiting_user",
+        revision=activity.revision,
     )
 
 

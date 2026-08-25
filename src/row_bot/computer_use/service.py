@@ -12,6 +12,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
+from row_bot.automation.contracts import (
+    ActionReceipt,
+    AutomationSurface,
+    ObservationStatus,
+    classify_no_progress,
+)
 from row_bot.cancellation import current_cancellation_scope
 from row_bot.computer_use.client import CuaClient, CuaElement, CuaResponse
 from row_bot.computer_use.policy import PolicyOutcome, approval_payload, classify_action
@@ -38,6 +44,64 @@ _MODEL_INTERACTIVE_ROLES = frozenset(
         "treeitem",
     }
 )
+_STANDARD_EFFECTS = frozenset(
+    {"confirmed", "partial", "unverifiable", "suspected_noop", "refused"}
+)
+_SAFE_ROUTES = frozenset(
+    {
+        "accessibility",
+        "synthetic_events",
+        "global_input",
+        "system_api",
+        "dom",
+        "trusted_input",
+        "pixels",
+        "unknown",
+    }
+)
+_SAFE_DELIVERY = frozenset({"background", "foreground", "not_applicable", "unknown"})
+
+
+def _standard_effect(value: object, *, verified: bool = False) -> str:
+    effect = str(value or "").strip().casefold().replace("-", "_")
+    if effect == "changed":
+        effect = "confirmed"
+    if effect in _STANDARD_EFFECTS:
+        return effect
+    return "confirmed" if verified else "unverifiable"
+
+
+def _standard_route(value: object) -> str:
+    route = str(value or "").strip().casefold().replace("-", "_")
+    route = {
+        "ax": "accessibility",
+        "uia": "accessibility",
+        "key_events": "synthetic_events",
+        "send_input": "global_input",
+        "px": "pixels",
+        "pixel": "pixels",
+    }.get(route, route)
+    return route if route in _SAFE_ROUTES else "unknown"
+
+
+def _standard_delivery(value: object) -> str:
+    delivery = str(value or "").strip().casefold().replace("-", "_")
+    return delivery if delivery in _SAFE_DELIVERY else "unknown"
+
+
+def _safe_driver_cause(code: object) -> str:
+    value = str(code or "").casefold()
+    if value in {"permission_denied", "driver_unavailable"}:
+        return "permission_or_driver_unavailable"
+    if value in {"timeout", "temporarily_unavailable"}:
+        return "temporary_backend_failure"
+    if value in {"stale_element", "snapshot_expired"}:
+        return "stale_observation"
+    if value in {"background_unavailable", "foreground_required"}:
+        return "foreground_required"
+    if value in {"unsupported", "unknown_tool", "not_supported"}:
+        return "unsupported_capability"
+    return "backend_refusal" if value else ""
 
 
 def _normalized_role(value: object) -> str:
@@ -84,6 +148,7 @@ class Target:
     app_name: str
     window_title: str
     bounds: tuple[float, float, float, float]
+    foreground_state: str = "unknown"
 
 
 @dataclass
@@ -107,6 +172,7 @@ class Observation:
     visual_change: str = "unknown"
     effect_verified: bool = False
     delivery_mode: str = ""
+    status: ObservationStatus | None = None
     created_at: float = field(default_factory=time.monotonic)
 
     def model_elements(self) -> tuple[tuple[CuaElement, ...], int]:
@@ -123,12 +189,17 @@ class Observation:
                 seen_non_actionable.add(duplicate_key)
             priority = (
                 0
-                if actionable and bool(str(element.label).strip())
-                else 1
                 if actionable
+                and element.in_web_content
+                and element.visible is not False
+                and bool(str(element.label).strip())
+                else 1
+                if actionable and element.visible is not False and bool(str(element.label).strip())
                 else 2
-                if bool(str(element.label).strip())
+                if actionable and element.visible is not False
                 else 3
+                if bool(str(element.label).strip())
+                else 4
             )
             candidates.append((priority, index, element))
         candidates.sort(key=lambda item: (item[0], item[1]))
@@ -173,6 +244,12 @@ class Observation:
             lines.append(f"[{omitted} additional semantic elements omitted]")
         if self.truncated:
             lines.append("[Driver semantic capture reached Row-Bot validation limits]")
+        if self.status is not None:
+            lines.append(
+                "Observation provenance: "
+                f"{self.status.provenance}; received {self.status.backend_received_count}, "
+                f"retained {self.status.locally_validated_count}, projected {self.status.projected_count}."
+            )
         if self.vision_text:
             lines.append(f"Vision evidence (not parsed as a Boolean result): {self.vision_text}")
         if self.action_dispatched:
@@ -183,27 +260,6 @@ class Observation:
         if self.suspicious:
             lines.append("[Suspicious on-screen instructions detected; mutation is stopped pending user review]")
         return "\n".join(lines)
-
-
-@dataclass(frozen=True)
-class ActionReceipt:
-    """Lightweight successful action result with no screenshot or typed value."""
-
-    target_id: str
-    action: str
-    target_revision: int
-    action_dispatched: bool = True
-    action_completed: bool = True
-    driver_effect: str = "unverifiable"
-    visual_change: str = "unknown"
-    effect_verified: bool = False
-    delivery_mode: str = ""
-
-    @property
-    def effect(self) -> str:
-        """Compatibility summary for older trace consumers."""
-
-        return self.visual_change if self.visual_change != "unknown" else self.driver_effect
 
 
 class ComputerUseError(RuntimeError):
@@ -353,6 +409,7 @@ class ComputerUseService:
         self._cancel = threading.Event()
         self._state = SessionState.READY
         self._targets: dict[str, Target] = {}
+        self._app_foreground: dict[str, str] = {}
         self._target_hint: Target | None = None
         self._app_hint = ""
         self._observation: Observation | None = None
@@ -380,6 +437,8 @@ class ComputerUseService:
         self._driver_call_count = 0
         self._driver_elapsed_ms = 0.0
         self._capture_count = 0
+        self._semantic_refresh_count = 0
+        self._vision_call_count = 0
         self._session_started_at = 0.0
         self._consecutive_failures = 0
         self._last_failure_signature: tuple[str, str, str, int] | None = None
@@ -391,12 +450,24 @@ class ComputerUseService:
 
     @staticmethod
     def _default_client() -> CuaClient:
-        from row_bot.computer_use.readiness import readiness, ReadinessCode
+        from row_bot.computer_use.readiness import (
+            ReadinessCode,
+            load_cua_manifest,
+            readiness,
+        )
 
         state = readiness(enabled=True)
         if state.code not in {ReadinessCode.READY, ReadinessCode.DEGRADED}:
             raise ComputerUseError(state.message)
-        return CuaClient(state.executable)
+        manifest = load_cua_manifest()
+        return CuaClient(
+            state.executable,
+            contract_version=str(manifest["version"]),
+            capabilities=frozenset(
+                str(value)
+                for value in manifest.get("reviewed_service_capabilities") or []
+            ),
+        )
 
     def add_listener(self, callback: Callable[[dict[str, Any]], None]) -> Callable[[], None]:
         with self._lock:
@@ -469,6 +540,9 @@ class ComputerUseService:
             return {
                 "driver_calls": self._driver_call_count,
                 "captures": self._capture_count,
+                "pixel_captures": self._capture_count,
+                "semantic_refreshes": self._semantic_refresh_count,
+                "vision_calls": self._vision_call_count,
                 "driver_elapsed_ms": round(self._driver_elapsed_ms, 3),
                 "session_elapsed_ms": round(
                     (time.perf_counter() - self._session_started_at) * 1000.0,
@@ -510,6 +584,7 @@ class ComputerUseService:
                 self._owner = owner
                 self._cancel.clear()
                 self._targets.clear()
+                self._app_foreground.clear()
                 self._target_hint = None
                 self._app_hint = ""
                 self._observation = None
@@ -534,6 +609,8 @@ class ComputerUseService:
                 self._driver_call_count = 0
                 self._driver_elapsed_ms = 0.0
                 self._capture_count = 0
+                self._semantic_refresh_count = 0
+                self._vision_call_count = 0
                 self._session_started_at = time.perf_counter()
                 self._consecutive_failures = 0
                 self._last_failure_signature = None
@@ -635,7 +712,10 @@ class ComputerUseService:
         except Exception as exc:
             if action == "type":
                 raise ComputerUseError("Cua type action failed safely; the typed value is hidden.") from exc
-            raise
+            raise ComputerUseError(
+                "Cua Driver rejected or failed the requested action.",
+                code="driver_failed",
+            ) from exc
         finally:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             with self._lock:
@@ -661,6 +741,11 @@ class ComputerUseService:
                 "Cua Driver disconnected; the session was stopped to prevent duplicate input.",
                 code="driver_unavailable",
             ) from exc
+        except Exception as exc:
+            raise ComputerUseError(
+                "Cua Driver rejected or failed the reviewed capability.",
+                code="driver_failed",
+            ) from exc
         finally:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             with self._lock:
@@ -668,6 +753,40 @@ class ComputerUseService:
                 self._driver_elapsed_ms += elapsed_ms
         self._check_cancelled()
         return response
+
+    def _client_supports(self, capability: str) -> bool:
+        with self._lock:
+            client = self._client
+        return bool(
+            client is not None
+            and callable(getattr(client, "supports_capability", None))
+            and client.supports_capability(capability)
+        )
+
+    def _verify_target_exists(self, target: Target) -> bool | None:
+        """Run at most one bounded, service-derived exact postcondition."""
+
+        if not self._client_supports("verify_state"):
+            return None
+        response = self._reviewed_driver_call(
+            "verify_state",
+            {
+                "pid": target.pid,
+                "window_id": target.window_id,
+                "expect": [{"window": {"exists": True}}],
+                "timeout_ms": 0,
+                "stable_samples": 1,
+                "include_screenshot": False,
+            },
+        )
+        if response.is_error:
+            return None
+        status = str(response.structured.get("status") or "unknown").casefold()
+        if status == "satisfied":
+            return True
+        if status == "unsatisfied":
+            return False
+        return None
 
     def _abort_driver_session(self) -> None:
         """Release all state after a crash without retrying an input call."""
@@ -728,7 +847,15 @@ class ComputerUseService:
             response = self._driver_call("list_apps", {})
         if response.is_error:
             raise ComputerUseError(response.text or response.error_code)
-        return self._safe_app_rows(response)
+        apps = self._safe_app_rows(response)
+        with self._lock:
+            self._app_foreground = {
+                _permission_key(row["name"]): (
+                    "foreground" if row["active"] else "not_foreground"
+                )
+                for row in apps
+            }
+        return apps
 
     def list_windows(
         self,
@@ -822,6 +949,7 @@ class ComputerUseService:
                     app_name=app_name,
                     window_title=window_title,
                     bounds=(float(bounds.get("x") or 0), float(bounds.get("y") or 0), float(bounds.get("width") or 0), float(bounds.get("height") or 0)),
+                    foreground_state=self._app_foreground.get(identity, "unknown"),
                 )
                 self._targets[target_id] = target
                 output.append({
@@ -1108,14 +1236,62 @@ class ComputerUseService:
         self._ensure_app_permission(target, approval_mode=approval_mode)
         with self._mutation_lock:
             self._state = SessionState.OBSERVING
-            response = self._driver_call("capture", {"pid": target.pid, "window_id": target.window_id})
-            observation = self._observation_from_response(target, response)
+            response = self._capture_response(target, include_screenshot=True)
+            observation = self._observation_from_response(
+                target,
+                response,
+                require_screenshot=True,
+            )
             if visual_question:
                 observation.vision_text = self._analyze_vision(observation, visual_question)
         self._notify()
         return observation
 
-    def _observation_from_response(self, target: Target, response: CuaResponse) -> Observation:
+    def refresh_semantics(
+        self,
+        target_id: str,
+        owner: LeaseOwner | None = None,
+        *,
+        approval_mode: object = "approve",
+    ) -> Observation:
+        """Refresh native tokens/tree without requesting pixels or Vision."""
+
+        self._require_owner(owner)
+        target = self._target(target_id)
+        self._ensure_app_permission(target, approval_mode=approval_mode)
+        with self._mutation_lock:
+            with self._lock:
+                previous = self._observation
+            response = self._capture_response(target, include_screenshot=False)
+            observation = self._observation_from_response(
+                target,
+                response,
+                require_screenshot=False,
+                previous=previous,
+            )
+        self._notify()
+        return observation
+
+    def _capture_response(self, target: Target, *, include_screenshot: bool) -> CuaResponse:
+        return self._driver_call(
+            "capture",
+            {
+                "pid": target.pid,
+                "window_id": target.window_id,
+                "include_screenshot": bool(include_screenshot),
+                "max_elements": 2_000,
+                "max_depth": 25,
+            },
+        )
+
+    def _observation_from_response(
+        self,
+        target: Target,
+        response: CuaResponse,
+        *,
+        require_screenshot: bool = True,
+        previous: Observation | None = None,
+    ) -> Observation:
         if response.is_error:
             if response.error_code == "stale_element":
                 raise StaleObservationError("Cua observation is stale; capture again.")
@@ -1127,11 +1303,11 @@ class ComputerUseService:
                 else "driver_failed"
             )
             raise ComputerUseError(
-                response.text or response.error_code or "Cua capture failed",
+                "The exact Computer target could not be observed safely.",
                 code=code,
                 retryable=code == "transient_driver_failure",
             )
-        if response.image_bytes is None:
+        if require_screenshot and response.image_bytes is None:
             raise ComputerUseError("Cua capture did not include a validated target-window image.")
         structured = response.structured
         pid = int(structured.get("pid") or target.pid)
@@ -1143,17 +1319,29 @@ class ComputerUseService:
                 "Target app/window identity changed during capture.",
                 code="target_mismatch",
             )
+        prior_for_target = (
+            previous
+            if previous is not None and previous.target.target_id == target.target_id
+            else None
+        )
         reported_width = int(
             structured.get("screenshot_width")
             or structured.get("width")
             or response.image_width
+            or (prior_for_target.width if prior_for_target else 0)
+            or target.bounds[2]
         )
         reported_height = int(
             structured.get("screenshot_height")
             or structured.get("height")
             or response.image_height
+            or (prior_for_target.height if prior_for_target else 0)
+            or target.bounds[3]
         )
-        if (reported_width, reported_height) != (response.image_width, response.image_height):
+        if response.image_bytes is not None and (
+            reported_width,
+            reported_height,
+        ) != (response.image_width, response.image_height):
             raise ComputerUseError("Cua screenshot dimensions do not match its structured capture metadata.")
         with self._lock:
             self._observation_generation += 1
@@ -1170,11 +1358,36 @@ class ComputerUseService:
                     else None
                 ),
                 elements=response.elements,
-                screenshot=response.image_bytes,
-                image_mime=response.image_mime,
+                screenshot=(
+                    response.image_bytes
+                    if response.image_bytes is not None
+                    else prior_for_target.screenshot if prior_for_target else None
+                ),
+                image_mime=(
+                    response.image_mime
+                    if response.image_bytes is not None
+                    else prior_for_target.image_mime if prior_for_target else ""
+                ),
                 truncated=response.truncated,
             )
-            self._capture_count += 1
+            projected_count = len(observation.model_elements()[0])
+            observation.status = ObservationStatus(
+                revision=observation.generation,
+                backend_declared_count=response.backend_declared_count,
+                backend_received_count=response.backend_received_count,
+                backend_filtered_count=response.backend_filtered_count,
+                locally_validated_count=len(response.elements),
+                projected_count=projected_count,
+                locally_filtered_count=response.locally_filtered_count,
+                backend_limited=response.backend_limited,
+                backend_sparse=response.backend_sparse,
+                local_limit_reasons=response.local_limit_reasons,
+            )
+            observation.truncated = observation.status.truncated
+            if response.image_bytes is not None:
+                self._capture_count += 1
+            else:
+                self._semantic_refresh_count += 1
             try:
                 from row_bot.agent import _scan_injection_patterns
 
@@ -1186,7 +1399,8 @@ class ComputerUseService:
             except Exception:
                 observation.suspicious = False
             self._observation = observation
-            self._preview_observation = observation
+            if response.image_bytes is not None:
+                self._preview_observation = observation
             self._target_hint = target
             return observation
 
@@ -1209,6 +1423,8 @@ class ComputerUseService:
             prefix = f"Analyzed by {disclosure['provider_label']}{' (screenshot sent to configured cloud provider)' if disclosure['is_cloud'] else ' (local)'}. "
         except Exception:
             prefix = "Analyzed by the configured VisionService. "
+        with self._lock:
+            self._vision_call_count += 1
         result = service.analyze(observation.screenshot, str(question)[:1000])
         self._check_cancelled()
         return (prefix + str(result))[:4096]
@@ -1401,13 +1617,202 @@ class ComputerUseService:
             )
         from row_bot.approval_policy import decision_for_action
 
-        if decision_for_action(approval_mode) == "block":
+        mode_decision = decision_for_action(approval_mode)
+        if mode_decision == "block":
             raise ComputerUseError(
                 "BLOCKED: Computer input is unavailable while this thread is in Block approval mode.",
                 code="hard_blocked",
             )
-        self._assert_resume_target_present(target)
+        if mode_decision == "ask":
+            with self._lock:
+                self._state = SessionState.WAITING_APPROVAL
+            self._notify()
+            outcome = self._gate_optional_approval(
+                approval_payload(
+                    "focus",
+                    app_name=target.app_name,
+                    window_title="Selected app window (title hidden)",
+                    target_label="exact selected window",
+                    expected_effect="Prepare exact foreground input delivery",
+                    reversible=True,
+                ),
+                approval_mode=approval_mode,
+            )
+            if outcome != "allow":
+                if outcome == "take_over":
+                    self.take_over()
+                raise ComputerUseError(
+                    "Computer focus was not approved.",
+                    code="approval_denied",
+                )
+        focus = self._driver_call(
+            "focus",
+            {"pid": target.pid, "window_id": target.window_id},
+        )
+        if focus.is_error:
+            self._clear_prepared_foreground_target()
+            raise ComputerUseError(
+                "The exact Computer target could not be prepared for foreground input.",
+                code=(
+                    "driver_unavailable"
+                    if focus.error_code in {"permission_denied", "driver_unavailable"}
+                    else "driver_failed"
+                ),
+            )
+        reported_pid = int(focus.structured.get("pid") or target.pid)
+        reported_window = int(focus.structured.get("window_id") or target.window_id)
+        if (reported_pid, reported_window) != (target.pid, target.window_id):
+            self._clear_prepared_foreground_target()
+            raise ComputerUseError(
+                "Target app/window identity changed during focus.",
+                code="target_mismatch",
+            )
+        self._prepare_foreground_target(target)
+        verified = self._verify_target_exists(target)
+        if verified is False:
+            self._clear_prepared_foreground_target()
+            raise ComputerUseError(
+                "The exact Computer target disappeared during focus verification.",
+                code="target_mismatch",
+            )
         self._check_cancelled()
+
+    def act_menu(
+        self,
+        target_id: str,
+        path: list[str] | tuple[str, ...],
+        owner: LeaseOwner | None = None,
+        *,
+        approval_mode: object = "approve",
+    ) -> ActionReceipt:
+        """Invoke one exact capability-gated native application menu path."""
+
+        self._check_failure_budget()
+        self._require_owner(owner)
+        target = self._target(target_id)
+        if not self._client_supports("invoke_menu"):
+            raise ComputerUseError(
+                "Exact native menu invocation is unavailable for this driver/platform.",
+                code="unsupported_capability",
+            )
+        if isinstance(path, (str, bytes)):
+            raise ComputerUseError(
+                "Menu path must be a list of exact labels.",
+                code="invalid_input",
+            )
+        labels = tuple(str(label).strip() for label in path)
+        if (
+            not 1 <= len(labels) <= 16
+            or any(not label or len(label) > 200 for label in labels)
+        ):
+            raise ComputerUseError(
+                "Menu path requires 1-16 labels of at most 200 characters.",
+                code="invalid_input",
+            )
+        decision = classify_action(
+            "menu",
+            app_name=target.app_name,
+            window_title=target.window_title,
+            label=" > ".join(labels),
+        )
+        if decision.outcome is PolicyOutcome.BLOCKED:
+            raise ComputerUseError(f"BLOCKED: {decision.reason}", code="hard_blocked")
+        if decision.outcome is PolicyOutcome.HANDOFF:
+            raise ComputerUseError(
+                "This protected menu path requires user takeover.",
+                code="handoff_required",
+            )
+        from row_bot.approval_policy import decision_for_action
+
+        mode = decision_for_action(approval_mode)
+        if mode == "block":
+            raise ComputerUseError(
+                "BLOCKED: Menu input is unavailable in Block approval mode.",
+                code="hard_blocked",
+            )
+        if decision.outcome is PolicyOutcome.CONSEQUENTIAL and mode == "ask":
+            with self._lock:
+                self._state = SessionState.WAITING_APPROVAL
+            self.invalidate_observation("menu approval wait")
+            self._notify()
+            outcome = self._gate_optional_approval(
+                approval_payload(
+                    "menu",
+                    app_name=target.app_name,
+                    window_title="Selected app window (title hidden)",
+                    target_label=" > ".join(labels),
+                    expected_effect="Invoke the exact native menu path",
+                    reversible=decision.reversible,
+                ),
+                approval_mode=approval_mode,
+            )
+            if outcome != "allow":
+                if outcome == "take_over":
+                    self.take_over()
+                raise ComputerUseError("Menu action was denied.", code="approval_denied")
+            self._assert_resume_target_present(target)
+        if (
+            target.foreground_state == "not_foreground"
+            and not self._foreground_prepared_for(target)
+        ):
+            self._prepare_foreground_fallback(
+                target,
+                owner,
+                approval_mode=approval_mode,
+            )
+        with self._mutation_lock:
+            self._state = SessionState.ACTING
+            self._last_action = "menu"
+            self._notify()
+            response = self._reviewed_driver_call(
+                "invoke_menu",
+                {
+                    "pid": target.pid,
+                    "window_id": target.window_id,
+                    "path": list(labels),
+                },
+            )
+            self.invalidate_observation("menu action")
+            if response.is_error:
+                raise ComputerUseError(
+                    "The exact native menu path was unavailable or refused.",
+                    code=(
+                        "stale_observation"
+                        if response.error_code in {"stale_element", "snapshot_expired"}
+                        else "driver_failed"
+                    ),
+                )
+            effect = _standard_effect(
+                response.structured.get("effect"),
+                verified=bool(response.structured.get("verified")),
+            )
+            delivery_value = response.structured.get("delivery")
+            if isinstance(delivery_value, dict):
+                delivery_value = delivery_value.get("mode")
+            receipt = ActionReceipt(
+                surface=AutomationSurface.COMPUTER,
+                target_id=target.target_id,
+                action_family="menu",
+                revision=self._observation_generation,
+                dispatched=effect != "refused",
+                completed=True,
+                backend_effect=effect,
+                delivery=_standard_delivery(delivery_value),
+                route=_standard_route(response.structured.get("route") or "accessibility"),
+                visual_change="unknown",
+                verified_outcome=bool(response.structured.get("verified")) or effect == "confirmed",
+                cause=_safe_driver_cause(response.error_code),
+            )
+            self._action_count += 1
+            self._last_effect = receipt.effect
+            self._last_driver_effect = receipt.driver_effect
+            self._last_visual_change = receipt.visual_change
+            self._last_effect_verified = receipt.effect_verified
+            self._last_action_completed = receipt.action_completed
+            self._state = SessionState.OBSERVING
+        self._record_action_success()
+        self._notify()
+        return receipt
 
     def _fail_needs_attention(self, message: str) -> None:
         with self._lock:
@@ -1463,11 +1868,22 @@ class ComputerUseService:
                 with self._lock:
                     observation = self._observation
                 if observation is None or observation.target.target_id != target_id:
-                    response = self._driver_call(
-                        "capture",
-                        {"pid": target.pid, "window_id": target.window_id},
+                    if element_token:
+                        raise StaleObservationError(
+                            "A fresh observation is required before using this element token."
+                        )
+                    needs_pixels = bool(
+                        (x is not None and y is not None) or visual_question
                     )
-                    observation = self._observation_from_response(target, response)
+                    response = self._capture_response(
+                        target,
+                        include_screenshot=needs_pixels,
+                    )
+                    observation = self._observation_from_response(
+                        target,
+                        response,
+                        require_screenshot=needs_pixels,
+                    )
                 element = self._current_element(element_token) if element_token else None
                 if observation.suspicious:
                     raise ComputerUseError(
@@ -1555,12 +1971,12 @@ class ComputerUseService:
                             code="approval_denied",
                         )
                     if action != "focus":
+                        previous = observation
                         observation = self._observation_from_response(
                             target,
-                            self._driver_call(
-                                "capture",
-                                {"pid": target.pid, "window_id": target.window_id},
-                            ),
+                            self._capture_response(target, include_screenshot=False),
+                            require_screenshot=False,
+                            previous=previous,
                         )
                     if old_element is not None and action != "focus":
                         matches = [
@@ -1573,6 +1989,26 @@ class ComputerUseService:
                                 "The approved target changed; approve again against the new observation."
                             )
                         element = matches[0]
+
+                needs_foreground = bool(
+                    original_action in {"type", "key", "scroll", "drag"}
+                    or (
+                        coordinate_only
+                        and original_action in {"click", "double_click", "right_click"}
+                    )
+                )
+                if (
+                    original_action != "focus"
+                    and needs_foreground
+                    and target.foreground_state == "not_foreground"
+                    and not self._foreground_prepared_for(target)
+                ):
+                    self._prepare_foreground_fallback(
+                        target,
+                        owner,
+                        approval_mode=approval_mode,
+                    )
+                    foreground_prepared = True
 
                 args: dict[str, Any] = {
                     "pid": target.pid,
@@ -1670,9 +2106,9 @@ class ComputerUseService:
                         else "driver_failed"
                     )
                     message = (
-                        "Cua type action failed safely; the typed value is hidden."
+                        "Computer text input failed safely; the typed value is hidden."
                         if driver_action == "type"
-                        else result.text or result.error_code
+                        else "The Computer driver refused the requested action safely."
                     )
                     raise ComputerUseError(
                         message,
@@ -1680,21 +2116,20 @@ class ComputerUseService:
                         retryable=error_code == "transient_driver_failure",
                     )
                 self._check_cancelled()
-                reported_effect = str(
-                    result.structured.get("effect")
-                    or ("confirmed" if result.structured.get("verified") else "unverifiable")
-                ).strip().casefold()
-                driver_effect = (
-                    reported_effect
-                    if reported_effect in {"confirmed", "changed", "unverifiable"}
-                    else "unverifiable"
+                driver_effect = _standard_effect(
+                    result.structured.get("effect"),
+                    verified=bool(result.structured.get("verified")),
                 )
                 effect_verified = bool(result.structured.get("verified")) or driver_effect == "confirmed"
-                delivery_mode = str(
+                delivery_mode = _standard_delivery(
                     result.structured.get("delivery_mode")
                     or args.get("delivery_mode")
-                    or "background"
+                    or "unknown"
                 )
+                route = _standard_route(
+                    result.structured.get("route") or result.structured.get("path")
+                )
+                dispatched = driver_effect != "refused"
                 visual_mutation = bool(
                     coordinate_only
                     and driver_action in {
@@ -1711,10 +2146,8 @@ class ComputerUseService:
                     self._notify()
                     completed_observation = self._observation_from_response(
                         target,
-                        self._driver_call(
-                            "capture",
-                            {"pid": target.pid, "window_id": target.window_id},
-                        ),
+                        self._capture_response(target, include_screenshot=True),
+                        require_screenshot=True,
                     )
                     if visual_mutation:
                         visual_change = self._visual_effect_in_region(
@@ -1745,7 +2178,7 @@ class ComputerUseService:
                     completed_observation.action_effect = (
                         visual_change if visual_change != "unknown" else driver_effect
                     )
-                    completed_observation.action_dispatched = True
+                    completed_observation.action_dispatched = dispatched
                     completed_observation.action_completed = True
                     completed_observation.driver_effect = driver_effect
                     completed_observation.visual_change = visual_change
@@ -1754,13 +2187,17 @@ class ComputerUseService:
                     completed: Observation | ActionReceipt = completed_observation
                 else:
                     completed = ActionReceipt(
+                        surface=AutomationSurface.COMPUTER,
                         target_id=target.target_id,
-                        action=driver_action,
-                        target_revision=self._observation_generation,
-                        driver_effect=driver_effect,
+                        action_family=driver_action,
+                        revision=self._observation_generation,
+                        dispatched=dispatched,
+                        backend_effect=driver_effect,
                         visual_change=visual_change,
-                        effect_verified=effect_verified,
-                        delivery_mode=delivery_mode,
+                        verified_outcome=effect_verified,
+                        delivery=delivery_mode,
+                        route=route,
+                        cause=_safe_driver_cause(result.error_code),
                     )
                 if original_action == "focus":
                     self._prepare_foreground_target(target)
@@ -1780,10 +2217,17 @@ class ComputerUseService:
                 self._last_effect_verified = completed.effect_verified
                 self._last_action_completed = completed.action_completed
             self._record_action_success()
+            progress_class = classify_no_progress(
+                backend_effect=completed_driver_effect,
+                visual_change=completed_visual_change,
+                verified_outcome=completed.effect_verified,
+            )
             progress_signal = (
                 "changed"
-                if completed.effect_verified or completed_driver_effect == "changed"
-                else completed_visual_change
+                if progress_class == "progress"
+                else "unchanged"
+                if progress_class == "no_progress"
+                else "unknown"
             )
             visual_no_effects = (
                 self._record_visual_effect(
@@ -1977,10 +2421,8 @@ class ComputerUseService:
             if observation is None or observation.target.target_id != target_id:
                 observation = self._observation_from_response(
                     target,
-                    self._driver_call(
-                        "capture",
-                        {"pid": target.pid, "window_id": target.window_id},
-                    ),
+                    self._capture_response(target, include_screenshot=False),
+                    require_screenshot=False,
                 )
             if observation.suspicious:
                 raise ComputerUseError(
@@ -2030,10 +2472,8 @@ class ComputerUseService:
                 self._notify()
                 verified = self._observation_from_response(
                     target,
-                    self._driver_call(
-                        "capture",
-                        {"pid": target.pid, "window_id": target.window_id},
-                    ),
+                    self._capture_response(target, include_screenshot=True),
+                    require_screenshot=True,
                 )
             except BaseException:
                 if delivered:
@@ -2225,10 +2665,8 @@ class ComputerUseService:
                 self._assert_resume_target_present(target)
                 observation = self._observation_from_response(
                     target,
-                    self._driver_call(
-                        "capture",
-                        {"pid": target.pid, "window_id": target.window_id},
-                    ),
+                    self._capture_response(target, include_screenshot=True),
+                    require_screenshot=True,
                 )
                 self._assert_resume_target_present(target)
         except BaseException:

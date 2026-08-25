@@ -257,7 +257,10 @@ def _managed_bin_dir(runtime_id: str) -> Path | None:
 
 
 def playwright_browsers_path() -> str:
-    return str(RUNTIMES_DIR / "playwright-browsers")
+    from row_bot.browser.runtime import check_managed_browser_runtime, runtime_root
+
+    readiness = check_managed_browser_runtime()
+    return readiness.browsers_dir if readiness.ready else str(runtime_root() / "browsers")
 
 
 def _find_playwright_chromium_executable(browsers_dir: Path) -> Path | None:
@@ -300,12 +303,10 @@ def playwright_browser_executable_path(
     executable, _browsers_dir = _playwright_browser_from_env(environment)
     if executable is not None:
         return str(executable)
-    manifest = _read_manifest("playwright-chrome")
-    executable_path = manifest.get("executable_path")
-    if executable_path and Path(str(executable_path)).exists():
-        return str(executable_path)
-    found = _find_playwright_chromium_executable(Path(str(manifest.get("browsers_dir") or playwright_browsers_path())))
-    return str(found) if found else ""
+    from row_bot.browser.runtime import check_managed_browser_runtime
+
+    readiness = check_managed_browser_runtime()
+    return readiness.executable_path if readiness.ready else ""
 
 
 def apply_managed_runtime_env(server_cfg: dict[str, Any] | None, env: dict[str, str]) -> dict[str, str]:
@@ -360,17 +361,22 @@ def check_requirement(requirement: RuntimeRequirement, env: dict[str, str] | Non
                 },
                 message="Playwright browser is available from the configured browser runtime.",
             )
-        manifest = _read_manifest("playwright-chrome")
-        browsers_dir = Path(str(manifest.get("browsers_dir") or playwright_browsers_path()))
-        executable_path = playwright_browser_executable_path()
-        available = bool(manifest.get("installed")) and browsers_dir.exists() and bool(executable_path)
-        if available:
+        from row_bot.browser.runtime import check_managed_browser_runtime
+
+        readiness = check_managed_browser_runtime()
+        if readiness.ready:
             return RuntimeCheck(
                 requirement=requirement,
                 available=True,
                 source="managed",
-                paths={"PLAYWRIGHT_BROWSERS_PATH": str(browsers_dir), "PLAYWRIGHT_MCP_EXECUTABLE_PATH": executable_path},
-                message="Playwright browser is available in Row-Bot's managed browser cache.",
+                paths={
+                    "PLAYWRIGHT_BROWSERS_PATH": readiness.browsers_dir,
+                    "PLAYWRIGHT_MCP_EXECUTABLE_PATH": readiness.executable_path,
+                },
+                message=(
+                    "The Python Playwright-matched Chromium runtime is available "
+                    f"(Playwright {readiness.package_version}, Chromium revision {readiness.chromium_revision})."
+                ),
             )
         return RuntimeCheck(
             requirement=requirement,
@@ -765,44 +771,26 @@ def _install_uv(progress: Callable[[str], None] | None = None) -> RuntimeInstall
 
 
 def _install_playwright_chrome(progress: Callable[[str], None] | None = None) -> RuntimeInstallResult:
-    env = os.environ.copy()
-    npx_path, env, missing = resolve_command("npx", env)
-    if not npx_path:
-        return RuntimeInstallResult(False, "playwright-chrome", missing_command_message("npx", missing))
-    browsers_dir = Path(playwright_browsers_path())
-    browsers_dir.mkdir(parents=True, exist_ok=True)
-    env["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_dir)
-    command = [npx_path, "-y", "playwright", "install", "chromium"]
-    if progress:
-        progress("Installing Playwright browser dependency")
-    completed = subprocess.run(
-        command,
-        env=env,
-        cwd=str(DATA_DIR),
-        text=True,
-        capture_output=True,
-        timeout=900,
-        check=False,
+    from row_bot.browser.runtime import install_managed_browser_runtime
+
+    result = install_managed_browser_runtime(progress=progress)
+    if not result.ok:
+        return RuntimeInstallResult(False, "playwright-chrome", result.message)
+    log_event(
+        "mcp.runtime_installed",
+        runtime="playwright-chrome",
+        browsers_dir=result.browsers_dir,
+        executable_path=result.executable_path,
+        playwright_version=result.package_version,
+        chromium_revision=result.chromium_revision,
     )
-    if completed.returncode != 0:
-        output_parts = [str(part).strip() for part in (completed.stdout, completed.stderr) if part]
-        output = "\n".join(part for part in output_parts if part).strip()
-        if len(output) > 2000:
-            output = output[:2000] + "..."
-        raise RuntimeError(output or f"Playwright install exited with code {completed.returncode}")
-    executable_path = _find_playwright_chromium_executable(browsers_dir)
-    if not executable_path:
-        raise RuntimeError(f"Playwright installed Chromium, but no browser executable was found in {browsers_dir}")
-    _write_manifest("playwright-chrome", {
-        "installed": True,
-        "browsers_dir": str(browsers_dir),
-        "browser": "chromium",
-        "executable_path": str(executable_path),
-        "command": "npx -y playwright install chromium",
-        "source": "playwright",
-    })
-    log_event("mcp.runtime_installed", runtime="playwright-chrome", browsers_dir=str(browsers_dir), executable_path=str(executable_path))
-    return RuntimeInstallResult(True, "playwright-chrome", "Installed Playwright browser for Row-Bot.", str(browsers_dir), "chromium")
+    return RuntimeInstallResult(
+        True,
+        "playwright-chrome",
+        result.message,
+        result.browsers_dir,
+        f"playwright-{result.package_version}/chromium-{result.chromium_revision}",
+    )
 
 
 def install_managed_runtime(runtime_id: str, progress: Callable[[str], None] | None = None) -> RuntimeInstallResult:

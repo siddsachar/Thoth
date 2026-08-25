@@ -39,7 +39,7 @@ _CONSEQUENTIAL = re.compile(
     r"(?:send|post|submit|publish|confirm|purchase|pay|transfer|order|book|trade|"
     r"delete|remove|empty trash|overwrite|upload|download|share|invite|grant|revoke|"
     r"permission|install|execute|run|account|security|privacy|network|medical|"
-    r"financial|export|transmit|save as|close without saving)",
+    r"financial|export|transmit|save|quit|exit|sign out|log out|close without saving)",
     re.IGNORECASE,
 )
 _SECURE_ROLE = re.compile(r"(?:password|secure|credential|otp|captcha)", re.IGNORECASE)
@@ -94,7 +94,7 @@ def classify_action(
         return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "An ambiguous coordinate action requires point-of-risk confirmation.")
     if action == "key" and normalized_keys in {"enter", "return"}:
         return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "Enter may submit the active form or dialog.", False)
-    if action in {"launch_app", "focus", "click", "double_click", "right_click", "type", "key", "key_sequence", "scroll", "drag"}:
+    if action in {"launch_app", "focus", "click", "double_click", "right_click", "type", "key", "key_sequence", "scroll", "drag", "menu"}:
         return PolicyDecision(PolicyOutcome.ROUTINE, "Routine action inside the approved task-scoped target.")
     return PolicyDecision(PolicyOutcome.BLOCKED, "Unknown Computer action fails closed.", False)
 

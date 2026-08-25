@@ -9,7 +9,10 @@ def test_browser_startup_has_no_hidden_install_or_csp_bypass() -> None:
     source = inspect.getsource(BrowserSession)
     assert "playwright\", \"install" not in source
     assert "bypass_csp" not in source
-    assert "explicit installation is required" in source
+    assert "Managed Chromium is not installed" in source
+    assert "networkidle" not in source
+    assert "wait_for_timeout" not in source
+    assert "time.sleep" not in source
 
 
 def test_server_browser_headless_flag_is_explicit(monkeypatch) -> None:

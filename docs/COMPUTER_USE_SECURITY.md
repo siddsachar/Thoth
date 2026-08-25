@@ -20,15 +20,15 @@ layer, personal-browser attachment, desktop replay, or a VM backend.
 ## Reviewed upstream dependency
 
 - Project: Cua Driver Rust, MIT license
-- Version/tag: `0.7.1` / `cua-driver-rs-v0.7.1`
-- Release commit: `7caf72b`
-- Release: <https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.7.1>
-- Windows x86_64 archive: `cua-driver-rs-0.7.1-windows-x86_64.zip`
-  (`00dfa76c5008db20c55ed0cc951388b0f25d1221f6995e5f131dcd6bc4fc5aab`)
-- Windows ARM64 archive: `cua-driver-rs-0.7.1-windows-arm64.zip`
-  (`43601a32a1ce9eec5fbbe98803718ad2ca3a3450c499b354b05fedc3a1cc5526`)
-- macOS universal app archive: `cua-driver-rs-0.7.1-darwin-universal.tar.gz`
-  (`3bd574f162bf293089ca9d28653c8ac2b869f1577a15b92ff95203c6279a08a1`)
+- Version/tag: `0.19.3` / `cua-driver-rs-v0.19.3`
+- Signed tag commit: `a1672e7b11951275ecfba3384264d4530185d0db`
+- Release: <https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.19.3>
+- Windows x86_64 full archive: `cua-driver-rs-0.19.3-windows-x86_64.zip`
+  (`e48b0117e343cec2577fc12693c741e094f389f8d4aef91e06284960bb03bce1`)
+- Windows ARM64 full archive: `cua-driver-rs-0.19.3-windows-arm64.zip`
+  (`693cff4618fdcb6b0ea797e2f5b17eb6291dcea4b62da7bc6b5c373f1aa1852f`)
+- macOS universal full app archive: `cua-driver-rs-0.19.3-darwin-universal.tar.gz`
+  (`a5b064bd3e05c3d97c4aaba1b8818e7b4203081ffc5f3186220005d356574aaa`)
 
 Row-Bot downloads only the exact selected asset after a separate explicit
 Install action, verifies SHA-256 before safe extraction, and keeps the runtime
@@ -39,12 +39,25 @@ left at its disclosed upstream default.
 ## Telemetry acceptance
 
 Before any Cua executable invocation, Row-Bot shows a mandatory Continue or
-Cancel disclosure. Reviewed source sends a stable random Cua installation ID,
-Cua version, OS name/version, architecture, CI flag, event category, and
-timestamp to `https://eu.i.posthog.com/capture/`. It explicitly excludes
-usernames, file paths, command arguments, tool arguments, and typed content.
-Row-Bot additionally prevents screenshots and its own prompt, memory, secret,
-tool-argument, and channel data from reaching Cua telemetry.
+Cancel disclosure. Notice version 2 invalidates the older 0.7.1 acknowledgement,
+so an upgrade requires explicit consent again.
+
+The reviewed 0.19.3 tagged source sends content-free product events to
+`https://eu.i.posthog.com/capture/`. They can include pseudonymous random
+installation and process-session identifiers; product/platform/architecture/
+transport versions; bounded client, provider, model, and agent categories;
+tool and operation categories; success, bounded refusal/error class, duration
+and output-size buckets; output type; aggregate session counts and bounded
+capture-scope/browser/cursor/recording/config usage flags; permission-gate
+state; and install/update lifecycle events.
+
+The event builders do not receive prompts, tool arguments or results, typed
+text, screenshots, accessibility trees, application/window names, URLs,
+filenames/paths, raw cursor/config values, or raw errors. Row-Bot does not
+disable or rebrand this upstream telemetry. It keeps Cua update checks off and
+does not expose Cua recording, browser, desktop-wide, updater, autostart,
+clipboard, or arbitrary execution tools, so those features cannot be invoked
+through this integration.
 
 ## Driver allowlist
 
@@ -59,9 +72,10 @@ The private client permits only:
 | `click`, `double_click`, `right_click` | token-first selection | routine or consequential |
 | `type_text`, `press_key`, `hotkey` | non-secret text/input | routine, consequential, or handoff |
 | `scroll`, `drag` | bounded target-window input | routine |
-| `set_config` | hidden session-only window/image limits | internal only |
 | `health_report`, `check_permissions` | readiness after disclosure | internal only |
-| `start_session`, `end_session` | private lifecycle | internal only |
+| `start_session`, `end_session` | private window-scoped lifecycle | internal only |
+| `verify_state` | one bounded service-derived exact postcondition | internal only |
+| `invoke_menu` | exact 1-16-label native menu path | capability-gated and policy-gated |
 
 All recording, desktop capture, browser-page/CDP, arbitrary config, update,
 installer, autostart, telemetry mutation, skill, FFmpeg, kill-process, and
@@ -78,18 +92,20 @@ maintenance surfaces are forbidden and never model-visible.
   reconnects, approval waits, and takeover invalidate them.
 - Credentials, OTP, CAPTCHA, biometric, UAC/TCC, terminals, password managers,
   Row-Bot itself, secure desktops, and elevation are handed off or blocked.
-- Every mutation is followed by a new target-window observation.
+- Pixels are captured only for coordinate grounding, visual comparison,
+  explicit Vision, live preview, or final visual evidence. Tree-only token
+  refreshes request no screenshot; cheap action receipts do not imply a fresh
+  observation.
 - Screenshot bytes are ephemeral. Typed values are excluded from logs,
   histories, checkpoints, approval payloads, memory, and durable media.
 - Consequential actions require point-of-risk confirmation even in Auto mode.
 - UI text and accessibility content are untrusted tool output and cannot grant
   new scope, recipients, secrets, or authority.
 
-## Upstream contract deviation
+## Upstream contract binding
 
-No supported Cua 0.7.1 environment variable for a private config/home path is
-documented. Row-Bot therefore does not invent one. It relies on the documented
-MCP behavior where `set_config` applies an in-memory, session-scoped override,
-forcing `capture_scope=window` and `max_image_dimension=1456` immediately after
-connection. This is the deviation explicitly permitted by Phase 0 of the
-canonical plan.
+Row-Bot passes `capture_scope="window"` directly to the tagged 0.19.3
+`start_session` contract. It never escalates to desktop scope. The runtime
+installer uses only the exact full archives above, performs traversal-safe
+staged extraction, and retains a prior known-good managed runtime until the new
+candidate passes diagnostics.

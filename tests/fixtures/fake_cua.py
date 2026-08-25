@@ -74,6 +74,11 @@ class FakeScenario:
     block_foreground: bool = False
     semantic_elements: tuple[dict[str, Any], ...] = ()
     accepted_background_noop_tools: frozenset[str] = field(default_factory=frozenset)
+    driver_declared_count: int | None = None
+    driver_limited: bool | None = None
+    driver_sparse: bool = False
+    verify_status: str = "satisfied"
+    menu_error_code: str = ""
 
 
 class FakeCuaTransport:
@@ -131,6 +136,35 @@ class FakeCuaTransport:
             })
         if name == "check_permissions":
             return self._result({"accessibility": not self.scenario.permission_denied, "screen_recording": True})
+        if name == "verify_state":
+            status = self.scenario.verify_status
+            return self._result(
+                {
+                    "status": status,
+                    "stable": status == "satisfied",
+                    "elapsed_ms": 0,
+                    "samples": 1,
+                    "predicates": [
+                        {
+                            "index": 0,
+                            "status": status,
+                            "unknown_reason": None,
+                            "observed_json": None,
+                        }
+                    ],
+                }
+            )
+        if name == "invoke_menu":
+            if self.scenario.menu_error_code:
+                return self._error("synthetic menu refusal", self.scenario.menu_error_code)
+            return self._result(
+                {
+                    "effect": "confirmed",
+                    "route": "accessibility",
+                    "delivery": {"mode": "foreground", "delivered_count": 1},
+                    "verified": True,
+                }
+            )
         if name == "list_apps":
             if self.scenario.list_apps_error_code:
                 return self._error(
@@ -161,6 +195,7 @@ class FakeCuaTransport:
                         str(item.get("role") or "text"),
                         str(item.get("label") or ""),
                         int(item.get("depth") or 1),
+                        item,
                     )
                     for item in self.scenario.semantic_elements
                 ]
@@ -192,9 +227,10 @@ class FakeCuaTransport:
                 depth = int(element_spec[2]) if len(element_spec) > 2 else (
                     index if self.scenario.oversized_tree else 1
                 )
+                source = element_spec[3] if len(element_spec) > 3 else {}
                 token = f"g{self.generation}-element-{index}"
                 self.element_labels[token] = label
-                elements.append({
+                element = {
                     "element_index": index,
                     "element_token": token,
                     "role": role,
@@ -207,7 +243,17 @@ class FakeCuaTransport:
                         "h": self.scenario.element_frame[3],
                     },
                     "depth": depth,
-                })
+                }
+                for key in (
+                    "parent_index",
+                    "visible",
+                    "enabled",
+                    "selected",
+                    "in_web_content",
+                ):
+                    if key in source:
+                        element[key] = source[key]
+                elements.append(element)
             if self.scenario.malformed_image:
                 image = "not-base64"
             elif self.scenario.capture_images:
@@ -225,14 +271,35 @@ class FakeCuaTransport:
                 "screenshot_width": width,
                 "screenshot_height": height,
                 "elements": elements,
+                "element_count": (
+                    self.scenario.driver_declared_count
+                    if self.scenario.driver_declared_count is not None
+                    else len(elements)
+                ),
+                "total_element_count": (
+                    self.scenario.driver_declared_count
+                    if self.scenario.driver_declared_count is not None
+                    else len(elements)
+                ),
+                "returned_element_count": len(elements),
+                "snapshot_id": f"g{self.generation}",
             }
+            if self.scenario.driver_limited is not None:
+                structured["truncated"] = self.scenario.driver_limited
+            if self.scenario.driver_sparse:
+                structured["degraded"] = True
             if self.scenario.include_scale_factor:
                 structured["scale_factor"] = 1.25
+            content = [RawCallContent(kind="text", text="fake window state")]
+            if args.get("include_screenshot") is not False:
+                content.append(
+                    RawCallContent(kind="image", data=image, mime_type="image/png")
+                )
+            else:
+                structured.pop("screenshot_width", None)
+                structured.pop("screenshot_height", None)
             return RawCallResult(
-                content=(
-                    RawCallContent(kind="text", text="fake window state"),
-                    RawCallContent(kind="image", data=image, mime_type="image/png"),
-                ),
+                content=tuple(content),
                 structured_content=structured,
             )
         if name in {"click", "double_click", "right_click", "type_text", "press_key", "hotkey", "scroll", "drag", "bring_to_front"}:

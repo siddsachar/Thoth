@@ -141,6 +141,8 @@ def test_pixel_change_with_unknown_vision_is_not_goal_verification(service, fake
     assert result.visual_change == "changed"
     assert result.effect_verified is False
     assert vision.calls == 1
+    assert service.performance_snapshot()["pixel_captures"] == 2
+    assert service.performance_snapshot()["vision_calls"] == 1
     payload = json.loads(_observation_payload(result))
     assert payload["ok"] is True
     assert payload["error"] is False
@@ -191,6 +193,89 @@ def test_model_projection_is_bounded_but_full_validated_elements_remain_ephemera
     assert "Action 000" in rendered
     assert "additional semantic elements omitted" in rendered
     assert service.current_observation(target_id) is observation
+
+
+def test_deep_current_document_action_survives_chrome_crowd_out(service, fake_transport) -> None:
+    chrome = tuple(
+        {"role": "Button", "label": f"Chrome {index:03d}", "depth": 2}
+        for index in range(160)
+    )
+    fake_transport.scenario.semantic_elements = chrome + (
+        {
+            "role": "Button",
+            "label": "Deep document action",
+            "depth": 25,
+            "in_web_content": True,
+            "visible": True,
+        },
+    )
+    target_id, observation = _browser_target(service, fake_transport)
+
+    assert len(observation.elements) == 161
+    assert "Deep document action" in observation.model_text()
+    assert observation.status is not None
+    assert observation.status.projected_count == 80
+
+
+def test_semantic_refresh_requests_no_pixels_and_has_separate_counters(
+    service,
+    fake_transport,
+) -> None:
+    target_id, first = _browser_target(service, fake_transport)
+    before = service.performance_snapshot()
+
+    refreshed = service.refresh_semantics(target_id, OWNER)
+    after = service.performance_snapshot()
+
+    capture_args = [args for name, args in fake_transport.calls if name == "get_window_state"][-1]
+    assert capture_args == {
+        "pid": 2501,
+        "window_id": 501,
+        "include_screenshot": False,
+        "max_elements": 2_000,
+        "max_depth": 25,
+        "session": "row-bot-test-session",
+    }
+    assert refreshed.screenshot == first.screenshot
+    assert after["pixel_captures"] == before["pixel_captures"]
+    assert after["semantic_refreshes"] == before["semantic_refreshes"] + 1
+    assert after["vision_calls"] == before["vision_calls"]
+
+
+def test_known_background_target_is_focused_once_then_reuses_prepared_delivery(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = (
+        {"name": "Notepad", "running": True, "active": False},
+    )
+    fake_transport.scenario.windows = (
+        {
+            "window_id": 601,
+            "pid": 2601,
+            "app_name": "Notepad",
+            "title": "Synthetic note - Notepad",
+            "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+            "is_on_screen": True,
+        },
+    )
+    fake_transport.scenario.capture_pid = 2601
+    fake_transport.scenario.capture_window_id = 601
+    service.acquire(OWNER, validate_context=False)
+    service.list_apps(OWNER)
+    target_id = service.list_windows(OWNER, app="Notepad")[0]["target_id"]
+    service.capture(target_id, OWNER)
+
+    service.act("key", target_id, OWNER, keys="a", approval_mode="allow_all")
+    service.act("scroll", target_id, OWNER, direction="down", amount=2, approval_mode="allow_all")
+
+    assert [name for name, _args in fake_transport.calls].count("bring_to_front") == 1
+    delivered = [
+        args
+        for name, args in fake_transport.calls
+        if name in {"press_key", "scroll"}
+    ]
+    assert [args["delivery_mode"] for args in delivered] == ["foreground", "foreground"]
 
 
 def test_tokens_omitted_from_the_model_projection_cannot_be_used(service, fake_transport) -> None:
@@ -312,3 +397,36 @@ def test_unknown_visual_comparisons_do_not_consume_no_progress_budget(
 
     assert service.status_snapshot()["consecutive_visual_no_effects"] == 0
     assert service.status_snapshot()["state"] == "observing"
+
+
+def test_generic_three_action_flow_stays_inside_native_budget(service, fake_transport) -> None:
+    target_id, observation = _browser_target(service, fake_transport)
+    before = service.performance_snapshot()
+    service.act("key", target_id, OWNER, keys="tab")
+    service.act("scroll", target_id, OWNER, direction="down", amount=2)
+    service.act("click", target_id, OWNER, element_token=observation.elements[0].token)
+    after = service.performance_snapshot()
+
+    assert after["driver_calls"] - before["driver_calls"] == 3
+    assert after["pixel_captures"] - before["pixel_captures"] == 0
+    assert after["semantic_refreshes"] - before["semantic_refreshes"] == 0
+    assert after["vision_calls"] - before["vision_calls"] == 0
+
+
+def test_native_browser_four_action_flow_has_exact_bounded_counts(service, fake_transport) -> None:
+    target_id, observation = _browser_target(service, fake_transport)
+    before = service.performance_snapshot()
+    service.act("focus", target_id, OWNER, approval_mode="allow_all")
+    service.act("type", target_id, OWNER, element_token=observation.elements[2].token, text="synthetic query")
+    service.refresh_semantics(target_id, OWNER)
+    current = service.current_observation(target_id)
+    service.act("click", target_id, OWNER, element_token=current.elements[0].token)
+    service.refresh_semantics(target_id, OWNER)
+    service.act("key", target_id, OWNER, keys="space")
+    after = service.performance_snapshot()
+
+    assert after["driver_calls"] - before["driver_calls"] == 6
+    assert after["pixel_captures"] - before["pixel_captures"] == 0
+    assert after["semantic_refreshes"] - before["semantic_refreshes"] == 2
+    assert after["vision_calls"] - before["vision_calls"] == 0
+    assert [name for name, _args in fake_transport.calls].count("bring_to_front") == 1

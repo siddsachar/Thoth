@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from row_bot.prompts import _AGENT_GUIDELINES, AGENT_BG_OVERRIDE
 from row_bot.tools.browser_tool import BrowserTool
 from row_bot.tools.computer_use_tool import ComputerUseTool
@@ -34,3 +37,14 @@ def test_existing_browser_guidance_uses_computer_while_ordinary_navigation_stays
     assert "already-open native browser windows" in computer_description
     assert "silently switching to the managed Browser" in computer_description
     assert "Navigate websites" in browser_description
+
+
+def test_optional_playwright_mcp_remains_an_external_surface() -> None:
+    catalog = json.loads(
+        Path("src/row_bot/mcp_client/recommended_servers.json").read_text(encoding="utf-8")
+    )
+    playwright = next(server for server in catalog if server.get("name") == "Playwright MCP")
+    assert playwright["install"]["command"] == "npx"
+    assert "@playwright/mcp" in playwright["install"]["args"]
+    assert "external" not in BrowserTool().description.casefold()  # first-party direct backend only
+    assert "direct Python Playwright" in BrowserTool().description

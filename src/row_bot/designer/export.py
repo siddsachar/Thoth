@@ -491,7 +491,7 @@ def export_pdf(
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise RuntimeError(
-            "Playwright is required for PDF export. Run: pip install playwright && playwright install chromium"
+            "Playwright is required for PDF export. Run: pip install playwright && python -m playwright install chromium"
         ) from exc
 
     pdf_pages = []
@@ -1176,7 +1176,7 @@ def _collect_native_slide(project: DesignerProject, page_html: str, *, page_inde
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise RuntimeError(
-            "Playwright is required for editable PPTX export. Run: pip install playwright && playwright install chromium"
+            "Playwright is required for editable PPTX export. Run: pip install playwright && python -m playwright install chromium"
         ) from exc
 
     html = render_page_html(project, page_html, page_index=page_index)

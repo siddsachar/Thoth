@@ -17,15 +17,23 @@ from typing import Any, Callable
 
 from row_bot.data_paths import get_row_bot_data_dir
 
-NOTICE_VERSION = 1
+NOTICE_VERSION = 2
 RUNTIME_ID = "cua-driver"
 DISCLOSURE_TEXT = (
-    "Computer Use is powered by the open-source Cua Driver. Cua sends limited "
-    "pseudonymous product analytics to Cua/PostHog, including a random Cua "
-    "installation ID, Cua version, operating-system details, architecture, "
-    "timestamp, and launch or command category. Based on the reviewed Cua "
-    "source, it does not send screenshots, typed text, filenames, paths, "
-    "command arguments, or action arguments. This telemetry goes to Cua, not Row-Bot."
+    "Computer Use is powered by the open-source Cua Driver 0.19.3. Cua telemetry "
+    "is enabled upstream by default and sends pseudonymous product analytics to "
+    "Cua's EU PostHog endpoint. Events can include random installation and "
+    "process-session identifiers; Cua/platform/architecture/transport versions; "
+    "bounded client, provider, model, and agent categories; tool/operation, "
+    "success, refusal/error class, duration bucket, output type/size bucket; "
+    "aggregate session counts and capture-scope/browser/cursor/recording/config "
+    "usage flags; permission-gate state; and install/update lifecycle events. "
+    "Row-Bot disables Cua update checks and does not expose Cua recording, browser, "
+    "desktop-wide, updater, autostart, clipboard, or arbitrary execution tools. "
+    "Based on the reviewed tagged source, telemetry does not receive prompts, "
+    "tool arguments or results, typed text, screenshots, accessibility trees, "
+    "app/window names, URLs, filenames/paths, raw cursor/config values, or raw "
+    "errors. This is Cua telemetry, not Row-Bot telemetry."
 )
 
 
@@ -185,7 +193,7 @@ def verify_system_cua() -> CuaReadiness:
     match = re.search(r"\b(\d+\.\d+\.\d+)\b", output)
     expected = str(load_cua_manifest()["version"])
     if completed.returncode != 0 or not match:
-        return CuaReadiness(ReadinessCode.FAILED, "System Cua version check failed.", executable=str(path), remediation="Select the reviewed 0.7.1 binary or use the managed install.")
+        return CuaReadiness(ReadinessCode.FAILED, "System Cua version check failed.", executable=str(path), remediation=f"Select the reviewed {expected} binary or use the managed install.")
     version = match.group(1)
     if version != expected:
         return CuaReadiness(ReadinessCode.VERSION_MISMATCH, "System Cua is outside the reviewed version pin.", version, str(path), remediation=f"Use Cua Driver {expected}.")
@@ -331,7 +339,14 @@ def run_cua_diagnostics() -> CuaReadiness:
         if state.hash_status == "verified":
             rollback_pinned_archive_runtime(RUNTIME_ID)
 
-    client = CuaClient(state.executable)
+    manifest = load_cua_manifest()
+    client = CuaClient(
+        state.executable,
+        contract_version=str(manifest["version"]),
+        capabilities=frozenset(
+            str(value) for value in manifest.get("reviewed_service_capabilities") or []
+        ),
+    )
     try:
         client.start()
         response = client.call_internal("health_report")

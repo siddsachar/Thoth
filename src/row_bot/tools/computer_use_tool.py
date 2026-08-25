@@ -25,7 +25,7 @@ class ComputerUseInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    action: str = Field(description="list_apps, list_windows, launch_app, capture, focus, click, double_click, right_click, type, key, key_sequence, scroll, drag, wait, or stop")
+    action: str = Field(description="list_apps, list_windows, launch_app, capture, focus, click, double_click, right_click, type, key, key_sequence, scroll, drag, capability-gated menu, wait, or stop")
     app: str = Field(default="", description="App display name for discovery or launch; never a path or URL")
     window_hint: str = Field(default="", description="Optional user-provided title fragment used to narrow same-app window discovery; unrelated titles stay private")
     target_id: str = Field(default="", description="Opaque target ID returned by list_windows")
@@ -42,6 +42,12 @@ class ComputerUseInput(BaseModel):
     visual_question: str = Field(default="", description="Optional question for the configured VisionService, applied to launch_app/capture, a coordinate action's fresh post-action capture, or an explicitly requested final type verification. Token-based semantic actions deliberately skip Vision so native controls stay fast; final type verification is the exception. Before the first coordinate-only visual action, use one Vision-grounded capture to identify the screenshot-local control/canvas region")
     expected_effect: str = Field(default="", description="Display context only; never authorization")
     destination: str = Field(default="", description="Display context for a recipient/destination; never authorization")
+    menu_path: str = Field(default="", description="For menu only: 1-16 exact case-sensitive native menu labels separated by >; no fuzzy matching or coordinate fallback")
+
+
+def _exact_menu_path(value: str) -> list[str]:
+    labels = [part.strip() for part in str(value or "").split(">") if part.strip()]
+    return labels
 
 
 def _json_payload(display_summary: str, **payload: Any) -> str:
@@ -224,10 +230,13 @@ def _action_payload(receipt: ActionReceipt) -> str:
         target_id=receipt.target_id,
         target_revision=receipt.target_revision,
         driver_effect=receipt.driver_effect,
+        backend_effect=receipt.backend_effect,
         visual_change=receipt.visual_change,
         effect=receipt.effect,
         effect_verified=receipt.effect_verified,
         delivery_mode=receipt.delivery_mode,
+        route=receipt.route,
+        cause=receipt.cause,
         next_action=(
             "Use capture on the exact same target before any geometry-dependent choice "
             "or final visual verification. Reuse the latest semantic tokens for stable controls, "
@@ -252,6 +261,7 @@ def _call_signature(
     direction: str,
     amount: int,
     capture_after: bool,
+    menu_path: list[str],
 ) -> tuple[Any, ...]:
     """Build an in-memory replay key without retaining typed content."""
 
@@ -274,6 +284,7 @@ def _call_signature(
         str(direction),
         int(amount),
         bool(capture_after),
+        tuple(str(label) for label in menu_path),
     )
 
 
@@ -353,6 +364,7 @@ class ComputerUseTool(BaseTool):
             visual_question: str = "",
             expected_effect: str = "",
             destination: str = "",
+            menu_path: str = "",
         ) -> str:
             """Use the local native Computer Use Beta session."""
 
@@ -360,6 +372,7 @@ class ComputerUseTool(BaseTool):
             from row_bot.tools.approval_gate import current_approval_mode
 
             approval_mode = current_approval_mode()
+            exact_menu_path = _exact_menu_path(menu_path)
             signature = _call_signature(
                 normalized,
                 app=app,
@@ -375,6 +388,7 @@ class ComputerUseTool(BaseTool):
                 direction=direction,
                 amount=amount,
                 capture_after=capture_after,
+                menu_path=exact_menu_path,
             )
             if service.resumed_call_matches(signature):
                 from langgraph.types import interrupt
@@ -488,7 +502,7 @@ class ComputerUseTool(BaseTool):
                         service.wait_and_capture(target_id, amount or 500),
                         display_summary="Waited on the selected target and captured a fresh observation.",
                     )
-                if normalized not in {"focus", "click", "double_click", "right_click", "type", "key", "key_sequence", "scroll", "drag"}:
+                if normalized not in {"focus", "click", "double_click", "right_click", "type", "key", "key_sequence", "scroll", "drag", "menu"}:
                     return _error_payload(
                         "invalid_input",
                         "Computer action was not recognized.",
@@ -511,6 +525,14 @@ class ComputerUseTool(BaseTool):
                         ),
                         display_summary="Completed the bounded Calculator steps and captured fresh verification.",
                         next_action="This is the final fresh verification. If it confirms the requested result, call stop now; do not capture again.",
+                    )
+                if normalized == "menu":
+                    return _action_payload(
+                        service.act_menu(
+                            target_id,
+                            exact_menu_path,
+                            approval_mode=approval_mode,
+                        )
                     )
                 result = service.act(
                         normalized,
