@@ -98,7 +98,7 @@ def test_consequential_approval_payload_is_redacted_and_resume_recaptures(tmp_pa
     assert secret not in str(approvals)
     type_index = next(i for i, (name, _args) in enumerate(transport.calls) if name == "type_text")
     assert transport.calls[type_index - 1][0] == "get_window_state"
-    assert transport.calls[type_index + 1][0] == "get_window_state"
+    assert type_index == len(transport.calls) - 1
 
 
 def test_consequential_denial_is_terminal_and_releases_the_lease(tmp_path, monkeypatch) -> None:

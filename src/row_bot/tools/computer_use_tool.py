@@ -38,7 +38,7 @@ class ComputerUseInput(BaseModel):
     keys: str = Field(default="", description="One key or plus-separated chord; for key_sequence, use 1-16 comma-separated Calculator keys such as 7,*,8,= or a compact safe expression such as 7×8=")
     direction: str = Field(default="", description="Scroll direction")
     amount: int = Field(default=0, description="Bounded scroll amount or wait milliseconds")
-    capture_after: bool = Field(default=False, description="Capture after the action when the next decision or final verification needs the changed UI. Unverifiable coordinate mutations are captured automatically")
+    capture_after: bool = Field(default=False, description="Capture after the action only when the next decision or final verification needs changed pixels or geometry")
     visual_question: str = Field(default="", description="Optional question for the configured VisionService, applied to launch_app/capture, a coordinate action's fresh post-action capture, or an explicitly requested final type verification. Token-based semantic actions deliberately skip Vision so native controls stay fast; final type verification is the exception. Before the first coordinate-only visual action, use one Vision-grounded capture to identify the screenshot-local control/canvas region")
     expected_effect: str = Field(default="", description="Display context only; never authorization")
     destination: str = Field(default="", description="Display context for a recipient/destination; never authorization")
@@ -177,24 +177,28 @@ def _observation_payload(
     next_action: str = "",
 ) -> str:
     action_effect = str(getattr(observation, "action_effect", "") or "")
+    action_dispatched = bool(getattr(observation, "action_dispatched", False))
+    action_completed = bool(getattr(observation, "action_completed", False))
+    driver_effect = str(getattr(observation, "driver_effect", "") or "")
+    visual_change = str(getattr(observation, "visual_change", "unknown") or "unknown")
     effect_verified = bool(getattr(observation, "effect_verified", False))
     payload: dict[str, Any] = {
         "fresh_observation": observation.model_text(),
         "capture_is_fresh": True,
     }
-    if action_effect:
+    vision_evidence = str(getattr(observation, "vision_text", "") or "")
+    if vision_evidence:
+        payload["vision_evidence"] = vision_evidence
+    if action_dispatched or action_effect:
         payload.update({
-            "ok": action_effect not in {"unchanged", "unknown", "obscured"},
-            "error": action_effect in {"unchanged", "unknown", "obscured"},
-            "error_code": (
-                "visual_no_effect"
-                if action_effect == "unchanged"
-                else "effect_unverified"
-                if action_effect in {"unknown", "obscured"}
-                else ""
+            "ok": True,
+            "error": False,
+            "action_dispatched": action_dispatched or bool(action_effect),
+            "action_completed": action_completed or bool(action_effect),
+            "driver_effect": driver_effect or (
+                action_effect if action_effect in {"confirmed", "changed"} else "unverifiable"
             ),
-            "action_dispatched": True,
-            "action_completed": effect_verified,
+            "visual_change": visual_change,
             "effect": action_effect,
             "effect_verified": effect_verified,
             "delivery_mode": str(getattr(observation, "delivery_mode", "") or ""),
@@ -205,26 +209,29 @@ def _observation_payload(
 
 
 def _action_payload(receipt: ActionReceipt) -> str:
-    completed = bool(receipt.effect_verified)
     summary = (
-        f"Completed {receipt.action.replace('_', ' ')} without an extra capture."
-        if completed
-        else f"Sent {receipt.action.replace('_', ' ')}; its effect is not yet verified."
+        f"Driver confirmed {receipt.action.replace('_', ' ')} without an extra capture."
+        if receipt.effect_verified
+        else f"Sent {receipt.action.replace('_', ' ')} without an extra capture; the requested outcome is not verified."
     )
     return _json_payload(
         summary,
         ok=True,
-        action_dispatched=True,
-        action_completed=completed,
+        error=False,
+        action_dispatched=receipt.action_dispatched,
+        action_completed=receipt.action_completed,
         capture_is_fresh=False,
         target_id=receipt.target_id,
         target_revision=receipt.target_revision,
+        driver_effect=receipt.driver_effect,
+        visual_change=receipt.visual_change,
         effect=receipt.effect,
         effect_verified=receipt.effect_verified,
         delivery_mode=receipt.delivery_mode,
         next_action=(
             "Use capture on the exact same target before any geometry-dependent choice "
-            "or final visual verification. Do not blind-retry the dispatched action."
+            "or final visual verification. Reuse the latest semantic tokens for stable controls, "
+            "and do not blind-retry the dispatched action."
         ),
     )
 
@@ -286,12 +293,15 @@ class ComputerUseTool(BaseTool):
             "When the user refers to this browser, the browser below, or an existing named browser window, use Computer: call list_windows with app and any title hint, then capture or focus that target. Do not call launch_app merely to focus an app that is already open, and never attach to a personal browser profile through CDP. "
             "For other native apps, OS dialogs, or visual-only surfaces, use Computer. launch_app already returns a fresh observation, "
             "so do not capture again. For coordinate-only visual work, pass a visual_question to launch_app or capture once before the first coordinate action; never guess coordinates from semantic element text. Do not attach visual_question to token-based semantic clicks; they intentionally stay on the fast native path. "
-            "Prefer semantic element tokens and one native drag for a simple stroke. Unverifiable coordinate mutations are captured and checked locally; "
-            "unchanged or unverified is not completion, and three no-effect mutations stop the session. Never blind-retry an error. "
+            "Use list_apps active metadata for foreground discovery; when it is unknown, use an explicit user app/title hint or Take over and never analyze the full screen merely to guess the foreground app. "
+            "One explicitly approved focus prepares that exact target for foreground type, key, scroll, pointer, and drag delivery in the current task session; do not refocus it before every input. "
+            "Prefer semantic element tokens and stable application shortcuts over transient coordinates. Set capture_after only for a coordinate-dependent next decision or final verification. "
+            "A dispatched action with unchanged or unknown visual evidence is not a tool error or verified completion; do not blind-retry it. Three proven same-family no-change attempts stop the session. "
             "type inserts at the current caret/selection; click and navigate first, and use explicit Ctrl+A only when replacement is intended. "
             "A hard_blocked result is terminal: do not enumerate aliases or try another Computer action to bypass it. "
             "The bounded Calculator key_sequence remains an app-specific optimization, not the general action protocol. "
             "Use wait only when the user explicitly requests a delay or the latest observation shows the selected app is still loading; never wait between ordinary actions. "
+            "For an open-ended capability check, use one initial capture, at most three reversible mutations, one final verification capture, then stop. "
             "list_windows requires app and should include window_hint when the user names a specific same-app window. Follow structured native-window errors without silently switching to the managed Browser or claiming native browsers are unsupported. Stop and Take over remain local controls."
         )
 
@@ -391,9 +401,29 @@ class ComputerUseTool(BaseTool):
                     )
                 if normalized == "list_apps":
                     apps = service.list_apps()
+                    active_apps = [
+                        row
+                        for row in apps
+                        if bool(row.get("running")) and bool(row.get("active"))
+                    ]
+                    foreground_known = len(active_apps) == 1
                     return _json_payload(
-                        f"Found {len(apps)} available native apps.",
+                        (
+                            f"Found {len(apps)} available native apps; {active_apps[0]['name']} is the native foreground app."
+                            if foreground_known
+                            else f"Found {len(apps)} available native apps; native foreground identity is unknown."
+                        ),
                         apps=apps,
+                        foreground={
+                            "status": "known" if foreground_known else "foreground_unknown",
+                            "app": active_apps[0]["name"] if foreground_known else "",
+                        },
+                        foreground_unknown=not foreground_known,
+                        next_action=(
+                            f"Call list_windows with app={active_apps[0]['name']!r} and any available user title hint; do not use full-screen Vision to identify the app."
+                            if foreground_known
+                            else "Use a user-provided app/title hint or Take over. Do not guess, launch an alias, open the managed Browser, or use full-screen Vision merely to identify the foreground app."
+                        ),
                     )
                 if normalized == "list_windows":
                     windows = service.list_windows(app=app, window_hint=window_hint)
@@ -502,15 +532,16 @@ class ComputerUseTool(BaseTool):
                     )
                 if isinstance(result, ActionReceipt):
                     return _action_payload(result)
-                action_effect = str(getattr(result, "action_effect", "") or "")
-                if action_effect == "changed":
-                    summary = f"Verified a visual change after {normalized.replace('_', ' ')}."
-                elif action_effect == "unchanged":
-                    summary = f"The {normalized.replace('_', ' ')} input was sent, but the target showed no visual change."
-                elif action_effect in {"unknown", "obscured", "unverifiable"}:
-                    summary = f"The {normalized.replace('_', ' ')} input was sent and captured, but its effect is not verified."
+                visual_change = str(getattr(result, "visual_change", "unknown") or "unknown")
+                effect_verified = bool(getattr(result, "effect_verified", False))
+                if effect_verified:
+                    summary = f"Driver confirmed {normalized.replace('_', ' ')} and the requested capture completed."
+                elif visual_change == "changed":
+                    summary = f"Sent {normalized.replace('_', ' ')}; the local capture changed, but the requested outcome is not verified."
+                elif visual_change == "unchanged":
+                    summary = f"Sent {normalized.replace('_', ' ')}; the requested capture was unchanged. Use at most one different safe recovery strategy if needed."
                 else:
-                    summary = f"Completed {normalized.replace('_', ' ')} and captured fresh verification."
+                    summary = f"Sent {normalized.replace('_', ' ')} and captured the target; visual change and requested outcome remain unknown."
                 return _observation_payload(result, display_summary=summary)
             except concurrent.futures.CancelledError:
                 if service.paused_call_matches(signature):

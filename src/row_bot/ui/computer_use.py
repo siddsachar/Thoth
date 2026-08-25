@@ -279,7 +279,13 @@ def build_active_session_card(*, compact: bool = False) -> Any:
             if snapshot["window"]:
                 ui.label(str(snapshot["window"])[:120]).classes("text-xs text-grey-5")
             if snapshot["last_action"]:
-                ui.label(f"{snapshot['last_action']} · {snapshot['last_effect'] or 'pending verification'}").classes("text-xs")
+                receipt_parts = [
+                    "completed" if snapshot.get("last_action_completed") else "dispatch pending",
+                    f"driver {snapshot.get('last_driver_effect') or 'unverifiable'}",
+                    f"visual {snapshot.get('last_visual_change') or 'unknown'}",
+                    "outcome verified" if snapshot.get("last_effect_verified") else "outcome unverified",
+                ]
+                ui.label(f"{snapshot['last_action']} · {' · '.join(receipt_parts)}").classes("text-xs")
             image = service.ephemeral_screenshot()
             if image and not compact:
                 source = "data:image/png;base64," + base64.b64encode(image).decode("ascii")
@@ -297,7 +303,7 @@ def build_active_session_card(*, compact: bool = False) -> Any:
                 elif snapshot["active"]:
                     ui.button("Take over", icon="pan_tool", on_click=service.take_over).props("outline dense no-caps")
                 if snapshot["action_count"]:
-                    ui.label(f"{snapshot['action_count']} verified action(s)").classes("text-xs text-grey-6")
+                    ui.label(f"{snapshot['action_count']} dispatched action(s)").classes("text-xs text-grey-6")
 
     _refresh()
     ui.timer(0.5, _refresh)

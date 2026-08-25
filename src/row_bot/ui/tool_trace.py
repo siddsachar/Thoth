@@ -246,8 +246,6 @@ def tool_result_failed(result_or_content: Any) -> bool:
     if isinstance(payload, dict):
         if payload.get("error") is True or payload.get("ok") is False:
             return True
-        if payload.get("action_completed") is False:
-            return True
         if str(payload.get("status") or "").strip().casefold() in {
             "error",
             "failed",

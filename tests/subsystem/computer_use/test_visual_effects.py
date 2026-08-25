@@ -53,6 +53,7 @@ def test_coordinate_drag_uses_screenshot_coordinates_once_and_verifies_changed_r
         y=10,
         end_x=40,
         end_y=40,
+        capture_after=True,
     )
 
     calls = fake_transport.calls[calls_before:]
@@ -69,10 +70,11 @@ def test_coordinate_drag_uses_screenshot_coordinates_once_and_verifies_changed_r
     assert [name for name, _args in calls] == ["drag", "get_window_state"]
     assert isinstance(result, Observation)
     assert result.action_effect == "changed"
-    assert result.effect_verified is True
+    assert result.visual_change == "changed"
+    assert result.effect_verified is False
 
 
-def test_unchanged_background_drag_retries_foreground_once_without_model_round(
+def test_unchanged_background_drag_is_not_replayed_after_driver_acceptance(
     service,
     fake_transport,
 ) -> None:
@@ -80,24 +82,26 @@ def test_unchanged_background_drag_retries_foreground_once_without_model_round(
     fake_transport.scenario.capture_images = (
         _png(),
         _png(),
-        _png(changed_box=(8, 8, 42, 42)),
     )
     fake_transport.scenario.effect = "unverifiable"
     fake_transport.scenario.foreground_effect = "unverifiable"
     target, _observation = _paint_target(service, fake_transport)
     calls_before = len(fake_transport.calls)
 
-    result = service.act("drag", target, OWNER, x=10, y=10, end_x=40, end_y=40)
+    result = service.act(
+        "drag", target, OWNER,
+        x=10, y=10, end_x=40, end_y=40,
+        capture_after=True,
+    )
 
     calls = fake_transport.calls[calls_before:]
     drags = [args for name, args in calls if name == "drag"]
-    assert len(drags) == 2
+    assert len(drags) == 1
     assert "delivery_mode" not in drags[0]
-    assert drags[1]["delivery_mode"] == "foreground"
     assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
-    assert result.delivery_mode == "foreground"
-    assert service.status_snapshot()["last_effect"] == "changed"
+    assert result.visual_change == "unchanged"
+    assert result.delivery_mode == "background"
+    assert service.status_snapshot()["last_visual_change"] == "unchanged"
 
 
 def test_cursor_only_change_at_drag_endpoint_is_not_mistaken_for_canvas_progress(
@@ -108,17 +112,20 @@ def test_cursor_only_change_at_drag_endpoint_is_not_mistaken_for_canvas_progress
     fake_transport.scenario.capture_images = (
         _png(),
         _png(changed_box=(36, 36, 44, 44)),
-        _png(changed_box=(8, 8, 42, 42)),
     )
     fake_transport.scenario.effect = "unverifiable"
     target, _observation = _paint_target(service, fake_transport)
 
-    result = service.act("drag", target, OWNER, x=10, y=10, end_x=40, end_y=40)
+    result = service.act(
+        "drag", target, OWNER,
+        x=10, y=10, end_x=40, end_y=40,
+        capture_after=True,
+    )
 
-    assert [name for name, _args in fake_transport.calls].count("drag") == 2
+    assert [name for name, _args in fake_transport.calls].count("drag") == 1
     assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
-    assert result.delivery_mode == "foreground"
+    assert result.visual_change == "unchanged"
+    assert result.delivery_mode == "background"
 
 
 def test_change_only_outside_intended_drag_region_does_not_count_as_progress(
@@ -129,17 +136,20 @@ def test_change_only_outside_intended_drag_region_does_not_count_as_progress(
     fake_transport.scenario.capture_images = (
         _png(),
         _png(changed_box=(55, 55, 63, 63)),
-        _png(changed_box=(8, 8, 42, 42)),
     )
     fake_transport.scenario.effect = "unverifiable"
     target, _observation = _paint_target(service, fake_transport)
 
-    result = service.act("drag", target, OWNER, x=10, y=10, end_x=30, end_y=30)
+    result = service.act(
+        "drag", target, OWNER,
+        x=10, y=10, end_x=30, end_y=30,
+        capture_after=True,
+    )
 
-    assert [name for name, _args in fake_transport.calls].count("drag") == 2
+    assert [name for name, _args in fake_transport.calls].count("drag") == 1
     assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
-    assert result.delivery_mode == "foreground"
+    assert result.visual_change == "unchanged"
+    assert result.delivery_mode == "background"
 
 
 def test_three_varied_accepted_no_effect_drags_stop_with_needs_attention(
@@ -147,7 +157,7 @@ def test_three_varied_accepted_no_effect_drags_stop_with_needs_attention(
     fake_transport,
 ) -> None:
     fake_transport.scenario.capture_dimensions = (64, 64)
-    fake_transport.scenario.capture_images = tuple(_png() for _ in range(7))
+    fake_transport.scenario.capture_images = tuple(_png() for _ in range(4))
     fake_transport.scenario.effect = "unverifiable"
     fake_transport.scenario.foreground_effect = "unverifiable"
     target, _observation = _paint_target(service, fake_transport)
@@ -157,6 +167,7 @@ def test_three_varied_accepted_no_effect_drags_stop_with_needs_attention(
             result = service.act(
                 "drag", target, OWNER,
                 x=5 + index, y=5, end_x=35 + index, end_y=35,
+                capture_after=True,
             )
             assert isinstance(result, Observation)
             assert result.action_effect == "unchanged"
@@ -165,12 +176,13 @@ def test_three_varied_accepted_no_effect_drags_stop_with_needs_attention(
                 service.act(
                     "drag", target, OWNER,
                     x=5 + index, y=5, end_x=35 + index, end_y=35,
+                    capture_after=True,
                 )
             assert exc_info.value.code == "no_progress"
 
     assert service.status_snapshot()["state"] == "needs_attention"
     assert service.status_snapshot()["consecutive_visual_no_effects"] == 3
-    assert [name for name, _args in fake_transport.calls].count("drag") == 6
+    assert [name for name, _args in fake_transport.calls].count("drag") == 3
 
 
 def test_changed_toolbar_clicks_do_not_reset_no_effect_canvas_drag_budget(
@@ -178,7 +190,7 @@ def test_changed_toolbar_clicks_do_not_reset_no_effect_canvas_drag_budget(
     fake_transport,
 ) -> None:
     fake_transport.scenario.capture_dimensions = (64, 64)
-    fake_transport.scenario.capture_images = tuple(_png() for _ in range(7))
+    fake_transport.scenario.capture_images = tuple(_png() for _ in range(6))
     fake_transport.scenario.effect = "unverifiable"
     fake_transport.scenario.foreground_effect = "unverifiable"
     target, _observation = _paint_target(service, fake_transport)
@@ -195,6 +207,7 @@ def test_changed_toolbar_clicks_do_not_reset_no_effect_canvas_drag_budget(
             result = service.act(
                 "drag", target, OWNER,
                 x=5 + index, y=5, end_x=35 + index, end_y=35,
+                capture_after=True,
             )
             assert isinstance(result, Observation)
             assert result.action_effect == "unchanged"
@@ -203,12 +216,13 @@ def test_changed_toolbar_clicks_do_not_reset_no_effect_canvas_drag_budget(
                 service.act(
                     "drag", target, OWNER,
                     x=5 + index, y=5, end_x=35 + index, end_y=35,
+                    capture_after=True,
                 )
             assert exc_info.value.code == "no_progress"
 
     assert service.status_snapshot()["state"] == "needs_attention"
     assert service.status_snapshot()["consecutive_visual_no_effects"] == 3
-    assert [name for name, _args in fake_transport.calls].count("drag") == 6
+    assert [name for name, _args in fake_transport.calls].count("drag") == 3
 
 
 def test_top_level_background_unavailable_uses_one_reviewed_foreground_fallback(
@@ -220,14 +234,19 @@ def test_top_level_background_unavailable_uses_one_reviewed_foreground_fallback(
     fake_transport.scenario.background_unavailable_tools = frozenset({"drag"})
     target, _observation = _paint_target(service, fake_transport)
 
-    result = service.act("drag", target, OWNER, x=10, y=10, end_x=40, end_y=40)
+    result = service.act(
+        "drag", target, OWNER,
+        x=10, y=10, end_x=40, end_y=40,
+        capture_after=True,
+    )
 
     drags = [args for name, args in fake_transport.calls if name == "drag"]
     assert len(drags) == 2
     assert "delivery_mode" not in drags[0]
     assert drags[1]["delivery_mode"] == "foreground"
     assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
+    assert result.visual_change == "changed"
+    assert result.effect_verified is False
 
 
 def test_semantic_bounds_are_not_presented_as_screenshot_coordinates(service, fake_transport) -> None:

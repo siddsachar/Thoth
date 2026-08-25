@@ -43,6 +43,11 @@ def test_every_routine_mutation_maps_once_without_an_implicit_post_capture(servi
     mutation_index = max(i for i, name in enumerate(names) if name == driver_tool)
     assert names[mutation_index + 1:] == []
     assert isinstance(result, ActionReceipt)
+    assert result.action_dispatched is True
+    assert result.action_completed is True
+    assert result.driver_effect == "confirmed"
+    assert result.visual_change == "unknown"
+    assert result.effect_verified is True
     assert "private typed value" not in repr(result)
     assert service.ephemeral_screenshot()
 
@@ -178,12 +183,15 @@ def test_stale_recovery_is_limited_to_one_exact_target_recapture(
     assert [name for name, _args in fake_transport.calls].count("click") == 2
 
 
-def test_focus_is_always_confirmed_then_recaptured(service, fake_transport) -> None:
+def test_focus_is_confirmed_once_and_prepares_without_an_implicit_capture(service, fake_transport) -> None:
     target, _ = _target_and_capture(service)
-    service.act("focus", target, OWNER, expected_effect="Bring Calculator forward")
+    result = service.act("focus", target, OWNER, expected_effect="Bring Calculator forward")
     names = [name for name, _args in fake_transport.calls]
-    assert "bring_to_front" in names
-    assert names[names.index("bring_to_front") + 1] == "get_window_state"
+    assert names.count("bring_to_front") == 1
+    assert names[-1] == "bring_to_front"
+    assert isinstance(result, ActionReceipt)
+    assert result.action_completed is True
+    assert service.status_snapshot()["foreground_prepared"] is True
 
 
 def test_approval_wait_recaptures_and_rebinds_semantic_target(fake_client, fake_transport) -> None:

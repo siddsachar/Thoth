@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 
-from row_bot.ui.tool_trace import canonical_tool_name, group_tool_results, is_computer_tool_name
+from row_bot.ui.tool_trace import (
+    canonical_tool_name,
+    group_tool_results,
+    is_computer_tool_name,
+    tool_result_failed,
+)
 
 
 def test_computer_trace_is_separate_from_browser_and_grouped() -> None:
@@ -114,3 +120,33 @@ def test_approval_resume_preserves_only_the_expected_interactive_origin() -> Non
             is_developer=False,
             is_designer=False,
         )
+
+
+def test_dispatched_but_unverified_computer_receipt_is_not_rendered_as_failure() -> None:
+    current = json.dumps({
+        "ok": True,
+        "error": False,
+        "action_dispatched": True,
+        "action_completed": True,
+        "driver_effect": "unverifiable",
+        "visual_change": "unchanged",
+        "effect_verified": False,
+        "display_summary": "Input delivered; visible result unchanged.",
+    })
+    older = json.dumps({
+        "ok": True,
+        "action_dispatched": True,
+        "action_completed": False,
+        "effect_verified": False,
+        "display_summary": "Input sent; effect not verified.",
+    })
+    structured_error = json.dumps({
+        "ok": False,
+        "error": True,
+        "error_code": "target_mismatch",
+        "display_summary": "Target changed.",
+    })
+
+    assert tool_result_failed(current) is False
+    assert tool_result_failed(older) is False
+    assert tool_result_failed(structured_error) is True

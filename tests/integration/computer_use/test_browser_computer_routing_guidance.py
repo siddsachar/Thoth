@@ -12,6 +12,11 @@ def test_prompt_prefers_structured_then_browser_then_computer() -> None:
     assert "call stop immediately and never add another capture" in _AGENT_GUIDELINES
     assert "before the first coordinate-only action" in _AGENT_GUIDELINES
     assert "capture once with visual_question" in _AGENT_GUIDELINES
+    assert "list_apps active metadata" in _AGENT_GUIDELINES
+    assert "never guess, launch aliases, switch to managed Browser" in _AGENT_GUIDELINES
+    assert "at most three reversible mutations" in _AGENT_GUIDELINES
+    assert "do not repeatedly focus it" in _AGENT_GUIDELINES
+    assert "A single unchanged or unknown visual comparison" in _AGENT_GUIDELINES
     assert "Computer Use is unavailable in background tasks" in AGENT_BG_OVERRIDE
 
 

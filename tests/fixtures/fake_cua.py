@@ -29,6 +29,22 @@ _CALCULATOR_LABEL_TO_KEY = {
     "Close parenthesis": ")",
 }
 
+SANITIZED_NATIVE_BROWSER_APPS = (
+    {"name": "msedge.exe", "running": True, "active": True},
+    {"name": "Notepad", "running": True, "active": False},
+)
+
+SANITIZED_NATIVE_BROWSER_WINDOWS = (
+    {
+        "window_id": 501,
+        "pid": 2501,
+        "app_name": "msedge.exe",
+        "title": "Example media - Microsoft Edge",
+        "bounds": {"x": 0, "y": 0, "width": 1280, "height": 720},
+        "is_on_screen": True,
+    },
+)
+
 
 @dataclass
 class FakeScenario:
@@ -56,6 +72,8 @@ class FakeScenario:
     foreground_effect: str = "unverifiable"
     document_value: str = ""
     block_foreground: bool = False
+    semantic_elements: tuple[dict[str, Any], ...] = ()
+    accepted_background_noop_tools: frozenset[str] = field(default_factory=frozenset)
 
 
 class FakeCuaTransport:
@@ -70,6 +88,7 @@ class FakeCuaTransport:
         self.release_action = threading.Event()
         self.generation = 1
         self.pressed_keys: list[str] = []
+        self.effective_keys: list[str] = []
         self.calculator_display = "0"
         self.element_labels: dict[str, str] = {}
         self.capture_index = 0
@@ -136,7 +155,16 @@ class FakeCuaTransport:
         if name == "get_window_state":
             if self.scenario.permission_denied:
                 return self._error("permission denied", "permission_denied")
-            if self.scenario.calculator_semantics and not self.scenario.oversized_tree:
+            if self.scenario.semantic_elements:
+                element_specs = [
+                    (
+                        str(item.get("role") or "text"),
+                        str(item.get("label") or ""),
+                        int(item.get("depth") or 1),
+                    )
+                    for item in self.scenario.semantic_elements
+                ]
+            elif self.scenario.calculator_semantics and not self.scenario.oversized_tree:
                 element_specs = [("text", f"Display {self.calculator_display}")] + [
                     ("button", label) for label in _CALCULATOR_BUTTON_LABELS
                 ]
@@ -159,7 +187,11 @@ class FakeCuaTransport:
                 ]
             elements = []
             self.element_labels = {}
-            for index, (role, label) in enumerate(element_specs):
+            for index, element_spec in enumerate(element_specs):
+                role, label = element_spec[:2]
+                depth = int(element_spec[2]) if len(element_spec) > 2 else (
+                    index if self.scenario.oversized_tree else 1
+                )
                 token = f"g{self.generation}-element-{index}"
                 self.element_labels[token] = label
                 elements.append({
@@ -174,7 +206,7 @@ class FakeCuaTransport:
                         "w": self.scenario.element_frame[2],
                         "h": self.scenario.element_frame[3],
                     },
-                    "depth": index if self.scenario.oversized_tree else 1,
+                    "depth": depth,
                 })
             if self.scenario.malformed_image:
                 image = "not-base64"
@@ -205,6 +237,10 @@ class FakeCuaTransport:
             )
         if name in {"click", "double_click", "right_click", "type_text", "press_key", "hotkey", "scroll", "drag", "bring_to_front"}:
             delivery_mode = str(args.get("delivery_mode") or "background")
+            accepted_noop = bool(
+                name in self.scenario.accepted_background_noop_tools
+                and delivery_mode != "foreground"
+            )
             if self.block_action.is_set() and (
                 not self.scenario.block_foreground
                 or delivery_mode == "foreground"
@@ -248,15 +284,19 @@ class FakeCuaTransport:
                     "delivery_mode": delivery_mode,
                 })
             if name == "press_key":
-                self.pressed_keys.append(str(args.get("key") or ""))
+                key = str(args.get("key") or "")
+                self.pressed_keys.append(key)
+                if not accepted_noop:
+                    self.effective_keys.append(key)
             elif name == "click":
                 label = self.element_labels.get(str(args.get("element_token") or ""), "")
                 key = _CALCULATOR_LABEL_TO_KEY.get(label)
                 if key:
                     self.pressed_keys.append(key)
+                    self.effective_keys.append(key)
             if self.pressed_keys[-4:] == ["7", "*", "8", "="]:
                 self.calculator_display = "56"
-            effect = (
+            effect = "unverifiable" if accepted_noop else (
                 self.scenario.foreground_effect
                 if delivery_mode == "foreground"
                 else self.scenario.effect
