@@ -18,7 +18,10 @@ from row_bot.buddy.overlay import (
     ScreenArea,
     build_thread_snapshot,
     clamp_overlay_position,
+    enable_windows_per_monitor_dpi,
+    native_overlay_transparency,
     placement_state_from_config,
+    placement_state_for_app_startup,
     position_for_drop,
     project_approval,
     screen_areas_from_native,
@@ -102,6 +105,33 @@ def test_manual_native_show_never_waits_forever_for_page_ready():
     assert should_defer_native_show(ready=False, manual=False) is True
     assert should_defer_native_show(ready=False, manual=True) is False
     assert should_defer_native_show(ready=True, manual=False) is False
+
+
+def test_app_startup_returns_buddy_to_dock_without_reviving_hidden_visibility():
+    shown = placement_state_for_app_startup(
+        {"placement": "desktop", "visible": True, "collapsed": True}
+    )
+    hidden = placement_state_for_app_startup(
+        {"placement": "desktop", "visible": False, "collapsed": True}
+    )
+
+    assert shown == BuddyPlacementState(BuddyPlacement.DOCKED, True, False)
+    assert hidden == BuddyPlacementState(BuddyPlacement.DOCKED, False, False)
+
+
+def test_windows_native_overlay_uses_hit_testable_per_monitor_mode():
+    contexts: list[int] = []
+
+    assert native_overlay_transparency("win32") is False
+    assert native_overlay_transparency("darwin") is True
+    assert enable_windows_per_monitor_dpi(
+        "win32", set_context=lambda context: contexts.append(context) or True
+    ) is True
+    assert contexts == [-4]
+    assert enable_windows_per_monitor_dpi(
+        "darwin", set_context=lambda _context: contexts.append(99) or True
+    ) is False
+    assert contexts == [-4]
 
 
 def test_placement_transitions_keep_hidden_and_collapsed_as_conditions():

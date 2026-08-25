@@ -1669,8 +1669,11 @@ from row_bot.buddy.overlay import (
     BuddyPlacement,
     ForegroundAppTracker,
     apply_placement_state,
+    enable_windows_per_monitor_dpi,
     finite_coordinate,
+    native_overlay_transparency,
     placement_state_from_config,
+    placement_state_for_app_startup,
     platform_foreground_backend,
     position_for_drop,
     screen_areas_from_native,
@@ -1690,6 +1693,16 @@ def _save_buddy_state(state, *, x=None, y=None):
         overlay["y"] = int(y)
     config["overlay"] = overlay
     return save_buddy_config(config)
+
+def _reset_buddy_placement_for_startup():
+    config = get_buddy_config()
+    current = placement_state_from_config(config)
+    startup = placement_state_for_app_startup(config)
+    if startup == current:
+        return False
+    _save_buddy_state(startup)
+    _buddy_window_log("startup reset Buddy to the main dock")
+    return True
 
 def _screen_areas():
     try:
@@ -2009,8 +2022,8 @@ class _JsApi:
             "on_top": True,
             "easy_drag": False,
             "hidden": True,
-            "background_color": "#000000",
-            "transparent": True,
+            "background_color": "#0B1119",
+            "transparent": native_overlay_transparency(sys.platform),
         }
         window = None
         fallback_kwargs = dict(kwargs)
@@ -2198,15 +2211,6 @@ def _on_loaded(window):
         """)
     except Exception:
         pass
-    try:
-        state = placement_state_from_config(get_buddy_config())
-        if state.placement is BuddyPlacement.DESKTOP:
-            opened = _JS_API.open_buddy_window(_APP_PORT, OVERLAY_WIDTH, OVERLAY_HEIGHT)
-            if not opened:
-                _save_buddy_state(state.dock())
-                _buddy_window_log("startup restore failed; returned Buddy to the main dock")
-    except Exception as exc:
-        _buddy_window_log(f"startup restore failed: {exc}")
 
 _JS_API = _JsApi()
 
@@ -2279,7 +2283,9 @@ _APP_PORT = _port_from_url(url)
 w, h = int(sys.argv[3]), int(sys.argv[4])
 _ICON_PATH = sys.argv[5] if len(sys.argv) > 5 else ""
 _CONTROL_PORT = int(sys.argv[6]) if len(sys.argv) > 6 else 0
+enable_windows_per_monitor_dpi(sys.platform)
 _install_windows_app_icon()
+_reset_buddy_placement_for_startup()
 _start_control_server(_CONTROL_PORT)
 threading.Thread(target=_track_foreground_apps, daemon=True, name="buddy-foreground-tracker").start()
 main_window = webview.create_window(title, url, width=w, height=h, js_api=_JS_API)

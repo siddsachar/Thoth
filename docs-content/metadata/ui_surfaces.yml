@@ -520,7 +520,7 @@ surfaces:
     state: requires native window management, drag-to-tear-off, and a visible compact thread overlay
     scenario: native-manual
     docs_page: /docs/voice-and-buddy/
-    no_image_reason: Browser automation cannot represent native tray menus, window ownership, or the transparent Buddy overlay faithfully.
+    no_image_reason: Browser automation cannot represent native tray menus, window ownership, or the native Buddy overlay faithfully.
     capture_type: manual
     status: ready
     source_files: [src/row_bot/launcher.py, src/row_bot/buddy, src/row_bot/ui/buddy.py]

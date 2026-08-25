@@ -81,8 +81,8 @@ def test_buddy_desktop_and_packaging_hooks_exist():
     assert "parse_qs(parsed.query or \"\")" in launcher_src
     assert "manual = str((qs.get(\"manual\") or [\"1\"])[0]).lower()" in launcher_src
     assert "_buddy_overlay_url" in launcher_src
-    assert '"transparent": True' in launcher_src
-    assert '"background_color": "#000000"' in launcher_src
+    assert '"transparent": native_overlay_transparency(sys.platform)' in launcher_src
+    assert '"background_color": "#0B1119"' in launcher_src
     assert '"background_color": "#00000000"' not in launcher_src
     assert "fallback_kwargs.pop(\"background_color\", None)" in launcher_src
     assert "minimal_kwargs" in launcher_src
@@ -102,7 +102,14 @@ def test_buddy_desktop_and_packaging_hooks_exist():
     assert "set_buddy_desktop_enabled" not in launcher_src
     assert "_install_main_window_buddy_events(main_window)" in launcher_src
     assert "window.events.closing += _on_main_window_closing" in launcher_src
-    assert 'startup restore failed; returned Buddy to the main dock' in launcher_src
+    assert 'startup reset Buddy to the main dock' in launcher_src
+    startup_reset = launcher_src.index("_reset_buddy_placement_for_startup()", launcher_src.index("url, title ="))
+    dpi_setup = launcher_src.index("enable_windows_per_monitor_dpi(sys.platform)", launcher_src.index("url, title ="))
+    main_create = launcher_src.index("main_window = webview.create_window", launcher_src.index("url, title ="))
+    assert startup_reset < main_create
+    assert dpi_setup < main_create
+    loaded_section = launcher_src.split("def _on_loaded", 1)[1].split("_JS_API =", 1)[0]
+    assert "open_buddy_window" not in loaded_section
     assert 'page-ready handshake timed out; forced native show' in launcher_src
     assert "window.events.minimized +=" not in launcher_src
     assert "window.events.restored +=" not in launcher_src

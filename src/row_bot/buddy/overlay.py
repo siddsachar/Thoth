@@ -76,6 +76,20 @@ def placement_state_from_config(config: Mapping[str, Any] | None) -> BuddyPlacem
     return BuddyPlacementState(placement, visible, collapsed)
 
 
+def placement_state_for_app_startup(
+    config: Mapping[str, Any] | None,
+) -> BuddyPlacementState:
+    """Return the safe in-app placement used for every fresh app launch.
+
+    Tear-off is intentionally session-scoped.  A persisted hidden preference
+    remains hidden, but a previous desktop placement never recreates a native
+    overlay before the user explicitly tears Buddy off again.
+    """
+
+    state = placement_state_from_config(config)
+    return BuddyPlacementState(BuddyPlacement.DOCKED, state.visible, False)
+
+
 def apply_placement_state(config: Mapping[str, Any], state: BuddyPlacementState) -> dict[str, Any]:
     """Return a canonical config update without reviving legacy surface flags."""
 
@@ -104,6 +118,43 @@ def should_defer_native_show(*, ready: bool, manual: bool) -> bool:
     """
 
     return not bool(ready) and not bool(manual)
+
+
+def native_overlay_transparency(platform_name: str) -> bool:
+    """Use an opaque Windows host so the overlay remains hit-testable.
+
+    pywebview's WinForms transparency support uses ``TransparencyKey``.  With
+    WebView2 composition that can make the rendered child visually present
+    while Windows sends pointer input to the application underneath it.
+    """
+
+    return str(platform_name or "").lower() != "win32"
+
+
+def enable_windows_per_monitor_dpi(
+    platform_name: str | None = None,
+    *,
+    set_context: Callable[[Any], Any] | None = None,
+) -> bool:
+    """Opt the native host into per-monitor-v2 coordinates before WinForms.
+
+    This keeps JavaScript ``screenX`` tear-off coordinates and pywebview monitor
+    bounds in the same coordinate space on mixed-DPI Windows desktops.
+    """
+
+    if str(platform_name or sys.platform).lower() != "win32":
+        return False
+    try:
+        if set_context is not None:
+            return bool(set_context(-4))
+        import ctypes
+
+        setter = ctypes.windll.user32.SetProcessDpiAwarenessContext
+        setter.argtypes = [ctypes.c_void_p]
+        setter.restype = ctypes.c_bool
+        return bool(setter(ctypes.c_void_p(-4)))
+    except Exception:
+        return False
 
 
 class NativeBuddyLifecycle:
