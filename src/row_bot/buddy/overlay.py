@@ -441,20 +441,61 @@ def project_approval(pending: Any) -> ApprovalProjection:
     items = [item for item in items if item is not None]
     if not items:
         return ApprovalProjection()
-    item = items[0]
-    if len(items) != 1 or not isinstance(item, Mapping):
-        return ApprovalProjection(True, False, "Approval required", "Review in Row-Bot", len(items))
-    description = plain_text_projection(
-        item.get("description")
-        or item.get("expected_effect")
-        or item.get("label")
-        or item.get("reason")
+    projected: list[tuple[str, str]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            return ApprovalProjection(
+                True,
+                False,
+                "Approval required",
+                "Review in Row-Bot",
+                len(items),
+            )
+        description = plain_text_projection(
+            item.get("description")
+            or item.get("expected_effect")
+            or item.get("label")
+            or item.get("reason")
+        )
+        reason = plain_text_projection(
+            item.get("reason")
+            or item.get("target")
+            or item.get("data_summary")
+            or item.get("origin_and_path")
+            or item.get("action")
+        )
+        has_structured_context = bool(
+            reason
+            or item.get("reversible") is not None
+            or isinstance(item.get("args"), Mapping) and item.get("args")
+        )
+        if not description or not has_structured_context:
+            return ApprovalProjection(
+                True,
+                False,
+                "Approval required",
+                "Review in Row-Bot",
+                len(items),
+            )
+        projected.append((description, reason))
+
+    if len(projected) == 1:
+        description, reason = projected[0]
+        return ApprovalProjection(True, True, description[:240], reason[:240], 1)
+
+    summaries: list[str] = []
+    for description, reason in projected:
+        summary = description if not reason else f"{description} — {reason}"
+        if summary not in summaries:
+            summaries.append(summary)
+    description = f"Approve {len(items)} actions: " + "; ".join(summaries)
+    return ApprovalProjection(
+        True,
+        True,
+        description[:480],
+        "Approve all or open details",
+        len(items),
     )
-    reason = plain_text_projection(item.get("reason") or item.get("target") or item.get("data_summary"))
-    sufficiently_described = bool(description and (reason or item.get("reversible") is not None))
-    if not sufficiently_described:
-        return ApprovalProjection(True, False, "Approval required", "Review in Row-Bot", 1)
-    return ApprovalProjection(True, True, description[:240], reason[:240], 1)
 
 
 def _latest_assistant_text(messages: Iterable[Any]) -> str:

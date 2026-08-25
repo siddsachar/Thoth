@@ -334,15 +334,41 @@ def test_snapshot_projects_runtime_errors_without_starting_another_turn(message)
     assert snapshot.can_stop is False
 
 
-def test_simple_approval_can_be_projected_but_grouped_or_vague_requires_full_ui():
+def test_well_described_approvals_can_be_settled_in_overlay_but_vague_requires_full_ui():
     simple = project_approval(
         {"description": "Write the reviewed file", "target": "notes.md", "reversible": True}
     )
     assert simple == ApprovalProjection(True, True, "Write the reviewed file", "notes.md", 1)
-    grouped = project_approval([{"description": "one"}, {"description": "two"}])
-    assert grouped == ApprovalProjection(True, False, "Approval required", "Review in Row-Bot", 2)
+    grouped = project_approval(
+        [
+            {"description": "Focus Edge", "action": "focus"},
+            {"description": "Select the AI topic", "target": "AI"},
+        ]
+    )
+    assert grouped.required is True
+    assert grouped.simple is True
+    assert grouped.count == 2
+    assert "Focus Edge" in grouped.description
+    assert "Select the AI topic" in grouped.description
+    assert grouped.reason == "Approve all or open details"
     vague = project_approval({"tool": "shell"})
     assert vague.simple is False
+
+
+def test_grouped_approval_with_an_undescribed_action_still_requires_full_ui():
+    projection = project_approval(
+        [
+            {"description": "Focus Edge", "action": "focus"},
+            {"tool": "browser_click"},
+        ]
+    )
+    assert projection == ApprovalProjection(
+        True,
+        False,
+        "Approval required",
+        "Review in Row-Bot",
+        2,
+    )
 
 
 @dataclass

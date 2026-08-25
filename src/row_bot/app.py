@@ -374,6 +374,7 @@ from row_bot.ui.streaming import (
     _sync_thread_approval_messages,
     _thread_has_attached_live_generation,
     _update_direct_agent_refresh_keys,
+    _sync_pending_interrupt_dialog,
     build_interrupt_dialog,
     send_message,
 )
@@ -2055,7 +2056,29 @@ async def index():
         defer_ui(_hydrate)
 
     # ── Interrupt dialog ─────────────────────────────────────────────────
-    show_interrupt = build_interrupt_dialog(state, p, cb)
+    render_interrupt = build_interrupt_dialog(state, p, cb)
+    _rendered_interrupt: dict[str, Any] = {}
+
+    def show_interrupt(data: Any) -> None:
+        render_interrupt(data)
+        generation_id = str(
+            getattr(state, "pending_interrupt_generation_id", "") or ""
+        )
+        if data is getattr(state, "pending_interrupt", None) and generation_id:
+            _rendered_interrupt.clear()
+            _rendered_interrupt.update(
+                {"generation_id": generation_id, "payload": data}
+            )
+
+    def _poll_pending_interrupt_dialog() -> None:
+        """Render approvals raised by another UI client, including Buddy."""
+
+        _sync_pending_interrupt_dialog(
+            state,
+            show_interrupt=show_interrupt,
+            close_interrupt=p.interrupt_dlg.close,
+            rendered=_rendered_interrupt,
+        )
 
     # ── Wire callback bundle ─────────────────────────────────────────────
     cb.rebuild_main = _rebuild_main
@@ -2807,7 +2830,13 @@ async def index():
     _notification_timer = safe_timer(1.0, _poll_notifications)
     _voice_timer = safe_timer(0.3, _poll_voice)
     _agent_card_timer = safe_timer(1.0, _poll_agent_card_refresh)
-    deactivate_on_disconnect(_notification_timer, _voice_timer, _agent_card_timer)
+    _interrupt_timer = safe_timer(0.2, _poll_pending_interrupt_dialog)
+    deactivate_on_disconnect(
+        _notification_timer,
+        _voice_timer,
+        _agent_card_timer,
+        _interrupt_timer,
+    )
 
     # ── Build initial view ───────────────────────────────────────────────
     _rebuild_main()

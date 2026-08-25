@@ -94,6 +94,51 @@ class StopResult:
         return self.status in {"stopped", "already_stopped"}
 
 
+def _sync_pending_interrupt_dialog(
+    state: AppState,
+    *,
+    show_interrupt: Callable[[Any], None],
+    close_interrupt: Callable[[], None],
+    rendered: dict[str, Any],
+) -> bool:
+    """Keep a client's full approval dialog aligned with shared state.
+
+    Buddy and the main page are separate NiceGUI clients, but intentionally
+    share the same ``AppState``.  An interrupt raised by Buddy therefore has
+    all of the data needed by the existing full approval dialog; this helper
+    only projects that state into the main client.  The payload reference is
+    retained so a later interrupt in the same generation is still rendered.
+    """
+
+    thread_id = str(getattr(state, "thread_id", "") or "")
+    generation_id = str(
+        getattr(state, "pending_interrupt_generation_id", "") or ""
+    )
+    pending = getattr(state, "pending_interrupt", None)
+    matches_selected_thread = bool(
+        thread_id
+        and generation_id.startswith(f"{thread_id}:")
+        and pending is not None
+    )
+    if not matches_selected_thread:
+        if rendered:
+            close_interrupt()
+            rendered.clear()
+            return True
+        return False
+
+    if (
+        rendered.get("generation_id") == generation_id
+        and rendered.get("payload") is pending
+    ):
+        return False
+
+    show_interrupt(pending)
+    rendered.clear()
+    rendered.update({"generation_id": generation_id, "payload": pending})
+    return True
+
+
 def _profile_runtime_config_for_thread(thread_id: str) -> dict[str, Any]:
     """Return Agent Profile runtime config for a chat thread, if one is selected."""
     thread_id = str(thread_id or "").strip()

@@ -390,24 +390,24 @@ body.row-bot-buddy-overlay-body {
     box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
 }
 .row-bot-buddy-overlay-header {
-    min-height: 54px;
+    min-height: 44px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     cursor: grab;
     user-select: none;
 }
 .row-bot-buddy-overlay-header:active { cursor: grabbing; }
 .row-bot-buddy-overlay-avatar {
-    width: 52px;
-    min-width: 52px;
-    height: 52px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
     overflow: hidden;
     pointer-events: none;
 }
 .row-bot-buddy-overlay-avatar .row-bot-buddy-stage {
-    width: 52px;
-    height: 52px;
+    width: 44px;
+    height: 44px;
     border-radius: 999px;
 }
 .row-bot-buddy-overlay-avatar .row-bot-buddy-status { display: none; }
@@ -417,7 +417,7 @@ body.row-bot-buddy-overlay-body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
 }
 .row-bot-buddy-overlay-subtitle {
@@ -431,33 +431,50 @@ body.row-bot-buddy-overlay-body {
 .row-bot-buddy-overlay-no-drag,
 .row-bot-buddy-overlay-no-drag * { cursor: default; }
 .row-bot-buddy-overlay-response {
-    min-height: 62px;
-    max-height: 72px;
+    min-height: 48px;
+    max-height: 54px;
     overflow-y: auto;
     padding: 7px 9px;
     border-radius: 9px;
     background: rgba(3, 7, 12, 0.56);
     border: 1px solid rgba(148, 163, 184, 0.16);
     color: #d9e2ec;
-    font-size: 11px;
-    line-height: 1.35;
+    font-size: 10px;
+    line-height: 1.25;
     white-space: pre-wrap;
     word-break: break-word;
 }
 .row-bot-buddy-overlay-approval {
-    padding: 6px 8px;
+    min-height: 34px;
+    padding: 3px 5px;
     border-radius: 9px;
     background: rgba(78, 54, 4, 0.34);
     border: 1px solid rgba(228, 194, 94, 0.34);
 }
+.row-bot-buddy-overlay-approval-summary {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #e8e1cc;
+    font-size: 10px;
+    line-height: 1.2;
+}
+.row-bot-buddy-overlay-approval-actions { flex-shrink: 0; }
+.row-bot-buddy-overlay-approval-actions .q-btn {
+    min-height: 25px;
+    padding: 0 5px;
+    font-size: 10px;
+}
 .row-bot-buddy-overlay-composer {
-    min-height: 38px;
+    min-height: 31px;
     border-radius: 10px;
     background: rgba(3, 7, 12, 0.68);
     border: 1px solid rgba(92, 167, 183, 0.26);
 }
 .row-bot-buddy-overlay-composer textarea {
-    max-height: 58px !important;
+    max-height: 42px !important;
     overflow-y: auto !important;
     font-size: 11px !important;
     line-height: 1.25 !important;
@@ -1056,9 +1073,7 @@ def build_buddy_overlay_page(state) -> None:
                 build_buddy_surface("desktop")
             with ui.column().classes("row-bot-buddy-overlay-meta"):
                 thread_label = ui.label("New chat").classes("row-bot-buddy-overlay-title")
-                surface_label = ui.label("Chat").classes("row-bot-buddy-overlay-subtitle")
-                target_app_label = ui.label("").classes("row-bot-buddy-overlay-subtitle")
-                target_app_label.set_visibility(False)
+                context_label = ui.label("Chat").classes("row-bot-buddy-overlay-subtitle")
             with ui.element("div").classes("row-bot-buddy-overlay-no-drag"):
                 menu_button = ui.button(icon="more_horiz").props(
                     "flat round dense size=sm aria-label='Buddy actions'"
@@ -1078,18 +1093,23 @@ def build_buddy_overlay_page(state) -> None:
             response_label._props["role"] = "status"
             response_label._props["aria-live"] = "polite"
 
-            with ui.column().classes("row-bot-buddy-overlay-approval w-full gap-1") as approval_box:
-                approval_description = ui.label("Approval required").classes("text-xs text-weight-medium")
-                approval_reason = ui.label("").classes("text-caption text-grey-5")
-                with ui.row().classes("w-full justify-end gap-1"):
+            with ui.row().classes(
+                "row-bot-buddy-overlay-approval w-full items-center no-wrap gap-1"
+            ) as approval_box:
+                approval_summary = ui.label("Approval required").classes(
+                    "row-bot-buddy-overlay-approval-summary"
+                )
+                with ui.row().classes(
+                    "row-bot-buddy-overlay-approval-actions items-center no-wrap gap-0"
+                ):
                     deny_button = ui.button("Deny").props("flat dense no-caps size=sm color=negative")
-                    review_button = ui.button("Open details").props("flat dense no-caps size=sm")
+                    review_button = ui.button("Details").props("flat dense no-caps size=sm")
                     approve_button = ui.button("Approve").props("flat dense no-caps size=sm color=positive")
             approval_box.set_visibility(False)
 
             with ui.row().classes("row-bot-buddy-overlay-composer w-full items-end no-wrap gap-1 q-px-xs"):
                 composer = ui.textarea(placeholder="Message this thread…").classes("w-full").props(
-                    "borderless autogrow rows=1 input-style='padding: 7px 5px;' aria-label='Buddy message'"
+                    "dense borderless autogrow rows=1 input-style='padding: 4px 3px;' aria-label='Buddy message'"
                 )
                 send_button = ui.button(icon="send").props("flat round dense size=sm aria-label='Send'")
                 stop_button = ui.button(icon="stop").props("flat round dense size=sm color=negative aria-label='Stop'")
@@ -1197,7 +1217,16 @@ def build_buddy_overlay_page(state) -> None:
         "thread_id": "",
         "foreground_poll": 0.0,
         "error_by_thread": {},
+        "surface": "Chat",
+        "target_app": "",
     }
+
+    def _render_context_label() -> None:
+        surface = str(projection_state["surface"] or "Chat")
+        target_app = str(projection_state["target_app"] or "")
+        context_label.set_text(
+            f"{surface} · Target: {target_app}" if target_app else surface
+        )
 
     async def _poll_projection() -> None:
         now = time.monotonic()
@@ -1226,23 +1255,27 @@ def build_buddy_overlay_page(state) -> None:
         if effective_key != projection_state["key"]:
             projection_state["key"] = effective_key
             thread_label.set_text(snapshot.thread_name)
-            surface_label.set_text(
+            projection_state["surface"] = (
                 {"normal_chat": "Chat", "developer": "Developer", "designer": "Designer"}.get(
                     snapshot.runtime_surface.value,
                     "Chat",
                 )
             )
+            _render_context_label()
             display_text = snapshot.error or cached_error or snapshot.response_text or snapshot.progress_text or "Ready"
             response_label.set_text(display_text)
             send_button.set_visibility(not snapshot.generating)
             stop_button.set_visibility(snapshot.can_stop)
             approval_box.set_visibility(snapshot.approval.required)
             if snapshot.approval.required:
-                approval_description.set_text(snapshot.approval.description or "Approval required")
-                approval_reason.set_text(snapshot.approval.reason)
+                summary = snapshot.approval.description or "Approval required"
+                if snapshot.approval.reason:
+                    summary = f"{summary} · {snapshot.approval.reason}"
+                approval_summary.set_text(summary)
                 approve_button.set_visibility(snapshot.approval.simple)
                 deny_button.set_visibility(snapshot.approval.simple)
-                review_button.set_text("Open details" if snapshot.approval.simple else "Review in Row-Bot")
+                approve_button.set_text("Approve all" if snapshot.approval.count > 1 else "Approve")
+                review_button.set_text("Details" if snapshot.approval.simple else "Review")
             await client.run_javascript(
                 f"""
                 (() => {{
@@ -1263,8 +1296,9 @@ def build_buddy_overlay_page(state) -> None:
             projection_state["foreground_poll"] = now
             target = await _native_call("api.get_foreground_target ? api.get_foreground_target() : null", "null")
             app_name = str(target.get("app_name") or "") if isinstance(target, dict) else ""
-            target_app_label.set_text(f"Target: {app_name}" if app_name else "")
-            target_app_label.set_visibility(bool(app_name))
+            if projection_state["target_app"] != app_name:
+                projection_state["target_app"] = app_name
+                _render_context_label()
 
     ui.timer(0.15, _poll_projection)
     _load_selected_draft(str(getattr(state, "thread_id", "") or ""), force=True)

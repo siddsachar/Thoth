@@ -293,6 +293,77 @@ def test_stale_approval_callback_cannot_resume_after_stop(monkeypatch) -> None:
     ]
 
 
+def test_pending_interrupt_dialog_sync_handoffs_between_ui_clients() -> None:
+    first = {"description": "Use the browser", "tool": "browser"}
+    state = SimpleNamespace(
+        thread_id="thread-overlay",
+        pending_interrupt=first,
+        pending_interrupt_generation_id="thread-overlay:generation-1",
+    )
+    rendered: dict[str, object] = {}
+    shown: list[object] = []
+    closed: list[bool] = []
+
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: closed.append(True),
+        rendered=rendered,
+    ) is True
+    assert shown == [first]
+    assert closed == []
+
+    # Polling is idempotent while the same approval remains pending.
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: closed.append(True),
+        rendered=rendered,
+    ) is False
+    assert shown == [first]
+
+    # A second interrupt may reuse the generation id after resume.  Its new
+    # payload must still replace the previously rendered approval.
+    second = {"description": "Submit the reviewed form", "tool": "browser"}
+    state.pending_interrupt = second
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: closed.append(True),
+        rendered=rendered,
+    ) is True
+    assert shown == [first, second]
+
+    # Settling from Buddy clears the stale modal in the full UI client.
+    state.pending_interrupt = None
+    state.pending_interrupt_generation_id = ""
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: closed.append(True),
+        rendered=rendered,
+    ) is True
+    assert closed == [True]
+    assert rendered == {}
+
+
+def test_pending_interrupt_dialog_sync_rejects_other_thread_approval() -> None:
+    state = SimpleNamespace(
+        thread_id="thread-selected",
+        pending_interrupt={"description": "Old thread action"},
+        pending_interrupt_generation_id="thread-other:generation-1",
+    )
+    shown: list[object] = []
+
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: None,
+        rendered={},
+    ) is False
+    assert shown == []
+
+
 def test_modal_stop_closes_approval_and_settles_before_service_cleanup(
     monkeypatch,
 ) -> None:
