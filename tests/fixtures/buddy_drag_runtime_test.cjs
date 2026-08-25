@@ -142,7 +142,9 @@ function createEnvironment(tearOff) {
     const document = {
         body,
         getElementById: id => elements.get(id) || null,
-        querySelectorAll: () => [],
+        querySelectorAll: selector => (
+            selector === '[data-buddy-in-app-shell]' ? [target] : []
+        ),
     };
     const context = { window, document, CustomEvent: FakeCustomEvent, Promise, Number, Math };
     window.document = document;
@@ -171,6 +173,7 @@ function createEnvironment(tearOff) {
         dock,
         notifications,
         target,
+        window,
     };
 }
 
@@ -204,6 +207,30 @@ async function firstDragKeepsCaptureAndCommits() {
     assert.equal(delivered, true);
     await settle();
     assert.equal(env.apiCalls.length, 1);
+    assert.equal(env.target.style.display, 'none');
+}
+
+async function snapshotRefreshDoesNotInterruptDrag() {
+    let resolveNative;
+    const env = createEnvironment(() => new Promise(resolve => { resolveNative = resolve; }));
+    env.deliver(pointer('pointerdown'));
+    env.window.RowBotBuddyDock.resetAll();
+    env.deliver(pointer('pointermove', { clientX: 150, clientY: 150 }));
+    assert.equal(env.target.parentElement, env.body);
+    env.window.RowBotBuddyDock.resetAll();
+    assert.equal(env.target.parentElement, env.body);
+    assert.equal(env.target.hasPointerCapture(7), true);
+    env.deliver(pointer('pointerup', {
+        clientX: 500,
+        clientY: 400,
+        screenX: 1500,
+        screenY: 1000,
+    }));
+    env.window.RowBotBuddyDock.resetAll();
+    assert.equal(env.apiCalls.length, 1);
+    assert.equal(env.target.parentElement, env.body);
+    resolveNative(true);
+    await settle();
     assert.equal(env.target.style.display, 'none');
 }
 
@@ -304,6 +331,7 @@ async function nativeRejectionRestores() {
 const scenarios = {
     click_below_threshold: clickBelowThreshold,
     first_drag: firstDragKeepsCaptureAndCommits,
+    snapshot_refresh: snapshotRefreshDoesNotInterruptDrag,
     edge_idempotent: edgeAndPointerUpCommitOnce,
     release_over_dock: releaseOverDockCancels,
     pointer_cancel: pointerCancelRestores,

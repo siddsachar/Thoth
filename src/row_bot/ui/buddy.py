@@ -867,6 +867,7 @@ def _install_in_app_buddy_drag_js(element_id: str, dock_id: str) -> str:
                     if (!target || !targetDock || target.dataset.buddyDragInstalled === '1') return;
                     target.dataset.buddyDockId = dockId;
                     target.dataset.buddyDragInstalled = '1';
+                    let gesture = null;
                     const dockHome = () => {{
                         target.classList.add('row-bot-buddy-docked');
                         target.classList.remove('row-bot-buddy-drag-preview', 'row-bot-buddy-dragging');
@@ -889,8 +890,14 @@ def _install_in_app_buddy_drag_js(element_id: str, dock_id: str) -> str:
                         if (target.parentElement !== document.body) document.body.appendChild(target);
                         try {{ target.setPointerCapture(active.pointerId); }} catch (error) {{}}
                     }};
-                    target.__rowBotBuddyDockHome = dockHome;
-                    let gesture = null;
+                    target.__rowBotBuddyDockHome = () => {{
+                        const ownsProjection = gesture && (
+                            gesture.phase === 'pressed'
+                            || gesture.phase === 'previewing'
+                            || gesture.phase === 'committing'
+                        );
+                        if (!ownsProjection) dockHome();
+                    }};
                     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
                     const containsPoint = (rect, event) => Boolean(
                         rect

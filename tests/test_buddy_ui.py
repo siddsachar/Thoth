@@ -25,6 +25,7 @@ def _read(relative: str) -> str:
     [
         "click_below_threshold",
         "first_drag",
+        "snapshot_refresh",
         "edge_idempotent",
         "release_over_dock",
         "pointer_cancel",
