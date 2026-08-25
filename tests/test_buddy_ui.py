@@ -68,7 +68,10 @@ def test_buddy_desktop_and_packaging_hooks_exist():
     assert "close_buddy_window" in launcher_src
     assert "show_buddy_window" in launcher_src
     assert "hide_buddy_window" in launcher_src
-    assert "minimize_buddy_window" in launcher_src
+    assert "tear_off_buddy" in launcher_src
+    assert "dock_buddy" in launcher_src
+    assert "restore_foreground_target" in launcher_src
+    assert "show_main_window" in launcher_src
     assert "Show Buddy" in launcher_src
     assert "Hide Buddy" in launcher_src
     assert "_send_window_command" in launcher_src
@@ -85,33 +88,32 @@ def test_buddy_desktop_and_packaging_hooks_exist():
     assert "minimal_kwargs" in launcher_src
     assert "plain_kwargs" in launcher_src
     assert "Buddy overlay create_window failed" in launcher_src
-    assert "webview.create_window(\"Buddy\", url, width=width, height=height)" in launcher_src
+    assert "webview.create_window(\"Buddy\", url, width=width, height=height, js_api=_JS_API)" in launcher_src
     assert '"shadow": False' in launcher_src
-    assert '"focus": False' in launcher_src
+    assert '"focus": True' in launcher_src
     assert '"hidden": True' in launcher_src
-    assert '"easy_drag", "hidden"' in launcher_src
+    assert '"easy_drag": False' in launcher_src
     assert "_BUDDY_WINDOW_READY = False" in launcher_src
-    assert "if not _BUDDY_WINDOW_READY:" in launcher_src
-    assert "_BUDDY_MANUALLY_HIDDEN" in launcher_src
-    assert "_BUDDY_DESKTOP_ENABLED = False" in launcher_src
+    assert "should_defer_native_show(ready=_BUDDY_WINDOW_READY" in launcher_src
+    assert "_BUDDY_MANUALLY_HIDDEN" not in launcher_src
+    assert "_BUDDY_DESKTOP_ENABLED" not in launcher_src
     assert "row_bot_window.log" in launcher_src
     assert "[buddy.window]" in launcher_src
-    assert "set_buddy_desktop_enabled" in launcher_src
+    assert "set_buddy_desktop_enabled" not in launcher_src
     assert "_install_main_window_buddy_events(main_window)" in launcher_src
-    assert "window.events.minimized += lambda *_args: _auto_show_buddy_window(\"main_window_minimized\")" in launcher_src
-    assert "window.events.restored += lambda *_args: _auto_hide_buddy_window(\"main_window_restored\")" in launcher_src
-    assert "window.events.shown += lambda *_args: _auto_hide_buddy_window(\"main_window_shown\")" in launcher_src
-    assert "window.events.closed += lambda *_args: _close_buddy_window_for_main_close()" in launcher_src
-    assert "_JS_API.show_buddy_window(False, _APP_PORT, 260, 260)" in launcher_src
-    assert "_JS_API.hide_buddy_window(False)" in launcher_src
-    assert "cache_bust=False" in launcher_src
-    assert "buddy_refresh" in launcher_src
+    assert "window.events.closing += _on_main_window_closing" in launcher_src
+    assert 'startup restore failed; returned Buddy to the main dock' in launcher_src
+    assert 'page-ready handshake timed out; forced native show' in launcher_src
+    assert "window.events.minimized +=" not in launcher_src
+    assert "window.events.restored +=" not in launcher_src
+    assert "window.events.shown +=" not in launcher_src
+    assert "OVERLAY_WIDTH" in launcher_src
+    assert "OVERLAY_HEIGHT" in launcher_src
     assert "_WINDOW_SCRIPT = r'''\nimport sys\nimport time" in launcher_src
     assert "_APP_ICON_PATH = app_icon_path()" in launcher_src
     assert "icon=_ICON_PATH if _ICON_PATH and os.path.isfile(_ICON_PATH) else None" in launcher_src
     assert "url = _buddy_overlay_url(buddy_port)" in launcher_src
-    assert "refresh_url = _buddy_overlay_url(buddy_port, cache_bust=True)" in launcher_src
-    assert "existing.load_url(refresh_url)" in launcher_src
+    assert "existing.load_url" not in launcher_src.split("def open_buddy_window", 1)[1].split("def mark_buddy_window_ready", 1)[0]
     assert '"url": url' in launcher_src
     assert "from buddy.desktop import open_buddy_overlay" not in launcher_src
     assert "..\\src\\row_bot\\*" in inno_src
@@ -357,18 +359,21 @@ def test_chat_avatar_uses_buddy_preview_only_for_default(monkeypatch):
 def test_buddy_settings_visibility_controls_are_not_redundant():
     buddy_ui_src = _read("src/row_bot/ui/buddy.py")
 
-    assert '_section("Visibility"' not in buddy_ui_src
-    assert '_section("Where it appears"' in buddy_ui_src
+    assert '_section("Visibility"' in buddy_ui_src
+    assert '_section("Where it appears"' not in buddy_ui_src
     assert '_section("Surfaces"' not in buddy_ui_src
-    assert 'ui.switch("Enable Buddy"' not in buddy_ui_src
-    assert '"In-app Buddy"' not in buddy_ui_src
-    assert '"In app"' in buddy_ui_src
-    assert "in_app_initial" in buddy_ui_src
-    assert "desktop_initial" in buddy_ui_src
-    assert '"enabled": in_app_enabled or desktop_enabled' in buddy_ui_src
-    assert '"sidebar_enabled": in_app_enabled' in buddy_ui_src
-    assert '"desktop_enabled": desktop_enabled' in buddy_ui_src
-    assert '"floating_enabled": False' in buddy_ui_src
+    assert 'ui.switch("Show Buddy"' in buddy_ui_src
+    assert '"Desktop overlay"' not in buddy_ui_src
+    assert "in_app_initial" not in buddy_ui_src
+    assert "desktop_initial" not in buddy_ui_src
+    assert '"enabled": visible' in buddy_ui_src
+    settings_src = buddy_ui_src.split("def build_buddy_settings_tab", 1)[1]
+    assert '"show_buddy_window" if visible else "hide_buddy_window"' in settings_src
+    assert "api.{native_method}(true)" in settings_src
+    assert '"visible": visible' in buddy_ui_src
+    assert '"sidebar_enabled"' not in buddy_ui_src
+    assert '"desktop_enabled"' not in buddy_ui_src
+    assert '"floating_enabled"' not in buddy_ui_src
 
 
 def test_buddy_settings_strips_redundant_pack_prefixes():
@@ -403,18 +408,17 @@ def test_buddy_surface_sizing_and_docked_drag_are_targeted():
     assert "sidebar_avatar_label = ui.label" not in buddy_ui_src
     assert "root.dataset.displayName" not in runtime_src
     assert "buddy-label" not in runtime_src
-    assert ".row-bot-buddy-in-app.row-bot-buddy-undocked .row-bot-buddy-stage::after" in buddy_ui_src
+    assert ".row-bot-buddy-in-app.row-bot-buddy-drag-preview .row-bot-buddy-stage::after" in buddy_ui_src
     assert "display: none" in buddy_ui_src
     assert "buddyDragInstalled" in buddy_ui_src
     assert "RowBotBuddyDock" in buddy_ui_src
     assert "row-bot-buddy-dock-empty" in buddy_ui_src
-    assert "row-bot-buddy-dock-hover" in buddy_ui_src
     assert "row-bot-buddy-docked" in buddy_ui_src
-    assert "row-bot-buddy-undocked" in buddy_ui_src
+    assert "row-bot-buddy-undocked" not in buddy_ui_src
     assert "document.body.appendChild(target)" in buddy_ui_src
     assert "targetDock.appendChild(target)" in buddy_ui_src
-    assert "setSurface('floating')" in buddy_ui_src
-    assert "setSurface('sidebar')" in buddy_ui_src
+    assert "setSurface('floating')" not in buddy_ui_src
+    assert "api.tear_off_buddy" in buddy_ui_src
     assert "resetAll()" in buddy_ui_src
     assert "setPointerCapture" in buddy_ui_src
     assert "CustomEvent('buddy-click'" in buddy_ui_src
@@ -447,7 +451,7 @@ def test_buddy_status_bubbles_and_hot_apply_are_wired():
 
     assert "data-bubble-verbosity" in buddy_ui_src
     assert '.row-bot-buddy-wrap[data-surface="sidebar"] .row-bot-buddy-status' in buddy_ui_src
-    assert ".row-bot-buddy-in-app.row-bot-buddy-undocked .row-bot-buddy-status" in buddy_ui_src
+    assert ".row-bot-buddy-in-app.row-bot-buddy-drag-preview .row-bot-buddy-status" in buddy_ui_src
     assert ".row-bot-buddy-overlay-page .row-bot-buddy-status" in buddy_ui_src
     assert "width: min(68vw, 176px)" in buddy_ui_src
     assert "max-height: 58px" in buddy_ui_src
@@ -463,18 +467,17 @@ def test_buddy_status_bubbles_and_hot_apply_are_wired():
     assert "not getattr(client, \"_deleted\", False)" in buddy_ui_src
     assert "lambda: _push_snapshot(client)" in buddy_ui_src
     assert "pump_timer.cancel(with_current_invocation=True)" in buddy_ui_src
+    snapshot_section = buddy_ui_src.split("def _push_snapshot", 1)[1].split("def _ensure_buddy_client_runtime", 1)[0]
+    assert "if (docked && window.RowBotBuddyDock) window.RowBotBuddyDock.resetAll();" in snapshot_section
     assert "_apply_buddy_surface_settings" in buddy_ui_src
     assert "window.pywebview.api" in buddy_ui_src
-    assert "api.set_buddy_desktop_enabled" in buddy_ui_src
-    assert "open_buddy_window" in buddy_ui_src
-    assert "show_buddy_window" in buddy_ui_src
+    assert "api.set_buddy_desktop_enabled" not in buddy_ui_src
+    assert "api.tear_off_buddy" in buddy_ui_src
+    assert "api.dock_buddy" in buddy_ui_src
     assert "hide_buddy_window" in buddy_ui_src
     assert "minimize_buddy_window" not in buddy_ui_src
-    assert "close_buddy_window" in buddy_ui_src
     assert "document.querySelectorAll('[data-buddy-in-app-shell]')" in buddy_ui_src
-    assert "__ROW_BOT_BUDDY_DESKTOP_FOCUS_SYNC" in buddy_ui_src
-    assert "api.hide_buddy_window(false)" in buddy_ui_src
-    assert "api.show_buddy_window(false" in buddy_ui_src
+    assert "__ROW_BOT_BUDDY_DESKTOP_FOCUS_SYNC" not in buddy_ui_src
     assert "row-bot-buddy-overlay-controls" not in buddy_ui_src
     assert "_hide_desktop_overlay" not in buddy_ui_src
     assert "_show_desktop_overlay" not in buddy_ui_src

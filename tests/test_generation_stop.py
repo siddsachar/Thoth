@@ -113,6 +113,36 @@ def test_request_generation_stop_detaches_wakes_queue_and_cancels_scope(monkeypa
     assert state.pending_interrupt_runtime_surface == ""
 
 
+def test_overlay_stop_only_cancels_the_current_selected_thread(monkeypatch) -> None:
+    first = _generation("thread-first")
+    selected = _generation("thread-selected")
+    _active_generations.update({first.thread_id: first, selected.thread_id: selected})
+    monkeypatch.setattr(streaming, "_cleanup_live_control_sessions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(streaming, "_stop_generation_child_agent_runs", lambda _gen: None)
+    monkeypatch.setattr(streaming, "_stop_generation_voice_outputs", lambda *_args: None)
+    state = SimpleNamespace(
+        thread_id=selected.thread_id,
+        voice_coordinator=None,
+        tts_service=None,
+        pending_interrupt=None,
+        pending_interrupt_generation_id="",
+        pending_interrupt_tool_groups={},
+        pending_interrupt_runtime_surface="",
+    )
+
+    result = streaming.request_generation_stop(
+        selected.thread_id,
+        state=state,
+        p=None,
+        reason="buddy_overlay",
+    )
+
+    assert result.thread_id == selected.thread_id
+    assert selected.stop_event.is_set() is True
+    assert first.stop_event.is_set() is False
+    assert _active_generations == {first.thread_id: first}
+
+
 def test_generation_stop_emits_one_terminal_buddy_event_and_clears_tool_lane(
     monkeypatch,
 ) -> None:

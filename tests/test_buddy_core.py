@@ -4,6 +4,20 @@ import importlib
 import pathlib
 import threading
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_buddy_durable_activity(monkeypatch):
+    """Keep Buddy unit tests independent of stale deterministic-lane state."""
+
+    import row_bot.agent_orchestrator as orchestrator
+    import row_bot.tasks as tasks
+
+    monkeypatch.setattr(tasks, "get_pending_approvals", lambda: [])
+    monkeypatch.setattr(tasks, "get_running_tasks", lambda: {})
+    monkeypatch.setattr(orchestrator, "get_thread_orchestration_activity", lambda: {})
+
 
 def test_buddy_event_bus_assigns_ids_and_retains_recent_events():
     from row_bot.buddy.events import BuddyEventBus, BuddyEventType
@@ -431,11 +445,12 @@ def test_buddy_config_round_trips_to_temp_data_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(config_mod, "_DATA_DIR", tmp_path)
     monkeypatch.setattr(config_mod, "_BUDDY_CONFIG_PATH", tmp_path / "buddy_config.json")
 
-    saved = config_mod.set_buddy_config("floating_enabled", True)
+    saved = config_mod.set_buddy_config("placement", "desktop")
     loaded = config_mod.get_buddy_config()
 
-    assert saved["floating_enabled"] is True
-    assert loaded["floating_enabled"] is True
+    assert saved["placement"] == "desktop"
+    assert loaded["placement"] == "desktop"
+    assert loaded["visible"] is True
     assert loaded["pack_id"] == "glyph"
 
 
@@ -449,7 +464,8 @@ def test_buddy_config_loads_utf8_bom_file(monkeypatch, tmp_path):
 
     loaded = config_mod.get_buddy_config()
 
-    assert loaded["floating_enabled"] is True
+    assert loaded["placement"] == "docked"
+    assert "floating_enabled" not in loaded
     assert loaded["display_name"] == "BOM Buddy"
 
 

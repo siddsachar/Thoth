@@ -2889,7 +2889,7 @@ async def index():
 async def buddy_overlay():
     ui.dark_mode(True)
     from row_bot.ui.buddy import build_buddy_overlay_page
-    build_buddy_overlay_page()
+    build_buddy_overlay_page(state)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

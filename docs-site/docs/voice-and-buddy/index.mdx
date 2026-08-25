@@ -7,7 +7,7 @@ import Screenshot from '@site/src/components/Screenshot';
 
 # Voice And Buddy
 
-Voice and Buddy make Row-Bot feel less like a text box and more like a desktop companion. Voice handles speech input and optional spoken output. Buddy is the visual companion that reflects app state and can live in the sidebar, workspace, or desktop overlay.
+Voice and Buddy make Row-Bot feel less like a text box and more like a desktop companion. Voice handles speech input and optional spoken output. Buddy reflects app state and can be docked in the sidebar or torn off into a compact desktop overlay.
 
 <Screenshot id="settings-voice" alt="Row-Bot Voice settings." caption="Voice settings control Dictate, Talk, read-aloud, voice models, devices, and diagnostics." />
 
@@ -31,12 +31,14 @@ Open Settings -> Voice, choose **Local FunASR / SenseVoice**, and use the instal
 
 Select the microphone and output device in Settings -> Voice. Run diagnostics when audio is silent, delayed, or routed to the wrong device.
 
-<Screenshot id="settings-buddy" alt="Row-Bot Buddy settings." caption="Buddy settings control companion visibility, overlay, personality, look, motion, and optional custom-look generation." />
+<Screenshot id="settings-buddy" alt="Row-Bot Buddy settings." caption="Buddy settings control companion visibility, personality, look, motion, and optional custom-look generation." />
 
 ## Buddy Controls
 
-- **Enable switches** choose sidebar, workspace, or desktop overlay visibility.
-- **Open and close overlay** manage the separate desktop companion window.
+- **Show Buddy** controls companion visibility.
+- **Drag to tear off** moves Buddy from its sidebar dock into the native desktop overlay.
+- **Dock Buddy** in the overlay menu returns it to the sidebar.
+- The overlay follows the selected thread and shares its stream, drafts, tools, and approvals.
 - **Companion personality** changes the tone of Buddy cues.
 - **Bubble style** changes status presentation.
 - **Look cards** choose bundled or custom appearances.
@@ -53,4 +55,4 @@ Voice input can become chat text. Realtime voice and provider-backed speech may 
 - If SenseVoice reports missing packages, install the `voice` extra for a source checkout or repair the packaged app. If its snapshot is missing or incomplete, reinstall it from Voice settings.
 - If SenseVoice is unavailable on Intel macOS, select local Whisper instead.
 - If realtime voice is unavailable, check Providers and Voice Models.
-- If Buddy does not appear, check Buddy enable switches and overlay state.
+- If Buddy does not appear, enable **Show Buddy** or use the tray's **Show Buddy** action when it is torn off.

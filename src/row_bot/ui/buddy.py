@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
+import logging
 import pathlib
+import time
 import uuid
 
 from row_bot.brand import APP_DISPLAY_NAME
@@ -12,8 +15,18 @@ from nicegui import run, ui
 
 from row_bot.buddy.assets import delete_generated_buddy_pack, list_buddy_packs, load_buddy_pack, static_url_for_path
 from row_bot.buddy.brain import get_buddy_snapshot
-from row_bot.buddy.config import get_buddy_config, save_buddy_config, set_buddy_config
+from row_bot.buddy.config import (
+    get_buddy_config,
+    get_buddy_placement_state,
+    save_buddy_config,
+    set_buddy_config,
+)
 from row_bot.buddy.events import BuddyEventType, emit_buddy_event
+from row_bot.buddy.overlay import (
+    BuddyPlacement,
+    OverlayTurnTarget,
+    build_thread_snapshot,
+)
 from row_bot.buddy.hatch import (
     activate_hatch_art,
     activate_hatch_motion,
@@ -24,6 +37,8 @@ from row_bot.buddy.hatch import (
     use_hatch_still_only,
 )
 from row_bot.ui.confirm import confirm_destructive
+
+logger = logging.getLogger(__name__)
 
 _BUDDY_HEAD = """
 <script>
@@ -135,7 +150,7 @@ html.row-bot-buddy-overlay-html body {
 .row-bot-buddy-in-app.row-bot-buddy-dragging {
     cursor: grabbing;
 }
-.row-bot-buddy-in-app.row-bot-buddy-undocked {
+.row-bot-buddy-in-app.row-bot-buddy-drag-preview {
     position: fixed;
     right: 18px;
     bottom: 18px;
@@ -287,16 +302,16 @@ html.row-bot-buddy-overlay-html body {
         min-height: 13px;
         color: #a7b3c2;
 }
-.row-bot-buddy-in-app.row-bot-buddy-undocked .row-bot-buddy-stage {
+.row-bot-buddy-in-app.row-bot-buddy-drag-preview .row-bot-buddy-stage {
     width: 154px;
     height: 154px;
     filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.34));
     border: 0;
 }
-.row-bot-buddy-in-app.row-bot-buddy-undocked .row-bot-buddy-stage::after {
+.row-bot-buddy-in-app.row-bot-buddy-drag-preview .row-bot-buddy-stage::after {
     display: none;
 }
-.row-bot-buddy-in-app.row-bot-buddy-undocked .row-bot-buddy-wrap,
+.row-bot-buddy-in-app.row-bot-buddy-drag-preview .row-bot-buddy-wrap,
 .row-bot-buddy-overlay-page .row-bot-buddy-wrap {
     position: relative;
 }
@@ -306,7 +321,7 @@ html.row-bot-buddy-overlay-html body {
     justify-content: center;
     gap: 4px;
 }
-.row-bot-buddy-in-app.row-bot-buddy-undocked .row-bot-buddy-status,
+.row-bot-buddy-in-app.row-bot-buddy-drag-preview .row-bot-buddy-status,
 .row-bot-buddy-overlay-page .row-bot-buddy-status {
     display: block;
     max-width: 172px;
@@ -320,7 +335,6 @@ html.row-bot-buddy-overlay-html body {
     box-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
     backdrop-filter: blur(8px);
 }
-.row-bot-buddy-wrap[data-bubble-verbosity="quiet"][data-surface="floating"] .row-bot-buddy-status,
 .row-bot-buddy-wrap[data-bubble-verbosity="quiet"][data-surface="desktop"] .row-bot-buddy-status:empty {
     display: none;
 }
@@ -362,6 +376,98 @@ body.row-bot-buddy-overlay-body {
         line-height: 1.25;
         background: rgba(9, 13, 18, 0.86);
         border-color: rgba(228, 194, 94, 0.34);
+}
+.row-bot-buddy-overlay-page {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    place-items: initial;
+    gap: 6px;
+    color: #e7edf5;
+    background: linear-gradient(145deg, rgba(11, 17, 25, 0.97), rgba(17, 27, 38, 0.96));
+    border: 1px solid rgba(92, 167, 183, 0.34);
+    border-radius: 14px;
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
+}
+.row-bot-buddy-overlay-header {
+    min-height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: grab;
+    user-select: none;
+}
+.row-bot-buddy-overlay-header:active { cursor: grabbing; }
+.row-bot-buddy-overlay-avatar {
+    width: 52px;
+    min-width: 52px;
+    height: 52px;
+    overflow: hidden;
+    pointer-events: none;
+}
+.row-bot-buddy-overlay-avatar .row-bot-buddy-stage {
+    width: 52px;
+    height: 52px;
+    border-radius: 999px;
+}
+.row-bot-buddy-overlay-avatar .row-bot-buddy-status { display: none; }
+.row-bot-buddy-overlay-meta { min-width: 0; flex: 1; gap: 1px; }
+.row-bot-buddy-overlay-title {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 700;
+}
+.row-bot-buddy-overlay-subtitle {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #9fb0c3;
+    font-size: 10px;
+}
+.row-bot-buddy-overlay-no-drag,
+.row-bot-buddy-overlay-no-drag * { cursor: default; }
+.row-bot-buddy-overlay-response {
+    min-height: 62px;
+    max-height: 72px;
+    overflow-y: auto;
+    padding: 7px 9px;
+    border-radius: 9px;
+    background: rgba(3, 7, 12, 0.56);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: #d9e2ec;
+    font-size: 11px;
+    line-height: 1.35;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.row-bot-buddy-overlay-approval {
+    padding: 6px 8px;
+    border-radius: 9px;
+    background: rgba(78, 54, 4, 0.34);
+    border: 1px solid rgba(228, 194, 94, 0.34);
+}
+.row-bot-buddy-overlay-composer {
+    min-height: 38px;
+    border-radius: 10px;
+    background: rgba(3, 7, 12, 0.68);
+    border: 1px solid rgba(92, 167, 183, 0.26);
+}
+.row-bot-buddy-overlay-composer textarea {
+    max-height: 58px !important;
+    overflow-y: auto !important;
+    font-size: 11px !important;
+    line-height: 1.25 !important;
+}
+.row-bot-buddy-overlay-page.row-bot-buddy-overlay-collapsed .row-bot-buddy-overlay-body {
+    display: none !important;
+}
+.row-bot-buddy-overlay-page.row-bot-buddy-overlay-collapsed .row-bot-buddy-overlay-header {
+    flex: 1;
+    justify-content: center;
 }
 </style>
 """
@@ -530,7 +636,6 @@ def _clear_hatch_media_overrides(cfg: dict) -> None:
 def _refresh_existing_buddy_surfaces() -> None:
     surface_html = {
         "sidebar": _surface_html("sidebar"),
-        "floating": _surface_html("floating"),
         "desktop": _surface_html("desktop"),
     }
     code = f"""
@@ -577,10 +682,27 @@ def _push_snapshot(client=None) -> None:
     if client is not None and not _client_is_live(client):
         return
     snapshot = get_buddy_snapshot()
-    code = (
-        f"if (!window.__ROW_BOT_BUDDY_HOLD_SNAPSHOT && window.RowBotBuddy) "
-        f"window.RowBotBuddy.setState({json.dumps(snapshot)});"
+    placement = get_buddy_placement_state()
+    snapshot.update(
+        {
+            "placement": placement.placement.value,
+            "visible": placement.visible,
+            "collapsed": placement.collapsed,
+        }
     )
+    code = f"""
+        (() => {{
+            const snapshot = {json.dumps(snapshot)};
+            if (!window.__ROW_BOT_BUDDY_HOLD_SNAPSHOT && window.RowBotBuddy) {{
+                window.RowBotBuddy.setState(snapshot);
+            }}
+            const docked = snapshot.placement === 'docked' && snapshot.visible;
+            if (docked && window.RowBotBuddyDock) window.RowBotBuddyDock.resetAll();
+            document.querySelectorAll('[data-buddy-sidebar-shell], [data-buddy-in-app-shell]').forEach((element) => {{
+                element.style.display = docked ? '' : 'none';
+            }});
+        }})();
+    """
     try:
         if client is not None:
             client.run_javascript(code)
@@ -632,9 +754,8 @@ def _emit_buddy_hi() -> None:
 
 
 def _apply_buddy_surface_settings(cfg: dict) -> None:
-    enabled = bool(cfg.get("enabled", True))
-    in_app_enabled = enabled and bool(cfg.get("sidebar_enabled", True))
-    desktop_enabled = enabled and bool(cfg.get("desktop_enabled", False))
+    placement = get_buddy_placement_state()
+    in_app_enabled = bool(cfg.get("enabled", True)) and placement.visible and placement.placement is BuddyPlacement.DOCKED
     bubble_verbosity = str(cfg.get("bubble_verbosity") or "normal")
     personality = str(cfg.get("personality") or "warm_mystical")
     ui.run_javascript(
@@ -643,82 +764,27 @@ def _apply_buddy_surface_settings(cfg: dict) -> None:
             const inAppVisible = {json.dumps(in_app_enabled)};
             const bubbleVerbosity = {json.dumps(bubble_verbosity)};
             const personality = {json.dumps(personality)};
-            const notify = (message, type) => {{
-                if (window.Quasar && window.Quasar.Notify) {{
-                    window.Quasar.Notify.create({{ message, type: type || 'info', timeout: 2600 }});
-                }}
-            }};
             document.querySelectorAll('[data-buddy-sidebar-shell]').forEach((element) => {{
                 element.style.display = inAppVisible ? '' : 'none';
             }});
             document.querySelectorAll('[data-buddy-in-app-shell]').forEach((element) => {{
                 element.style.display = inAppVisible ? '' : 'none';
             }});
-            if (!inAppVisible && window.RowBotBuddyDock) window.RowBotBuddyDock.resetAll();
+            if (inAppVisible && window.RowBotBuddyDock) window.RowBotBuddyDock.resetAll();
             document.querySelectorAll('[data-row-bot-buddy]').forEach((element) => {{
                 element.dataset.bubbleVerbosity = bubbleVerbosity;
                 element.dataset.personality = personality;
             }});
-            const api = window.pywebview && window.pywebview.api ? window.pywebview.api : null;
-            if (api) {{
-                if (api.set_buddy_desktop_enabled) {{
-                    Promise.resolve(api.set_buddy_desktop_enabled({json.dumps(desktop_enabled)})).catch(() => {{}});
-                }}
-                if ({json.dumps(desktop_enabled)} && api.open_buddy_window) {{
-                    Promise.resolve(api.open_buddy_window(Number(window.location.port || 8080), 260, 260)).then((ok) => {{
-                        if (!ok) notify('Desktop overlay is available only in the native window', 'warning');
-                    }}).catch((error) => notify('Desktop overlay could not open: ' + (error && error.message ? error.message : String(error || 'unknown error')), 'negative'));
-                }} else if (api.close_buddy_window) {{
-                    Promise.resolve(api.close_buddy_window(false)).catch(() => {{}});
-                }}
-            }} else if ({json.dumps(desktop_enabled)}) {{
-                notify('Desktop overlay needs the pywebview native window', 'warning');
-            }}
         }})();
         """
     )
     build_in_app_buddy()
-    _install_desktop_overlay_focus_sync(cfg)
-
-
-def _install_desktop_overlay_focus_sync(cfg: dict) -> None:
-    enabled = bool(cfg.get("enabled", True)) and bool(cfg.get("desktop_enabled", False))
-    ui.run_javascript(
-        f"""
-        (() => {{
-            const api = window.pywebview && window.pywebview.api ? window.pywebview.api : null;
-            window.__ROW_BOT_BUDDY_DESKTOP_ENABLED = {json.dumps(enabled)};
-            if (!api) return;
-            if (api.set_buddy_desktop_enabled) {{
-                Promise.resolve(api.set_buddy_desktop_enabled({json.dumps(enabled)})).catch(() => {{}});
-            }}
-            const port = Number(window.location.port || 8080);
-            const hideForFocus = () => {{
-                if (!window.__ROW_BOT_BUDDY_DESKTOP_ENABLED || !api.hide_buddy_window) return;
-                Promise.resolve(api.hide_buddy_window(false)).catch(() => {{}});
-            }};
-            const showForBlur = () => {{
-                if (!window.__ROW_BOT_BUDDY_DESKTOP_ENABLED || !api.show_buddy_window) return;
-                Promise.resolve(api.show_buddy_window(false, port, 260, 260)).catch(() => {{}});
-            }};
-            if (!window.__ROW_BOT_BUDDY_DESKTOP_FOCUS_SYNC) {{
-                window.__ROW_BOT_BUDDY_DESKTOP_FOCUS_SYNC = true;
-                window.addEventListener('focus', hideForFocus);
-                window.addEventListener('blur', showForBlur);
-                document.addEventListener('visibilitychange', () => {{
-                    if (document.visibilityState === 'visible') hideForFocus();
-                    else showForBlur();
-                }});
-            }}
-            if (window.__ROW_BOT_BUDDY_DESKTOP_ENABLED && document.hasFocus()) hideForFocus();
-        }})();
-        """
-    )
 
 
 def build_sidebar_buddy(state, p, open_settings=None) -> None:
     cfg = get_buddy_config()
-    visible = bool(cfg.get("enabled", True)) and bool(cfg.get("sidebar_enabled", True))
+    placement = get_buddy_placement_state()
+    visible = bool(cfg.get("enabled", True)) and placement.visible and placement.placement is BuddyPlacement.DOCKED
     dock_id = f"buddy-sidebar-dock-{uuid.uuid4().hex[:10]}"
     in_app_id = f"buddy-in-app-shell-{uuid.uuid4().hex[:10]}"
 
@@ -740,12 +806,21 @@ def build_sidebar_buddy(state, p, open_settings=None) -> None:
                 buddy_shell._props["tabindex"] = "0"
                 buddy_shell.on("buddy-click", _handle_click)
                 p.sidebar_avatar = build_buddy_surface("sidebar")
+        if visible and not bool(cfg.get("tear_off_hint_dismissed", False)):
+            with ui.row().classes("items-center no-wrap gap-1 q-px-xs") as tear_off_hint:
+                ui.label("Drag Buddy onto your desktop").classes("text-caption text-grey-6")
+
+                def _dismiss_tear_off_hint() -> None:
+                    set_buddy_config("tear_off_hint_dismissed", True)
+                    tear_off_hint.delete()
+
+                ui.button(icon="close", on_click=_dismiss_tear_off_hint).props(
+                    "flat round dense size=xs aria-label='Dismiss Buddy tip'"
+                )
     ui.run_javascript(f"setTimeout(() => {{ {_install_in_app_buddy_drag_js(in_app_id, dock_id)} }}, 100);")
 
 
 def build_in_app_buddy(*, recreate: bool = False) -> None:
-    cfg = get_buddy_config()
-    _install_desktop_overlay_focus_sync(cfg)
     ui.run_javascript(
         """
         (() => {
@@ -757,11 +832,6 @@ def build_in_app_buddy(*, recreate: bool = False) -> None:
         })();
         """
     )
-
-
-def build_floating_buddy(*, recreate: bool = False) -> None:
-    build_in_app_buddy(recreate=recreate)
-
 
 def _install_in_app_buddy_drag_js(element_id: str, dock_id: str) -> str:
     return f"""
@@ -780,56 +850,69 @@ def _install_in_app_buddy_drag_js(element_id: str, dock_id: str) -> str:
                     if (!target || !targetDock || target.dataset.buddyDragInstalled === '1') return;
                     target.dataset.buddyDockId = dockId;
                     target.dataset.buddyDragInstalled = '1';
-                    const root = () => target.querySelector('[data-row-bot-buddy]');
-                    const setSurface = (surface) => {{
-                        const buddyRoot = root();
-                        if (buddyRoot) buddyRoot.dataset.surface = surface;
-                    }};
                     const dockHome = () => {{
                         target.classList.add('row-bot-buddy-docked');
-                        target.classList.remove('row-bot-buddy-undocked', 'row-bot-buddy-dragging');
+                        target.classList.remove('row-bot-buddy-drag-preview', 'row-bot-buddy-dragging');
+                        target.style.display = '';
                         target.style.left = '';
                         target.style.top = '';
                         target.style.right = '';
                         target.style.bottom = '';
                         targetDock.classList.remove('row-bot-buddy-dock-empty', 'row-bot-buddy-dock-hover');
                         if (target.parentElement !== targetDock) targetDock.appendChild(target);
-                        setSurface('sidebar');
                     }};
-                    const undock = (rect) => {{
+                    const beginPreview = (rect) => {{
                         target.style.left = rect.left + 'px';
                         target.style.top = rect.top + 'px';
                         target.style.right = 'auto';
                         target.style.bottom = 'auto';
-                        target.classList.add('row-bot-buddy-undocked');
+                        target.classList.add('row-bot-buddy-drag-preview');
                         target.classList.remove('row-bot-buddy-docked');
                         targetDock.classList.add('row-bot-buddy-dock-empty');
                         if (target.parentElement !== document.body) document.body.appendChild(target);
-                        setSurface('floating');
                     }};
                     target.__rowBotBuddyDockHome = dockHome;
                     let drag = null;
                     let moved = false;
+                    let committed = false;
                     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-                    const isNearDock = () => {{
-                        const buddyRect = target.getBoundingClientRect();
-                        const dockRect = targetDock.getBoundingClientRect();
-                        const buddyX = buddyRect.left + buddyRect.width / 2;
-                        const buddyY = buddyRect.top + buddyRect.height / 2;
-                        const dockX = dockRect.left + dockRect.width / 2;
-                        const dockY = dockRect.top + dockRect.height / 2;
-                        const distance = Math.hypot(buddyX - dockX, buddyY - dockY);
-                        return distance < Math.max(92, dockRect.width * 0.58);
+                    const notify = (message, type) => {{
+                        if (window.Quasar && window.Quasar.Notify) {{
+                            window.Quasar.Notify.create({{message, type: type || 'info', timeout: 3000}});
+                        }}
                     }};
-                    const updateDockHover = () => {{
-                        if (!target.classList.contains('row-bot-buddy-undocked')) return;
-                        targetDock.classList.toggle('row-bot-buddy-dock-hover', isNearDock());
+                    const commitTearOff = (event) => {{
+                        if (committed) return;
+                        committed = true;
+                        const api = window.pywebview && window.pywebview.api ? window.pywebview.api : null;
+                        if (!api || !api.tear_off_buddy) {{
+                            committed = false;
+                            dockHome();
+                            notify('Drag-to-desktop is available in the native Row-Bot window', 'warning');
+                            return;
+                        }}
+                        const port = Number(window.location.port || 8080);
+                        Promise.resolve(api.tear_off_buddy(event.screenX, event.screenY, port)).then((ok) => {{
+                            if (!ok) {{
+                                committed = false;
+                                dockHome();
+                                notify('Buddy could not be torn off', 'negative');
+                                return;
+                            }}
+                            target.style.display = 'none';
+                            targetDock.classList.add('row-bot-buddy-dock-empty');
+                        }}).catch(() => {{
+                            committed = false;
+                            dockHome();
+                            notify('Buddy could not be torn off', 'negative');
+                        }});
                     }};
                     target.addEventListener('pointerdown', (event) => {{
                         if (event.button !== 0) return;
                         const rect = target.getBoundingClientRect();
                         drag = {{ pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top }};
                         moved = false;
+                        committed = false;
                         target.classList.add('row-bot-buddy-dragging');
                         try {{ target.setPointerCapture(event.pointerId); }} catch (error) {{}}
                         event.preventDefault();
@@ -837,9 +920,9 @@ def _install_in_app_buddy_drag_js(element_id: str, dock_id: str) -> str:
                     target.addEventListener('pointermove', (event) => {{
                         if (!drag || drag.pointerId !== event.pointerId) return;
                         const rect = target.getBoundingClientRect();
-                        if (Math.abs(event.clientX - drag.startX) > 4 || Math.abs(event.clientY - drag.startY) > 4) {{
+                        if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 6) {{
                             moved = true;
-                            if (!target.classList.contains('row-bot-buddy-undocked')) undock(rect);
+                            if (!target.classList.contains('row-bot-buddy-drag-preview')) beginPreview(rect);
                         }}
                         if (!moved) return;
                         const width = target.offsetWidth;
@@ -848,15 +931,15 @@ def _install_in_app_buddy_drag_js(element_id: str, dock_id: str) -> str:
                         target.style.top = clamp(event.clientY - drag.offsetY, 8, window.innerHeight - height - 8) + 'px';
                         target.style.right = 'auto';
                         target.style.bottom = 'auto';
-                        updateDockHover();
+                        const atClientEdge = event.clientX <= 1 || event.clientY <= 1 || event.clientX >= window.innerWidth - 1 || event.clientY >= window.innerHeight - 1;
+                        if (atClientEdge) commitTearOff(event);
                     }});
                     const finish = (event) => {{
                         if (!drag || drag.pointerId !== event.pointerId) return;
                         const wasClick = !moved;
                         drag = null;
                         target.classList.remove('row-bot-buddy-dragging');
-                        if (!wasClick && target.classList.contains('row-bot-buddy-undocked') && isNearDock()) dockHome();
-                        else targetDock.classList.remove('row-bot-buddy-dock-hover');
+                        if (!wasClick) commitTearOff(event);
                         if (wasClick) target.dispatchEvent(new CustomEvent('buddy-click', {{ bubbles: true }}));
                     }};
                     target.addEventListener('pointerup', finish);
@@ -874,8 +957,62 @@ def _install_in_app_buddy_drag_js(element_id: str, dock_id: str) -> str:
     """
 
 
-def build_buddy_overlay_page() -> None:
+def build_buddy_overlay_page(state) -> None:
+    from row_bot.threads import delete_thread_draft, load_thread_draft, save_thread_draft
+    from row_bot.ui.state import P, _active_generations
+    from row_bot.ui.streaming import Callbacks, request_generation_stop, resume_after_interrupt, send_message
+
     inject_buddy_head()
+    client = ui.context.client
+    p = P()
+    p.pending_files = []
+    cb = Callbacks()
+
+    def _noop(*_args, **_kwargs):
+        return None
+
+    for callback_name in cb.__slots__:
+        setattr(cb, callback_name, _noop)
+    p.streaming_callbacks = cb
+
+    async def _native_call(expression: str, fallback: str = "false"):
+        try:
+            return await client.run_javascript(
+                f"""
+                (async () => {{
+                    const api = window.pywebview && window.pywebview.api ? window.pywebview.api : null;
+                    if (!api) return {fallback};
+                    return await ({expression});
+                }})()
+                """
+            )
+        except Exception:
+            return None
+
+    async def _open_full_thread() -> None:
+        result = await _native_call("api.show_main_window ? api.show_main_window() : false")
+        if not result:
+            await client.run_javascript("window.open('/', '_blank', 'noopener');")
+
+    async def _dock() -> None:
+        await _native_call("api.dock_buddy ? api.dock_buddy() : false")
+
+    async def _hide() -> None:
+        await _native_call("api.hide_buddy_window ? api.hide_buddy_window(true) : false")
+
+    collapsed = {"value": get_buddy_placement_state().collapsed}
+
+    async def _toggle_collapse() -> None:
+        collapsed["value"] = not collapsed["value"]
+        if collapsed["value"]:
+            root.classes(add="row-bot-buddy-overlay-collapsed")
+        else:
+            root.classes(remove="row-bot-buddy-overlay-collapsed")
+        collapse_item.set_text("Expand" if collapsed["value"] else "Collapse")
+        await _native_call(
+            f"api.set_buddy_collapsed ? api.set_buddy_collapsed({str(collapsed['value']).lower()}) : false"
+        )
+
     ui.run_javascript(
         """
         (() => {
@@ -910,8 +1047,227 @@ def build_buddy_overlay_page() -> None:
         timeout=1,
     )
     emit_buddy_event(BuddyEventType.APP_READY, source="buddy.overlay", payload={"label": "Overlay ready"})
-    with ui.element("div").classes("row-bot-buddy-overlay-page"):
-        build_buddy_surface("desktop")
+    root_classes = "row-bot-buddy-overlay-page"
+    if collapsed["value"]:
+        root_classes += " row-bot-buddy-overlay-collapsed"
+    with ui.element("div").classes(root_classes) as root:
+        with ui.element("div").classes("row-bot-buddy-overlay-header pywebview-drag-region"):
+            with ui.element("div").classes("row-bot-buddy-overlay-avatar"):
+                build_buddy_surface("desktop")
+            with ui.column().classes("row-bot-buddy-overlay-meta"):
+                thread_label = ui.label("New chat").classes("row-bot-buddy-overlay-title")
+                surface_label = ui.label("Chat").classes("row-bot-buddy-overlay-subtitle")
+                target_app_label = ui.label("").classes("row-bot-buddy-overlay-subtitle")
+                target_app_label.set_visibility(False)
+            with ui.element("div").classes("row-bot-buddy-overlay-no-drag"):
+                menu_button = ui.button(icon="more_horiz").props(
+                    "flat round dense size=sm aria-label='Buddy actions'"
+                )
+                with ui.menu() as menu:
+                    ui.menu_item("Open full thread", on_click=_open_full_thread)
+                    collapse_item = ui.menu_item(
+                        "Expand" if collapsed["value"] else "Collapse",
+                        on_click=_toggle_collapse,
+                    )
+                    ui.menu_item("Dock Buddy", on_click=_dock)
+                    ui.menu_item("Hide Buddy", on_click=_hide)
+                menu_button.on("click", menu.open)
+
+        with ui.column().classes("row-bot-buddy-overlay-body w-full gap-1"):
+            response_label = ui.label("Ready").classes("row-bot-buddy-overlay-response w-full")
+            response_label._props["role"] = "status"
+            response_label._props["aria-live"] = "polite"
+
+            with ui.column().classes("row-bot-buddy-overlay-approval w-full gap-1") as approval_box:
+                approval_description = ui.label("Approval required").classes("text-xs text-weight-medium")
+                approval_reason = ui.label("").classes("text-caption text-grey-5")
+                with ui.row().classes("w-full justify-end gap-1"):
+                    deny_button = ui.button("Deny").props("flat dense no-caps size=sm color=negative")
+                    review_button = ui.button("Open details").props("flat dense no-caps size=sm")
+                    approve_button = ui.button("Approve").props("flat dense no-caps size=sm color=positive")
+            approval_box.set_visibility(False)
+
+            with ui.row().classes("row-bot-buddy-overlay-composer w-full items-end no-wrap gap-1 q-px-xs"):
+                composer = ui.textarea(placeholder="Message this thread…").classes("w-full").props(
+                    "borderless autogrow rows=1 input-style='padding: 7px 5px;' aria-label='Buddy message'"
+                )
+                send_button = ui.button(icon="send").props("flat round dense size=sm aria-label='Send'")
+                stop_button = ui.button(icon="stop").props("flat round dense size=sm color=negative aria-label='Stop'")
+                stop_button.set_visibility(False)
+
+        with ui.column().style("display:none") as hidden_chat:
+            p.chat_container = hidden_chat
+    p.chat_input = composer
+    p.chat_header_label = thread_label
+
+    draft_state = {"thread_id": "", "loaded_text": "", "source": ""}
+
+    def _load_selected_draft(thread_id: str, *, force: bool = False) -> None:
+        if not thread_id:
+            if force:
+                composer.value = ""
+                composer.update()
+            draft_state.update({"thread_id": "", "loaded_text": "", "source": ""})
+            return
+        draft = load_thread_draft(thread_id) or {}
+        text = str(draft.get("text") or "")
+        current = str(composer.value or "")
+        can_replace = force or current == draft_state["loaded_text"] or not current
+        if can_replace and current != text:
+            composer.value = text
+            composer.update()
+        draft_state.update(
+            {
+                "thread_id": thread_id,
+                "loaded_text": text if can_replace else current,
+                "source": str(draft.get("source") or ""),
+            }
+        )
+
+    def _on_draft_change(event) -> None:
+        text = str(event.args if isinstance(event.args, str) else composer.value or "")
+        thread_id = str(getattr(state, "thread_id", "") or "")
+        if thread_id:
+            save_thread_draft(thread_id, text, source="buddy_overlay")
+        draft_state.update({"thread_id": thread_id, "loaded_text": text, "source": "buddy_overlay"})
+
+    composer.on("update:model-value", _on_draft_change)
+
+    async def _restore_foreground() -> None:
+        await _native_call("api.restore_foreground_target ? api.restore_foreground_target() : false")
+
+    async def _send() -> None:
+        text = str(composer.value or "")
+        if not text.strip():
+            return
+        target = OverlayTurnTarget.capture(state)
+        captured_thread_id = target.thread_id
+        await _restore_foreground()
+        try:
+            await send_message(text, state=state, p=p, cb=cb, turn_target=target)
+        except Exception as exc:
+            logger.exception("Buddy overlay send failed")
+            response_label.set_text(str(exc) or "The message could not be sent. Open Row-Bot for details.")
+            return
+        accepted_thread_id = captured_thread_id or str(getattr(state, "thread_id", "") or "")
+        accepted = accepted_thread_id in _active_generations or any(
+            isinstance(message, dict)
+            and message.get("role") == "user"
+            and str(message.get("content") or "") == text
+            for message in (getattr(state, "messages", None) or [])
+        )
+        if accepted:
+            composer.value = ""
+            composer.update()
+            delete_thread_draft(accepted_thread_id)
+            draft_state.update(
+                {"thread_id": accepted_thread_id, "loaded_text": "", "source": "buddy_overlay"}
+            )
+
+    def _stop() -> None:
+        thread_id = str(getattr(state, "thread_id", "") or "")
+        request_generation_stop(thread_id, state=state, p=p, reason="buddy_overlay")
+
+    async def _settle_approval(approved: bool) -> None:
+        thread_id = str(getattr(state, "thread_id", "") or "")
+        generation_id = str(getattr(state, "pending_interrupt_generation_id", "") or "")
+        if not thread_id or not generation_id.startswith(f"{thread_id}:"):
+            await _open_full_thread()
+            return
+        await resume_after_interrupt(approved, state=state, p=p, cb=cb)
+
+    send_button.on("click", _send)
+    stop_button.on("click", _stop)
+    approve_button.on("click", lambda: asyncio.create_task(_settle_approval(True)))
+    deny_button.on("click", lambda: asyncio.create_task(_settle_approval(False)))
+    review_button.on("click", _open_full_thread)
+    composer.on(
+        "keydown.enter",
+        _send,
+        js_handler="""(event) => {
+            if (event.shiftKey) return;
+            event.preventDefault();
+            emit();
+        }""",
+    )
+
+    projection_state = {
+        "key": None,
+        "last_idle_poll": 0.0,
+        "thread_id": "",
+        "foreground_poll": 0.0,
+        "error_by_thread": {},
+    }
+
+    async def _poll_projection() -> None:
+        now = time.monotonic()
+        selected_id = str(getattr(state, "thread_id", "") or "")
+        generation = _active_generations.get(selected_id)
+        streaming = generation is not None and str(getattr(generation, "status", "")) in {"streaming", "interrupted"}
+        if not streaming and now - projection_state["last_idle_poll"] < 0.6:
+            return
+        projection_state["last_idle_poll"] = now
+        buddy_status = str(get_buddy_snapshot().get("message") or "")
+        snapshot = build_thread_snapshot(state, _active_generations, buddy_status=buddy_status)
+        if snapshot.error:
+            projection_state["error_by_thread"][snapshot.thread_id] = snapshot.error
+        elif streaming:
+            projection_state["error_by_thread"].pop(snapshot.thread_id, None)
+        cached_error = str(projection_state["error_by_thread"].get(snapshot.thread_id) or "")
+        if projection_state["thread_id"] != snapshot.thread_id:
+            previous_id = str(projection_state["thread_id"] or "")
+            if previous_id and str(composer.value or ""):
+                save_thread_draft(previous_id, str(composer.value or ""), source="buddy_overlay")
+            projection_state["thread_id"] = snapshot.thread_id
+            _load_selected_draft(snapshot.thread_id, force=True)
+        elif not str(composer.value or ""):
+            _load_selected_draft(snapshot.thread_id)
+        effective_key = (snapshot.key, cached_error)
+        if effective_key != projection_state["key"]:
+            projection_state["key"] = effective_key
+            thread_label.set_text(snapshot.thread_name)
+            surface_label.set_text(
+                {"normal_chat": "Chat", "developer": "Developer", "designer": "Designer"}.get(
+                    snapshot.runtime_surface.value,
+                    "Chat",
+                )
+            )
+            display_text = snapshot.error or cached_error or snapshot.response_text or snapshot.progress_text or "Ready"
+            response_label.set_text(display_text)
+            send_button.set_visibility(not snapshot.generating)
+            stop_button.set_visibility(snapshot.can_stop)
+            approval_box.set_visibility(snapshot.approval.required)
+            if snapshot.approval.required:
+                approval_description.set_text(snapshot.approval.description or "Approval required")
+                approval_reason.set_text(snapshot.approval.reason)
+                approve_button.set_visibility(snapshot.approval.simple)
+                deny_button.set_visibility(snapshot.approval.simple)
+                review_button.set_text("Open details" if snapshot.approval.simple else "Review in Row-Bot")
+            await client.run_javascript(
+                f"""
+                (() => {{
+                    const element = document.getElementById('c{response_label.id}');
+                    if (!element) return;
+                    if (!element.dataset.buddyScrollInstalled) {{
+                        element.dataset.buddyScrollInstalled = '1';
+                        element.dataset.buddyAtBottom = '1';
+                        element.addEventListener('scroll', () => {{
+                            element.dataset.buddyAtBottom = String(element.scrollHeight - element.scrollTop - element.clientHeight < 8 ? 1 : 0);
+                        }});
+                    }}
+                    if (element.dataset.buddyAtBottom !== '0') element.scrollTop = element.scrollHeight;
+                }})();
+                """
+            )
+        if now - projection_state["foreground_poll"] >= 0.75:
+            projection_state["foreground_poll"] = now
+            target = await _native_call("api.get_foreground_target ? api.get_foreground_target() : null", "null")
+            app_name = str(target.get("app_name") or "") if isinstance(target, dict) else ""
+            target_app_label.set_text(f"Target: {app_name}" if app_name else "")
+            target_app_label.set_visibility(bool(app_name))
+
+    ui.timer(0.15, _poll_projection)
+    _load_selected_draft(str(getattr(state, "thread_id", "") or ""), force=True)
 
 
 def build_buddy_settings_tab(_reopen=None) -> None:
@@ -935,7 +1291,6 @@ def build_buddy_settings_tab(_reopen=None) -> None:
     active_pack_label = _display_pack_name(active_pack.name)
     motion_count = len(active_pack.motion_clips or {})
     pack_status_text = "Motion pack ready" if active_pack.status == "available" else (active_pack.message or "Pack needs attention")
-    overlay_available = "Native pywebview only"
 
     def _section(title: str, icon: str, subtitle: str):
         with ui.column().classes("w-full gap-2 q-pa-sm rounded-borders q-mb-sm").style(
@@ -952,56 +1307,9 @@ def build_buddy_settings_tab(_reopen=None) -> None:
             body = ui.column().classes("w-full gap-2")
         return header_actions, body
 
-    def _surface_switch_row(icon: str, title: str, subtitle: str, label: str, value: bool, *, divider: bool = True):
-        border = "border-bottom: 1px solid rgba(148, 163, 184, 0.10);" if divider else ""
-        with ui.row().classes("items-center gap-2 no-wrap w-full q-py-xs").style(border):
-            ui.icon(icon, size="sm").classes("text-grey-6")
-            with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
-                ui.label(title).classes("text-sm text-weight-medium")
-                ui.label(subtitle).classes("text-grey-6 text-xs")
-            return ui.switch(label, value=value).props("dense")
-
-    async def _desktop_call(open_requested: bool) -> None:
-        script = f"""
-        (async () => {{
-            const api = window.pywebview && window.pywebview.api ? window.pywebview.api : null;
-            if (!api) return 'unavailable';
-            try {{
-                if ({json.dumps(open_requested)}) {{
-                    if (!api.open_buddy_window) return 'unavailable';
-                    return await api.open_buddy_window(Number(window.location.port || 8080), 260, 260) ? 'opened' : 'failed';
-                }}
-                if (!api.close_buddy_window) return 'unavailable';
-                return await api.close_buddy_window(true) ? 'closed' : 'not-open';
-            }} catch (error) {{
-                return 'failed: ' + (error && error.message ? error.message : String(error || 'unknown error'));
-            }}
-        }})()
-        """
-        result = await ui.run_javascript(script, timeout=5)
-        if result == "opened":
-            ui.notify("Desktop overlay opened", type="positive")
-        elif result == "closed":
-            ui.notify("Desktop overlay closed", type="info")
-        elif result == "not-open":
-            ui.notify("Desktop overlay was not open", type="info")
-        elif result == "unavailable":
-            ui.notify("Desktop overlay needs the pywebview native window", type="warning")
-        elif isinstance(result, str) and result.startswith("failed: "):
-            ui.notify(f"Desktop overlay could not be opened: {result.removeprefix('failed: ')}", type="negative")
-        else:
-            ui.notify("Desktop overlay could not be opened", type="negative")
-
-    async def _open_desktop_overlay() -> None:
-        await _desktop_call(True)
-
-    async def _close_desktop_overlay() -> None:
-        await _desktop_call(False)
-
     buddy_enabled = bool(cfg.get("enabled", True))
-    in_app_initial = buddy_enabled and (bool(cfg.get("sidebar_enabled", True)) or bool(cfg.get("floating_enabled", False)))
-    desktop_initial = buddy_enabled and bool(cfg.get("desktop_enabled", False))
-    has_visible_buddy = in_app_initial or desktop_initial
+    placement = get_buddy_placement_state()
+    has_visible_buddy = buddy_enabled and placement.visible
 
     ui.label("Buddy").classes("text-h6 q-mb-xs")
     with ui.row().classes("items-center justify-between w-full q-mb-sm"):
@@ -1010,25 +1318,14 @@ def build_buddy_settings_tab(_reopen=None) -> None:
             ui.badge("enabled" if has_visible_buddy else "paused", color="green" if has_visible_buddy else "grey").props("outline dense")
             ui.badge(pack_status_text, color="cyan" if active_pack.status == "available" else "orange").props("outline dense")
 
-    presence_actions, presence_body = _section("Where it appears", "widgets", "Choose the in-app surface and optional desktop overlay.")
-    with presence_actions:
-        ui.badge(overlay_available, color="blue-grey").props("outline dense")
+    presence_actions, presence_body = _section("Visibility", "widgets", "Buddy is docked here or torn off onto the desktop.")
     with presence_body:
-        in_app = _surface_switch_row(
-            "radio_button_checked",
-            "In app",
-            "Starts in the sidebar dock and can be dragged into the workspace.",
-            "In app",
-            in_app_initial,
-        )
         with ui.row().classes("items-center gap-2 no-wrap w-full q-py-xs"):
-            ui.icon("picture_in_picture_alt", size="sm").classes("text-grey-6")
+            ui.icon("visibility", size="sm").classes("text-grey-6")
             with ui.column().classes("gap-0").style("min-width: 0; flex: 1;"):
-                ui.label("Desktop overlay").classes("text-sm text-weight-medium")
-                ui.label("A separate transparent pywebview window.").classes("text-grey-6 text-xs")
-            desktop = ui.switch("Desktop overlay", value=desktop_initial).props("dense")
-            ui.button(icon="open_in_new", on_click=_open_desktop_overlay).props("flat dense round size=sm color=primary").tooltip("Open overlay now")
-            ui.button(icon="close", on_click=_close_desktop_overlay).props("flat dense round size=sm").tooltip("Close overlay")
+                ui.label("Show Buddy").classes("text-sm text-weight-medium")
+                ui.label("Drag Buddy away from the sidebar to tear it off. Use Dock Buddy in the overlay to return.").classes("text-grey-6 text-xs")
+            visibility = ui.switch("Show Buddy", value=has_visible_buddy).props("dense")
 
     behavior_actions, behavior_body = _section("Behavior", "tune", "Bubble tone and runtime personality for status text.")
     with behavior_actions:
@@ -1183,17 +1480,14 @@ def build_buddy_settings_tab(_reopen=None) -> None:
 
     def _save() -> None:
         buddy_notes = sanitize_personality(str(buddy_description.value or ""))
-        in_app_enabled = bool(in_app.value)
-        desktop_enabled = bool(desktop.value)
+        visible = bool(visibility.value)
         latest_cfg = get_buddy_config()
         concept_prompt = _clean_hatch_concept(str(prompt.value or ""))
         if concept_prompt != str(prompt.value or "").strip():
             prompt.set_value(concept_prompt)
         latest_cfg.update({
-            "enabled": in_app_enabled or desktop_enabled,
-            "sidebar_enabled": in_app_enabled,
-            "floating_enabled": False,
-            "desktop_enabled": desktop_enabled,
+            "enabled": visible,
+            "visible": visible,
             "pack_id": str(selected_pack_id.get("value") or "glyph"),
             "personality": str(buddy_personality.value or "warm_mystical"),
             "personality_description": buddy_notes,
@@ -1206,6 +1500,16 @@ def build_buddy_settings_tab(_reopen=None) -> None:
         save_buddy_config(latest_cfg)
         cfg.clear()
         cfg.update(latest_cfg)
+        if placement.placement is BuddyPlacement.DESKTOP:
+            native_method = "show_buddy_window" if visible else "hide_buddy_window"
+            ui.run_javascript(
+                f"""
+                (() => {{
+                    const api = window.pywebview && window.pywebview.api ? window.pywebview.api : null;
+                    if (api && api.{native_method}) Promise.resolve(api.{native_method}(true)).catch(() => {{}});
+                }})();
+                """
+            )
         if buddy_notes != str(buddy_description.value or ""):
             buddy_description.set_value(buddy_notes)
             ui.notify("Some companion personality text was removed", type="warning")
@@ -1392,7 +1696,3 @@ def build_buddy_settings_tab(_reopen=None) -> None:
         retry_motion_button = ui.button("Retry motion", icon="movie", on_click=_retry_motion).props("outline no-caps")
         hatch_button = ui.button("Generate full Buddy", icon="auto_fix_high", on_click=_hatch).props("outline no-caps")
     ui.timer(2.0, _poll_hatch_job_status)
-
-
-def set_floating_enabled(enabled: bool) -> dict:
-    return set_buddy_config("floating_enabled", bool(enabled))

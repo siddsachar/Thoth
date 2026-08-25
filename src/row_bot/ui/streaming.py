@@ -27,6 +27,7 @@ from typing import Any, Callable, Mapping
 from nicegui import run, ui
 
 from row_bot.cancellation import CancellationScope, use_cancellation_scope
+from row_bot.buddy.overlay import OverlayTurnTarget, RuntimeSurface
 from row_bot.ui.state import (
     AppState,
     GenerationState,
@@ -4626,6 +4627,7 @@ async def send_message(
     voice_mode: bool = False,
     queued_message_ids: list[str] | None = None,
     internal_goal_continuation: bool = False,
+    turn_target: OverlayTurnTarget | None = None,
 ) -> None:
     """Send a message and stream the agent response."""
     from row_bot.agent import stream_agent, repair_orphaned_tool_calls
@@ -4646,6 +4648,9 @@ async def send_message(
 
     if not text.strip() and not p.pending_files:
         return
+    target = turn_target or OverlayTurnTarget.capture(state)
+    gen_thread_id = target.thread_id
+    turn_messages = target.messages if isinstance(target.messages, list) else state.messages
     direct_agent_request = None
     direct_agent_command_text = False
     if not internal_goal_continuation and not p.pending_files:
@@ -4660,7 +4665,7 @@ async def send_message(
 
     def _direct_spawn_enabled_tools() -> list[str]:
         names = [tool.name for tool in tool_registry.get_enabled_tools()]
-        if getattr(state, "active_developer_workspace_id", None):
+        if target.developer_workspace_id:
             try:
                 from row_bot.developer.profile import effective_tool_names
 
@@ -4669,9 +4674,9 @@ async def send_message(
                 logger.debug("Could not apply Developer tool profile to direct Agent spawn", exc_info=True)
         return names
 
-    if state.thread_id and state.thread_id in _active_generations:
-        if not _drop_terminal_active_generation(state.thread_id):
-            active_gen = _active_generations.get(state.thread_id)
+    if gen_thread_id and gen_thread_id in _active_generations:
+        if not _drop_terminal_active_generation(gen_thread_id):
+            active_gen = _active_generations.get(gen_thread_id)
             if direct_agent_request is not None:
                 await _handle_direct_agent_spawn(
                     direct_agent_request,
@@ -4688,12 +4693,13 @@ async def send_message(
 
                 user_msg = {"role": "user", "content": text}
                 assistant_msg = {"role": "assistant", "content": format_agent_spawn_usage()}
-                state.messages.extend([user_msg, assistant_msg])
-                persist_thread_media_state(state.thread_id, state.messages)
-                state.cache_active_messages()
-                cb.add_chat_message(user_msg)
-                cb.add_chat_message(assistant_msg)
-                touch_thread(state.thread_id)
+                turn_messages.extend([user_msg, assistant_msg])
+                persist_thread_media_state(gen_thread_id, turn_messages)
+                if state.thread_id == gen_thread_id:
+                    state.cache_active_messages()
+                    cb.add_chat_message(user_msg)
+                    cb.add_chat_message(assistant_msg)
+                touch_thread(gen_thread_id)
                 return
             from row_bot.voice.actions import classify_active_run_control
             from row_bot.voice.agent_bridge import VoiceAgentBridge
@@ -4703,11 +4709,11 @@ async def send_message(
                 control_kind == "steer"
                 and not _looks_like_new_agent_request(text)
             ):
-                target = await run.io_bound(lambda: _single_steering_target(str(state.thread_id or "")))
-                if target:
-                    target_status = str(target.get("status") or "")
-                    target_name = str(target.get("display_name") or target.get("id") or "Agent")
-                    run_id = str(target.get("id") or "")
+                steering_target = await run.io_bound(lambda: _single_steering_target(gen_thread_id))
+                if steering_target:
+                    target_status = str(steering_target.get("status") or "")
+                    target_name = str(steering_target.get("display_name") or steering_target.get("id") or "Agent")
+                    run_id = str(steering_target.get("id") or "")
                     if target_status in {"queued", "waiting_user"}:
                         label = f"Added to {target_name} before it starts"
                         queued_status = "queued_agent_message"
@@ -4738,9 +4744,9 @@ async def send_message(
 
             bridge = VoiceAgentBridge(
                 send_message=lambda *args, **kwargs: None,
-                active_generation=lambda: _active_generations.get(state.thread_id),
+                active_generation=lambda: _active_generations.get(gen_thread_id),
                 cancel_generation=lambda _gen: request_generation_stop(
-                    state.thread_id,
+                    gen_thread_id,
                     state=state,
                     p=p,
                     reason="voice_control",
@@ -4758,7 +4764,7 @@ async def send_message(
                         status="queued_parent_turn",
                         label="Queued as your next chat message",
                     )
-                    gen = _active_generations.get(state.thread_id)
+                    gen = _active_generations.get(gen_thread_id)
                     control_queue = getattr(gen, "voice_control_queue", None) if gen else None
                     if control_queue and isinstance(control_queue[-1], dict):
                         control_queue[-1]["pending_message_id"] = pending_id
@@ -4769,7 +4775,7 @@ async def send_message(
                         "voice.realtime.pipeline %s",
                         {
                             "stage": "active_run_control_notification",
-                            "thread_id": state.thread_id,
+                            "thread_id": gen_thread_id,
                             "control": control.get("control"),
                             "speakable": speakable,
                             "pending_message_id": pending_id,
@@ -4787,7 +4793,7 @@ async def send_message(
             return
 
     # Ensure a thread exists
-    if state.thread_id is None:
+    if not gen_thread_id:
         from row_bot.approval_policy import DEFAULT_APPROVAL_MODE, normalize_approval_mode
         tid = uuid.uuid4().hex[:12]
         name = text[:50]
@@ -4799,6 +4805,7 @@ async def send_message(
         state.thread_id = tid
         state.thread_name = name
         state.messages = []
+        turn_messages = state.messages
         state.show_onboarding = False
         # ``immediate=True`` so ``p.chat_container`` is ready for the
         # user-message render and streaming placeholder below (no
@@ -4809,13 +4816,19 @@ async def send_message(
             # Older callback signature without kwargs - fall back.
             cb.rebuild_main()
         cb.rebuild_thread_list()
-
-    gen_thread_id = state.thread_id
+        gen_thread_id = tid
+        target = OverlayTurnTarget(
+            thread_id=tid,
+            thread_name=name,
+            runtime_surface=RuntimeSurface.CHAT,
+            model_override=str(getattr(state, "thread_model_override", "") or ""),
+            approval_mode=str(getattr(state, "thread_approval_mode", "") or ""),
+        )
     goal_agent_input_override: str | None = None
     queued_visible_user_msg = False
     if queued_message_ids:
         queued_visible_user_msg = _mark_queued_controls_dispatching(
-            state.messages,
+            turn_messages,
             queued_message_ids,
         )
         if queued_visible_user_msg:
@@ -4887,15 +4900,17 @@ async def send_message(
                         user_msg = {"role": "user", "content": text}
                         assistant_msg = {"role": "assistant", "content": command_response}
                         if queued_visible_user_msg:
-                            state.messages.append(assistant_msg)
+                            turn_messages.append(assistant_msg)
                         else:
-                            state.messages.extend([user_msg, assistant_msg])
-                        persist_thread_media_state(state.thread_id, state.messages)
-                        state.cache_active_messages()
-                        if not queued_visible_user_msg:
-                            cb.add_chat_message(user_msg)
-                        cb.add_chat_message(assistant_msg)
-                        touch_thread(state.thread_id)
+                            turn_messages.extend([user_msg, assistant_msg])
+                        persist_thread_media_state(gen_thread_id, turn_messages)
+                        if state.thread_id == gen_thread_id:
+                            state.cache_active_messages()
+                        if state.thread_id == gen_thread_id:
+                            if not queued_visible_user_msg:
+                                cb.add_chat_message(user_msg)
+                            cb.add_chat_message(assistant_msg)
+                        touch_thread(gen_thread_id)
                         try:
                             _schedule_goal_strip_refresh(cb)
                             cb.rebuild_main()
@@ -4914,15 +4929,17 @@ async def send_message(
                     user_msg = {"role": "user", "content": text}
                     assistant_msg = {"role": "assistant", "content": command_response}
                     if queued_visible_user_msg:
-                        state.messages.append(assistant_msg)
+                        turn_messages.append(assistant_msg)
                     else:
-                        state.messages.extend([user_msg, assistant_msg])
-                    persist_thread_media_state(state.thread_id, state.messages)
-                    state.cache_active_messages()
-                    if not queued_visible_user_msg:
-                        cb.add_chat_message(user_msg)
-                    cb.add_chat_message(assistant_msg)
-                    touch_thread(state.thread_id)
+                        turn_messages.extend([user_msg, assistant_msg])
+                    persist_thread_media_state(gen_thread_id, turn_messages)
+                    if state.thread_id == gen_thread_id:
+                        state.cache_active_messages()
+                    if state.thread_id == gen_thread_id:
+                        if not queued_visible_user_msg:
+                            cb.add_chat_message(user_msg)
+                        cb.add_chat_message(assistant_msg)
+                    touch_thread(gen_thread_id)
                     try:
                         cb.rebuild_main()
                     except TypeError:
@@ -4932,7 +4949,7 @@ async def send_message(
     # ── Snapshot & clear attached files immediately ──────────────────
     from row_bot.models import get_current_model
 
-    selected_model = state.thread_model_override or get_current_model()
+    selected_model = target.model_override or get_current_model()
     if not await _context_capacity_ready_for_send(selected_model):
         return
 
@@ -4961,26 +4978,28 @@ async def send_message(
     if user_images:
         user_msg["images"] = user_images
     if not queued_visible_user_msg and not internal_goal_continuation:
-        state.messages.append(user_msg)
-        persist_thread_media_state(state.thread_id, state.messages)
-        state.cache_active_messages()
-        cb.add_chat_message(user_msg)
+        turn_messages.append(user_msg)
+        persist_thread_media_state(gen_thread_id, turn_messages)
+        if state.thread_id == gen_thread_id:
+            state.cache_active_messages()
+            cb.add_chat_message(user_msg)
 
     auth_block_message = None
     try:
         from row_bot.models import get_current_model
 
-        selected_model = state.thread_model_override or get_current_model()
+        selected_model = target.model_override or get_current_model()
         auth_block_message = await run.io_bound(lambda: _subscription_auth_block_message(selected_model))
     except Exception:
         logger.debug("Subscription auth preflight skipped unexpectedly", exc_info=True)
     if auth_block_message:
         assistant_msg = {"role": "assistant", "content": auth_block_message}
-        state.messages.append(assistant_msg)
-        persist_thread_media_state(state.thread_id, state.messages)
-        state.cache_active_messages()
-        cb.add_chat_message(assistant_msg)
-        touch_thread(state.thread_id)
+        turn_messages.append(assistant_msg)
+        persist_thread_media_state(gen_thread_id, turn_messages)
+        if state.thread_id == gen_thread_id:
+            state.cache_active_messages()
+            cb.add_chat_message(assistant_msg)
+        touch_thread(gen_thread_id)
         return
 
     # Process attached files (slow - vision analysis etc.)
@@ -5003,7 +5022,7 @@ async def send_message(
             if p.chat_scroll:
                 p.chat_scroll.scroll_to(percent=1.0)
 
-        _effective_model = state.thread_model_override or None
+        _effective_model = target.model_override or None
         try:
             await run.io_bound(materialize_chat_attachments, _files_snapshot)
             file_context, _, file_warnings = await run.io_bound(
@@ -5028,14 +5047,14 @@ async def send_message(
         marked_file_context = wrap_attachment_context(file_context)
         agent_input = f"{marked_file_context}\n\n{agent_input}" if agent_input else marked_file_context
     developer_context = ""
-    if getattr(state, "active_developer_workspace_id", None):
+    if target.developer_workspace_id:
         try:
             from row_bot.developer.agent_context import build_developer_agent_context
 
             developer_context = await run.io_bound(
                 build_developer_agent_context,
-                state.active_developer_workspace_id,
-                state.thread_id,
+                target.developer_workspace_id,
+                gen_thread_id,
             )
         except Exception:
             logger.debug("Failed to build Developer Studio context", exc_info=True)
@@ -5043,17 +5062,19 @@ async def send_message(
                 file_names, len(file_context), len(agent_input))
 
     # Auto-name thread
-    if not internal_goal_continuation and should_auto_rename_thread(state.thread_id, state.thread_name):
-        state.thread_name = rename_thread(
-            state.thread_id,
-            build_auto_thread_title(display_content, current_name=state.thread_name),
+    if not internal_goal_continuation and should_auto_rename_thread(gen_thread_id, target.thread_name):
+        turn_thread_name = rename_thread(
+            gen_thread_id,
+            build_auto_thread_title(display_content, current_name=target.thread_name),
             source="auto",
         )
+        if state.thread_id == gen_thread_id:
+            state.thread_name = turn_thread_name
         cb.rebuild_thread_list()
-        if p.chat_header_label:
-            p.chat_header_label.set_text(str(state.thread_name))
+        if p.chat_header_label and state.thread_id == gen_thread_id:
+            p.chat_header_label.set_text(str(turn_thread_name))
     else:
-        touch_thread(state.thread_id)
+        touch_thread(gen_thread_id)
 
     # ── Build config ─────────────────────────────────────────────────
     # Sync attachment cache to chart tool so it can read attached data files
@@ -5078,14 +5099,15 @@ async def send_message(
     from row_bot.approval_policy import DEFAULT_APPROVAL_MODE, normalize_approval_mode
     from row_bot.threads import _get_thread_approval_mode
 
-    _thread_mo = state.thread_model_override or ""
+    _thread_mo = target.model_override
     _thread_approval_mode = normalize_approval_mode(
-        getattr(state, "thread_approval_mode", "") or await run.io_bound(_get_thread_approval_mode, gen_thread_id),
+        target.approval_mode or await run.io_bound(_get_thread_approval_mode, gen_thread_id),
         DEFAULT_APPROVAL_MODE,
     )
-    state.thread_approval_mode = _thread_approval_mode
-    is_developer = bool(getattr(state, "active_developer_workspace_id", None))
-    is_designer = bool(getattr(state, "active_designer_project", None))
+    if state.thread_id == gen_thread_id:
+        state.thread_approval_mode = _thread_approval_mode
+    is_developer = target.runtime_surface is RuntimeSurface.DEVELOPER
+    is_designer = target.runtime_surface is RuntimeSurface.DESIGNER
     project_workspace_id = ""
     if is_developer:
         try:
@@ -5117,10 +5139,10 @@ async def send_message(
             "voice_transport": str(state.voice_coordinator.transport or ""),
             **({"internal_goal_continuation": True} if internal_goal_continuation else {}),
             **({"model_override": _thread_mo} if _thread_mo else {}),
-            **({"developer_workspace_id": state.active_developer_workspace_id} if getattr(state, "active_developer_workspace_id", None) else {}),
+            **({"developer_workspace_id": target.developer_workspace_id} if target.developer_workspace_id else {}),
             **({"project_workspace_id": project_workspace_id} if project_workspace_id else {}),
-            **({"designer_project_id": str(state.active_designer_project.id)} if getattr(state, "active_designer_project", None) else {}),
-            **({"designer_mode": str(state.active_designer_project.mode)} if getattr(state, "active_designer_project", None) else {}),
+            **({"designer_project_id": target.designer_project_id} if target.designer_project_id else {}),
+            **({"designer_mode": target.designer_mode} if target.designer_mode else {}),
             **({"developer_context": developer_context} if developer_context else {}),
             **profile_runtime_config,
         },
@@ -5131,7 +5153,7 @@ async def send_message(
         is_developer,
     )
     enabled_tools = [t.name for t in tool_registry.get_enabled_tools()]
-    if getattr(state, "active_developer_workspace_id", None):
+    if target.developer_workspace_id:
         from row_bot.developer.profile import effective_tool_names
         enabled_tools = effective_tool_names(enabled_tools)
 
@@ -5184,13 +5206,16 @@ async def send_message(
         })
         logger.info("voice.realtime.pipeline %s", snapshot)
 
-    if p.stop_btn:
+    if p.stop_btn and state.thread_id == gen_thread_id:
         p.stop_btn.enable()
 
     # ── Prepare assistant message placeholder ────────────────────────
-    _build_assistant_placeholder(gen, p)
+    if state.thread_id == gen_thread_id:
+        _build_assistant_placeholder(gen, p)
+    else:
+        gen.detached = True
 
-    if p.chat_scroll:
+    if p.chat_scroll and state.thread_id == gen_thread_id:
         p.chat_scroll.scroll_to(percent=1.0)
 
     # ── Start producer thread ────────────────────────────────────────

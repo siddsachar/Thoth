@@ -18,7 +18,6 @@ class BuddyMood(StrEnum):
 
 class BuddyMode(StrEnum):
     SIDEBAR = "sidebar"
-    FLOATING = "floating"
     DESKTOP = "desktop"
 
 

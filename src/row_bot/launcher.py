@@ -1662,11 +1662,48 @@ import webbrowser
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+from row_bot.buddy.config import get_buddy_config, save_buddy_config
+from row_bot.buddy.overlay import (
+    OVERLAY_HEIGHT,
+    OVERLAY_WIDTH,
+    BuddyPlacement,
+    ForegroundAppTracker,
+    apply_placement_state,
+    finite_coordinate,
+    placement_state_from_config,
+    platform_foreground_backend,
+    position_for_drop,
+    screen_areas_from_native,
+    should_defer_native_show,
+)
 
 _NAMED_WINDOWS = {}
-_BUDDY_MANUALLY_HIDDEN = False
 _BUDDY_WINDOW_READY = False
-_BUDDY_DESKTOP_ENABLED = False
+_FOREGROUND_TRACKER = ForegroundAppTracker(platform_foreground_backend())
+
+def _save_buddy_state(state, *, x=None, y=None):
+    config = apply_placement_state(get_buddy_config(), state)
+    overlay = dict(config.get("overlay") or {})
+    if x is not None:
+        overlay["x"] = int(x)
+    if y is not None:
+        overlay["y"] = int(y)
+    config["overlay"] = overlay
+    return save_buddy_config(config)
+
+def _screen_areas():
+    try:
+        return screen_areas_from_native(list(getattr(webview, "screens", []) or []))
+    except Exception:
+        return []
+
+def _track_foreground_apps():
+    while True:
+        try:
+            _FOREGROUND_TRACKER.observe()
+        except Exception:
+            pass
+        time.sleep(0.25)
 
 def _install_windows_app_icon():
     if sys.platform != "win32" or not (_ICON_PATH and os.path.isfile(_ICON_PATH)):
@@ -1731,13 +1768,66 @@ def _buddy_window_log(message):
 
 class _JsApi:
     """Expose Python helpers to JavaScript via window.pywebview.api."""
-    def set_buddy_desktop_enabled(self, enabled=False):
-        global _BUDDY_DESKTOP_ENABLED
-        _BUDDY_DESKTOP_ENABLED = bool(enabled)
-        _buddy_window_log(f"desktop_enabled={_BUDDY_DESKTOP_ENABLED}")
-        if not _BUDDY_DESKTOP_ENABLED:
-            self.close_buddy_window(False)
+    def tear_off_buddy(self, screen_x=0, screen_y=0, port=None):
+        try:
+            buddy_port = int(port or _APP_PORT)
+            drop_x = finite_coordinate(screen_x)
+            drop_y = finite_coordinate(screen_y)
+            x, y = position_for_drop(drop_x, drop_y, _screen_areas())
+        except Exception:
+            return False
+        state = placement_state_from_config(get_buddy_config()).tear_off()
+        _save_buddy_state(state, x=x, y=y)
+        _buddy_window_log(f"tear-off drop={drop_x:.0f},{drop_y:.0f} position={x},{y}")
+        opened = self.open_buddy_window(buddy_port, OVERLAY_WIDTH, OVERLAY_HEIGHT, x, y)
+        if not opened:
+            _save_buddy_state(state.dock())
+        return opened
+
+    def dock_buddy(self):
+        state = placement_state_from_config(get_buddy_config()).dock()
+        _save_buddy_state(state)
+        _buddy_window_log("docked")
+        return self.close_buddy_window(False)
+
+    def buddy_placement(self):
+        state = placement_state_from_config(get_buddy_config())
+        return {
+            "placement": state.placement.value,
+            "visible": state.visible,
+            "collapsed": state.collapsed,
+        }
+
+    def set_buddy_collapsed(self, collapsed=False):
+        state = placement_state_from_config(get_buddy_config())
+        if state.placement is not BuddyPlacement.DESKTOP:
+            return False
+        _save_buddy_state(state.collapse() if bool(collapsed) else state.expand())
         return True
+
+    def show_main_window(self):
+        window = _NAMED_WINDOWS.get("main")
+        if window is None:
+            return False
+        try:
+            try:
+                window.restore()
+            except Exception:
+                pass
+            window.show()
+            return True
+        except Exception:
+            return False
+
+    def get_foreground_target(self):
+        target = _FOREGROUND_TRACKER.last_external
+        return {
+            "available": target is not None,
+            "app_name": _FOREGROUND_TRACKER.app_name,
+        }
+
+    def restore_foreground_target(self):
+        return _FOREGROUND_TRACKER.restore_once()
 
     def open_url(self, url):
         if isinstance(url, str) and url.lower().startswith(("https://", "http://")):
@@ -1860,60 +1950,64 @@ class _JsApi:
         except Exception:
             return False
 
-    def open_buddy_window(self, port=None, width=260, height=260):
-        global _BUDDY_MANUALLY_HIDDEN, _BUDDY_WINDOW_READY
+    def open_buddy_window(self, port=None, width=OVERLAY_WIDTH, height=OVERLAY_HEIGHT, x=None, y=None):
+        global _BUDDY_WINDOW_READY
         try:
             buddy_port = int(port or _APP_PORT)
-            width = int(width or 260)
-            height = int(height or 260)
+            width = int(width or OVERLAY_WIDTH)
+            height = int(height or OVERLAY_HEIGHT)
         except Exception:
             return False
 
-        _BUDDY_MANUALLY_HIDDEN = False
-        _BUDDY_WINDOW_READY = False
+        config = get_buddy_config()
+        placement = placement_state_from_config(config)
+        if placement.placement is not BuddyPlacement.DESKTOP:
+            return False
+        overlay_config = dict(config.get("overlay") or {})
+        requested_x = overlay_config.get("x") if x is None else x
+        requested_y = overlay_config.get("y") if y is None else y
+        if requested_x is not None and requested_y is not None:
+            x, y = position_for_drop(
+                finite_coordinate(requested_x) + width / 2,
+                finite_coordinate(requested_y) + min(height / 3, 76),
+                _screen_areas(),
+                width=width,
+                height=height,
+            )
+            _save_buddy_state(placement, x=x, y=y)
+        else:
+            x = y = None
         key = "buddy"
         url = _buddy_overlay_url(buddy_port)
-        refresh_url = _buddy_overlay_url(buddy_port, cache_bust=True)
         existing = _NAMED_WINDOWS.get(key)
         if existing is not None:
             try:
-                try:
-                    existing.hide()
-                except Exception:
-                    pass
-                existing.load_url(refresh_url)
+                if x is not None and y is not None:
+                    existing.move(int(x), int(y))
                 try:
                     existing.restore()
                 except Exception:
                     pass
+                if placement.visible and _BUDDY_WINDOW_READY:
+                    existing.show()
                 return True
             except Exception:
-                try:
-                    existing.hide()
-                except Exception:
-                    pass
-                try:
-                    existing.load_url(url)
-                    try:
-                        existing.restore()
-                    except Exception:
-                        pass
-                    return True
-                except Exception:
-                    _NAMED_WINDOWS.pop(key, None)
+                _NAMED_WINDOWS.pop(key, None)
 
         kwargs = {
             "title": "Buddy",
             "url": url,
             "width": width,
             "height": height,
+            "x": int(x) if x is not None else None,
+            "y": int(y) if y is not None else None,
             "js_api": _JS_API,
             "resizable": False,
             "frameless": True,
             "shadow": False,
-            "focus": False,
+            "focus": True,
             "on_top": True,
-            "easy_drag": True,
+            "easy_drag": False,
             "hidden": True,
             "background_color": "#000000",
             "transparent": True,
@@ -1922,13 +2016,14 @@ class _JsApi:
         fallback_kwargs = dict(kwargs)
         fallback_kwargs.pop("background_color", None)
         minimal_kwargs = dict(fallback_kwargs)
-        for optional_key in ("transparent", "shadow", "focus", "on_top", "easy_drag", "hidden"):
+        for optional_key in ("transparent", "shadow", "on_top", "hidden"):
             minimal_kwargs.pop(optional_key, None)
         plain_kwargs = {
             "title": "Buddy",
             "url": url,
             "width": width,
             "height": height,
+            "js_api": _JS_API,
         }
         for candidate in (kwargs, fallback_kwargs, minimal_kwargs, plain_kwargs):
             try:
@@ -1942,7 +2037,7 @@ class _JsApi:
                 continue
         if window is None:
             try:
-                window = webview.create_window("Buddy", url, width=width, height=height)
+                window = webview.create_window("Buddy", url, width=width, height=height, js_api=_JS_API)
             except Exception as exc:
                 try:
                     print(f"Buddy overlay plain create_window failed: {exc}", file=sys.stderr, flush=True)
@@ -1950,11 +2045,45 @@ class _JsApi:
                     pass
         if window is None:
             return False
+        _BUDDY_WINDOW_READY = False
         _NAMED_WINDOWS[key] = window
+
+        def _forget_buddy(*_args):
+            global _BUDDY_WINDOW_READY
+            _NAMED_WINDOWS.pop(key, None)
+            _BUDDY_WINDOW_READY = False
+
+        def _persist_move(moved_x, moved_y):
+            try:
+                state = placement_state_from_config(get_buddy_config())
+                _save_buddy_state(state, x=int(moved_x), y=int(moved_y))
+            except Exception:
+                pass
+
         try:
-            window.events.closed += lambda *_args: _NAMED_WINDOWS.pop(key, None)
+            window.events.closed += _forget_buddy
+            window.events.moved += _persist_move
         except Exception:
             pass
+
+        def _ready_timeout_show():
+            time.sleep(2.0)
+            if _NAMED_WINDOWS.get(key) is not window or _BUDDY_WINDOW_READY:
+                return
+            state = placement_state_from_config(get_buddy_config())
+            if state.placement is not BuddyPlacement.DESKTOP or not state.visible:
+                return
+            try:
+                window.show()
+                _buddy_window_log("page-ready handshake timed out; forced native show")
+            except Exception as exc:
+                _buddy_window_log(f"page-ready timeout show failed: {exc}")
+
+        threading.Thread(
+            target=_ready_timeout_show,
+            daemon=True,
+            name="buddy-ready-timeout",
+        ).start()
         return True
 
     def mark_buddy_window_ready(self):
@@ -1963,7 +2092,8 @@ class _JsApi:
         window = _NAMED_WINDOWS.get("buddy")
         if window is None:
             return False
-        if _BUDDY_MANUALLY_HIDDEN:
+        state = placement_state_from_config(get_buddy_config())
+        if state.placement is not BuddyPlacement.DESKTOP or not state.visible:
             return True
         try:
             try:
@@ -1971,21 +2101,22 @@ class _JsApi:
             except Exception:
                 pass
             window.show()
+            _buddy_window_log("page ready; native window shown")
             return True
-        except Exception:
+        except Exception as exc:
+            _buddy_window_log(f"page ready show failed: {exc}")
             return False
 
-    def show_buddy_window(self, manual=True, port=None, width=260, height=260):
-        global _BUDDY_MANUALLY_HIDDEN
-        if bool(manual):
-            _BUDDY_MANUALLY_HIDDEN = False
-        elif _BUDDY_MANUALLY_HIDDEN:
-            _buddy_window_log("auto-show skipped; manually_hidden=true")
+    def show_buddy_window(self, manual=True, port=None, width=OVERLAY_WIDTH, height=OVERLAY_HEIGHT):
+        state = placement_state_from_config(get_buddy_config())
+        if state.placement is not BuddyPlacement.DESKTOP:
             return False
+        if bool(manual):
+            _save_buddy_state(state.show())
         window = _NAMED_WINDOWS.get("buddy")
         if window is None:
             return self.open_buddy_window(port, width, height)
-        if not _BUDDY_WINDOW_READY:
+        if should_defer_native_show(ready=_BUDDY_WINDOW_READY, manual=bool(manual)):
             return True
         try:
             try:
@@ -1993,14 +2124,19 @@ class _JsApi:
             except Exception:
                 pass
             window.show()
+            if bool(manual) and not _BUDDY_WINDOW_READY:
+                _buddy_window_log("manual recovery forced native show before page-ready handshake")
             return True
-        except Exception:
+        except Exception as exc:
+            _buddy_window_log(f"native show failed: {exc}")
             return False
 
     def hide_buddy_window(self, manual=True):
-        global _BUDDY_MANUALLY_HIDDEN
+        state = placement_state_from_config(get_buddy_config())
+        if state.placement is not BuddyPlacement.DESKTOP:
+            return False
         if bool(manual):
-            _BUDDY_MANUALLY_HIDDEN = True
+            _save_buddy_state(state.hide())
         window = _NAMED_WINDOWS.get("buddy")
         if window is None:
             return False
@@ -2010,26 +2146,11 @@ class _JsApi:
         except Exception:
             return False
 
-    def minimize_buddy_window(self, manual=True):
-        global _BUDDY_MANUALLY_HIDDEN
-        if bool(manual):
-            _BUDDY_MANUALLY_HIDDEN = True
-        window = _NAMED_WINDOWS.get("buddy")
-        if window is None:
-            return False
-        try:
-            window.minimize()
-            return True
-        except Exception:
-            return False
-
     def close_buddy_window(self, manual=True):
-        global _BUDDY_MANUALLY_HIDDEN, _BUDDY_WINDOW_READY
-        if bool(manual):
-            _BUDDY_MANUALLY_HIDDEN = True
+        global _BUDDY_WINDOW_READY
         window = _NAMED_WINDOWS.get("buddy")
         if window is None:
-            return False
+            return True
         try:
             window.destroy()
             _NAMED_WINDOWS.pop("buddy", None)
@@ -2077,35 +2198,35 @@ def _on_loaded(window):
         """)
     except Exception:
         pass
+    try:
+        state = placement_state_from_config(get_buddy_config())
+        if state.placement is BuddyPlacement.DESKTOP:
+            opened = _JS_API.open_buddy_window(_APP_PORT, OVERLAY_WIDTH, OVERLAY_HEIGHT)
+            if not opened:
+                _save_buddy_state(state.dock())
+                _buddy_window_log("startup restore failed; returned Buddy to the main dock")
+    except Exception as exc:
+        _buddy_window_log(f"startup restore failed: {exc}")
 
 _JS_API = _JsApi()
 
-def _auto_show_buddy_window(reason):
-    if not _BUDDY_DESKTOP_ENABLED:
-        _buddy_window_log(f"auto-show skipped; reason={reason} desktop_enabled=false")
+def _on_main_window_closing():
+    state = placement_state_from_config(get_buddy_config())
+    if state.placement is not BuddyPlacement.DESKTOP:
+        return True
+    window = _NAMED_WINDOWS.get("main")
+    try:
+        if window is not None:
+            window.hide()
+        _buddy_window_log("main-window close cancelled; hidden while Buddy is desktop")
         return False
-    ok = _JS_API.show_buddy_window(False, _APP_PORT, 260, 260)
-    _buddy_window_log(f"auto-show reason={reason} ok={bool(ok)}")
-    return ok
-
-def _auto_hide_buddy_window(reason):
-    if not _BUDDY_DESKTOP_ENABLED:
-        return False
-    ok = _JS_API.hide_buddy_window(False)
-    _buddy_window_log(f"auto-hide reason={reason} ok={bool(ok)}")
-    return ok
-
-def _close_buddy_window_for_main_close():
-    ok = _JS_API.close_buddy_window(False)
-    _buddy_window_log(f"main-window-closed close-buddy ok={bool(ok)}")
-    return ok
+    except Exception as exc:
+        _buddy_window_log(f"main-window hide-on-close failed: {exc}")
+        return True
 
 def _install_main_window_buddy_events(window):
     try:
-        window.events.minimized += lambda *_args: _auto_show_buddy_window("main_window_minimized")
-        window.events.restored += lambda *_args: _auto_hide_buddy_window("main_window_restored")
-        window.events.shown += lambda *_args: _auto_hide_buddy_window("main_window_shown")
-        window.events.closed += lambda *_args: _close_buddy_window_for_main_close()
+        window.events.closing += _on_main_window_closing
         _buddy_window_log("main-window native event sync installed")
         return True
     except Exception as exc:
@@ -2136,11 +2257,13 @@ def _start_control_server(control_port):
             qs = parse_qs(parsed.query or "")
             manual = str((qs.get("manual") or ["1"])[0]).lower() not in {"0", "false", "no"}
             if parsed.path.startswith("/buddy/show"):
-                self._send(_JS_API.show_buddy_window(manual, _APP_PORT, 260, 260))
+                self._send(_JS_API.show_buddy_window(manual, _APP_PORT, OVERLAY_WIDTH, OVERLAY_HEIGHT))
             elif parsed.path.startswith("/buddy/hide"):
                 self._send(_JS_API.hide_buddy_window(manual))
             elif parsed.path.startswith("/buddy/close"):
                 self._send(_JS_API.close_buddy_window(manual))
+            elif parsed.path.startswith("/main/show"):
+                self._send(_JS_API.show_main_window())
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -2158,7 +2281,9 @@ _ICON_PATH = sys.argv[5] if len(sys.argv) > 5 else ""
 _CONTROL_PORT = int(sys.argv[6]) if len(sys.argv) > 6 else 0
 _install_windows_app_icon()
 _start_control_server(_CONTROL_PORT)
+threading.Thread(target=_track_foreground_apps, daemon=True, name="buddy-foreground-tracker").start()
 main_window = webview.create_window(title, url, width=w, height=h, js_api=_JS_API)
+_NAMED_WINDOWS["main"] = main_window
 _install_main_window_buddy_events(main_window)
 _DATA_DIR = os.environ.get("ROW_BOT_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".row-bot")
 _WEBVIEW_STORAGE_PATH = os.environ.get("ROW_BOT_WEBVIEW_STORAGE_PATH") or os.path.join(
@@ -2606,7 +2731,8 @@ class RowBotTray:
         port = self._window_control_port
         if not port:
             return False
-        url = f"http://127.0.0.1:{int(port)}/buddy/{action}"
+        path = "/main/show" if action == "main-show" else f"/buddy/{action}"
+        url = f"http://127.0.0.1:{int(port)}{path}"
         try:
             with urllib.request.urlopen(url, timeout=timeout) as response:
                 body = response.read(64).decode("utf-8", errors="replace").lower()
@@ -2639,6 +2765,9 @@ class RowBotTray:
     def _on_open(self, icon=None, item=None) -> None:  # noqa: ARG002
         """Open (or re-open) the native window."""
         if self._is_window_alive():
+            if self._send_window_command("main-show"):
+                logger.info("Restored existing hidden %s window", APP_DISPLAY_NAME)
+                return
             # Window is running but may be behind other apps.  Try to bring
             # it to the foreground WITHOUT killing it — killing drops the
             # WebSocket connection and makes in-flight streams appear failed.

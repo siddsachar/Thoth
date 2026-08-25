@@ -130,6 +130,19 @@ def test_launcher_change_selects_startup_regressions() -> None:
     assert not selection.unmatched_files
 
 
+def test_buddy_overlay_change_selects_state_ui_and_stop_regressions() -> None:
+    selection = select_tests_for_changes(
+        ["src/row_bot/buddy/overlay.py", "src/row_bot/ui/buddy.py"]
+    )
+
+    assert "buddy_lifecycle" in selection.matched_rules
+    assert "tests/test_buddy_core.py" in selection.test_paths
+    assert "tests/test_buddy_ui.py" in selection.test_paths
+    assert "tests/test_buddy_overlay.py" in selection.test_paths
+    assert "tests/test_generation_stop.py" in selection.test_paths
+    assert not selection.unmatched_files
+
+
 def test_app_port_change_selects_startup_and_mobile_regressions() -> None:
     selection = select_tests_for_changes(["src/row_bot/app_port.py"])
 

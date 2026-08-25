@@ -7,9 +7,9 @@ import Screenshot from '@site/src/components/Screenshot';
 
 # Settings: Buddy
 
-Buddy is Row-Bot's visual companion. It can live in the sidebar, float in the workspace, or open as a desktop overlay. Buddy reflects app state but does not change model behavior by itself.
+Buddy is Row-Bot's visual companion. It stays docked in the sidebar or can be torn off into a compact desktop overlay. The overlay follows the thread selected in Row-Bot and uses the same model, tools, approvals, drafts, and saved conversation.
 
-<Screenshot id="settings-buddy" alt="Settings: Buddy in Row-Bot." caption="The Buddy tab controls the sidebar companion, desktop overlay, personality, look, motion, and optional custom-look generation." />
+<Screenshot id="settings-buddy" alt="Settings: Buddy in Row-Bot." caption="The Buddy tab controls companion visibility, personality, look, motion, and optional custom-look generation." />
 
 ## Where To Find It
 
@@ -17,8 +17,10 @@ Open **Settings**, then choose **Buddy** from the left tab list.
 
 ## Controls
 
-- Enable switches decide whether Buddy appears in the sidebar, workspace, or desktop overlay.
-- Open and close overlay buttons control the separate desktop overlay window.
+- **Show Buddy** controls overall visibility.
+- Drag Buddy away from its sidebar dock to tear it off into the desktop overlay.
+- The overlay menu can open the full thread, collapse the compact surface, dock Buddy, or hide it.
+- The overlay composer sends to the selected Chat, Developer, or Designer thread. Enter sends and Shift+Enter adds a line.
 - Companion personality changes the tone of Buddy status cues.
 - Bubble style changes how visual status appears.
 - Look cards choose a bundled or custom Buddy appearance.
@@ -28,10 +30,11 @@ Open **Settings**, then choose **Buddy** from the left tab list.
 
 ## Common Workflow
 
-1. Start with the bundled look and sidebar mode.
-2. Enable desktop overlay only if you want Buddy outside the main Row-Bot window.
-3. Generate a custom look after providers and media models are ready.
-4. Use still only if motion generation is unavailable or distracting.
+1. Start with the bundled look and docked Buddy.
+2. Drag Buddy onto the desktop when you want a compact always-on-top view of the selected thread.
+3. Use **Dock Buddy** in the overlay menu to return it to the sidebar.
+4. Generate a custom look after providers and media models are ready.
+5. Use still only if motion generation is unavailable or distracting.
 
 ## What Is Saved
 
@@ -47,6 +50,7 @@ The [generated Settings Controls reference](/docs/reference/generated/settings-c
 
 ## Troubleshooting
 
-- If Buddy does not appear, check the enable switches and refresh the app.
-- If the overlay is stuck, use Close overlay, then Open overlay again.
+- If Buddy does not appear, turn on **Show Buddy**. If it was hidden while torn off, use **Show Buddy** from the system tray.
+- If Row-Bot's main window is hidden while Buddy is torn off, use **Open Row-Bot** from the tray or **Open full thread** from Buddy.
+- Browser/server mode keeps the docked Buddy but cannot tear it into a native desktop window.
 - If custom generation fails, check provider readiness and try still-only mode.

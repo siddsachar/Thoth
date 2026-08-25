@@ -393,14 +393,17 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
     SourceTestRule(
         "buddy_lifecycle",
         (
-            "src/row_bot/buddy/brain.py",
-            "src/row_bot/buddy/events.py",
+            "src/row_bot/buddy/**",
+            "src/row_bot/ui/buddy.py",
+            "static/buddy/runtime/buddy.js",
         ),
         (
             "tests/test_buddy_core.py",
+            "tests/test_buddy_ui.py",
+            "tests/test_buddy_overlay.py",
             "tests/test_generation_stop.py",
         ),
-        "Buddy lifecycle events must clear active generation and tool lanes exactly once when a generation stops.",
+        "Buddy placement, native projection, lifecycle events, and generation controls share one local-first companion contract.",
     ),
     SourceTestRule(
         "approvals",
