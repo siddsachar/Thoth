@@ -39,6 +39,59 @@ def test_typed_value_is_absent_from_service_state_model_output_and_fake_history(
     assert secret not in repr(fake_transport.calls)
 
 
+def test_replaced_value_is_absent_from_model_status_receipt_logs_and_fake_history(
+    service,
+    fake_transport,
+    caplog,
+) -> None:
+    import logging
+
+    secret = "never-expose-this-replacement"
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "GridCell",
+            "label": "Selected item",
+            "value": "prior private value",
+            "enabled": True,
+            "selected": True,
+        },
+    )
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER)
+    signature = (
+        "replace_text",
+        target_id,
+        True,
+        len(secret),
+    )
+
+    with caplog.at_level(logging.INFO, logger="row_bot.computer_use.service"):
+        service.begin_tool_call(signature)
+        result = service.act(
+            "replace_text",
+            target_id,
+            OWNER,
+            element_token=observation.elements[0].token,
+            text=secret,
+        )
+        service.end_tool_call(
+            signature,
+            action_family="replace_text",
+            driver_effect=result.driver_effect,
+            effect_verified=result.effect_verified,
+        )
+
+    rendered = "\n".join(record.message for record in caplog.records)
+    assert secret not in repr(result)
+    assert secret not in observation.model_text()
+    assert secret not in str(service.status_snapshot())
+    assert secret not in repr(fake_transport.calls)
+    assert secret not in rendered
+    assert "prior private value" not in observation.model_text()
+    assert "replace_text (value hidden)" in str(service.status_snapshot())
+
+
 def test_window_discovery_requires_scope_before_calling_the_driver(service, fake_transport) -> None:
     service.acquire(OWNER, validate_context=False)
 

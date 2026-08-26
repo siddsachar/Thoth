@@ -82,6 +82,7 @@ class FakeScenario:
     accepted_background_noop_tools: frozenset[str] = field(default_factory=frozenset)
     action_route: str = ""
     action_cause: str = ""
+    element_type_effect: str = "confirmed"
     driver_declared_count: int | None = None
     driver_limited: bool | None = None
     driver_sparse: bool = False
@@ -415,10 +416,11 @@ class FakeCuaTransport:
                     # Pinned Cua Windows behavior: UIA ValuePattern.SetValue is
                     # an atomic whole-value replacement, not caret insertion.
                     self.document_value = typed
+                    effect = self.scenario.element_type_effect
                     return self._result({
                         "path": "ax",
-                        "effect": "confirmed",
-                        "verified": True,
+                        "effect": effect,
+                        "verified": effect == "confirmed",
                         "delivery_mode": delivery_mode,
                     })
                 self.document_value += typed

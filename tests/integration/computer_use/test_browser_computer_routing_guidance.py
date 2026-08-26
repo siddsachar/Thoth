@@ -20,6 +20,13 @@ def test_prompt_prefers_structured_then_browser_then_computer() -> None:
     assert "at most three reversible mutations" in _AGENT_GUIDELINES
     assert "do not repeatedly focus it" in _AGENT_GUIDELINES
     assert "A single unchanged or unknown visual comparison" in _AGENT_GUIDELINES
+    assert "replace_text" in _AGENT_GUIDELINES
+    assert "literal caret insertion" in _AGENT_GUIDELINES
+    assert "action_dispatched=true" in _AGENT_GUIDELINES
+    assert "not proof of focus" in _AGENT_GUIDELINES
+    assert "one materially different safe recovery" in _AGENT_GUIDELINES
+    assert "shell or clipboard" in _AGENT_GUIDELINES
+    assert "free-form Vision prose" in _AGENT_GUIDELINES
     assert "Computer Use is unavailable in background tasks" in AGENT_BG_OVERRIDE
 
 

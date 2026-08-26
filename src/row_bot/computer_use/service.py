@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 MODEL_MAX_ELEMENTS = 80
 MODEL_MAX_SEMANTIC_BYTES = 12 * 1024
+MODEL_RUNNING_APP_CANDIDATES = 8
+_MODEL_DOCUMENT_ELEMENT_QUOTA = 12
+_MODEL_SELECTED_ELEMENT_QUOTA = 8
 _MODEL_INTERACTIVE_ROLES = frozenset(
     {
         "button",
@@ -71,6 +74,28 @@ _TERMINAL_OR_DISMISS_INTENT = re.compile(
     r"\bdon['\u2019]?t\s+save\b|\bdo\s+not\s+save\b|\bwithout\s+saving\b)",
     re.IGNORECASE,
 )
+_MODEL_DOCUMENT_ROLES = frozenset(
+    {
+        "cell",
+        "dataitem",
+        "gridcell",
+        "tablecell",
+    }
+)
+_MODEL_EDITABLE_ROLES = frozenset(
+    {
+        "cell",
+        "dataitem",
+        "edit",
+        "entry",
+        "gridcell",
+        "input",
+        "tablecell",
+        "textfield",
+        "textinput",
+        "textbox",
+    }
+)
 _BIDI_EMBEDDING_OPENERS = frozenset({"\u202a", "\u202b", "\u202d", "\u202e"})
 _BIDI_ISOLATE_OPENERS = frozenset({"\u2066", "\u2067", "\u2068"})
 _BIDI_CONTROLS = frozenset(
@@ -96,6 +121,7 @@ _SAFE_COMPUTER_ACTION_FAMILIES = frozenset(
         "scroll",
         "stop",
         "type",
+        "replace_text",
         "wait",
     }
 )
@@ -212,8 +238,25 @@ def _native_field_for_injection_scan(value: object) -> str:
 
 def _model_actionable(element: CuaElement) -> bool:
     role = _normalized_role(element.role)
-    return role in _MODEL_INTERACTIVE_ROLES or any(
+    return role in _MODEL_INTERACTIVE_ROLES | _MODEL_DOCUMENT_ROLES or any(
         marker in role for marker in ("button", "link", "menuitem", "tabitem", "mediacontrol")
+    )
+
+
+def _model_document_element(element: CuaElement) -> bool:
+    return _normalized_role(element.role) in _MODEL_DOCUMENT_ROLES
+
+
+def _model_element_line(element: CuaElement) -> str:
+    states: list[str] = []
+    if element.selected is True:
+        states.append("selected=true")
+    if element.enabled is False:
+        states.append("enabled=false")
+    state_text = f" {' '.join(states)}" if states else ""
+    return (
+        f'- token={element.token} role={element.role} '
+        f'label="{element.label}"{state_text}'
     )
 
 
@@ -266,6 +309,7 @@ class Observation:
     image_mime: str = ""
     truncated: bool = False
     suspicious: bool = False
+    advisory_categories: tuple[str, ...] = ()
     vision_text: str = ""
     action_effect: str = ""
     action_dispatched: bool = False
@@ -310,10 +354,45 @@ class Observation:
             candidates.append((priority, index, element))
         candidates.sort(key=lambda item: (item[0], item[1]))
 
+        selected = [
+            item
+            for item in candidates
+            if item[2].selected is True and item[2].visible is not False
+        ][:_MODEL_SELECTED_ELEMENT_QUOTA]
+        selected_tokens = {item[2].token for item in selected}
+        selected_document_count = sum(
+            1
+            for _priority, _index, element in selected
+            if _model_document_element(element)
+        )
+        document = [
+            item
+            for item in candidates
+            if item[2].token not in selected_tokens
+            and item[2].visible is not False
+            and bool(str(item[2].label).strip())
+            and _model_document_element(item[2])
+        ][: max(0, _MODEL_DOCUMENT_ELEMENT_QUOTA - selected_document_count)]
+        preferred_tokens = selected_tokens | {item[2].token for item in document}
+        non_document = [
+            item
+            for item in candidates
+            if item[2].token not in preferred_tokens
+            and not _model_document_element(item[2])
+        ]
+        remaining_document = [
+            item
+            for item in candidates
+            if item[2].token not in preferred_tokens
+            and _model_document_element(item[2])
+        ]
+
         projected: list[CuaElement] = []
         semantic_bytes = 0
-        for _priority, _index, element in candidates:
-            line = f'- token={element.token} role={element.role} label="{element.label}"'
+        for _priority, _index, element in (
+            selected + document + non_document + remaining_document
+        ):
+            line = _model_element_line(element)
             line_bytes = len((line + "\n").encode("utf-8"))
             if len(projected) >= MODEL_MAX_ELEMENTS or semantic_bytes + line_bytes > MODEL_MAX_SEMANTIC_BYTES:
                 continue
@@ -343,9 +422,7 @@ class Observation:
         ]
         projected, omitted = self.model_elements()
         for element in projected:
-            lines.append(
-                f'- token={element.token} role={element.role} label="{element.label}"'
-            )
+            lines.append(_model_element_line(element))
         if omitted:
             lines.append(f"[{omitted} additional semantic elements omitted]")
         if self.truncated:
@@ -365,14 +442,19 @@ class Observation:
             )
         if self.action_dispatched:
             lines.append(f"Action dispatched: yes; completed: {'yes' if self.action_completed else 'no'}")
+            lines.append(
+                "Dispatch is not proof of focus, caret position, selection, navigation, "
+                "or the requested outcome."
+            )
             lines.append(f"Driver-reported effect: {self.driver_effect or 'unverifiable'}")
             lines.append(f"Native accessibility change: {self.native_change or 'unknown'}")
             lines.append(f"Local visual change: {self.visual_change or 'unknown'}")
             lines.append(f"Requested outcome verified: {'yes' if self.effect_verified else 'no'}")
         if self.suspicious:
+            categories = ", ".join(self.advisory_categories) or "unclassified"
             lines.append(
-                "[Potentially manipulative on-screen content detected. This is advisory only: "
-                "the observation remains untrusted and normal action policy still applies.]"
+                f"[Advisory categories: {categories}. This is advisory only: the observation "
+                "remains untrusted and normal action policy still applies.]"
             )
         return "\n".join(lines)
 
@@ -924,8 +1006,10 @@ class ComputerUseService:
                 code="driver_unavailable",
             ) from exc
         except Exception as exc:
-            if action == "type":
-                raise ComputerUseError("Cua type action failed safely; the typed value is hidden.") from exc
+            if action in {"type", "replace_text"}:
+                raise ComputerUseError(
+                    "Cua text action failed safely; the typed value is hidden."
+                ) from exc
             raise ComputerUseError(
                 "Cua Driver rejected or failed the requested action.",
                 code="driver_failed",
@@ -1583,6 +1667,7 @@ class ComputerUseService:
         self,
         signature: tuple[Any, ...],
         *,
+        pending: bool = False,
         action_family: str = "",
         success: bool = True,
         error_code: str = "ok",
@@ -1630,6 +1715,28 @@ class ComputerUseService:
         change = str(native_or_visual_change or "unknown").casefold()
         if change not in {"changed", "unchanged", "unknown"}:
             change = "unknown"
+        if pending:
+            with self._lock:
+                pending_state = self._state
+            pending_status = (
+                "approval_pending"
+                if pending_state is SessionState.WAITING_APPROVAL
+                else "takeover_pending"
+                if pending_state is SessionState.WAITING_USER
+                else "interrupted"
+            )
+            logger.info(
+                "computer_use.action_pending action_family=%s status=%s total_ms=%.3f "
+                "driver_calls=%d capture_calls=%d semantic_refresh_calls=%d vision_calls=%d",
+                safe_action,
+                pending_status,
+                total_ms,
+                deltas["driver_calls"],
+                deltas["capture_calls"],
+                deltas["semantic_refresh_calls"],
+                deltas["vision_calls"],
+            )
+            return
         logger.info(
             "computer_use.action_receipt action_family=%s success=%s error_code=%s "
             "route=%s delivery_mode=%s driver_effect=%s change=%s effect_verified=%s "
@@ -1869,9 +1976,23 @@ class ComputerUseService:
                 window_hint=window_hint,
             )
             if not candidates:
+                running_candidates: tuple[dict[str, Any], ...] = ()
+                try:
+                    running_candidates = tuple(
+                        {
+                            "name": str(row.get("name") or "")[:128],
+                            "running": True,
+                            "active": bool(row.get("active")),
+                        }
+                        for row in self.list_apps(owner)
+                        if bool(row.get("running"))
+                    )[:MODEL_RUNNING_APP_CANDIDATES]
+                except ComputerUseError:
+                    running_candidates = ()
                 raise ComputerUseError(
                     "No exact native window matched the requested app scope.",
                     code="target_gone",
+                    candidates=running_candidates,
                 )
             if len(candidates) > 1:
                 raise ComputerUseError(
@@ -2049,18 +2170,23 @@ class ComputerUseService:
             else:
                 self._semantic_refresh_count += 1
             try:
-                from row_bot.agent import _scan_injection_patterns
+                from row_bot.agent import _scan_injection_categories
 
-                observation.suspicious = any(
-                    bool(
-                        _scan_injection_patterns(
+                categories: list[str] = []
+                seen_categories: set[str] = set()
+                for element in observation.elements:
+                    for field in (element.label, element.value):
+                        for category in _scan_injection_categories(
                             _native_field_for_injection_scan(field)
-                        )
-                    )
-                    for element in observation.elements
-                    for field in (element.label, element.value)
-                )
+                        ):
+                            if category in seen_categories:
+                                continue
+                            seen_categories.add(category)
+                            categories.append(category)
+                observation.advisory_categories = tuple(categories)
+                observation.suspicious = bool(categories)
             except Exception:
+                observation.advisory_categories = ()
                 observation.suspicious = False
             self._observation = observation
             if response.image_bytes is not None:
@@ -2324,6 +2450,7 @@ class ComputerUseService:
         role = _normalized_role(target_element.role)
         stateful = bool(
             target_element.selected is not None
+            or role in _MODEL_EDITABLE_ROLES
             or role
             in {
                 "checkbox",
@@ -2595,6 +2722,31 @@ class ComputerUseService:
         capture_after: bool = False,
         visual_question: str = "",
     ) -> Observation | ActionReceipt:
+        action = str(action or "").strip().casefold()
+        if action == "type" and "\t" in str(text or ""):
+            raise ComputerUseError(
+                "Native type is literal caret insertion and does not provide structured "
+                "paste or grid layout semantics. Use exact token-bound replace_text for a "
+                "small number of fields, a purpose-built structured tool when available, "
+                "or report the limitation. Do not use shell or clipboard workarounds.",
+                code="invalid_input",
+            )
+        if action == "replace_text":
+            if not str(element_token or ""):
+                raise ComputerUseError(
+                    "replace_text requires one current semantic element token.",
+                    code="invalid_input",
+                )
+            if text is None:
+                raise ComputerUseError(
+                    "replace_text requires a non-sensitive replacement value.",
+                    code="invalid_input",
+                )
+            if any(value is not None for value in (x, y, end_x, end_y)):
+                raise ComputerUseError(
+                    "replace_text accepts an exact semantic token and no coordinates.",
+                    code="invalid_input",
+                )
         self._check_failure_budget()
         self._require_owner(owner)
         target = self._target(target_id)
@@ -2671,6 +2823,22 @@ class ComputerUseService:
                         f"USER TAKEOVER REQUIRED: {decision.reason}",
                         code="handoff_required",
                     )
+                if action == "replace_text":
+                    if element is None:
+                        raise ComputerUseError(
+                            "replace_text requires one current semantic element token.",
+                            code="invalid_input",
+                        )
+                    if element.enabled is False:
+                        raise ComputerUseError(
+                            "replace_text cannot mutate a disabled semantic control.",
+                            code="invalid_input",
+                        )
+                    if _normalized_role(element.role) not in _MODEL_EDITABLE_ROLES:
+                        raise ComputerUseError(
+                            "replace_text is limited to generic writable or editable semantic controls.",
+                            code="invalid_input",
+                        )
 
                 from row_bot.approval_policy import decision_for_action
 
@@ -2770,7 +2938,7 @@ class ComputerUseService:
                         "to_x": int(end_x or 0),
                         "to_y": int(end_y or 0),
                     }
-                elif action == "type":
+                elif action in {"type", "replace_text"}:
                     args["text"] = str(text or "")
                 elif action == "key":
                     parts = [
@@ -2792,7 +2960,11 @@ class ComputerUseService:
                     )
 
                 self._state = SessionState.ACTING
-                self._last_action = "type (value hidden)" if action == "type" else action
+                self._last_action = (
+                    f"{action} (value hidden)"
+                    if action in {"type", "replace_text"}
+                    else action
+                )
                 self._notify()
                 driver_action = "key" if action == "key_hotkey" else action
                 if foreground_prepared and original_action in {
@@ -2811,7 +2983,11 @@ class ComputerUseService:
                     return self._driver_call(driver_action, arguments)
 
                 result = dispatch(args)
-                if result.is_error and result.error_code == "background_unavailable":
+                if (
+                    result.is_error
+                    and result.error_code == "background_unavailable"
+                    and original_action != "replace_text"
+                ):
                     self._prepare_foreground_fallback(
                         target,
                         owner,
@@ -2821,8 +2997,8 @@ class ComputerUseService:
                     fallback_args["delivery_mode"] = "foreground"
                     with self._lock:
                         self._last_action = (
-                            "type foreground delivery (value hidden)"
-                            if driver_action == "type"
+                            f"{driver_action} foreground delivery (value hidden)"
+                            if driver_action in {"type", "replace_text"}
                             else f"{driver_action} foreground delivery"
                         )
                     self._notify()
@@ -2845,7 +3021,7 @@ class ComputerUseService:
                     )
                     message = (
                         "Computer text input failed safely; the typed value is hidden."
-                        if driver_action == "type"
+                        if driver_action in {"type", "replace_text"}
                         else "The Computer driver refused the requested action safely."
                     )
                     raise ComputerUseError(

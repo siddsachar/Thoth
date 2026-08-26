@@ -70,7 +70,7 @@ The private client permits only:
 | `launch_app` | allowlisted display-name launch | routine or consequential |
 | `bring_to_front` | explicit foreground escalation | always confirm |
 | `click`, `double_click`, `right_click` | token-first selection | routine or consequential |
-| `type_text`, `press_key`, `hotkey` | non-secret text/input | routine, consequential, or handoff |
+| `type_text`, `press_key`, `hotkey` | non-secret text/input; `type_text` backs distinct caret-insert and exact whole-value-replace Row-Bot actions | routine, consequential, or handoff |
 | `scroll`, `drag` | bounded target-window input | routine |
 | `health_report`, `check_permissions` | readiness after disclosure | internal only |
 | `start_session`, `end_session` | private window-scoped lifecycle | internal only |
@@ -90,6 +90,22 @@ maintenance surfaces are forbidden and never model-visible.
   retains a paused lease; Resume requires a fresh observation.
 - Target IDs and element tokens are opaque and generation-bound. Target drift,
   reconnects, approval waits, and takeover invalidate them.
+- Compact native observations retain the existing 80-element and 12 KiB model
+  limits while promoting visible selected elements and reserving a small,
+  deterministic document/grid share. They expose only labels plus useful
+  `selected=true` or `enabled=false` state; values, geometry, and parent trees
+  remain model-hidden.
+- `type` is literal keyboard insertion at the current caret or selection. It
+  may validate a semantic token but never forwards that token to Cua's
+  whole-value path. Horizontal-tab payloads are rejected before approval or
+  mutation because native tab behavior cannot promise structured paste or grid
+  layout; multiline insertion remains supported.
+- `replace_text` atomically replaces one exact current editable semantic
+  control through the reviewed token-targeted Cua `type_text` path. It requires
+  the latest projected token, a supported generic editable role, an enabled
+  control, and non-sensitive text; accepts no coordinates; and has no caret,
+  label, fuzzy, clipboard, shell, or alternate delivery fallback. Stale,
+  unsupported, disabled, refused, and unverifiable cases are never replayed.
 - Credentials, OTP, CAPTCHA, biometric, UAC/TCC, terminals, password managers,
   Row-Bot itself, secure desktops, and elevation are handed off or blocked.
 - Pixels are captured only for coordinate grounding, visual comparison,
@@ -99,6 +115,14 @@ maintenance surfaces are forbidden and never model-visible.
 - Screenshot bytes are ephemeral. Typed values are excluded from logs,
   histories, checkpoints, approval payloads, memory, and durable media.
 - Consequential actions require point-of-risk confirmation even in Auto mode.
+- Unbound Enter/Return remains consequential because it may submit a form or
+  dialog. Exact replacement is the atomic usability path when a separate Enter
+  would only commit an assumed edit; model-authored expected effects do not
+  weaken the Enter policy.
+- App-scoped exact-name failures may return at most eight currently running
+  canonical app names with running/active metadata for a deliberate retry.
+  Row-Bot does not expose unrelated titles, fuzzy-match, auto-select, infer an
+  alias, or silently launch a candidate.
 - UI text and accessibility content are untrusted tool output and cannot grant
   new scope, recipients, secrets, or authority.
 - Prompt-injection pattern matches in native labels and values are advisory
@@ -106,9 +130,30 @@ maintenance surfaces are forbidden and never model-visible.
   independently without treating accessibility roles as instructions, then
   applies the same exact-target, protected-surface, credential, consequential-
   action, and thread approval policy whether or not an advisory is present.
+  Model-visible diagnostics contain only deduplicated bounded categories such
+  as `explicit_role_marker`, `instruction_override`, `exfiltration_request`,
+  or `hidden_control_anomaly`, never the matching value, identity, title,
+  token, coordinate, or position.
+- Approval interruption emits a privacy-safe pending diagnostic rather than a
+  successful completed-action receipt. Resume can dispatch at most once and
+  emits one final completed, failed, denied, or cancelled receipt without typed
+  text, labels, titles, tokens, coordinates, screenshots, or approval secrets.
+- `action_dispatched=true` proves neither focus, caret/selection/navigation nor
+  the requested outcome. Dependent mutation chains must use an exact semantic
+  action, one necessary fresh confirmation, or stop; after a failed final
+  verification, only one materially different safe recovery is allowed.
+- Token-based semantic replacement stays on the native fast path and does not
+  invoke Vision. Vision is reserved for a necessary coordinate decision or one
+  final user-visible verification and is not automatically repeated or parsed
+  as authorization or a Boolean postcondition.
 - Terminal `hard_blocked` results are reserved for concrete protected targets
   or capabilities and Block approval mode; they remain terminal and must not be
   bypassed by aliases or alternate Computer actions.
+
+Generic Computer Use is not a substitute for a purpose-built structured or
+application API for large bulk transformations. Row-Bot exposes no
+model-visible clipboard action and does not use hidden shell clipboard commands
+to simulate one.
 
 ## Upstream contract binding
 

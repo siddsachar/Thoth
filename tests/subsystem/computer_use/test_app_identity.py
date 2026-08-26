@@ -108,17 +108,47 @@ def test_unknown_or_partial_app_name_is_not_fuzzily_resolved(service, fake_trans
     assert service.list_windows(OWNER, app="Calc") == []
 
 
-def test_app_scoped_capture_zero_matches_returns_target_gone_without_pixels(
+def test_app_scoped_capture_zero_matches_returns_bounded_running_exact_candidates_without_pixels(
     service,
     fake_transport,
 ) -> None:
-    fake_transport.scenario.windows = (_window(1, "Notepad", "Untitled - Notepad"),)
+    private_title = "Private document title"
+    fake_transport.scenario.windows = (
+        _window(1, "grid-editor.exe", private_title),
+    )
+    candidate_names = (
+        "grid-editor.exe",
+        "Document App.app",
+        "org.example.Editor",
+        *(f"candidate-{index}.exe" for index in range(9)),
+    )
+    fake_transport.scenario.apps = tuple(
+        {
+            "name": name,
+            "running": True,
+            "active": index == 3,
+        }
+        for index, name in enumerate(candidate_names)
+    ) + (
+        {"name": "not-running.exe", "running": False, "active": False},
+    )
 
     with pytest.raises(ComputerUseError) as missing:
-        service.capture(owner=OWNER, app="Calculator")
+        service.capture(owner=OWNER, app="Grid Editing App")
 
     assert missing.value.code == "target_gone"
+    assert len(missing.value.candidates) == 8
+    assert missing.value.candidates[3] == {
+        "name": "candidate-0.exe",
+        "running": True,
+        "active": True,
+    }
+    assert all(row["running"] is True for row in missing.value.candidates)
+    assert "not-running.exe" not in repr(missing.value.candidates)
+    assert private_title not in repr(missing.value.candidates)
     assert [name for name, _args in fake_transport.calls].count("list_windows") == 1
+    assert [name for name, _args in fake_transport.calls].count("list_apps") == 1
+    assert "launch_app" not in [name for name, _args in fake_transport.calls]
     assert "get_window_state" not in [name for name, _args in fake_transport.calls]
 
 

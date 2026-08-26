@@ -9,7 +9,13 @@ import logging
 import pytest
 from PIL import Image, ImageDraw
 
-from row_bot.computer_use.service import ComputerUseError, LeaseOwner, Observation
+from row_bot.computer_use.service import (
+    MODEL_MAX_ELEMENTS,
+    MODEL_MAX_SEMANTIC_BYTES,
+    ComputerUseError,
+    LeaseOwner,
+    Observation,
+)
 from row_bot.tools.computer_use_tool import _observation_payload
 from tests.fixtures.fake_cua import SANITIZED_NATIVE_BROWSER_APPS
 
@@ -253,6 +259,54 @@ def test_model_projection_is_bounded_but_full_validated_elements_remain_ephemera
     assert "Action 000" in rendered
     assert "additional semantic elements omitted" in rendered
     assert service.current_observation(target_id) is observation
+
+
+def test_dense_grid_projection_preserves_selected_item_and_bounded_control_mix(
+    service,
+    fake_transport,
+) -> None:
+    private_values = tuple(f"private-value-{index:04d}" for index in range(1_200))
+    chrome = tuple(
+        {
+            "role": "Button",
+            "label": f"Application control {index:03d}",
+            "visible": True,
+        }
+        for index in range(400)
+    )
+    document = tuple(
+        {
+            "role": "GridCell",
+            "label": f"Item {index:04d}",
+            "value": private_values[index],
+            "visible": True,
+            "enabled": index != 7,
+            "selected": index == 1_199,
+        }
+        for index in range(1_200)
+    )
+    fake_transport.scenario.semantic_elements = chrome + document
+
+    _target_id, observation = _browser_target(service, fake_transport)
+    projected, omitted = observation.model_elements()
+    rendered = observation.model_text()
+    projected_roles = [element.role.casefold() for element in projected]
+    semantic_lines = "\n".join(
+        line for line in rendered.splitlines() if line.startswith("- token=")
+    )
+
+    assert len(observation.elements) == 1_600
+    assert len(projected) == MODEL_MAX_ELEMENTS
+    assert omitted == len(observation.elements) - MODEL_MAX_ELEMENTS
+    assert 8 <= projected_roles.count("gridcell") <= 16
+    assert projected_roles.count("button") >= 32
+    assert "Item 1199" in rendered
+    assert "selected=true" in rendered
+    assert "enabled=false" in rendered
+    assert all(value not in rendered for value in private_values)
+    assert len(semantic_lines.encode("utf-8")) <= MODEL_MAX_SEMANTIC_BYTES
+    assert observation.status is not None
+    assert observation.status.projected_count == MODEL_MAX_ELEMENTS
 
 
 def test_deep_current_document_action_survives_chrome_crowd_out(service, fake_transport) -> None:

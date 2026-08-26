@@ -20,15 +20,20 @@ def test_model_tool_is_one_flat_provider_neutral_schema() -> None:
     assert "text" in schema["properties"]
     assert schema["properties"]["capture_after"]["type"] == "boolean"
     assert "key_sequence" in schema["properties"]["action"]["description"]
+    assert "replace_text" in schema["properties"]["action"]["description"]
     assert "comma-separated" in schema["properties"]["keys"]["description"]
     assert "7,*,8,=" in schema["properties"]["keys"]["description"]
     assert "compact" in schema["properties"]["keys"]["description"].lower()
     assert "current caret" in schema["properties"]["text"]["description"]
-    assert "complete value" in schema["properties"]["element_token"]["description"]
+    assert "complete value" in schema["properties"]["text"]["description"]
+    assert "replace_text" in schema["properties"]["element_token"]["description"]
     assert "Before the first coordinate-only visual action" in schema["properties"]["visual_question"]["description"]
     assert "semantic actions deliberately skip Vision" in schema["properties"]["visual_question"]["description"]
     assert "visual_question" in ComputerUseTool().description
     assert "never guess coordinates" in ComputerUseTool().description
+    assert "action_dispatched=true is not proof" in ComputerUseTool().description
+    assert "shell or clipboard" in ComputerUseTool().description
+    assert "one materially different safe recovery" in ComputerUseTool().description
 
 
 def test_key_sequence_driver_failure_is_not_misreported_as_invalid_input() -> None:
@@ -46,12 +51,39 @@ def test_key_sequence_driver_failure_is_not_misreported_as_invalid_input() -> No
 def test_beta_action_map_and_internal_allowlist_exclude_maintenance() -> None:
     assert set(MODEL_ACTION_TO_CUA) == {
         "list_apps", "list_windows", "launch_app", "capture", "focus",
-        "click", "double_click", "right_click", "type", "key", "scroll", "drag",
+        "click", "double_click", "right_click", "type", "replace_text", "key", "scroll", "drag",
     }
     assert ALLOWED_CUA_TOOLS.isdisjoint(FORBIDDEN_TOOL_FAMILIES)
     assert "set_config" in ALLOWED_CUA_TOOLS
     assert "check_for_update" not in ALLOWED_CUA_TOOLS
     assert "start_recording" not in ALLOWED_CUA_TOOLS
+
+
+def test_exact_app_recovery_payload_exposes_only_bounded_running_canonical_names() -> None:
+    candidates = tuple(
+        {
+            "name": f"candidate-{index}.app",
+            "running": True,
+            "active": index == 1,
+        }
+        for index in range(8)
+    )
+    payload = json.loads(
+        _computer_error_payload(
+            "capture",
+            ComputerUseError(
+                "No exact native window matched the requested app scope.",
+                code="target_gone",
+                candidates=candidates,
+            ),
+        )
+    )
+
+    assert payload["error_code"] == "target_gone"
+    assert payload["running_candidates"] == list(candidates)
+    assert "exactly one canonical name" in payload["next_action"]
+    assert "fuzzy" in payload["next_action"]
+    assert all(set(row) == {"name", "running", "active"} for row in payload["running_candidates"])
 
 
 def test_computer_use_is_off_by_default() -> None:

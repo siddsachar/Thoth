@@ -99,6 +99,252 @@ def test_single_tool_runs_discovery_capture_and_verified_action(tmp_path, monkey
     assert transport.calls[-1][0] == "get_window_state"
 
 
+def test_exact_replacement_is_atomic_token_bound_and_skips_vision(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    scenario = FakeScenario(
+        apps=({"name": "Form Studio", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 611,
+                "pid": 2611,
+                "app_name": "Form Studio",
+                "title": "Untitled form",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2611,
+        capture_window_id=611,
+        semantic_elements=(
+            {
+                "role": "GridCell",
+                "label": "Selected item",
+                "enabled": True,
+                "selected": True,
+            },
+        ),
+    )
+    _service, transport, vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+    captured = json.loads(tool.invoke({"action": "capture", "app": "Form Studio"}))
+    target_id = captured["fresh_observation"].split("Target ID: ", 1)[1].splitlines()[0]
+    token = captured["fresh_observation"].split("token=", 1)[1].split(" ", 1)[0]
+    replacement = "private complete value"
+
+    replaced = json.loads(
+        tool.invoke(
+            {
+                "action": "replace_text",
+                "target_id": target_id,
+                "element_token": token,
+                "text": replacement,
+                "capture_after": True,
+                "visual_question": "Do not invoke Vision for verified semantic replacement.",
+            }
+        )
+    )
+
+    type_calls = [args for name, args in transport.calls if name == "type_text"]
+    assert len(type_calls) == 1
+    assert type_calls[0]["element_token"] == token
+    assert type_calls[0]["text"] == f"<redacted:{len(replacement)} chars>"
+    assert replaced["action_dispatched"] is True
+    assert replaced["effect_verified"] is True
+    assert vision.calls == []
+    assert all(name != "press_key" for name, _args in transport.calls)
+
+
+def test_tabular_type_payload_is_rejected_with_no_hidden_recovery_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    scenario = FakeScenario(
+        apps=({"name": "Document App", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 612,
+                "pid": 2612,
+                "app_name": "Document App",
+                "title": "Untitled document",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2612,
+        capture_window_id=612,
+        semantic_elements=(
+            {"role": "Edit", "label": "Document body", "enabled": True},
+        ),
+    )
+    service, transport, vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+    captured = json.loads(tool.invoke({"action": "capture", "app": "Document App"}))
+    target_id = captured["fresh_observation"].split("Target ID: ", 1)[1].splitlines()[0]
+    token = captured["fresh_observation"].split("token=", 1)[1].split(" ", 1)[0]
+    current = service.current_observation(target_id)
+    calls_before = len(transport.calls)
+
+    rejected = json.loads(
+        tool.invoke(
+            {
+                "action": "type",
+                "target_id": target_id,
+                "element_token": token,
+                "text": "first\tsecond\nthird\tfourth",
+            }
+        )
+    )
+
+    assert rejected["error_code"] == "invalid_input"
+    assert "literal caret insertion" in rejected["remediation"]
+    assert "replace_text" in rejected["remediation"]
+    assert "shell or clipboard" in rejected["remediation"]
+    assert transport.calls[calls_before:] == []
+    assert service.current_observation(target_id) is current
+    assert vision.calls == []
+
+
+def test_unverified_action_payload_forbids_dependent_mutation_assumptions(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    scenario = FakeScenario(
+        apps=({"name": "Document App", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 613,
+                "pid": 2613,
+                "app_name": "Document App",
+                "title": "Untitled document",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2613,
+        capture_window_id=613,
+        effect="unverifiable",
+    )
+    _service, transport, vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+    captured = json.loads(tool.invoke({"action": "capture", "app": "Document App"}))
+    target_id = captured["fresh_observation"].split("Target ID: ", 1)[1].splitlines()[0]
+
+    result = json.loads(
+        tool.invoke(
+            {
+                "action": "type",
+                "target_id": target_id,
+                "text": "one literal insertion",
+            }
+        )
+    )
+
+    assert result["action_dispatched"] is True
+    assert result["effect_verified"] is False
+    assert "not proof of focus, caret position, selection, navigation" in result["next_action"]
+    assert "Do not build a dependent mutation chain" in result["next_action"]
+    assert [name for name, _args in transport.calls].count("type_text") == 1
+    assert vision.calls == []
+
+
+def test_approval_interrupt_logs_pending_then_one_completed_action(
+    tmp_path,
+    monkeypatch,
+    caplog,
+) -> None:
+    import logging
+
+    private_label = "Send private material"
+    scenario = FakeScenario(
+        apps=({"name": "Form Studio", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 614,
+                "pid": 2614,
+                "app_name": "Form Studio",
+                "title": "Private form title",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2614,
+        capture_window_id=614,
+        semantic_elements=(
+            {"role": "Button", "label": private_label, "enabled": True},
+        ),
+    )
+    service, transport, _vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+    monkeypatch.setattr(
+        "row_bot.tools.approval_gate.current_approval_mode",
+        lambda: "approve",
+    )
+    captured = json.loads(tool.invoke({"action": "capture", "app": "Form Studio"}))
+    target_id = captured["fresh_observation"].split("Target ID: ", 1)[1].splitlines()[0]
+    token = captured["fresh_observation"].split("token=", 1)[1].split(" ", 1)[0]
+    caplog.clear()
+
+    class GraphInterrupt(RuntimeError):
+        pass
+
+    service._approval = lambda _payload: (_ for _ in ()).throw(GraphInterrupt("pending"))
+    with caplog.at_level(logging.INFO, logger="row_bot.computer_use.service"):
+        with pytest.raises(GraphInterrupt):
+            tool.invoke(
+                {
+                    "action": "click",
+                    "target_id": target_id,
+                    "element_token": token,
+                }
+            )
+        service._approval = lambda _payload: True
+        completed = json.loads(
+            tool.invoke(
+                {
+                    "action": "click",
+                    "target_id": target_id,
+                    "element_token": token,
+                }
+            )
+        )
+
+    pending = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("computer_use.action_pending ")
+    ]
+    receipts = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("computer_use.action_receipt ")
+    ]
+    assert len(pending) == 1
+    assert "status=approval_pending" in pending[0]
+    assert "success=" not in pending[0]
+    assert len(receipts) == 1
+    assert "success=true" in receipts[0]
+    assert [name for name, _args in transport.calls].count("click") == 1
+    assert completed["action_completed"] is True
+    diagnostics = "\n".join(pending + receipts)
+    assert private_label not in diagnostics
+    assert token not in diagnostics
+    assert "Private form title" not in diagnostics
+
+
 def test_existing_edge_window_tool_loop_preserves_scope_approval_and_target(
     tmp_path,
     monkeypatch,

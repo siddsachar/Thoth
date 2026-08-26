@@ -91,6 +91,7 @@ _CONSEQUENTIAL_TARGET_ACTIONS = frozenset(
         "double_click",
         "right_click",
         "type",
+        "replace_text",
         "key",
         "key_sequence",
         "menu",
@@ -182,7 +183,7 @@ def classify_action(
         return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "An ambiguous coordinate action requires point-of-risk confirmation.")
     if action == "key" and normalized_keys in {"enter", "return"}:
         return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "Enter may submit the active form or dialog.", False)
-    if action in {"launch_app", "focus", "click", "double_click", "right_click", "type", "key", "key_sequence", "scroll", "drag", "menu"}:
+    if action in {"launch_app", "focus", "click", "double_click", "right_click", "type", "replace_text", "key", "key_sequence", "scroll", "drag", "menu"}:
         return PolicyDecision(PolicyOutcome.ROUTINE, "Routine action inside the approved task-scoped target.")
     return PolicyDecision(PolicyOutcome.BLOCKED, "Unknown Computer action fails closed.", False)
 

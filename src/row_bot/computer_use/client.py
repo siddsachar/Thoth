@@ -35,6 +35,7 @@ MODEL_ACTION_TO_CUA = {
     "double_click": "double_click",
     "right_click": "right_click",
     "type": "type_text",
+    "replace_text": "type_text",
     "key": "press_key",
     "scroll": "scroll",
     "drag": "drag",
