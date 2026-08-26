@@ -13,6 +13,7 @@ from row_bot.computer_use.service import (
     LeaseOwner,
     Observation,
 )
+from row_bot.tools.computer_use_tool import _computer_error_payload
 from tests.fixtures.fake_cua import FakeCuaTransport
 
 
@@ -505,12 +506,12 @@ def test_replace_text_is_one_call_by_default_and_one_optional_capture_at_most(
 
 
 @pytest.mark.parametrize(
-    ("profile", "in_web", "verified"),
-    [
-        ("native_exact_set_value", False, True),
-        ("web_targeted_unverifiable", True, False),
-        ("catalyst_value_unavailable", False, False),
-    ],
+        ("profile", "in_web", "verified"),
+        [
+            ("native_exact_set_value", False, True),
+            ("web_targeted_unverifiable", True, True),
+            ("catalyst_value_unavailable", False, False),
+        ],
 )
 def test_optional_exact_value_verification_profiles_remain_nonblocking(
     service: ComputerUseService,
@@ -620,13 +621,14 @@ def test_large_tree_semantic_filter_refuses_multiple_exact_matches(
         fake_transport,
         ({"role": "Button", "label": "Current action"},),
     )
-    current_token = current.elements[0].token
     fake_transport.scenario.rotate_element_tokens = True
     fake_transport.scenario.semantic_elements = (
-        {"role": "DataItem", "label": "Named item"},
-        {"role": "DataItem", "label": "Named item"},
+        {"role": "Button", "label": "Unrelated action"},
+        {"role": "DataItem", "label": "Named item", "selected": True},
+        {"role": "DataItem", "label": "Named item", "selected": False},
     )
     generation_before = current.generation
+    calls_before = len(fake_transport.calls)
 
     with pytest.raises(ComputerUseError) as ambiguous:
         service.capture(
@@ -637,14 +639,26 @@ def test_large_tree_semantic_filter_refuses_multiple_exact_matches(
         )
 
     assert ambiguous.value.code == "ambiguous_target"
-    assert service.current_observation(target_id) is current
-    assert service.current_observation(target_id).generation == generation_before
-    calls_before = len(fake_transport.calls)
-    service.act("click", target_id, OWNER, element_token=current_token)
-    assert [name for name, _args in fake_transport.calls[calls_before:]] == ["click"]
+    fresh = service.current_observation(target_id)
+    assert fresh is ambiguous.value.observation
+    assert fresh is not current
+    assert fresh.generation == generation_before + 1
+    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
+        "get_window_state"
+    ]
+    assert [candidate["token"] for candidate in ambiguous.value.candidates] == [
+        fresh.elements[1].token,
+        fresh.elements[2].token,
+    ]
+    assert all(candidate["label"] == "Named item" for candidate in ambiguous.value.candidates)
+    assert all(candidate["role"] == "DataItem" for candidate in ambiguous.value.candidates)
+    assert [candidate["selected"] for candidate in ambiguous.value.candidates] == [
+        True,
+        False,
+    ]
 
 
-def test_semantic_filter_no_match_preserves_current_token_without_rediscovery(
+def test_semantic_filter_no_match_keeps_fresh_unfiltered_capture_current(
     service: ComputerUseService,
     fake_transport: FakeCuaTransport,
 ) -> None:
@@ -653,7 +667,6 @@ def test_semantic_filter_no_match_preserves_current_token_without_rediscovery(
         fake_transport,
         ({"role": "Button", "label": "Current action"},),
     )
-    current_token = current.elements[0].token
     fake_transport.scenario.rotate_element_tokens = True
     fake_transport.scenario.semantic_elements = (
         {"role": "Button", "label": "Different action"},
@@ -671,14 +684,17 @@ def test_semantic_filter_no_match_preserves_current_token_without_rediscovery(
         )
 
     assert missing.value.code == "semantic_no_match"
-    assert service.current_observation(target_id) is current
-    assert service.current_observation(target_id).generation == generation_before
+    fresh = service.current_observation(target_id)
+    assert fresh is missing.value.observation
+    assert fresh is not current
+    assert fresh.generation == generation_before + 1
+    assert [element.label for element in fresh.model_elements()[0]] == [
+        "Different action",
+        "Level",
+    ]
     assert [name for name, _args in fake_transport.calls[calls_before:]] == [
         "get_window_state"
     ]
-    calls_before = len(fake_transport.calls)
-    service.act("click", target_id, OWNER, element_token=current_token)
-    assert [name for name, _args in fake_transport.calls[calls_before:]] == ["click"]
 
 
 def test_exact_value_scope_is_not_formula_navigation_or_task_completion(
@@ -733,6 +749,88 @@ def test_background_refusal_permits_one_foreground_driver_action_without_focus_c
     assert [name for name, _args in calls] == ["type_text", "type_text"]
     assert calls[1][1]["delivery_mode"] == "foreground"
     assert "bring_to_front" not in [name for name, _args in calls]
+
+
+def test_background_key_refusal_permits_exactly_one_same_action_foreground_retry(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+) -> None:
+    fake_transport.scenario.background_unavailable_tools = frozenset({"press_key"})
+    target_id, _observed = _capture_generic(
+        service,
+        fake_transport,
+        ({"role": "Button", "label": "Current action"},),
+    )
+    calls_before = len(fake_transport.calls)
+
+    service.act(
+        "key",
+        target_id,
+        OWNER,
+        keys="enter",
+        approval_mode="allow_all",
+    )
+
+    calls = fake_transport.calls[calls_before:]
+    assert [name for name, _args in calls] == ["press_key", "press_key"]
+    assert calls[1][1]["delivery_mode"] == "foreground"
+    assert all(name not in {"bring_to_front", "click", "get_window_state"} for name, _args in calls)
+
+
+def test_calculator_key_sequence_uses_one_foreground_retry_without_preparation(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+) -> None:
+    fake_transport.scenario.calculator_semantics = True
+    fake_transport.scenario.background_unavailable_tools = frozenset({"click"})
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    service.capture(target_id, OWNER)
+    calls_before = len(fake_transport.calls)
+
+    service.act_key_sequence(
+        target_id,
+        "7",
+        OWNER,
+        approval_mode="allow_all",
+    )
+
+    calls = fake_transport.calls[calls_before:]
+    assert [name for name, _args in calls] == ["click", "click", "get_window_state"]
+    assert calls[1][1]["delivery_mode"] == "foreground"
+    assert [name for name, _args in calls].count("click") == 2
+    assert "bring_to_front" not in [name for name, _args in calls]
+
+
+def test_second_foreground_key_refusal_is_terminal_and_requires_takeover(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+) -> None:
+    fake_transport.scenario.background_unavailable_tools = frozenset({"press_key"})
+    fake_transport.scenario.foreground_error_code = "foreground_required"
+    target_id, _observed = _capture_generic(
+        service,
+        fake_transport,
+        ({"role": "Button", "label": "Current action"},),
+    )
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(ComputerUseError) as refused:
+        service.act(
+            "key",
+            target_id,
+            OWNER,
+            keys="enter",
+            approval_mode="allow_all",
+        )
+
+    calls = fake_transport.calls[calls_before:]
+    assert [name for name, _args in calls] == ["press_key", "press_key"]
+    assert refused.value.code == "background_unavailable"
+    assert refused.value.terminal is True
+    payload = __import__("json").loads(_computer_error_payload("key", refused.value))
+    assert payload["terminal"] is True
+    assert "take over" in payload["remediation"].casefold()
 
 
 def test_stop_takeover_and_cancel_never_rewrite_prior_unverified_receipt(

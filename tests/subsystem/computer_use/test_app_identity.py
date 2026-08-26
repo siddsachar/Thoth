@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import pytest
 
+from row_bot.computer_use.client import CuaResponse
 from row_bot.computer_use.service import ComputerUseError, ComputerUseService, LeaseOwner
 
 
@@ -59,6 +64,102 @@ def test_duplicate_native_browser_rows_are_deduplicated_in_stable_order(
     assert [row["candidate"] for row in rows] == [
         "matching msedge.exe window 1",
         "matching msedge.exe window 2",
+    ]
+
+
+def test_app_inventory_omits_only_exact_current_session_controller_pids(
+    service,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    data_dir = Path(os.environ["ROW_BOT_DATA_DIR"])
+    data_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ROW_BOT_LAUNCH_SESSION_ID", "current-launch-session")
+    (data_dir / "launcher_state.json").write_text(
+        json.dumps(
+            {
+                "session": "current-launch-session",
+                "pid": 31001,
+                "window_pid": 31002,
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake_transport.scenario.apps = (
+        {
+            "name": "Python 3.13 (64-bit)",
+            "pid": os.getpid(),
+            "running": True,
+            "active": True,
+        },
+        {
+            "name": "Python 3.13 (64-bit)",
+            "pid": 31001,
+            "running": True,
+            "active": True,
+        },
+        {
+            "name": "Python 3.13 (64-bit)",
+            "pid": 31002,
+            "running": True,
+            "active": True,
+        },
+        {
+            "name": "Python 3.13 (64-bit)",
+            "pid": 41999,
+            "running": True,
+            "active": False,
+        },
+        {"name": "Notepad", "pid": 42000, "running": True, "active": False},
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    apps = service.list_apps(OWNER)
+
+    assert apps == [
+        {"name": "Python 3.13 (64-bit)", "running": True, "active": False},
+        {"name": "Notepad", "running": True, "active": False},
+    ]
+
+
+def test_stale_launcher_state_never_hides_an_unrelated_python_process(
+    service,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    data_dir = Path(os.environ["ROW_BOT_DATA_DIR"])
+    data_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ROW_BOT_LAUNCH_SESSION_ID", "current-launch-session")
+    (data_dir / "launcher_state.json").write_text(
+        json.dumps(
+            {
+                "session": "different-launch-session",
+                "pid": 51001,
+                "window_pid": 51002,
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake_transport.scenario.apps = (
+        {
+            "name": "Python 3.13 (64-bit)",
+            "pid": os.getpid(),
+            "running": True,
+            "active": True,
+        },
+        {
+            "name": "Python 3.13 (64-bit)",
+            "pid": 51001,
+            "running": True,
+            "active": False,
+        },
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    apps = service.list_apps(OWNER)
+
+    assert apps == [
+        {"name": "Python 3.13 (64-bit)", "running": True, "active": False},
     ]
 
 
@@ -364,6 +465,25 @@ def test_packaged_launch_uses_exact_inventory_name_under_local_ui_grant(
     assert windows[0]["app"] == "Windows Calculator"
     assert [name for name, _args in fake_transport.calls].count("list_windows") == 3
     assert approvals == []
+
+
+def test_recorded_calculator_shape_proves_only_exact_package_launch_identity() -> None:
+    fixture_path = (
+        Path(__file__).parents[2]
+        / "fixtures"
+        / "computer_use"
+        / "calculator_packaged_launch_shape.json"
+    )
+    recorded = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    pid, window_ids = ComputerUseService._trusted_packaged_launch_identity(
+        CuaResponse(structured=recorded["launch_response"]),
+        recorded["inventory"]["bundle_id"],
+    )
+
+    assert pid == 777
+    assert window_ids == frozenset({7})
+    assert recorded["rediscovered_window"]["app_name"] == "ApplicationFrameHost.exe"
 
 
 def test_packaged_calculator_launch_never_trusts_an_unidentified_launch_row(
@@ -739,6 +859,9 @@ def test_protected_controller_names_remain_blocked_after_normalization(
 def test_driver_launch_error_is_structured_and_never_retried(fake_client, fake_transport) -> None:
     fake_transport.scenario.apps = ({"name": "msedge.exe", "running": True},)
     fake_transport.scenario.launch_error_code = "driver_unavailable"
+    fake_transport.scenario.launch_error_message = (
+        "private driver path C:\\Users\\person\\secret-app.exe failed"
+    )
     service = ComputerUseService(
         client_factory=lambda: fake_client,
         approval_callback=lambda _payload: True,
@@ -749,6 +872,10 @@ def test_driver_launch_error_is_structured_and_never_retried(fake_client, fake_t
         service.launch_app("msedge.exe", OWNER)
 
     assert exc_info.value.code == "driver_unavailable"
+    assert exc_info.value.failure_stage == "launch_dispatch"
+    assert exc_info.value.safe_driver_error == "permission_or_driver_unavailable"
+    assert "secret-app" not in str(exc_info.value)
+    assert "secret-app" not in repr(exc_info.value)
     names = [name for name, _args in fake_transport.calls]
     assert names.count("launch_app") == 1
     assert "list_windows" not in names

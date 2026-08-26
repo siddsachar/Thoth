@@ -21,6 +21,22 @@ from row_bot.tools import registry
 from row_bot.tools.base import BaseTool
 
 
+_SAFE_LAUNCH_FAILURE_STAGES = frozenset(
+    {"inventory", "launch_dispatch", "rediscovery", "capture_verify"}
+)
+_SAFE_DRIVER_ERROR_CLASSES = frozenset(
+    {
+        "backend_refusal",
+        "foreground_required",
+        "permission_or_driver_unavailable",
+        "stale_observation",
+        "target_disappeared",
+        "temporary_backend_failure",
+        "unsupported_capability",
+    }
+)
+
+
 class ComputerUseInput(BaseModel):
     """Flat schema kept compatible with Row-Bot's provider adapters."""
 
@@ -29,8 +45,8 @@ class ComputerUseInput(BaseModel):
     action: str = Field(description="list_apps, list_windows, launch_app, capture, focus, click, double_click, right_click, type, replace_text, key, key_sequence, scroll, drag, capability-gated menu, wait, or stop")
     app: str = Field(default="", description="App display name for exact discovery, app-scoped initial capture, or launch; never a path or URL")
     window_hint: str = Field(default="", description="Optional user-provided title fragment used to narrow same-app window discovery; unrelated titles stay private")
-    target_id: str = Field(default="", description="Opaque exact target ID. For initial capture of one already-open named app, omit this and pass app instead")
-    element_token: str = Field(default="", description="Opaque token from the latest capture. Current tokens are dispatched directly to Cua after explicit disabled, read-only, secure, protected, and structural checks")
+    target_id: str = Field(default="", description="Opaque exact target ID valid only in the current Computer Use generation/lease. A new user turn must rediscover or app-scope capture before reuse")
+    element_token: str = Field(default="", description="Opaque token from the latest capture, valid only in the current Computer Use generation/lease. Current tokens are dispatched directly to Cua after explicit disabled, read-only, secure, protected, and structural checks")
     x: int = Field(default=-1, description="Window-local screenshot X coordinate; semantic tokens are preferred")
     y: int = Field(default=-1, description="Window-local screenshot Y coordinate; semantic tokens are preferred")
     end_x: int = Field(default=-1, description="Window-local drag end X")
@@ -86,8 +102,18 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
         raw_candidates = tuple(getattr(exc, "candidates", ()) or ())[:8]
         semantic_controls = [
             {
+                **(
+                    {"token": str(candidate.get("token") or "")[:256]}
+                    if candidate.get("token")
+                    else {}
+                ),
                 "label": str(candidate.get("label") or "")[:200],
                 "role": str(candidate.get("role") or "")[:80],
+                **{
+                    key: bool(candidate[key])
+                    for key in ("selected", "checked", "expanded", "pressed", "enabled")
+                    if key in candidate
+                },
             }
             for candidate in raw_candidates
             if isinstance(candidate, dict)
@@ -106,7 +132,7 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "lease_busy": "Computer Use is already controlled by another task.",
             "stale_observation": "The Computer observation became stale before the action completed.",
             "target_mismatch": "The selected Computer target changed identity.",
-            "target_gone": "The selected Computer target is no longer available.",
+            "target_gone": "The selected Computer target is gone or its lease expired.",
             "ambiguous_target": (
                 "Multiple current controls matched the exact label/role/value filter."
                 if semantic_ambiguity
@@ -133,18 +159,21 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
         }
         remediation = {
             "ambiguous_target": (
-                "Use one unfiltered semantic capture on the same target or revise the exact filter."
+                "Use one of the returned current tokens or revise the exact filter against this current capture."
                 if semantic_ambiguity
                 else "Select one opaque target_id from the returned candidates, then capture it."
             ),
-            "semantic_no_match": "Use one unfiltered semantic capture on the same target or revise the exact filter.",
+            "semantic_no_match": "Revise the exact filter or use a current token from this current unfiltered capture; do not rediscover the app or window.",
             "parallel_calls_not_supported": "Issue one Computer Use call at a time on a later turn.",
             "stale_observation": "Capture the exact same target once before retrying.",
-            "target_gone": "Use a returned running canonical app name for one deliberate exact retry, or report that the requested app is unavailable.",
+            "target_gone": "Begin from current generation list_apps/list_windows discovery or an app-scoped capture; the prior target may be gone or lease-expired.",
             "driver_unavailable": "Run Computer Use diagnostics, then start a new session.",
             "background_unavailable": (
-                "Use only an explicitly supported foreground rung; do not invent a focus, "
-                "click, key, coordinate, clipboard, shell, or application-specific fallback."
+                "Use Take over if foreground delivery was also unavailable; do not invent a focus, "
+                "click, coordinate, clipboard, shell, or application-specific fallback."
+                if bool(getattr(exc, "terminal", False))
+                else "Use only the explicitly supported internal foreground rung; do not invent a focus, "
+                "click, coordinate, clipboard, shell, or application-specific fallback."
             ),
             "transient_driver_failure": "Retry this action once; stop if it fails again.",
             "paused_for_takeover": "Resume or Stop the session locally.",
@@ -164,12 +193,31 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
                 else remediation
             ),
             retryable=bool(getattr(exc, "retryable", False)),
-            terminal=explicit_code in {"hard_blocked", "handoff_required"},
+            terminal=(
+                explicit_code in {"hard_blocked", "handoff_required"}
+                or bool(getattr(exc, "terminal", False))
+            ),
         )
+        failure_stage = str(getattr(exc, "failure_stage", "") or "")
+        driver_error_class = str(getattr(exc, "safe_driver_error", "") or "")
+        if (
+            failure_stage in _SAFE_LAUNCH_FAILURE_STAGES
+            or driver_error_class in _SAFE_DRIVER_ERROR_CLASSES
+        ):
+            decoded = json.loads(payload)
+            if failure_stage in _SAFE_LAUNCH_FAILURE_STAGES:
+                decoded["failure_stage"] = failure_stage
+            if driver_error_class in _SAFE_DRIVER_ERROR_CLASSES:
+                decoded["driver_error_class"] = driver_error_class
+            payload = json.dumps(decoded, ensure_ascii=False)
         if explicit_code == "semantic_no_match" or semantic_ambiguity:
             decoded = json.loads(payload)
             if semantic_controls:
                 decoded["controls"] = semantic_controls
+            observation = getattr(exc, "observation", None)
+            if observation is not None:
+                decoded["fresh_observation"] = observation.model_text()
+                decoded["capture_is_fresh"] = True
             return json.dumps(decoded, ensure_ascii=False)
         if explicit_code == "ambiguous_target":
             decoded = json.loads(payload)
@@ -193,7 +241,7 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             if running_candidates:
                 decoded["running_candidates"] = running_candidates
                 decoded["next_action"] = (
-                    "Retry capture with exactly one canonical name from running_candidates. "
+                    "In the current generation, retry capture with exactly one canonical name from running_candidates. "
                     "Do not fuzzy-match, infer an alias, launch another app, or use a window title."
                 )
             return json.dumps(decoded, ensure_ascii=False)
@@ -284,6 +332,10 @@ def _observation_payload(
     driver_verdict = str(getattr(observation, "driver_verdict", "unverifiable") or "unverifiable")
     semantic_postcondition = str(getattr(observation, "semantic_postcondition", "unavailable") or "unavailable")
     visual_observation = str(getattr(observation, "visual_observation", "unavailable") or "unavailable")
+    action_family = str(getattr(observation, "action_family", "") or "")
+    exact_postcondition_verified = bool(
+        effect_verified and verified_scope in {"exact_value", "exact_state"}
+    )
     payload: dict[str, Any] = {
         "fresh_observation": observation.model_text(),
         "capture_is_fresh": True,
@@ -316,14 +368,44 @@ def _observation_payload(
             "semantic_postcondition": semantic_postcondition,
             "visual_observation": visual_observation,
             "action_outcome": outcome or "unverified",
+            "evidence": {
+                "dispatch": "dispatched" if action_dispatched else "not_dispatched",
+                "native_state": native_change,
+                "exact_postcondition": (
+                    "verified" if exact_postcondition_verified else "not_verified"
+                ),
+                "verified_scope": verified_scope,
+            },
         })
     if next_action:
         payload["next_action"] = str(next_action)
+    elif (
+        action_family == "click"
+        and action_dispatched
+        and native_change == "unchanged"
+        and not exact_postcondition_verified
+    ):
+        payload["next_action"] = (
+            "Fresh native state was unchanged. For this reversible click only, one alternative "
+            "exact route grounded in current evidence is allowed. If asynchronous navigation is "
+            "plausible, use one bounded wait and capture first; do not cycle routes or use fuzzy, "
+            "blind-coordinate, shell, clipboard, CDP, or app-specific fallbacks."
+        )
+    elif (
+        action_family == "click"
+        and action_dispatched
+        and native_change == "changed"
+        and not exact_postcondition_verified
+    ):
+        payload["next_action"] = (
+            "Fresh native state changed, but the intended outcome is not verified. Inspect the "
+            "current evidence without claiming success or replaying the same route blindly."
+        )
     elif outcome == "delivered_unverified":
         payload["next_action"] = (
-            "The mutation was delivered but not verified. Do not repeat that exact uncertain "
-            "insertion. Enter, navigation, later fields, capture, and truthful final answers "
-            "remain available."
+            "The action was dispatched but no exact postcondition was verified. Text insertion, "
+            "replace_text, keys with uncertain dispatch, destructive actions, and consequential "
+            "actions must not be replayed; inspection and truthful final answers remain available."
         )
     elif semantic_postcondition == "contradicted":
         payload["next_action"] = (
@@ -341,10 +423,14 @@ def _action_payload(receipt: ActionReceipt) -> str:
         if receipt.action_dispatched
         else "refused"
     )
+    exact_postcondition_verified = bool(
+        receipt.effect_verified
+        and receipt.verified_scope in {"exact_value", "exact_state"}
+    )
     summary = (
-        f"Driver confirmed {receipt.action.replace('_', ' ')} without an extra capture."
-        if receipt.effect_verified
-        else f"Sent {receipt.action.replace('_', ' ')} without an extra capture; the requested outcome is not verified."
+        f"Exact {receipt.verified_scope.replace('_', ' ')} postcondition verified for {receipt.action.replace('_', ' ')}."
+        if exact_postcondition_verified
+        else f"Dispatched {receipt.action.replace('_', ' ')} without a fresh native comparison; the intended outcome is not verified."
     )
     return _json_payload(
         summary,
@@ -374,12 +460,21 @@ def _action_payload(receipt: ActionReceipt) -> str:
         delivery_mode=receipt.delivery_mode,
         route=receipt.route,
         cause=receipt.cause,
+        evidence={
+            "dispatch": "dispatched" if receipt.action_dispatched else "not_dispatched",
+            "native_state": "unknown",
+            "exact_postcondition": (
+                "verified" if exact_postcondition_verified else "not_verified"
+            ),
+            "verified_scope": receipt.verified_scope,
+        },
         next_action=(
             "The exact action scope was verified. Proceed using newly observed tokens when "
             "the next decision depends on changed semantic state."
-            if receipt.effect_verified
-            else "Delivered/unverified is useful delivery. Do not repeat the exact uncertain "
-            "insertion; capture only when the next decision needs state."
+            if exact_postcondition_verified
+            else "Capture only if the next decision needs current state. A reversible click may "
+            "use one alternative exact route only after a fresh capture is explicitly unchanged; "
+            "text, uncertain keys, destructive, and consequential actions must not be replayed."
         ),
     )
 
@@ -539,6 +634,7 @@ class ComputerUseTool(BaseTool):
             log_change = "unknown"
             log_effect_verified = False
             log_outcome = "none"
+            log_failure_stage = "none"
 
             def record_result(value: Any) -> None:
                 nonlocal log_route, log_delivery, log_driver_effect
@@ -558,7 +654,16 @@ class ComputerUseTool(BaseTool):
                 visual_change = str(getattr(value, "visual_change", "unknown") or "unknown")
                 log_change = native_change if native_change != "unknown" else visual_change
                 log_effect_verified = bool(getattr(value, "effect_verified", False))
-                log_outcome = str(getattr(value, "outcome", "") or "none")
+                log_outcome = str(getattr(value, "outcome", "") or "")
+                if not log_outcome and hasattr(value, "action_dispatched"):
+                    log_outcome = (
+                        "verified"
+                        if bool(getattr(value, "effect_verified", False))
+                        else "delivered_unverified"
+                        if bool(getattr(value, "action_dispatched", False))
+                        else "refused"
+                    )
+                log_outcome = log_outcome or "none"
 
             call_started = False
             try:
@@ -755,15 +860,23 @@ class ComputerUseTool(BaseTool):
                 if isinstance(result, ActionReceipt):
                     return _action_payload(result)
                 visual_change = str(getattr(result, "visual_change", "unknown") or "unknown")
+                native_change = str(getattr(result, "native_change", "unknown") or "unknown")
                 effect_verified = bool(getattr(result, "effect_verified", False))
-                if effect_verified:
-                    summary = f"Driver confirmed {normalized.replace('_', ' ')} and the requested capture completed."
-                elif visual_change == "changed":
-                    summary = f"Sent {normalized.replace('_', ' ')}; the local capture changed, but the requested outcome is not verified."
-                elif visual_change == "unchanged":
-                    summary = f"Sent {normalized.replace('_', ' ')}; the requested capture was unchanged. Use at most one different safe recovery strategy if needed."
+                verified_scope = str(getattr(result, "verified_scope", "") or "")
+                exact_verified = bool(
+                    effect_verified and verified_scope in {"exact_value", "exact_state"}
+                )
+                observed_change = (
+                    native_change if native_change != "unknown" else visual_change
+                )
+                if exact_verified:
+                    summary = f"Exact {verified_scope.replace('_', ' ')} postcondition verified for {normalized.replace('_', ' ')}."
+                elif observed_change == "changed":
+                    summary = f"Dispatched {normalized.replace('_', ' ')}; fresh native state changed, but the intended outcome is not verified."
+                elif observed_change == "unchanged":
+                    summary = f"Dispatched {normalized.replace('_', ' ')}; fresh native state was unchanged and no exact postcondition was verified."
                 else:
-                    summary = f"Sent {normalized.replace('_', ' ')} and captured the target; visual change and requested outcome remain unknown."
+                    summary = f"Dispatched {normalized.replace('_', ' ')} and captured the target; native change and the intended outcome remain unknown."
                 return _observation_payload(result, display_summary=summary)
             except concurrent.futures.CancelledError:
                 log_success = False
@@ -776,6 +889,7 @@ class ComputerUseTool(BaseTool):
             except ComputerUseError as exc:
                 log_success = False
                 log_error_code = str(getattr(exc, "code", "driver_failed") or "driver_failed")
+                log_failure_stage = str(getattr(exc, "failure_stage", "") or "none")
                 if service.paused_call_matches(signature):
                     from langgraph.types import interrupt
 
@@ -807,6 +921,7 @@ class ComputerUseTool(BaseTool):
                         native_or_visual_change=log_change,
                         effect_verified=log_effect_verified,
                         outcome=log_outcome,
+                        failure_stage=log_failure_stage,
                     )
 
         return [StructuredTool.from_function(

@@ -515,9 +515,69 @@ def test_unverified_action_payload_allows_later_work_without_replay(
 
     assert result["action_dispatched"] is True
     assert result["effect_verified"] is False
-    assert "useful delivery" in result["next_action"]
-    assert "Do not repeat the exact uncertain insertion" in result["next_action"]
+    assert "must not be replayed" in result["next_action"]
+    assert result["evidence"] == {
+        "dispatch": "dispatched",
+        "native_state": "unknown",
+        "exact_postcondition": "not_verified",
+        "verified_scope": "",
+    }
     assert [name for name, _args in transport.calls].count("type_text") == 1
+    assert vision.calls == []
+
+
+def test_reversible_click_payload_allows_one_current_evidence_alternative_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    unchanged_controls = (
+        {"role": "Button", "label": "Play", "selected": False},
+    )
+    scenario = FakeScenario(
+        apps=({"name": "Media App", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 614,
+                "pid": 2614,
+                "app_name": "Media App",
+                "title": "Media",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2614,
+        capture_window_id=614,
+        effect="unverifiable",
+        rotate_element_tokens=True,
+        semantic_snapshots=(unchanged_controls, unchanged_controls),
+    )
+    _service, transport, vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+    captured = json.loads(tool.invoke({"action": "capture", "app": "Media App"}))
+    observation = captured["fresh_observation"]
+    target_id = observation.split("Target ID: ", 1)[1].splitlines()[0]
+    token = observation.split("token=", 1)[1].split(" ", 1)[0]
+
+    result = json.loads(
+        tool.invoke(
+            {
+                "action": "click",
+                "target_id": target_id,
+                "element_token": token,
+                "capture_after": True,
+            }
+        )
+    )
+
+    assert result["action_dispatched"] is True
+    assert result["native_change"] == "unchanged"
+    assert result["effect_verified"] is False
+    assert "one alternative exact route" in result["next_action"].casefold()
+    assert "current evidence" in result["next_action"].casefold()
+    assert [name for name, _args in transport.calls].count("click") == 1
     assert vision.calls == []
 
 
@@ -601,11 +661,12 @@ def test_approval_interrupt_logs_pending_then_one_completed_action(
     assert len(receipts) == 1
     assert "success=true" in receipts[0]
     assert [name for name, _args in transport.calls].count("click") == 1
-    assert completed["action_completed"] is True
+    assert completed["action_completed"] is False
     assert completed["driver_effect"] == "confirmed"
-    assert completed["effect_verified"] is True
-    assert completed["action_outcome"] == "verified"
-    assert completed["verified_scope"] == "delivery"
+    assert completed["effect_verified"] is False
+    assert completed["action_outcome"] == "delivered_unverified"
+    assert completed["verified_scope"] == ""
+    assert completed["evidence"]["exact_postcondition"] == "not_verified"
     diagnostics = "\n".join(pending + receipts)
     assert private_label not in diagnostics
     assert token not in diagnostics

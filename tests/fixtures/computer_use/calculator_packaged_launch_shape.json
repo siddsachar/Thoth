@@ -1,0 +1,32 @@
+{
+  "inventory": {
+    "name": "Windows Calculator",
+    "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+    "kind": "uwp",
+    "running": false
+  },
+  "launch_response": {
+    "pid": 777,
+    "name": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+    "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+    "windows": [
+      {
+        "window_id": 7,
+        "title": "Calculator"
+      }
+    ]
+  },
+  "rediscovered_window": {
+    "window_id": 7,
+    "pid": 777,
+    "app_name": "ApplicationFrameHost.exe",
+    "title": "Calculator",
+    "bounds": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 600
+    },
+    "is_on_screen": true
+  }
+}

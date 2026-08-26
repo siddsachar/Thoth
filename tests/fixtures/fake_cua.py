@@ -84,6 +84,7 @@ class FakeScenario:
     apps: tuple[dict[str, Any], ...] = ()
     list_apps_error_code: str = ""
     launch_error_code: str = ""
+    launch_error_message: str = "fake launch failure"
     launch_pid: int = 4242
     launch_window_id: int = 101
     launch_bundle_id: str = ""
@@ -95,6 +96,8 @@ class FakeScenario:
     include_scale_factor: bool = True
     element_frame: tuple[float, float, float, float] = (0, 0, 1, 1)
     background_unavailable_tools: frozenset[str] = field(default_factory=frozenset)
+    foreground_error_code: str = ""
+    foreground_error_message: str = "fake foreground refusal"
     foreground_effect: str = "unverifiable"
     document_value: str = ""
     block_foreground: bool = False
@@ -263,7 +266,10 @@ class FakeCuaTransport:
             return self._result({"windows": windows})
         if name == "launch_app":
             if self.scenario.launch_error_code:
-                return self._error("fake launch failure", self.scenario.launch_error_code)
+                return self._error(
+                    self.scenario.launch_error_message,
+                    self.scenario.launch_error_code,
+                )
             app_name = str(args.get("name") or "Calculator")
             window = {
                 "window_id": self.scenario.launch_window_id,
@@ -519,6 +525,11 @@ class FakeCuaTransport:
                 return self._top_level_error(
                     "Background delivery is unavailable for this target.",
                     "background_unavailable",
+                )
+            if delivery_mode == "foreground" and self.scenario.foreground_error_code:
+                return self._top_level_error(
+                    self.scenario.foreground_error_message,
+                    self.scenario.foreground_error_code,
                 )
             if name == "type_text":
                 typed = str(args.get("text") or "")

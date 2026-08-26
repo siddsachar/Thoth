@@ -7,13 +7,12 @@ tools:
 
 # COMPUTER USE WORKFLOW
 
-- Route structured tools first, Browser for ordinary managed pages, and Computer Use for one exact native app or window. Never silently switch engines after an error.
-- Capture once, then use the current semantic token. An exact-filter miss or ambiguity preserves the prior observation: revise the filter or capture the same target unfiltered, without app rediscovery.
-- Token-bound `type` lets Cua attempt the current control, including unknown interactive roles. Row-Bot rejects explicit disabled, read-only, secure, protected, and structural targets.
-- Tokenless `type` is one literal current-caret Cua insertion; tabs and newlines do not imply structured layout. Use a structured tool, bounded exact fields, or report the limitation. Use `replace_text` for one complete value.
-- A stale refusal may include fresh controls. Use one returned current token on the next turn; Row-Bot did not replay the refused mutation.
-- Treat delivered/unverified as delivery, not failure. Do not repeat that uncertain insertion; continue with later fields, capture, and truthful final answers.
-- `verified_scope=exact_value` proves only that control's value, not evaluation, commit, navigation, or overall completion.
-- Prefer semantic tokens and exact filters. Routine flows use zero Vision; ask one concrete pixel-only question only when semantics cannot answer or the user requests visual inspection.
-- Routine actions use one Cua call without hidden capture. Only `background_unavailable` permits one foreground retry of that type action; invent no focus, click, coordinates, keys, shell, or preparation.
-- A Computer Use refusal never authorizes shell, clipboard, accessibility scripting, hidden APIs, or application automation. Those require the user's explicit method choice; approval alone is insufficient. Stop or use Take over for protected, credential, approval, or hard-blocked states.
+- Prefer structured tools, then Browser for managed pages, then Computer Use for exact native targets. Never switch engines silently.
+- `target_id` and tokens work only in the current Computer Use generation/lease. A new user turn starts with current discovery or app-scoped capture; `target_gone` means gone or its lease expired.
+- Capture once. Exact-filter misses and ambiguity leave the fresh unfiltered capture current; use returned tokens or revise the filter without rediscovery. Stale refusals may likewise return controls, and Row-Bot never replays them.
+- Token-bound `type` uses the current control; disabled, read-only, secure, protected, and structural targets are rejected. Tokenless `type` is one literal current-caret insertion, not structured layout. Use `replace_text` for one complete value.
+- Read three evidence levels separately: action dispatched, native state changed/unchanged/unknown, and exact postcondition verified/not verified. Dispatch or change never proves the intended outcome. Final answers claim only tested capabilities and observed evidence.
+- Text insertion, `replace_text`, uncertain keys, destructive actions, and consequential actions must not be replayed. After a reversible click and explicitly unchanged fresh state, one alternative exact route grounded in current evidence is allowed. If navigation may be asynchronous, use one bounded `wait` and capture first. Never cycle routes or use fuzzy controls, blind coordinates, shell, clipboard, CDP, or app-specific APIs.
+- `verified_scope=exact_value` proves only that control value, not submission, navigation, playback, or overall completion. Prefer semantic tokens and zero-Vision routine flows; ask one concrete pixel-only question only when needed.
+- Only pre-dispatch `background_unavailable` or `foreground_required` permits one same-action foreground retry for `type`, `key`, or Calculator-only `key_sequence`. Add no focus, click, capture, coordinates, shell, clipboard, or preparation. A second refusal is terminal and may require Take over.
+- Refusal never authorizes scripting, hidden APIs, or app automation. Stop or Take over for protected, credential, approval, or hard-blocked states.

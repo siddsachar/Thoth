@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 
 import pytest
 from PIL import Image, ImageDraw
 
-from row_bot.computer_use.service import ComputerUseError, LeaseOwner, Observation
+from row_bot.computer_use.client import CuaElement
+from row_bot.computer_use.service import (
+    ComputerUseError,
+    LeaseOwner,
+    Observation,
+    _semantic_fingerprint,
+)
+from row_bot.tools.computer_use_tool import _observation_payload
 
 
 OWNER = LeaseOwner("visual-thread", "visual-generation", "visual-task")
@@ -33,6 +41,174 @@ def _paint_target(service, fake_transport) -> tuple[str, Observation]:
     service.acquire(OWNER, validate_context=False)
     target = service.list_windows(OWNER, app="Paint")[0]["target_id"]
     return target, service.capture(target, OWNER)
+
+
+def _element(
+    token: str,
+    index: int,
+    role: str,
+    label: str,
+    *,
+    parent_index: int | None = None,
+    selected: bool | None = None,
+    checked: bool | None = None,
+    expanded: bool | None = None,
+    pressed: bool | None = None,
+    enabled: bool | None = None,
+    bounds: tuple[float, float, float, float] = (0, 0, 10, 10),
+) -> CuaElement:
+    return CuaElement(
+        token=token,
+        index=index,
+        role=role,
+        label=label,
+        value="hidden value",
+        bounds=bounds,
+        depth=1 if parent_index is None else 2,
+        parent_index=parent_index,
+        selected=selected,
+        checked=checked,
+        expanded=expanded,
+        pressed=pressed,
+        enabled=enabled,
+    )
+
+
+def test_semantic_fingerprint_ignores_reference_rotation_geometry_and_order() -> None:
+    before = (
+        _element("old-root", 10, "Group", "Playback controls"),
+        _element(
+            "old-child",
+            11,
+            "Button",
+            "Play",
+            parent_index=10,
+            selected=False,
+            checked=False,
+            expanded=False,
+            pressed=False,
+            enabled=True,
+        ),
+    )
+    after = (
+        _element(
+            "new-child",
+            41,
+            "Button",
+            "Play",
+            parent_index=40,
+            selected=False,
+            checked=False,
+            expanded=False,
+            pressed=False,
+            enabled=True,
+            bounds=(101.25, 55.5, 11.0, 9.5),
+        ),
+        _element("new-root", 40, "Group", "Playback controls", bounds=(9, 9, 99, 99)),
+    )
+
+    assert _semantic_fingerprint(before) == _semantic_fingerprint(after)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"role": "CheckBox"},
+        {"label": "Pause"},
+        {"selected": True},
+        {"checked": True},
+        {"expanded": True},
+        {"pressed": True},
+        {"enabled": False},
+        {"parent_index": None},
+    ],
+)
+def test_semantic_fingerprint_detects_meaningful_control_or_tree_change(changed) -> None:
+    root = _element("root", 0, "Group", "Playback controls")
+    baseline_fields = {
+        "role": "Button",
+        "label": "Play",
+        "parent_index": 0,
+        "selected": False,
+        "checked": False,
+        "expanded": False,
+        "pressed": False,
+        "enabled": True,
+    }
+    updated_fields = {**baseline_fields, **changed}
+    before = (root, _element("before", 1, **baseline_fields))
+    after = (root, _element("after", 1, **updated_fields))
+
+    assert _semantic_fingerprint(before) != _semantic_fingerprint(after)
+
+
+def test_unchanged_post_click_semantics_are_observed_but_not_verified(
+    service,
+    fake_transport,
+) -> None:
+    semantic = (
+        {
+            "role": "Button",
+            "label": "Play",
+            "selected": False,
+            "checked": False,
+            "expanded": False,
+            "pressed": False,
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.semantic_snapshots = (semantic, semantic)
+    fake_transport.scenario.rotate_element_tokens = True
+    fake_transport.scenario.effect = "unverifiable"
+    target, observation = _paint_target(service, fake_transport)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        capture_after=True,
+    )
+
+    assert result.native_change == "unchanged"
+    assert result.effect_verified is False
+    assert result.verified_scope == ""
+    payload = json.loads(_observation_payload(result))
+    assert "one alternative exact route" in payload["next_action"].casefold()
+    assert "bounded wait" in payload["next_action"].casefold()
+
+
+def test_changed_post_click_semantics_do_not_verify_the_intended_outcome(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_snapshots = (
+        ({"role": "Button", "label": "Play", "selected": False},),
+        ({"role": "Button", "label": "Play", "selected": True},),
+    )
+    fake_transport.scenario.rotate_element_tokens = True
+    fake_transport.scenario.effect = "unverifiable"
+    target, observation = _paint_target(service, fake_transport)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        expected_effect="Start playback",
+        approval_mode="allow_all",
+        capture_after=True,
+    )
+
+    assert result.native_change == "changed"
+    assert result.effect_verified is False
+    assert result.verified_scope == ""
+    assert result.semantic_postcondition == "unavailable"
+    payload = json.loads(_observation_payload(result))
+    assert payload["action_dispatched"] is True
+    assert payload["native_change"] == "changed"
+    assert payload["effect_verified"] is False
+    assert "intended outcome" not in payload["display_summary"].casefold()
 
 
 def test_coordinate_drag_uses_screenshot_coordinates_once_with_one_optional_capture(

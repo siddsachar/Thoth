@@ -155,11 +155,11 @@ def test_every_routine_mutation_maps_once_without_an_implicit_post_capture(servi
     assert names[mutation_index + 1:] == []
     assert isinstance(result, ActionReceipt)
     assert result.action_dispatched is True
-    assert result.action_completed is True
+    assert result.action_completed is False
     assert result.driver_effect == "confirmed"
     assert result.visual_change == "unknown"
-    assert result.effect_verified is True
-    assert result.verified_scope == "delivery"
+    assert result.effect_verified is False
+    assert result.verified_scope == ""
     assert "private typed value" not in repr(result)
     assert service.ephemeral_screenshot()
 
@@ -524,6 +524,44 @@ def test_capture_after_performs_exactly_one_fresh_post_action_capture(
         "get_window_state",
     ]
     assert service.performance_snapshot()["captures"] == captures_before + 1
+
+
+def test_exact_web_content_replace_text_readback_verifies_only_the_value(
+    service,
+    fake_transport,
+) -> None:
+    replacement = "private exact search value"
+    fake_transport.scenario.delivery_profile = "web_targeted_unverifiable"
+    fake_transport.scenario.set_value_updates_document = True
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "TextField",
+            "label": "Search",
+            "value": "",
+            "enabled": True,
+            "in_web_content": True,
+        },
+    )
+    target, observation = _target_and_capture(service)
+
+    result = service.act(
+        "replace_text",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        text=replacement,
+        capture_after=True,
+    )
+
+    assert result.effect_verified is True
+    assert result.verified_scope == "exact_value"
+    assert result.semantic_postcondition == "matched"
+    rendered = result.model_text().casefold()
+    assert "submission" not in rendered
+    assert "navigation" not in rendered
+    assert "search completion" not in rendered
+    assert "playback" not in rendered
+    assert replacement not in rendered
 
 
 

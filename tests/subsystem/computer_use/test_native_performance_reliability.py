@@ -102,7 +102,11 @@ def test_privacy_safe_action_receipt_logs_phase_timings_and_counts_once(
     assert len(receipts) == 1
     receipt = receipts[0]
     assert "action_family=capture" in receipt
+    assert "thread_id=performance-thread" in receipt
+    assert "generation_id=performance-generation" in receipt
     assert "success=true error_code=ok" in receipt
+    assert "failure_stage=none" in receipt
+    assert "outcome=none" in receipt
     assert "driver_start_ms=" in receipt
     assert "discovery_ms=" in receipt
     assert "native_capture_ms=" in receipt

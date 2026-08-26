@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 from row_bot.computer_use.client import ALLOWED_CUA_TOOLS, FORBIDDEN_TOOL_FAMILIES, MODEL_ACTION_TO_CUA
 from row_bot.computer_use.service import ComputerUseError
@@ -30,6 +32,8 @@ def test_model_tool_is_one_flat_provider_neutral_schema() -> None:
     assert "complete value" in schema["properties"]["text"]["description"]
     assert "dispatched directly to Cua" in schema["properties"]["element_token"]["description"]
     assert "read-only" in schema["properties"]["element_token"]["description"]
+    assert "current computer use generation" in schema["properties"]["target_id"]["description"].casefold()
+    assert "current computer use generation" in schema["properties"]["element_token"]["description"].casefold()
     assert "zero Vision calls" in schema["properties"]["visual_question"]["description"]
     assert "concrete pixel-only" in schema["properties"]["visual_question"]["description"]
     assert "at most once" in schema["properties"]["visual_question"]["description"]
@@ -98,29 +102,28 @@ def test_exact_app_recovery_payload_exposes_only_bounded_running_canonical_names
 
 
 def test_semantic_miss_payload_never_recommends_app_rediscovery_or_another_engine() -> None:
+    observation = SimpleNamespace(
+        model_text=lambda: "Fresh controls:\n- token=current-token role=Button label=\"Current action\""
+    )
     payload = json.loads(
         _computer_error_payload(
             "capture",
             ComputerUseError(
                 "Semantic capture filter did not match a current control.",
                 code="semantic_no_match",
-                candidates=(
-                    {"label": "Current action", "role": "Button"},
-                    {"label": "Level", "role": "Slider"},
-                ),
+                observation=observation,
             ),
         )
     )
 
     assert payload["error_code"] == "semantic_no_match"
     assert "exact label/role/value filter" in payload["display_summary"]
-    assert payload["controls"] == [
-        {"label": "Current action", "role": "Button"},
-        {"label": "Level", "role": "Slider"},
-    ]
+    assert payload["capture_is_fresh"] is True
+    assert "token=current-token" in payload["fresh_observation"]
+    assert "controls" not in payload
     remediation = payload["remediation"].casefold()
-    assert "same target" in remediation
-    assert "unfiltered semantic capture" in remediation
+    assert "current unfiltered capture" in remediation
+    assert "current token" in remediation
     assert all(
         marker not in remediation
         for marker in (
@@ -135,6 +138,9 @@ def test_semantic_miss_payload_never_recommends_app_rediscovery_or_another_engin
 
 
 def test_ambiguous_semantic_filter_reports_controls_not_app_windows() -> None:
+    observation = SimpleNamespace(
+        model_text=lambda: "Fresh current semantic capture"
+    )
     payload = json.loads(
         _computer_error_payload(
             "capture",
@@ -142,9 +148,20 @@ def test_ambiguous_semantic_filter_reports_controls_not_app_windows() -> None:
                 "Semantic capture filter matched multiple controls.",
                 code="ambiguous_target",
                 candidates=(
-                    {"label": "Duplicate", "role": "Button"},
-                    {"label": "Duplicate", "role": "Button"},
+                    {
+                        "token": "current-one",
+                        "label": "Duplicate",
+                        "role": "Button",
+                        "selected": True,
+                    },
+                    {
+                        "token": "current-two",
+                        "label": "Duplicate",
+                        "role": "Button",
+                        "selected": False,
+                    },
                 ),
+                observation=observation,
             ),
         )
     )
@@ -152,10 +169,74 @@ def test_ambiguous_semantic_filter_reports_controls_not_app_windows() -> None:
     assert "controls" in payload["display_summary"].casefold()
     assert "app windows" not in payload["display_summary"].casefold()
     assert payload["controls"] == [
-        {"label": "Duplicate", "role": "Button"},
-        {"label": "Duplicate", "role": "Button"},
+        {
+            "token": "current-one",
+            "label": "Duplicate",
+            "role": "Button",
+            "selected": True,
+        },
+        {
+            "token": "current-two",
+            "label": "Duplicate",
+            "role": "Button",
+            "selected": False,
+        },
     ]
-    assert "same target" in payload["remediation"].casefold()
+    assert payload["capture_is_fresh"] is True
+    assert "current tokens" in payload["remediation"].casefold()
+
+
+def test_generation_lifetime_and_action_specific_recovery_are_explicit() -> None:
+    guide = (
+        Path(__file__).parents[2] / "tool_guides" / "computer_use_guide" / "SKILL.md"
+    ).read_text(encoding="utf-8").casefold()
+
+    assert "current computer use generation" in guide
+    assert "new user turn" in guide
+    assert "gone or its lease expired" in guide
+    assert "reversible click" in guide
+    assert "one alternative exact route" in guide
+    assert "text insertion" in guide
+    assert "must not be replayed" in guide
+    assert "action dispatched" in guide
+    assert "native state" in guide
+    assert "exact postcondition" in guide
+
+
+def test_expired_target_remediation_requires_current_generation_rediscovery() -> None:
+    payload = json.loads(
+        _computer_error_payload(
+            "click",
+            ComputerUseError(
+                "Unknown target: gone or its lease expired.",
+                code="target_gone",
+            ),
+        )
+    )
+
+    assert "gone or its lease expired" in payload["display_summary"].casefold()
+    assert "current generation" in payload["remediation"].casefold()
+    assert "list_apps" in payload["remediation"]
+    assert "capture" in payload["remediation"]
+
+
+def test_launch_failure_payload_exposes_only_safe_stage_and_error_class() -> None:
+    payload = json.loads(
+        _computer_error_payload(
+            "launch_app",
+            ComputerUseError(
+                "Native app launch failed safely.",
+                code="driver_unavailable",
+                failure_stage="launch_dispatch",
+                safe_driver_error="permission_or_driver_unavailable",
+            ),
+        )
+    )
+
+    assert payload["failure_stage"] == "launch_dispatch"
+    assert payload["driver_error_class"] == "permission_or_driver_unavailable"
+    assert "path" not in payload
+    assert "raw_error" not in payload
 
 
 def test_computer_use_is_off_by_default() -> None:

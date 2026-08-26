@@ -192,6 +192,32 @@ def test_new_lease_never_shows_previous_session_action(service) -> None:
     assert service.status_snapshot()["action_count"] == 0
 
 
+def test_new_generation_rejects_prior_target_and_token_as_lease_expired(
+    service,
+    fake_transport,
+) -> None:
+    service.acquire(OWNER_A, validate_context=False)
+    old_target = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
+    old_observation = service.capture(old_target, OWNER_A)
+    old_token = old_observation.elements[0].token
+    service.stop()
+    service.acquire(OWNER_B, validate_context=False)
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(ComputerUseError) as expired:
+        service.act(
+            "click",
+            old_target,
+            OWNER_B,
+            element_token=old_token,
+            approval_mode="allow_all",
+        )
+
+    assert expired.value.code == "target_gone"
+    assert "lease expired" in str(expired.value).casefold()
+    assert fake_transport.calls[calls_before:] == []
+
+
 def test_new_generation_has_no_replay_or_completion_state(
     service,
     fake_transport,

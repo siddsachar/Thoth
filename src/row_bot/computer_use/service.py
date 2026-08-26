@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
+import os
 import re
 import secrets
 import threading
@@ -21,6 +23,7 @@ from row_bot.automation.contracts import (
 from row_bot.cancellation import current_cancellation_scope
 from row_bot.computer_use.client import CuaClient, CuaElement, CuaResponse
 from row_bot.computer_use.policy import PolicyOutcome, approval_payload, classify_action
+from row_bot.data_paths import get_row_bot_data_dir
 
 
 logger = logging.getLogger(__name__)
@@ -150,6 +153,9 @@ _SAFE_COMPUTER_RESULT_CODES = frozenset(
         "unsupported_capability",
     }
 )
+_SAFE_LAUNCH_FAILURE_STAGES = frozenset(
+    {"inventory", "launch_dispatch", "rediscovery", "capture_verify"}
+)
 
 
 def _standard_effect(value: object, *, verified: bool = False) -> str:
@@ -203,6 +209,39 @@ def _safe_driver_cause(code: object) -> str:
     return "backend_refusal" if value else ""
 
 
+def _safe_correlation_id(value: object) -> str:
+    candidate = re.sub(r"[^A-Za-z0-9_.:-]", "", str(value or ""))[:128]
+    return candidate or "none"
+
+
+def _launch_failure(
+    stage: str,
+    *,
+    error_code: object = "driver_failed",
+    message: str = "Native app launch failed safely.",
+) -> ComputerUseError:
+    safe_stage = str(stage) if str(stage) in _SAFE_LAUNCH_FAILURE_STAGES else "inventory"
+    raw_code = str(error_code or "driver_failed").strip().casefold().replace("-", "_")
+    public_code = (
+        "driver_unavailable"
+        if raw_code in {"permission_denied", "driver_unavailable"}
+        else "transient_driver_failure"
+        if raw_code in {"timeout", "temporarily_unavailable"}
+        else "target_gone"
+        if raw_code in {"target_gone", "target_not_found", "window_not_found"}
+        else "unsupported_capability"
+        if raw_code in {"not_supported", "unsupported", "unsupported_capability"}
+        else "driver_failed"
+    )
+    return ComputerUseError(
+        message,
+        code=public_code,
+        retryable=public_code == "transient_driver_failure",
+        failure_stage=safe_stage,
+        safe_driver_error=_safe_driver_cause(raw_code) or "backend_refusal",
+    )
+
+
 def _normalized_role(value: object) -> str:
     return "".join(character for character in str(value or "").casefold() if character.isalnum())
 
@@ -211,6 +250,57 @@ def _normalized_semantic_text(value: object) -> str:
     return " ".join(
         unicodedata.normalize("NFKC", str(value or "")).casefold().split()
     )
+
+
+def _semantic_fingerprint(
+    elements: tuple[CuaElement, ...],
+) -> tuple[tuple[object, ...], ...]:
+    """Canonicalize validated native semantics without references or values."""
+
+    by_index = {int(element.index): element for element in elements}
+
+    def tree_path(element: CuaElement) -> tuple[tuple[str, str], ...]:
+        path: list[tuple[str, str]] = []
+        current: CuaElement | None = element
+        seen: set[int] = set()
+        while current is not None:
+            current_index = int(current.index)
+            if current_index in seen:
+                path.append(("cycle", ""))
+                break
+            seen.add(current_index)
+            path.append(
+                (
+                    _normalized_role(current.role),
+                    _normalized_semantic_text(current.label),
+                )
+            )
+            if current.parent_index is None:
+                break
+            current = by_index.get(int(current.parent_index))
+            if current is None:
+                path.append(("missing_parent", ""))
+                break
+        return tuple(reversed(path))
+
+    nodes = (
+        (
+            tree_path(element),
+            _normalized_role(element.role),
+            _normalized_semantic_text(element.label),
+            element.selected,
+            element.checked,
+            element.expanded,
+            element.pressed,
+            element.enabled,
+            element.toggled,
+            element.visible,
+            element.editable,
+            element.read_only,
+        )
+        for element in elements
+    )
+    return tuple(sorted(nodes, key=repr))
 
 
 def _native_field_for_injection_scan(value: object) -> str:
@@ -320,6 +410,7 @@ class Observation:
     suspicious: bool = False
     advisory_categories: tuple[str, ...] = ()
     vision_text: str = ""
+    action_family: str = ""
     action_effect: str = ""
     action_dispatched: bool = False
     action_completed: bool = False
@@ -489,14 +580,20 @@ class ComputerUseError(RuntimeError):
         *,
         code: str = "computer_failed",
         retryable: bool = False,
+        terminal: bool = False,
         candidates: tuple[dict[str, Any], ...] = (),
         observation: Observation | None = None,
+        failure_stage: str = "",
+        safe_driver_error: str = "",
     ) -> None:
         super().__init__(message)
         self.code = str(code)
         self.retryable = bool(retryable)
+        self.terminal = bool(terminal)
         self.candidates = tuple(dict(candidate) for candidate in candidates)
         self.observation = observation
+        self.failure_stage = str(failure_stage)
+        self.safe_driver_error = str(safe_driver_error)
 
 
 class LeaseBusyError(ComputerUseError):
@@ -645,6 +742,40 @@ def _is_protected_controller_target(app_name: str, window_title: str = "") -> bo
     return app in _PYTHON_HOST_APPS and "rowbot" in title
 
 
+def _trusted_controller_pids() -> frozenset[int]:
+    """Return exact current-session Row-Bot process identities only."""
+
+    trusted: set[int] = set()
+    try:
+        current_pid = int(os.getpid())
+    except (TypeError, ValueError, OverflowError):
+        current_pid = 0
+    if current_pid > 0:
+        trusted.add(current_pid)
+
+    launch_session = str(os.environ.get("ROW_BOT_LAUNCH_SESSION_ID") or "").strip()
+    if not launch_session:
+        return frozenset(trusted)
+    try:
+        state = json.loads(
+            (get_row_bot_data_dir(create=False) / "launcher_state.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return frozenset(trusted)
+    if not isinstance(state, dict) or str(state.get("session") or "") != launch_session:
+        return frozenset(trusted)
+    for field_name in ("pid", "window_pid"):
+        try:
+            candidate = int(state.get(field_name) or 0)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if candidate > 0:
+            trusted.add(candidate)
+    return frozenset(trusted)
+
+
 def current_owner() -> LeaseOwner:
     try:
         from row_bot.agent import get_active_runtime_context
@@ -723,6 +854,7 @@ class ComputerUseService:
         self._session_started_at = 0.0
         self._tool_call_started_at = 0.0
         self._tool_call_counters: dict[str, int] = {}
+        self._tool_call_owner: tuple[str, str] = ("", "")
         self._tool_phase_ms = {
             "driver_start": 0.0,
             "discovery": 0.0,
@@ -866,6 +998,8 @@ class ComputerUseService:
             if self._owner is None:
                 self._state = SessionState.ACQUIRING
                 self._owner = owner
+                if self._tool_call_started_at and not self._tool_call_owner[0]:
+                    self._tool_call_owner = (owner.thread_id, owner.generation_id)
                 self._cancel.clear()
                 self._targets.clear()
                 self._app_foreground.clear()
@@ -1130,12 +1264,22 @@ class ComputerUseService:
         self._notify()
 
     @staticmethod
-    def _safe_app_rows(response: CuaResponse) -> list[dict[str, Any]]:
+    def _safe_app_rows(
+        response: CuaResponse,
+        *,
+        excluded_pids: frozenset[int] = frozenset(),
+    ) -> list[dict[str, Any]]:
         rows = response.structured.get("apps") if isinstance(response.structured.get("apps"), list) else []
         output: list[dict[str, Any]] = []
         seen: dict[str, int] = {}
         for row in rows:
             if not isinstance(row, dict):
+                continue
+            try:
+                pid = int(row.get("pid") or 0)
+            except (TypeError, ValueError, OverflowError):
+                pid = 0
+            if pid > 0 and pid in excluded_pids:
                 continue
             name = str(row.get("name") or "")[:128]
             key = _permission_key(name)
@@ -1160,7 +1304,8 @@ class ComputerUseService:
             response = self._driver_call("list_apps", {})
         if response.is_error:
             raise ComputerUseError(response.text or response.error_code)
-        apps = self._safe_app_rows(response)
+        controller_pids = _trusted_controller_pids()
+        apps = self._safe_app_rows(response, excluded_pids=controller_pids)
         package_families: dict[str, str] = {}
         app_pids: dict[str, set[int]] = {}
         raw_apps = response.structured.get("apps")
@@ -1183,6 +1328,8 @@ class ComputerUseService:
                 pid = int(row.get("pid") or 0)
             except (TypeError, ValueError, OverflowError):
                 pid = 0
+            if pid > 0 and pid in controller_pids:
+                continue
             if pid > 0:
                 app_pids.setdefault(key, set()).add(pid)
         with self._lock:
@@ -1491,19 +1638,31 @@ class ComputerUseService:
                 resolved_app_identity,
             )
         if not trusted_pid:
-            return []
+            raise _launch_failure(
+                "rediscovery",
+                error_code="target_not_found",
+                message="The launched app identity could not be rediscovered exactly.",
+            )
         deadline = time.monotonic() + max(
             0.0,
             float(self.PACKAGED_LAUNCH_STABILITY_TIMEOUT_SECONDS),
         )
         previous_signatures: set[tuple[Any, ...]] = set()
+        capture_attempted = False
         while True:
-            rows = self._exact_driver_window_rows(
-                app_name,
-                trusted_pid=trusted_pid,
-                trusted_window_ids=preferred_window_ids,
-                allow_trusted_launch_identity=packaged,
-            )
+            try:
+                rows = self._exact_driver_window_rows(
+                    app_name,
+                    trusted_pid=trusted_pid,
+                    trusted_window_ids=preferred_window_ids,
+                    allow_trusted_launch_identity=packaged,
+                )
+            except ComputerUseError as exc:
+                raise _launch_failure(
+                    "rediscovery",
+                    error_code=exc.code,
+                    message="The launched app could not be rediscovered safely.",
+                ) from exc
             preferred_rows = [
                 row
                 for row in rows
@@ -1534,6 +1693,7 @@ class ComputerUseService:
                 if windows:
                     target_id = str(windows[0]["target_id"])
                     transient_target = self._target(target_id)
+                    capture_attempted = True
                     try:
                         self.capture(
                             target_id,
@@ -1557,13 +1717,25 @@ class ComputerUseService:
                             return windows
                     except ComputerUseError as exc:
                         if exc.code not in {"target_gone", "stale_observation"}:
-                            raise
+                            raise _launch_failure(
+                                "capture_verify",
+                                error_code=exc.code,
+                                message="The launched window could not be capture-verified safely.",
+                            ) from exc
                     self._expire_disappeared_target(transient_target)
                     previous_signatures = set()
                     continue
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return []
+                raise _launch_failure(
+                    "capture_verify" if capture_attempted else "rediscovery",
+                    error_code="target_not_found",
+                    message=(
+                        "The launched window could not be capture-verified safely."
+                        if capture_attempted
+                        else "The launched app could not be rediscovered safely."
+                    ),
+                )
             previous_signatures = signatures
             self._cancel.wait(
                 min(
@@ -1577,7 +1749,7 @@ class ComputerUseService:
             target = self._targets.get(str(target_id))
         if target is None:
             raise ComputerUseError(
-                "Unknown or expired target_id; list windows again.",
+                "Unknown target_id: the target is gone or its lease expired; rediscover it in the current Computer Use generation.",
                 code="target_gone",
             )
         if _is_protected_controller_target(target.app_name, target.window_title):
@@ -1644,6 +1816,10 @@ class ComputerUseService:
                 "semantic_refresh_calls": self._semantic_refresh_count,
                 "vision_calls": self._vision_call_count,
             }
+            self._tool_call_owner = (
+                self._owner.thread_id if self._owner else "",
+                self._owner.generation_id if self._owner else "",
+            )
             self._tool_phase_ms = {
                 "driver_start": 0.0,
                 "discovery": 0.0,
@@ -1670,6 +1846,7 @@ class ComputerUseService:
         native_or_visual_change: str = "unknown",
         effect_verified: bool = False,
         outcome: str = "",
+        failure_stage: str = "",
     ) -> None:
         with self._lock:
             if self._active_call_signature != tuple(signature):
@@ -1677,6 +1854,7 @@ class ComputerUseService:
             self._active_call_signature = None
             started_at = self._tool_call_started_at
             counters_before = dict(self._tool_call_counters)
+            tool_call_owner = self._tool_call_owner
             phases = dict(self._tool_phase_ms)
             counters_after = {
                 "driver_calls": self._driver_call_count,
@@ -1686,6 +1864,7 @@ class ComputerUseService:
             }
             self._tool_call_started_at = 0.0
             self._tool_call_counters = {}
+            self._tool_call_owner = ("", "")
             self._tool_phase_ms = {
                 "driver_start": 0.0,
                 "discovery": 0.0,
@@ -1720,6 +1899,11 @@ class ComputerUseService:
             "refused",
         }:
             safe_outcome = "none"
+        safe_stage = str(failure_stage or "none").casefold()
+        if safe_stage not in _SAFE_LAUNCH_FAILURE_STAGES | {"none"}:
+            safe_stage = "none"
+        safe_thread_id = _safe_correlation_id(tool_call_owner[0])
+        safe_generation_id = _safe_correlation_id(tool_call_owner[1])
         if pending:
             with self._lock:
                 pending_state = self._state
@@ -1731,10 +1915,14 @@ class ComputerUseService:
                 else "interrupted"
             )
             logger.info(
-                "computer_use.action_pending action_family=%s status=%s total_ms=%.3f "
+                "computer_use.action_pending thread_id=%s generation_id=%s action_family=%s "
+                "status=%s failure_stage=%s total_ms=%.3f "
                 "driver_calls=%d capture_calls=%d semantic_refresh_calls=%d vision_calls=%d",
+                safe_thread_id,
+                safe_generation_id,
                 safe_action,
                 pending_status,
+                safe_stage,
                 total_ms,
                 deltas["driver_calls"],
                 deltas["capture_calls"],
@@ -1743,14 +1931,18 @@ class ComputerUseService:
             )
             return
         logger.info(
-            "computer_use.action_receipt action_family=%s success=%s error_code=%s "
+            "computer_use.action_receipt thread_id=%s generation_id=%s action_family=%s "
+            "success=%s error_code=%s failure_stage=%s "
             "route=%s delivery_mode=%s driver_effect=%s change=%s effect_verified=%s outcome=%s "
             "driver_start_ms=%.3f discovery_ms=%.3f native_capture_ms=%.3f "
             "optional_vision_ms=%.3f total_ms=%.3f driver_calls=%d capture_calls=%d "
             "semantic_refresh_calls=%d vision_calls=%d",
+            safe_thread_id,
+            safe_generation_id,
             safe_action,
             str(bool(success)).lower(),
             safe_code,
+            safe_stage,
             _standard_route(route),
             _standard_delivery(delivery_mode),
             _standard_effect(driver_effect, verified=bool(effect_verified)),
@@ -2044,13 +2236,6 @@ class ComputerUseService:
         target = self._target(target_id)
         self._ensure_app_permission(target, approval_mode=approval_mode)
         with self._mutation_lock:
-            with self._lock:
-                published_before = (
-                    self._observation,
-                    self._preview_observation,
-                    self._observation_generation,
-                    self._target_hint,
-                )
             self._state = SessionState.OBSERVING
             response = self._capture_response(target, include_screenshot=True)
             observation = self._observation_from_response(
@@ -2058,23 +2243,12 @@ class ComputerUseService:
                 response,
                 require_screenshot=True,
             )
-            try:
-                self._apply_semantic_filter(
-                    observation,
-                    label=semantic_label,
-                    role=semantic_role,
-                    value_prefix=semantic_value_prefix,
-                )
-            except ComputerUseError as exc:
-                if exc.code in {"ambiguous_target", "semantic_no_match"}:
-                    with self._lock:
-                        (
-                            self._observation,
-                            self._preview_observation,
-                            self._observation_generation,
-                            self._target_hint,
-                        ) = published_before
-                raise
+            self._apply_semantic_filter(
+                observation,
+                label=semantic_label,
+                role=semantic_role,
+                value_prefix=semantic_value_prefix,
+            )
             if initial_app_scope and not visual_question:
                 observation.vision_deferred = True
             # Publish only after the native response has passed exact identity,
@@ -2117,11 +2291,36 @@ class ComputerUseService:
         if len(matches) != 1:
             controls = tuple(
                 {
+                    "token": str(element.token),
                     "label": str(element.label or "")[:200],
                     "role": str(element.role or "")[:80],
+                    **(
+                        {"selected": bool(element.selected)}
+                        if element.selected is not None
+                        else {}
+                    ),
+                    **(
+                        {"checked": bool(element.checked)}
+                        if element.checked is not None
+                        else {}
+                    ),
+                    **(
+                        {"expanded": bool(element.expanded)}
+                        if element.expanded is not None
+                        else {}
+                    ),
+                    **(
+                        {"pressed": bool(element.pressed)}
+                        if element.pressed is not None
+                        else {}
+                    ),
+                    **(
+                        {"enabled": bool(element.enabled)}
+                        if element.enabled is not None
+                        else {}
+                    ),
                 }
-                for element in observation.elements[:8]
-                if str(element.label or "").strip() or str(element.role or "").strip()
+                for element in matches[:8]
             )
             raise ComputerUseError(
                 "Semantic capture filter matched multiple controls."
@@ -2129,6 +2328,7 @@ class ComputerUseService:
                 else "Semantic capture filter did not match a current control.",
                 code="ambiguous_target" if len(matches) > 1 else "semantic_no_match",
                 candidates=controls,
+                observation=observation,
             )
         observation.semantic_filter = matches
 
@@ -2708,6 +2908,12 @@ class ComputerUseService:
             self._check_cancelled()
             with self._lock:
                 observation = self._observation
+            before_native_fingerprint = (
+                _semantic_fingerprint(observation.elements)
+                if observation is not None
+                and observation.target.target_id == target.target_id
+                else None
+            )
             element: CuaElement | None = None
             if element_token:
                 if (
@@ -2824,8 +3030,9 @@ class ComputerUseService:
                 return self._driver_call(driver_action, arguments)
 
             result = dispatch(args)
+            retried_in_foreground = False
             if (
-                action == "type"
+                action in {"type", "key"}
                 and result.is_error
                 and result.error_code
                 in {"background_unavailable", "foreground_required"}
@@ -2835,8 +3042,19 @@ class ComputerUseService:
                 fallback_args["delivery_mode"] = "foreground"
                 result = dispatch(fallback_args)
                 args = fallback_args
+                retried_in_foreground = True
 
             if result.is_error:
+                if (
+                    retried_in_foreground
+                    and result.error_code
+                    in {"background_unavailable", "foreground_required"}
+                ):
+                    raise ComputerUseError(
+                        "Foreground delivery was unavailable; user takeover may be required.",
+                        code="background_unavailable",
+                        terminal=True,
+                    )
                 if result.error_code in {"stale_element", "snapshot_expired"}:
                     raise self._fresh_stale_error(
                         target,
@@ -2879,12 +3097,15 @@ class ComputerUseService:
                 verified=bool(result.structured.get("verified")),
             )
             dispatched = driver_effect != "refused"
-            verified = bool(
+            driver_verified = bool(
                 dispatched
                 and (
                     result.structured.get("verified") is True
                     or driver_effect == "confirmed"
                 )
+            )
+            verified = bool(
+                driver_verified and action in {"focus", "replace_text"}
             )
             delivery_mode = _standard_delivery(
                 result.structured.get("delivery_mode")
@@ -2899,12 +3120,13 @@ class ComputerUseService:
             verified_scope = (
                 "exact_value"
                 if verified and action == "replace_text"
-                else "delivery"
-                if verified
+                else "exact_state"
+                if verified and action == "focus"
                 else ""
             )
 
             completed_observation: Observation | None = None
+            native_change = "unknown"
             if capture_after:
                 self._state = SessionState.VERIFYING
                 self._notify()
@@ -2918,6 +3140,13 @@ class ComputerUseService:
                     self._state = SessionState.OBSERVING
                     self._notify()
                     raise
+                if before_native_fingerprint is not None:
+                    native_change = (
+                        "unchanged"
+                        if before_native_fingerprint
+                        == _semantic_fingerprint(completed_observation.elements)
+                        else "changed"
+                    )
                 if action == "replace_text" and element is not None:
                     matches = self._exact_semantic_matches(
                         completed_observation,
@@ -2928,10 +3157,6 @@ class ComputerUseService:
                         exact_native_value = bool(
                             matched.value_available
                             and matched.value == str(text or "")
-                            and not (
-                                matched.in_web_content
-                                and driver_effect == "unverifiable"
-                            )
                         )
                         if exact_native_value:
                             verified = True
@@ -2958,6 +3183,7 @@ class ComputerUseService:
             self._state = SessionState.OBSERVING
 
             if completed_observation is not None:
+                completed_observation.action_family = action
                 completed_observation.action_effect = outcome
                 completed_observation.action_dispatched = dispatched
                 completed_observation.action_completed = verified
@@ -2980,6 +3206,7 @@ class ComputerUseService:
                     else "unavailable"
                 )
                 completed_observation.visual_observation = "unavailable"
+                completed_observation.native_change = native_change
                 self._notify()
                 return completed_observation
 
@@ -3215,12 +3442,39 @@ class ComputerUseService:
                             "element_token": button.token,
                         },
                     )
+                    if (
+                        result.is_error
+                        and result.error_code
+                        in {"background_unavailable", "foreground_required"}
+                    ):
+                        self._require_existing_owner(owner)
+                        result = self._driver_call(
+                            "click",
+                            {
+                                "pid": target.pid,
+                                "window_id": target.window_id,
+                                "element_token": button.token,
+                                "delivery_mode": "foreground",
+                            },
+                        )
                     if result.is_error:
                         if result.error_code == "stale_element":
                             raise StaleObservationError(
                                 "A Calculator button token became stale; capture again."
                             )
-                        raise ComputerUseError(result.text or result.error_code)
+                        if result.error_code in {
+                            "background_unavailable",
+                            "foreground_required",
+                        }:
+                            raise ComputerUseError(
+                                "Foreground delivery was unavailable; user takeover may be required.",
+                                code="background_unavailable",
+                                terminal=True,
+                            )
+                        raise ComputerUseError(
+                            "The Computer driver refused a Calculator key step safely.",
+                            code="driver_failed",
+                        )
                     delivered += 1
                 self._check_cancelled()
                 with self._lock:
@@ -3276,15 +3530,26 @@ class ComputerUseService:
                 code="hard_blocked",
             )
         self._require_owner(owner)
-        inventory = self.list_apps(owner)
+        try:
+            inventory = self.list_apps(owner)
+        except concurrent.futures.CancelledError:
+            raise
+        except ComputerUseError as exc:
+            raise _launch_failure(
+                "inventory",
+                error_code=exc.code,
+                message="Native app inventory failed safely before launch dispatch.",
+            ) from exc
         resolved_name = _resolve_app_identity(
             name,
             [str(row.get("name") or "") for row in inventory],
         )
         if not resolved_name:
             raise ComputerUseError(
-                f"Could not resolve the native app identity for {name!r} from the reviewed app inventory.",
+                "Could not resolve the exact native app identity from the reviewed inventory.",
                 code="target_gone",
+                failure_stage="inventory",
+                safe_driver_error="backend_refusal",
             )
         with self._lock:
             expected_package_family = self._app_package_families.get(
@@ -3309,17 +3574,27 @@ class ComputerUseService:
             approval_mode=approval_mode,
             display_name=name,
         )
-        with self._mutation_lock:
-            self._state = SessionState.ACTING
-            self._last_action = "launch app"
-            self._notify()
-            response = self._driver_call("launch_app", {"name": resolved_name})
-            self._state = SessionState.OBSERVING
-            self._notify()
+        try:
+            with self._mutation_lock:
+                self._state = SessionState.ACTING
+                self._last_action = "launch app"
+                self._notify()
+                try:
+                    response = self._driver_call("launch_app", {"name": resolved_name})
+                finally:
+                    self._state = SessionState.OBSERVING
+                    self._notify()
+        except concurrent.futures.CancelledError:
+            raise
+        except ComputerUseError as exc:
+            raise _launch_failure(
+                "launch_dispatch",
+                error_code=exc.code,
+            ) from exc
         if response.is_error:
-            raise ComputerUseError(
-                response.text or response.error_code or "Cua app launch failed",
-                code=response.error_code or "driver_failed",
+            raise _launch_failure(
+                "launch_dispatch",
+                error_code=response.error_code,
             )
         # Every launch uses bounded exact rediscovery. Packaged apps retain
         # package-family proof; classic apps require an exact reviewed launch
@@ -3333,11 +3608,6 @@ class ComputerUseService:
             approval_mode=approval_mode,
             visual_question=visual_question,
         )
-        if not windows:
-            raise ComputerUseError(
-                f"The native app launch completed, but no exact {name!r} window could be verified.",
-                code="target_gone",
-            )
         return windows
 
     def take_over(
