@@ -313,7 +313,12 @@ class FakeCuaTransport:
                     "element_token": token,
                     "role": role,
                     "label": label,
-                    "value": self.document_value if index == 2 else "",
+                    "value": str(
+                        source.get(
+                            "value",
+                            self.document_value if index == 2 else "",
+                        )
+                    ),
                     "frame": {
                         "x": self.scenario.element_frame[0],
                         "y": self.scenario.element_frame[1],

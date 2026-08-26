@@ -23,6 +23,52 @@ def _target_and_capture(service):
     return target, service.capture(target, OWNER)
 
 
+@pytest.mark.parametrize(
+    ("app_name", "window_title", "ordinary_label"),
+    [
+        ("Contoso Notes.exe", "Project - Contoso Notes", "System"),
+        ("Acme Writer.app", "Draft - Acme Writer", "Assistant"),
+        ("org.example.Editor", "System Information", "System Settings"),
+    ],
+)
+def test_ordinary_platform_labels_do_not_block_safe_exact_semantic_actions(
+    service,
+    fake_transport,
+    app_name: str,
+    window_title: str,
+    ordinary_label: str,
+) -> None:
+    fake_transport.scenario.windows = (
+        {
+            "window_id": 301,
+            "pid": 5301,
+            "app_name": app_name,
+            "title": window_title,
+            "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+            "is_on_screen": True,
+        },
+    )
+    fake_transport.scenario.semantic_elements = (
+        {"role": "MenuItem", "label": ordinary_label},
+        {"role": "Button", "label": "Open"},
+    )
+    service.acquire(OWNER, validate_context=False)
+    target = service.list_windows(OWNER, app=app_name)[0]["target_id"]
+
+    observation = service.capture(target, OWNER, approval_mode="allow_all")
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[1].token,
+        approval_mode="allow_all",
+    )
+
+    assert observation.suspicious is False
+    assert isinstance(result, ActionReceipt)
+    assert [name for name, _args in fake_transport.calls].count("click") == 1
+
+
 def test_app_scoped_capture_discovers_and_captures_exactly_once_without_vision(
     fake_client,
     fake_transport,

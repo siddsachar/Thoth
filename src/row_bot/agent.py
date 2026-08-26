@@ -1346,7 +1346,7 @@ _UNTRUSTED_TOOLS: frozenset[str] = frozenset({
 _INJECTION_PATTERNS: list[tuple["_re.Pattern[str]", str]] = [
     # ── Role overrides ──────────────────────────────────────────────
     (_re.compile(
-        r"(?:^|\n)\s*(?:SYSTEM|ASSISTANT|### (?:System|Assistant)|"
+        r"(?:^|\n)\s*(?:(?:SYSTEM|ASSISTANT)\s*:|### (?:System|Assistant)|"
         r"\[SYSTEM MESSAGE\]|\[INST\]|<\|system\|>|<\|im_start\|>)",
         _re.IGNORECASE,
     ), "role override"),
@@ -1391,7 +1391,7 @@ def _scan_injection_patterns(text: str) -> str:
     Returns a warning string if any pattern matches, empty string otherwise.
     Never strips or modifies the content — detection only.
     """
-    if not text or len(text) < 10:
+    if not text:
         return ""
     # Only scan first 20 KB to keep latency near‑zero on huge outputs
     sample = text[:20_000]

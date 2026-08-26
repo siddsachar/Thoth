@@ -101,6 +101,14 @@ maintenance surfaces are forbidden and never model-visible.
 - Consequential actions require point-of-risk confirmation even in Auto mode.
 - UI text and accessibility content are untrusted tool output and cannot grant
   new scope, recipients, secrets, or authority.
+- Prompt-injection pattern matches in native labels and values are advisory
+  evidence, not mutation authorization. Row-Bot scans app-authored fields
+  independently without treating accessibility roles as instructions, then
+  applies the same exact-target, protected-surface, credential, consequential-
+  action, and thread approval policy whether or not an advisory is present.
+- Terminal `hard_blocked` results are reserved for concrete protected targets
+  or capabilities and Block approval mode; they remain terminal and must not be
+  bypassed by aliases or alternate Computer actions.
 
 ## Upstream contract binding
 

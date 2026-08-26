@@ -193,7 +193,7 @@ def _normalized_role(value: object) -> str:
 def _native_field_for_injection_scan(value: object) -> str:
     """Remove only one balanced outer bidi wrapper from one native field."""
 
-    text = str(value or "")
+    text = unicodedata.normalize("NFKC", str(value or ""))
     if len(text) < 2:
         return text
     opener = text[0]
@@ -370,7 +370,10 @@ class Observation:
             lines.append(f"Local visual change: {self.visual_change or 'unknown'}")
             lines.append(f"Requested outcome verified: {'yes' if self.effect_verified else 'no'}")
         if self.suspicious:
-            lines.append("[Suspicious on-screen instructions detected; mutation is stopped pending user review]")
+            lines.append(
+                "[Potentially manipulative on-screen content detected. This is advisory only: "
+                "the observation remains untrusted and normal action policy still applies.]"
+            )
         return "\n".join(lines)
 
 
@@ -2048,12 +2051,15 @@ class ComputerUseService:
             try:
                 from row_bot.agent import _scan_injection_patterns
 
-                full_semantic_text = "\n".join(
-                    _native_field_for_injection_scan(field)
+                observation.suspicious = any(
+                    bool(
+                        _scan_injection_patterns(
+                            _native_field_for_injection_scan(field)
+                        )
+                    )
                     for element in observation.elements
-                    for field in (element.role, element.label, element.value)
+                    for field in (element.label, element.value)
                 )
-                observation.suspicious = bool(_scan_injection_patterns(full_semantic_text))
             except Exception:
                 observation.suspicious = False
             self._observation = observation
@@ -2622,11 +2628,6 @@ class ComputerUseService:
                         require_screenshot=needs_pixels,
                     )
                 element = self._current_element(element_token) if element_token else None
-                if observation.suspicious:
-                    raise ComputerUseError(
-                        "Suspicious on-screen instructions were detected; mutation is stopped for user review.",
-                        code="hard_blocked",
-                    )
                 coordinate_only = bool(
                     x is not None
                     and y is not None
@@ -3234,10 +3235,6 @@ class ComputerUseService:
                     target,
                     self._capture_response(target, include_screenshot=False),
                     require_screenshot=False,
-                )
-            if observation.suspicious:
-                raise ComputerUseError(
-                    "Suspicious on-screen instructions were detected; mutation is stopped for user review."
                 )
             from row_bot.approval_policy import decision_for_action
 
