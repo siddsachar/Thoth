@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from row_bot.computer_use import service as service_module
 from row_bot.computer_use.service import ComputerUseError, ComputerUseService, LeaseOwner
 
 
@@ -26,7 +25,7 @@ def _window(
     }
 
 
-def test_microsoft_edge_display_name_selects_only_title_scoped_msedge_window(
+def test_canonical_edge_identity_selects_only_title_scoped_window(
     service,
     fake_transport,
 ) -> None:
@@ -38,7 +37,7 @@ def test_microsoft_edge_display_name_selects_only_title_scoped_msedge_window(
     )
     service.acquire(OWNER, validate_context=False)
 
-    rows = service.list_windows(OWNER, app="Microsoft Edge", window_hint="YouTube")
+    rows = service.list_windows(OWNER, app="msedge.exe", window_hint="YouTube")
 
     assert len(rows) == 1
     assert rows[0]["app"] == "msedge.exe"
@@ -55,7 +54,7 @@ def test_duplicate_native_browser_rows_are_deduplicated_in_stable_order(
     fake_transport.scenario.windows = (first, dict(first), second)
     service.acquire(OWNER, validate_context=False)
 
-    rows = service.list_windows(OWNER, app="Edge")
+    rows = service.list_windows(OWNER, app="msedge.exe")
 
     assert [row["candidate"] for row in rows] == [
         "matching msedge.exe window 1",
@@ -69,15 +68,11 @@ def test_duplicate_native_browser_rows_are_deduplicated_in_stable_order(
         ("Microsoft Edge", "msedge.exe"),
         ("Edge", "msedge.exe"),
         ("Google Chrome", "chrome.exe"),
-        ("Chrome", "chrome.exe"),
         ("Mozilla Firefox", "firefox.exe"),
-        ("Firefox", "firefox.exe"),
         ("Brave Browser", "brave.exe"),
-        ("Brave", "brave.exe"),
-        ("Safari", "Safari.app"),
     ],
 )
-def test_explicit_browser_alias_groups_match_only_their_canonical_driver(
+def test_human_browser_aliases_do_not_silently_select_driver_identities(
     service,
     fake_transport,
     requested: str,
@@ -87,6 +82,29 @@ def test_explicit_browser_alias_groups_match_only_their_canonical_driver(
         _window(1, driver_name, "Target"),
         _window(2, "unrelated.exe", "Target"),
     )
+    service.acquire(OWNER, validate_context=False)
+
+    rows = service.list_windows(OWNER, app=requested)
+
+    assert rows == []
+
+
+@pytest.mark.parametrize(
+    ("requested", "driver_name"),
+    [
+        ("Chrome", "chrome.exe"),
+        ("Firefox", "firefox.exe"),
+        ("Brave", "brave.exe"),
+        ("Safari", "Safari.app"),
+    ],
+)
+def test_exact_identity_allows_only_platform_executable_or_bundle_suffix(
+    service,
+    fake_transport,
+    requested: str,
+    driver_name: str,
+) -> None:
+    fake_transport.scenario.windows = (_window(1, driver_name, "Target"),)
     service.acquire(OWNER, validate_context=False)
 
     rows = service.list_windows(OWNER, app=requested)
@@ -146,7 +164,7 @@ def test_app_scoped_capture_zero_matches_returns_bounded_running_exact_candidate
     assert all(row["running"] is True for row in missing.value.candidates)
     assert "not-running.exe" not in repr(missing.value.candidates)
     assert private_title not in repr(missing.value.candidates)
-    assert [name for name, _args in fake_transport.calls].count("list_windows") == 1
+    assert [name for name, _args in fake_transport.calls].count("list_windows") == 0
     assert [name for name, _args in fake_transport.calls].count("list_apps") == 1
     assert "launch_app" not in [name for name, _args in fake_transport.calls]
     assert "get_window_state" not in [name for name, _args in fake_transport.calls]
@@ -158,8 +176,11 @@ def test_app_scoped_capture_multiple_matches_returns_opaque_ambiguity_without_pi
 ) -> None:
     private_titles = ("Private workbook A", "Private workbook B")
     fake_transport.scenario.windows = (
-        _window(1, "Notepad", private_titles[0]),
-        _window(2, "Notepad", private_titles[1]),
+        _window(1, "Notepad", private_titles[0], pid=2001),
+        _window(2, "Notepad", private_titles[1], pid=2001),
+    )
+    fake_transport.scenario.apps = (
+        {"name": "Notepad", "pid": 2001, "running": True},
     )
 
     with pytest.raises(ComputerUseError) as ambiguous:
@@ -169,6 +190,24 @@ def test_app_scoped_capture_multiple_matches_returns_opaque_ambiguity_without_pi
     assert len(ambiguous.value.candidates) == 2
     assert all(str(row["target_id"]).startswith("target_") for row in ambiguous.value.candidates)
     assert all(title not in repr(ambiguous.value.candidates) for title in private_titles)
+    assert "get_window_state" not in [name for name, _args in fake_transport.calls]
+
+
+def test_app_scoped_capture_rejects_exact_name_window_owned_by_another_pid(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = (
+        {"name": "Native Editor.app", "pid": 3101, "running": True},
+    )
+    fake_transport.scenario.windows = (
+        _window(41, "Native Editor.app", "Open", pid=4101),
+    )
+
+    with pytest.raises(ComputerUseError) as mismatch:
+        service.capture(owner=OWNER, app="Native Editor.app")
+
+    assert mismatch.value.code == "target_gone"
     assert "get_window_state" not in [name for name, _args in fake_transport.calls]
 
 
@@ -192,7 +231,7 @@ def test_protected_app_scoped_capture_is_blocked_before_driver_start(
         ("Windows Calculator", "CalculatorApp.exe"),
     ],
 )
-def test_explicit_calculator_identity_group_matches_inventory_and_window_names(
+def test_noncanonical_calculator_names_do_not_cross_select(
     service,
     fake_transport,
     requested: str,
@@ -206,11 +245,10 @@ def test_explicit_calculator_identity_group_matches_inventory_and_window_names(
 
     rows = service.list_windows(OWNER, app=requested)
 
-    assert len(rows) == 1
-    assert rows[0]["app"] == driver_name
+    assert rows == []
 
 
-def test_calculator_window_discovery_accepts_only_the_exact_packaged_host_title(
+def test_window_discovery_does_not_infer_app_from_packaged_host_title(
     service,
     fake_transport,
 ) -> None:
@@ -223,15 +261,10 @@ def test_calculator_window_discovery_accepts_only_the_exact_packaged_host_title(
 
     rows = service.list_windows(OWNER, app="Calculator")
 
-    assert len(rows) == 1
-    target = service._target(rows[0]["target_id"])
-    assert (target.app_name, target.window_title) == (
-        "ApplicationFrameHost.exe",
-        "Calculator",
-    )
+    assert rows == []
 
 
-def test_packaged_host_discovery_is_exact_for_any_reviewed_app_name(
+def test_window_discovery_does_not_infer_any_app_from_shared_host_title(
     service,
     fake_transport,
 ) -> None:
@@ -244,20 +277,13 @@ def test_packaged_host_discovery_is_exact_for_any_reviewed_app_name(
 
     rows = service.list_windows(OWNER, app="Photos")
 
-    assert len(rows) == 1
-    target = service._target(rows[0]["target_id"])
-    assert (target.app_name, target.window_title) == (
-        "ApplicationFrameHost.exe",
-        "Photos",
-    )
+    assert rows == []
 
 
-def test_calculator_launch_resolves_windows_inventory_name_under_local_ui_grant(
+def test_packaged_launch_uses_exact_inventory_name_under_local_ui_grant(
     fake_client,
     fake_transport,
-    monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
     approvals: list[dict] = []
     fake_transport.scenario.apps = (
         {
@@ -272,13 +298,13 @@ def test_calculator_launch_resolves_windows_inventory_name_under_local_ui_grant(
         approval_callback=lambda payload: approvals.append(payload) or True,
     )
     service.acquire(OWNER, validate_context=False)
-    service.grant_app_permission_for_local_ui(OWNER, "Calculator")
+    service.grant_app_permission_for_local_ui(OWNER, "Windows Calculator")
 
-    windows = service.launch_app("Calculator", OWNER)
+    windows = service.launch_app("Windows Calculator", OWNER)
 
     launch_args = next(args for name, args in fake_transport.calls if name == "launch_app")
-    assert launch_args["name"] == "calc.exe"
-    assert windows[0]["app"] == "Calculator"
+    assert launch_args["name"] == "Windows Calculator"
+    assert windows[0]["app"] == "Windows Calculator"
     assert [name for name, _args in fake_transport.calls].count("list_windows") == 3
     assert approvals == []
 
@@ -286,9 +312,7 @@ def test_calculator_launch_resolves_windows_inventory_name_under_local_ui_grant(
 def test_packaged_calculator_launch_never_trusts_an_unidentified_launch_row(
     fake_client,
     fake_transport,
-    monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
     fake_transport.scenario.apps = (
         {
             "name": "Windows Calculator",
@@ -308,7 +332,7 @@ def test_packaged_calculator_launch_never_trusts_an_unidentified_launch_row(
     service.acquire(OWNER, validate_context=False)
 
     with pytest.raises(ComputerUseError) as exc_info:
-        service.launch_app("Calculator", OWNER)
+        service.launch_app("Windows Calculator", OWNER)
 
     assert exc_info.value.code == "target_gone"
     assert [name for name, _args in fake_transport.calls].count("launch_app") == 1
@@ -319,9 +343,7 @@ def test_packaged_calculator_launch_never_trusts_an_unidentified_launch_row(
 def test_packaged_calculator_launch_rebinds_only_after_replacement_is_stable(
     fake_client,
     fake_transport,
-    monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
     fake_transport.scenario.apps = (
         {
             "name": "Windows Calculator",
@@ -346,9 +368,9 @@ def test_packaged_calculator_launch_rebinds_only_after_replacement_is_stable(
     )
     service.PACKAGED_LAUNCH_POLL_INTERVAL_SECONDS = 0.0
     service.acquire(OWNER, validate_context=False)
-    service.grant_app_permission_for_local_ui(OWNER, "Calculator")
+    service.grant_app_permission_for_local_ui(OWNER, "Windows Calculator")
 
-    windows = service.launch_app("Calculator", OWNER)
+    windows = service.launch_app("Windows Calculator", OWNER)
 
     target = service._target(windows[0]["target_id"])
     assert (target.pid, target.window_id) == (222, 2)
@@ -358,9 +380,7 @@ def test_packaged_calculator_launch_rebinds_only_after_replacement_is_stable(
 def test_packaged_calculator_launch_binds_exact_package_window_under_shared_host(
     fake_client,
     fake_transport,
-    monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
     fake_transport.scenario.apps = (
         {
             "name": "Windows Calculator",
@@ -384,14 +404,14 @@ def test_packaged_calculator_launch_binds_exact_package_window_under_shared_host
     )
     service.PACKAGED_LAUNCH_POLL_INTERVAL_SECONDS = 0.0
     service.acquire(OWNER, validate_context=False)
-    service.grant_app_permission_for_local_ui(OWNER, "Calculator")
+    service.grant_app_permission_for_local_ui(OWNER, "Windows Calculator")
 
-    windows = service.launch_app("Calculator", OWNER)
+    windows = service.launch_app("Windows Calculator", OWNER)
 
     assert len(windows) == 1
     target = service._target(windows[0]["target_id"])
     assert (target.app_name, target.pid, target.window_id) == (
-        "Calculator",
+        "Windows Calculator",
         777,
         7,
     )
@@ -400,9 +420,7 @@ def test_packaged_calculator_launch_binds_exact_package_window_under_shared_host
 def test_packaged_calculator_launch_rejects_untrusted_package_identity(
     fake_client,
     fake_transport,
-    monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
     fake_transport.scenario.apps = (
         {
             "name": "Windows Calculator",
@@ -417,10 +435,10 @@ def test_packaged_calculator_launch_rejects_untrusted_package_identity(
         approval_callback=lambda _payload: True,
     )
     service.acquire(OWNER, validate_context=False)
-    service.grant_app_permission_for_local_ui(OWNER, "Calculator")
+    service.grant_app_permission_for_local_ui(OWNER, "Windows Calculator")
 
     with pytest.raises(ComputerUseError) as exc_info:
-        service.launch_app("Calculator", OWNER)
+        service.launch_app("Windows Calculator", OWNER)
 
     assert exc_info.value.code == "target_gone"
     assert "get_window_state" not in [name for name, _args in fake_transport.calls]
@@ -581,7 +599,7 @@ def test_classic_launch_stabilization_wait_is_cancellable(
     assert "get_window_state" not in [name for name, _args in fake_transport.calls]
 
 
-def test_launch_resolves_edge_once_and_keeps_friendly_approval_copy(
+def test_launch_uses_exact_edge_identity_for_approval_and_driver(
     fake_client,
     fake_transport,
 ) -> None:
@@ -599,17 +617,17 @@ def test_launch_resolves_edge_once_and_keeps_friendly_approval_copy(
     )
     service.acquire(OWNER, validate_context=False)
 
-    windows = service.launch_app("Microsoft Edge", OWNER)
+    windows = service.launch_app("msedge.exe", OWNER)
 
     assert windows[0]["app"] == "msedge.exe"
     launch_args = next(args for name, args in fake_transport.calls if name == "launch_app")
     assert launch_args["name"] == "msedge.exe"
     assert len(approvals) == 1
     assert approvals[0]["app"] == "msedge.exe"
-    assert "Microsoft Edge" in approvals[0]["label"]
+    assert "msedge.exe" in approvals[0]["label"]
 
 
-def test_known_browser_executable_remains_resolvable_when_inventory_scan_fails(
+def test_inventory_failure_does_not_trigger_a_browser_alias_fallback(
     fake_client,
     fake_transport,
 ) -> None:
@@ -623,10 +641,10 @@ def test_known_browser_executable_remains_resolvable_when_inventory_scan_fails(
     )
     service.acquire(OWNER, validate_context=False)
 
-    service.launch_app("Microsoft Edge", OWNER)
+    with pytest.raises(ComputerUseError):
+        service.launch_app("msedge.exe", OWNER)
 
-    launch_args = next(args for name, args in fake_transport.calls if name == "launch_app")
-    assert launch_args["name"] == "msedge.exe"
+    assert "launch_app" not in [name for name, _args in fake_transport.calls]
 
 
 def test_unknown_launch_name_is_not_guessed_from_inventory(fake_client, fake_transport) -> None:
@@ -671,7 +689,7 @@ def test_driver_launch_error_is_structured_and_never_retried(fake_client, fake_t
     service.acquire(OWNER, validate_context=False)
 
     with pytest.raises(ComputerUseError) as exc_info:
-        service.launch_app("Microsoft Edge", OWNER)
+        service.launch_app("msedge.exe", OWNER)
 
     assert exc_info.value.code == "driver_unavailable"
     names = [name for name, _args in fake_transport.calls]

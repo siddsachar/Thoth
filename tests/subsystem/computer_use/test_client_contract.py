@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import pytest
 import base64
 
+import pytest
+
+from row_bot.computer_use import client as client_module
 from row_bot.computer_use.client import CuaClient, build_cua_environment, parse_cua_result
 from row_bot.computer_use.readiness import cancel_disclosure
 from tests.fixtures.fake_cua import FakeCuaTransport, FakeScenario
@@ -17,13 +19,75 @@ def test_client_starts_tagged_lifecycle_without_arbitrary_config(fake_client, fa
     assert all(name != "set_config" for name, _args in fake_transport.calls)
 
 
-def test_environment_disables_update_check_but_does_not_override_telemetry(monkeypatch) -> None:
-    monkeypatch.setattr("platform.system", lambda: "Darwin")
-    env = build_cua_environment("session", {"HOME": "/home/test", "SECRET": "no", "CUA_DRIVER_RS_TELEMETRY_ENABLED": "0"})
+def test_environment_disables_update_check_without_embedded_or_parent_liveness_state() -> None:
+    env = build_cua_environment(
+        "session",
+        {
+            "HOME": "/home/test",
+            "SECRET": "no",
+            "CUA_DRIVER_EMBEDDED": "1",
+            "CUA_DRIVER_PARENT_LIVENESS_STDIN": "1",
+            "CUA_DRIVER_HOST_BUNDLE_ID": "invented.host",
+            "CUA_DRIVER_RS_TELEMETRY_ENABLED": "0",
+        },
+    )
     assert env["CUA_DRIVER_RS_UPDATE_CHECK"] == "0"
-    assert env["CUA_DRIVER_EMBEDDED"] == "1"
+    assert "CUA_DRIVER_EMBEDDED" not in env
+    assert "CUA_DRIVER_PARENT_LIVENESS_STDIN" not in env
+    assert "CUA_DRIVER_HOST_BUNDLE_ID" not in env
     assert "CUA_DRIVER_RS_TELEMETRY_ENABLED" not in env
     assert "SECRET" not in env
+
+
+@pytest.mark.parametrize(
+    ("system", "expected_args"),
+    [
+        ("Windows", ["mcp"]),
+        ("Darwin", ["mcp", "--direct"]),
+    ],
+)
+def test_private_transport_uses_exact_platform_launch_profile(
+    tmp_path,
+    monkeypatch,
+    system: str,
+    expected_args: list[str],
+) -> None:
+    from row_bot.computer_use.readiness import acknowledge_disclosure
+
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path))
+    acknowledge_disclosure()
+    created: list[dict] = []
+
+    class _PrivateSession:
+        def __init__(self, **kwargs) -> None:
+            created.append(dict(kwargs))
+
+        def open(self) -> None:
+            return None
+
+        def call_raw(self, name, arguments=None):
+            return RawCallResult(
+                (RawCallContent(kind="text", text="ok"),),
+                {"session": (arguments or {}).get("session"), "ok": True},
+                False,
+            )
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(client_module.platform, "system", lambda: system)
+    monkeypatch.setattr(client_module, "PrivateMcpSession", _PrivateSession)
+
+    client = CuaClient("reviewed-cua")
+    client.start()
+    client.close()
+
+    assert len(created) == 1
+    assert created[0]["command"].endswith("reviewed-cua")
+    assert created[0]["args"] == expected_args
+    assert created[0]["env"]["CUA_DRIVER_RS_UPDATE_CHECK"] == "0"
+    assert "CUA_DRIVER_EMBEDDED" not in created[0]["env"]
+    assert "CUA_DRIVER_PARENT_LIVENESS_STDIN" not in created[0]["env"]
 
 
 def test_no_process_opens_before_disclosure(tmp_path, monkeypatch) -> None:
@@ -112,6 +176,39 @@ def test_top_level_background_unavailable_error_code_is_preserved() -> None:
 
     assert response.is_error is True
     assert response.error_code == "background_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_path"),
+    [
+        ("macos_native_ax_confirmed", "ax"),
+        ("windows_native_uia_confirmed", "uia"),
+    ],
+)
+def test_explicit_native_targeted_profiles_expose_platform_response_shape(
+    fake_client,
+    fake_transport,
+    profile: str,
+    expected_path: str,
+) -> None:
+    fake_transport.scenario.delivery_profile = profile
+    captured = fake_client.call_action(
+        "capture",
+        {"pid": 4242, "window_id": 101, "include_screenshot": False},
+    )
+
+    response = fake_client.call_action(
+        "type",
+        {
+            "pid": 4242,
+            "window_id": 101,
+            "element_token": captured.elements[0].token,
+            "text": "bounded text",
+        },
+    )
+
+    assert response.structured["path"] == expected_path
+    assert response.structured["effect"] == "confirmed"
 
 
 def test_oversized_tree_is_deterministically_capped(fake_transport) -> None:

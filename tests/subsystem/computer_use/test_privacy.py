@@ -120,7 +120,7 @@ def test_driver_interpolated_replacement_is_absent_from_public_error_and_history
     assert secret not in str(service.status_snapshot())
 
 
-def test_post_stop_unresolved_completion_latch_contains_no_mutation_payload(
+def test_post_stop_completion_ledger_survives_without_private_mutation_payload(
     service,
     fake_transport,
 ) -> None:
@@ -134,6 +134,7 @@ def test_post_stop_unresolved_completion_latch_contains_no_mutation_payload(
         },
     )
     fake_transport.scenario.set_value_updates_document = False
+    fake_transport.scenario.delivery_profile = "catalyst_value_unavailable"
     service.acquire(OWNER, validate_context=False)
     target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
     observation = service.capture(target_id, OWNER)
@@ -153,8 +154,10 @@ def test_post_stop_unresolved_completion_latch_contains_no_mutation_payload(
         thread_id=OWNER.thread_id,
         generation_id=OWNER.generation_id,
     )
-    assert secret not in repr(service._unresolved_completions)
-    assert "old private value" not in repr(service._unresolved_completions)
+    ledger = service.completion_evidence_statuses(OWNER)
+    assert ledger[-1]["status"] == "unresolved"
+    assert secret not in repr(ledger)
+    assert "old private value" not in repr(ledger)
 
 
 def test_window_discovery_requires_scope_before_calling_the_driver(service, fake_transport) -> None:

@@ -81,7 +81,7 @@ def test_semantic_element_action_honors_one_explicit_post_action_vision_call(fak
     assert vision.calls[0][1] == "Confirm the semantic button changed visually."
 
 
-def test_initial_app_capture_defers_vision_then_target_capture_calls_it_once(
+def test_explicit_initial_and_target_capture_questions_each_call_vision_once(
     fake_client,
 ) -> None:
     vision = _Vision()
@@ -102,9 +102,11 @@ def test_initial_app_capture_defers_vision_then_target_capture_calls_it_once(
         visual_question="Where is Equals?",
     )
 
-    assert initial.vision_deferred is True
-    assert len(vision.calls) == 1
-    assert vision.calls[0][0] == grounded.screenshot
+    assert initial.vision_deferred is False
+    assert grounded.vision_deferred is False
+    assert len(vision.calls) == 2
+    assert vision.calls[0] == (initial.screenshot, "Premature visual request")
+    assert vision.calls[1] == (grounded.screenshot, "Where is Equals?")
 
 
 def test_validated_preview_is_published_before_blocked_vision_returns(

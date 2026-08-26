@@ -36,6 +36,14 @@ private. It never runs the upstream installer or updater. Cua update checks are
 disabled with `CUA_DRIVER_RS_UPDATE_CHECK=0`; Cua telemetry is deliberately
 left at its disclosed upstream default.
 
+Ordinary Row-Bot sessions and diagnostics use the same private launch profile:
+Windows starts the executable with exactly `mcp`, while macOS starts it with
+exactly `mcp --direct`. Row-Bot sets neither `CUA_DRIVER_EMBEDDED` nor
+`CUA_DRIVER_PARENT_LIVENESS_STDIN`. On macOS the packaged Row-Bot host owns the
+Accessibility and Screen Recording permission relationship; Row-Bot does not
+install a daemon, LaunchAgent, global socket, `/Applications` helper copy, or
+embedded SDK host.
+
 ## Telemetry acceptance
 
 Before any Cua executable invocation, Row-Bot shows a mandatory Continue or
@@ -70,9 +78,9 @@ The private client permits only:
 | `list_apps`, `list_windows` | private discovery | observation |
 | `get_window_state` | target-window tree and screenshot | observation |
 | `launch_app` | allowlisted display-name launch | routine or consequential |
-| `bring_to_front` | explicit foreground escalation | always confirm |
+| `bring_to_front` | explicit user-requested focus and ordinary non-text foreground preparation; never targeted typing | always confirm |
 | `click`, `double_click`, `right_click` | token-first selection | routine or consequential |
-| `type_text`, `set_value`, `press_key`, `hotkey` | non-secret text/input; `type_text` preserves ordinary focused caret/selection insertion and `set_value` performs exact textual replacement | routine, consequential, or handoff |
+| `type_text`, `set_value`, `press_key`, `hotkey` | non-secret text/input; token-bound `type_text` is Cua's exact focus-and-insert transaction, tokenless `type_text` preserves the current caret/selection, and `set_value` performs exact textual replacement | routine, consequential, or handoff |
 | `scroll`, `drag` | bounded target-window input | routine |
 | `health_report`, `check_permissions` | readiness after disclosure | internal only |
 | `start_session`, `end_session` | private window-scoped lifecycle | internal only |
@@ -97,22 +105,33 @@ maintenance surfaces are forbidden and never model-visible.
   deterministic document/grid share. They expose only labels plus useful
   `selected=true` or `enabled=false` state; values, geometry, and parent trees
   remain model-hidden.
-- `type` is literal keyboard insertion at the current caret or selection. It
-  may validate a semantic token but never forwards that token to Cua's
-  whole-value path. Horizontal-tab payloads are rejected before approval or
-  mutation because native tab behavior cannot promise structured paste or grid
-  layout; multiline insertion remains supported.
+- Token-bound `type` derives structural and geometry identity from the current
+  token, obtains a new semantic-only snapshot, requires exactly one same-window
+  enabled writable text/search match, and forwards only that fresh token to
+  Cua's reviewed exact focus-and-insert transaction. `selected=true` is not a
+  requirement. Tokenless `type` preserves current-caret/selection insertion
+  without a token. Horizontal-tab payloads are rejected before approval or
+  mutation; multiline insertion remains supported.
+- Targeted typing tries exact background delivery first. Only an explicit
+  pre-dispatch `background_unavailable` refusal permits one newly approved
+  foreground driver call with another fresh token. Row-Bot adds no preliminary
+  click, focus, selection, coordinate, label, clipboard, shell, key sequence,
+  or application-specific fallback, never calls `bring_to_front` automatically
+  for this path, and never replays an unverifiable insertion.
 - `replace_text` requests one exact current editable semantic control through
   the reviewed token-targeted Cua `set_value` path. It requires
   the latest projected token, a supported generic editable role, an enabled
   control, and non-sensitive text; accepts no coordinates; and has no caret,
   label, fuzzy, clipboard, shell, or alternate delivery fallback. Stale,
   unsupported, disabled, refused, and unverifiable cases are never replayed.
-  It takes contemporaneous before/after target-window captures and verifies
-  only exact target equality corroborated by target-interior display change.
-  Provider echoes, unrelated tree churn, focus decoration, and cursor overlays
-  cannot establish the requested outcome. Verified scope is only the displayed
-  target, never saved, durable, recalculated, submitted, or whole-document state.
+  It takes contemporaneous before/after target-window captures. One exact native
+  value readback may verify the requested value even when target pixels do not
+  change. A web-content accessibility echo paired with an unverifiable driver
+  verdict remains unresolved. A macOS Catalyst/null value is unavailable—not a
+  match or contradiction. Provider echoes, unrelated tree churn, focus
+  decoration, cursor overlays, and Vision cannot establish a semantic outcome.
+  Verified scope is only the exact target, never saved, durable, recalculated,
+  submitted, or whole-document state.
 - Credentials, OTP, CAPTCHA, biometric, UAC/TCC, terminals, password managers,
   Row-Bot itself, secure desktops, and elevation are handed off or blocked.
 - Pixels are captured only for coordinate grounding, visual comparison,
@@ -145,10 +164,19 @@ maintenance surfaces are forbidden and never model-visible.
   successful completed-action receipt. Resume can dispatch at most once and
   emits one final completed, failed, denied, or cancelled receipt without typed
   text, labels, titles, tokens, coordinates, screenshots, or approval secrets.
-- `action_dispatched=true` proves neither focus, caret/selection/navigation nor
-  the requested outcome. Dependent mutation chains must use an exact semantic
-  action, one necessary fresh confirmation, or stop; after a failed final
-  verification, only one materially different safe recovery is allowed.
+- Dispatch, bounded driver verdict, exact semantic postcondition, visual
+  observation, action outcome, and generation completion are independent.
+  Unresolved insertion replay and commit input are blocked for that exact
+  target, but unrelated safe navigation is not globally frozen. A fresh exact
+  native capture may resolve a replacement; web echo, Catalyst-null evidence,
+  and Vision cannot. A stable contradiction releases replay protection as a
+  truthful failed/no-op outcome.
+- Private pending attempts may temporarily retain only the data needed to block
+  replay and are cleared by Stop, cancellation, or takeover. A separate bounded,
+  value-free generation completion ledger records target fingerprint, action
+  family, reason, and `verified`/`failed`/`superseded`/`unresolved` status. It
+  survives those controls for the final-status gate and is consumed there;
+  those lifecycle actions never promote unresolved work to success.
 - Token-based semantic replacement stays on the native fast path unless
   `capture_after=true` and one explicit visual question requests exactly one
   advisory Vision check. Vision is not automatically repeated or parsed as

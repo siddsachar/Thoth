@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import io
 import logging
-import platform
 import re
 import secrets
 import threading
@@ -40,6 +40,8 @@ _MODEL_INTERACTIVE_ROLES = frozenset(
         "checkbox",
         "combobox",
         "edit",
+        "entry",
+        "input",
         "link",
         "listitem",
         "menuitem",
@@ -48,7 +50,9 @@ _MODEL_INTERACTIVE_ROLES = frozenset(
         "spinbutton",
         "tabitem",
         "textfield",
+        "textinput",
         "textbox",
+        "textarea",
         "togglebutton",
         "treeitem",
     }
@@ -90,17 +94,22 @@ _MODEL_EDITABLE_ROLES = frozenset(
         "entry",
         "gridcell",
         "input",
+        "searchfield",
         "tablecell",
+        "textarea",
         "textfield",
         "textinput",
         "textbox",
     }
 )
-_MODEL_CARET_EDITABLE_ROLES = frozenset(
+_MODEL_INSERTION_ROLES = frozenset(
     {
+        "editablecombobox",
         "edit",
         "entry",
         "input",
+        "searchfield",
+        "textarea",
         "textfield",
         "textinput",
         "textbox",
@@ -156,7 +165,7 @@ _SAFE_COMPUTER_RESULT_CODES = frozenset(
         "surface_unavailable",
         "target_gone",
         "target_mismatch",
-        "target_not_selected",
+        "focus_refused",
         "transient_driver_failure",
         "unsupported_capability",
     }
@@ -263,8 +272,20 @@ def _model_element_line(element: CuaElement) -> str:
     states: list[str] = []
     if element.selected is True:
         states.append("selected=true")
+    if element.checked is True:
+        states.append("checked=true")
+    if element.expanded is True:
+        states.append("expanded=true")
+    if element.pressed is True:
+        states.append("pressed=true")
+    if element.toggled is True:
+        states.append("toggled=true")
     if element.enabled is False:
         states.append("enabled=false")
+    if element.editable is True:
+        states.append("editable=true")
+    if element.read_only is True:
+        states.append("read_only=true")
     state_text = f" {' '.join(states)}" if states else ""
     return (
         f'- token={element.token} role={element.role} '
@@ -334,6 +355,10 @@ class Observation:
     cause: str = ""
     outcome: str = ""
     verified_scope: str = ""
+    dispatch_state: str = "rejected"
+    driver_verdict: str = "unverifiable"
+    semantic_postcondition: str = "unavailable"
+    visual_observation: str = "unavailable"
     computer_use_completion_blocked: bool = False
     native_change: str = "unknown"
     vision_deferred: bool = False
@@ -470,9 +495,13 @@ class Observation:
         if self.outcome:
             lines.append(f"Bounded target outcome: {self.outcome}")
             lines.append(f"Verified scope: {self.verified_scope or 'none'}")
+            lines.append(f"Dispatch state: {self.dispatch_state}")
+            lines.append(f"Driver verdict: {self.driver_verdict}")
+            lines.append(f"Exact semantic postcondition: {self.semantic_postcondition}")
+            lines.append(f"Visual observation: {self.visual_observation}")
         if self.computer_use_completion_blocked:
             lines.append(
-                "A prior exact text mutation remains unverified; dependent text or commit input is blocked."
+                "An exact text mutation remains unresolved. Do not replay that insertion or commit it; unrelated safe navigation may continue, and a fresh exact semantic capture may resolve a native replacement."
             )
         if self.suspicious:
             categories = ", ".join(self.advisory_categories) or "unclassified"
@@ -493,6 +522,11 @@ class _PendingMutation:
     action_family: str
     match_key: tuple[Any, ...] = field(repr=False)
     requested_value: str = field(repr=False)
+    element_fingerprint: str = ""
+    baseline_value: str = field(repr=False, default="")
+    baseline_value_available: bool = False
+    in_web_content: bool = False
+    driver_verdict: str = "unverifiable"
     baseline_screenshot: bytes | None = field(repr=False, default=None)
     baseline_width: int = 0
     baseline_height: int = 0
@@ -502,22 +536,40 @@ class _PendingMutation:
 class _CompletionStatus(str, Enum):
     UNRESOLVED = "unresolved"
     VERIFIED = "verified"
+    FAILED = "failed"
+    SUPERSEDED = "superseded"
 
 
 class _CompletionReason(str, Enum):
     EXACT_TARGET_POSTCONDITION_UNVERIFIED = "exact_target_postcondition_unverified"
+    EXACT_TARGET_POSTCONDITION_MATCHED = "exact_target_postcondition_matched"
+    EXACT_TARGET_POSTCONDITION_CONTRADICTED = "exact_target_postcondition_contradicted"
+    DRIVER_REFUSED = "driver_refused"
+    INSERTION_UNVERIFIABLE = "insertion_unverifiable"
 
 
 class _CompletionActionFamily(str, Enum):
     REPLACE_TEXT = "replace_text"
+    TYPE = "type"
 
 
-@dataclass(frozen=True)
-class _UnresolvedCompletion:
+@dataclass
+class _CompletionEvidence:
     owner_key: tuple[str, str, str]
+    target_id: str
+    element_fingerprint: str
     action_family: _CompletionActionFamily
     reason: _CompletionReason
     status: _CompletionStatus = _CompletionStatus.UNRESOLVED
+
+
+@dataclass(frozen=True)
+class _ActionEvidence:
+    dispatch: str
+    driver_verdict: str
+    semantic_postcondition: str
+    visual_observation: str
+    outcome: str
 
 
 class ComputerUseError(RuntimeError):
@@ -546,26 +598,6 @@ class StaleObservationError(ComputerUseError):
 
 
 _PYTHON_HOST_APPS = frozenset({"python", "pythonw"})
-_BROWSER_CANONICAL_BY_ALIAS = {
-    "microsoftedge": "msedge.exe",
-    "edge": "msedge.exe",
-    "msedge": "msedge.exe",
-    "googlechrome": "chrome.exe",
-    "chrome": "chrome.exe",
-    "mozillafirefox": "firefox.exe",
-    "firefox": "firefox.exe",
-    "bravebrowser": "brave.exe",
-    "brave": "brave.exe",
-    "safari": "Safari.app",
-}
-_CALCULATOR_IDENTITIES = frozenset(
-    {
-        "calculator",
-        "windowscalculator",
-        "calculatorapp",
-    }
-)
-_WINDOWS_PACKAGED_WINDOW_HOSTS = frozenset({"applicationframehost"})
 
 
 def _normalize_app_identity(value: object) -> str:
@@ -577,17 +609,6 @@ def _normalize_app_identity(value: object) -> str:
             text = text[: -len(suffix)]
             break
     return "".join(character for character in text if character.isalnum())
-
-
-def _canonical_browser_identity(value: object) -> str:
-    return _BROWSER_CANONICAL_BY_ALIAS.get(_normalize_app_identity(value), "")
-
-
-def _canonical_calculator_identity(value: object) -> str:
-    normalized = _normalize_app_identity(value)
-    if normalized == "calc" and str(value or "").strip().casefold().endswith(".exe"):
-        return "Calculator"
-    return "Calculator" if normalized in _CALCULATOR_IDENTITIES else ""
 
 
 def _windows_package_family(value: object) -> str:
@@ -609,16 +630,10 @@ def _windows_package_family(value: object) -> str:
 
 
 def _window_row_matches_app(requested: object, row: dict[str, Any]) -> bool:
-    """Match a reviewed app or one exact Windows packaged-app host row."""
+    """Match one exact canonical driver app identity."""
 
     app_name = str(row.get("app_name") or row.get("name") or "")[:128]
-    if _app_identities_match(requested, app_name):
-        return True
-    return bool(
-        _normalize_app_identity(app_name) in _WINDOWS_PACKAGED_WINDOW_HOSTS
-        and _normalize_app_identity(row.get("title"))
-        == _normalize_app_identity(_permission_scope_name(requested))
-    )
+    return _app_identities_match(requested, app_name)
 
 
 def _app_identities_match(requested: object, candidate: object) -> bool:
@@ -626,26 +641,11 @@ def _app_identities_match(requested: object, candidate: object) -> bool:
     candidate_normalized = _normalize_app_identity(candidate)
     if not requested_normalized or not candidate_normalized:
         return False
-    requested_browser = _canonical_browser_identity(requested)
-    candidate_browser = _canonical_browser_identity(candidate)
-    if requested_browser or candidate_browser:
-        return bool(requested_browser and requested_browser == candidate_browser)
-    requested_calculator = _canonical_calculator_identity(requested)
-    candidate_calculator = _canonical_calculator_identity(candidate)
-    if requested_calculator or candidate_calculator:
-        return bool(
-            requested_calculator
-            and requested_calculator == candidate_calculator
-        )
     return requested_normalized == candidate_normalized
 
 
 def _permission_scope_name(app_name: object) -> str:
-    return (
-        _canonical_browser_identity(app_name)
-        or _canonical_calculator_identity(app_name)
-        or str(app_name or "").strip()[:128]
-    )
+    return str(app_name or "").strip()[:128]
 
 
 def _permission_key(app_name: object) -> str:
@@ -653,32 +653,19 @@ def _permission_key(app_name: object) -> str:
 
 
 def _resolve_app_identity(requested: str, candidates: list[str]) -> str | None:
-    """Resolve exact identities plus the explicit browser groups only."""
+    """Resolve one exact canonical identity without aliases or fuzzy matching."""
 
-    known_browser = _canonical_browser_identity(requested)
-    known_calculator = _canonical_calculator_identity(requested)
     matches: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
         if not _app_identities_match(requested, candidate):
             continue
-        resolved = (
-            known_browser
-            or (
-                "calc.exe"
-                if known_calculator and platform.system().casefold() == "windows"
-                else str(candidate).strip()[:128]
-            )
-        )
+        resolved = str(candidate).strip()[:128]
         key = _permission_key(resolved)
         if not key or key in seen:
             continue
         seen.add(key)
         matches.append(resolved)
-    if known_browser:
-        return known_browser
-    if known_calculator and platform.system().casefold() == "windows":
-        return "calc.exe" if matches else None
     return matches[0] if len(matches) == 1 else None
 
 
@@ -747,6 +734,7 @@ class ComputerUseService:
         self._approved_apps: set[str] = set()
         self._app_display_names: dict[str, str] = {}
         self._app_package_families: dict[str, str] = {}
+        self._app_pids: dict[str, frozenset[int]] = {}
         self._paused_at = 0.0
         self._lease_id = ""
         self._takeover_token = ""
@@ -762,9 +750,9 @@ class ComputerUseService:
         self._last_effect_verified = False
         self._last_action_completed = False
         self._pending_mutation: _PendingMutation | None = None
-        self._unresolved_completions: dict[
+        self._completion_ledger: dict[
             tuple[str, str, str],
-            _UnresolvedCompletion,
+            list[_CompletionEvidence],
         ] = {}
         self._prepared_foreground_target_id = ""
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
@@ -943,6 +931,7 @@ class ComputerUseService:
                 self._approved_apps.clear()
                 self._app_display_names.clear()
                 self._app_package_families.clear()
+                self._app_pids.clear()
                 self._paused_at = 0.0
                 self._lease_id = secrets.token_urlsafe(24)
                 self._takeover_token = ""
@@ -1026,7 +1015,9 @@ class ComputerUseService:
     def _check_cancelled(self) -> None:
         scope = current_cancellation_scope()
         if self._cancel.is_set() or (scope is not None and scope.is_cancelled()):
-            self._clear_prepared_foreground_target()
+            with self._lock:
+                self._prepared_foreground_target_id = ""
+                self._pending_mutation = None
             raise concurrent.futures.CancelledError("Computer action stopped")
 
     def _clear_prepared_foreground_target(self) -> None:
@@ -1230,6 +1221,7 @@ class ComputerUseService:
             self._approved_apps.clear()
             self._app_display_names.clear()
             self._app_package_families.clear()
+            self._app_pids.clear()
             self._observation = None
             self._preview_observation = None
             self._observation_generation += 1
@@ -1279,6 +1271,7 @@ class ComputerUseService:
             raise ComputerUseError(response.text or response.error_code)
         apps = self._safe_app_rows(response)
         package_families: dict[str, str] = {}
+        app_pids: dict[str, set[int]] = {}
         raw_apps = response.structured.get("apps")
         if not isinstance(raw_apps, list):
             raw_apps = []
@@ -1295,6 +1288,12 @@ class ComputerUseService:
             )
             if family:
                 package_families[key] = family
+            try:
+                pid = int(row.get("pid") or 0)
+            except (TypeError, ValueError, OverflowError):
+                pid = 0
+            if pid > 0:
+                app_pids.setdefault(key, set()).add(pid)
         with self._lock:
             self._app_foreground = {
                 _permission_key(row["name"]): (
@@ -1303,6 +1302,9 @@ class ComputerUseService:
                 for row in apps
             }
             self._app_package_families = package_families
+            self._app_pids = {
+                key: frozenset(pids) for key, pids in app_pids.items()
+            }
         return apps
 
     def list_windows(
@@ -1334,10 +1336,13 @@ class ComputerUseService:
                 code=response.error_code or "driver_failed",
             )
         rows = response.structured.get("windows") if isinstance(response.structured.get("windows"), list) else []
+        with self._lock:
+            allowed_pids = self._app_pids.get(_permission_key(app), frozenset())
         return self._register_window_rows(
             rows,
             app_filter=app,
             window_filter=window_hint,
+            allowed_pids=allowed_pids,
         )
 
     def _register_window_rows(
@@ -1350,6 +1355,7 @@ class ComputerUseService:
         fallback_pid: int = 0,
         display_app: str = "",
         target_app_override: str = "",
+        allowed_pids: frozenset[int] = frozenset(),
     ) -> list[dict[str, Any]]:
         """Convert reviewed driver window rows to private task-scoped target ids."""
 
@@ -1377,6 +1383,8 @@ class ComputerUseService:
                 bounds = row.get("bounds") if isinstance(row.get("bounds"), dict) else {}
                 pid = int(row.get("pid") or fallback_pid)
                 window_id = int(row.get("window_id") or 0)
+                if allowed_pids and pid not in allowed_pids:
+                    continue
                 identity = _permission_key(app_name)
                 row_key = (
                     (identity, pid, window_id)
@@ -1796,11 +1804,11 @@ class ComputerUseService:
         safe_outcome = str(outcome or "none").casefold()
         if safe_outcome not in {
             "none",
-            "already_satisfied",
-            "displayed_postcondition_observed",
-            "provider_echo_unverified",
+            "verified",
+            "delivered_unverified",
             "suspected_noop",
             "unverified",
+            "refused",
         }:
             safe_outcome = "none"
         if pending:
@@ -2057,27 +2065,35 @@ class ComputerUseService:
                     "Row-Bot and its Computer control surfaces cannot be targeted.",
                     code="hard_blocked",
                 )
-        self._require_owner(owner)
+        owner = self._require_owner(owner)
         if initial_app_scope:
+            apps = self.list_apps(owner)
+            running_candidates = tuple(
+                {
+                    "name": str(row.get("name") or "")[:128],
+                    "running": True,
+                    "active": bool(row.get("active")),
+                }
+                for row in apps
+                if bool(row.get("running"))
+            )[:MODEL_RUNNING_APP_CANDIDATES]
+            canonical_app = _resolve_app_identity(
+                app_name,
+                [row["name"] for row in running_candidates],
+            )
+            if canonical_app is None:
+                raise ComputerUseError(
+                    "No exact running native app matched the requested app identity.",
+                    code="target_gone",
+                    candidates=running_candidates,
+                )
+            app_name = canonical_app
             candidates = self.list_windows(
                 owner,
                 app=app_name,
                 window_hint=window_hint,
             )
             if not candidates:
-                running_candidates: tuple[dict[str, Any], ...] = ()
-                try:
-                    running_candidates = tuple(
-                        {
-                            "name": str(row.get("name") or "")[:128],
-                            "running": True,
-                            "active": bool(row.get("active")),
-                        }
-                        for row in self.list_apps(owner)
-                        if bool(row.get("running"))
-                    )[:MODEL_RUNNING_APP_CANDIDATES]
-                except ComputerUseError:
-                    running_candidates = ()
                 raise ComputerUseError(
                     "No exact native window matched the requested app scope.",
                     code="target_gone",
@@ -2106,13 +2122,13 @@ class ComputerUseService:
             )
             self._resolve_pending_from_observation(observation)
             observation.computer_use_completion_blocked = self.computer_use_completion_blocked()
-            if initial_app_scope and visual_question:
+            if initial_app_scope and not visual_question:
                 observation.vision_deferred = True
             # Publish only after the native response has passed exact identity,
             # screenshot, semantic, protected-target, and injection validation.
             # Keep the mutation lock and target lease while optional Vision runs.
             self._notify()
-            if visual_question and not initial_app_scope:
+            if visual_question:
                 observation.vision_text = self._analyze_vision(observation, visual_question)
                 self._notify()
         return observation
@@ -2523,18 +2539,35 @@ class ComputerUseService:
             str(target_element.value),
             target_element.enabled,
             target_element.selected,
+            target_element.checked,
+            target_element.expanded,
+            target_element.pressed,
+            target_element.toggled,
         )
         after_state = (
             str(matched.label),
             str(matched.value),
             matched.enabled,
             matched.selected,
+            matched.checked,
+            matched.expanded,
+            matched.pressed,
+            matched.toggled,
         )
         if before_state != after_state:
             return "changed"
         role = _normalized_role(target_element.role)
         stateful = bool(
-            target_element.selected is not None
+            any(
+                state is not None
+                for state in (
+                    target_element.selected,
+                    target_element.checked,
+                    target_element.expanded,
+                    target_element.pressed,
+                    target_element.toggled,
+                )
+            )
             or role in _MODEL_EDITABLE_ROLES
             or role
             in {
@@ -2551,6 +2584,44 @@ class ComputerUseService:
             }
         )
         return "unchanged" if stateful else "unknown"
+
+    @classmethod
+    def _exact_semantic_state_transition(
+        cls,
+        before: Observation,
+        after: Observation,
+        *,
+        target_element: CuaElement | None,
+    ) -> bool:
+        """Return true only for one fresh exact bounded control-state transition."""
+
+        if target_element is None or before.target.target_id != after.target.target_id:
+            return False
+        matches = cls._exact_element_matches(
+            after,
+            cls._exact_element_match_key(before, target_element),
+        )
+        if len(matches) != 1:
+            return False
+        matched = matches[0]
+        before_states = (
+            target_element.selected,
+            target_element.checked,
+            target_element.expanded,
+            target_element.pressed,
+            target_element.toggled,
+        )
+        after_states = (
+            matched.selected,
+            matched.checked,
+            matched.expanded,
+            matched.pressed,
+            matched.toggled,
+        )
+        return any(
+            earlier is not None and later is not None and earlier != later
+            for earlier, later in zip(before_states, after_states, strict=True)
+        )
 
     @classmethod
     def _exact_element_match_key(
@@ -2608,15 +2679,43 @@ class ComputerUseService:
             if cls._exact_element_match_key(observation, element) == match_key
         )
 
-    def _validate_selected_type_element(
+    @staticmethod
+    def _validate_type_element(element: CuaElement | None) -> CuaElement:
+        if element is None:
+            raise ComputerUseError(
+                "Targeted type requires one current semantic element token.",
+                code="invalid_input",
+            )
+        if element.enabled is False:
+            raise ComputerUseError(
+                "Targeted type cannot mutate a disabled semantic control.",
+                code="invalid_input",
+            )
+        if element.read_only is True:
+            raise ComputerUseError(
+                "Targeted type cannot mutate a read-only semantic control.",
+                code="invalid_input",
+            )
+        role = _normalized_role(element.role)
+        insertion_capable = role in _MODEL_INSERTION_ROLES or (
+            role == "combobox" and element.editable is True
+        )
+        if not insertion_capable:
+            raise ComputerUseError(
+                "Targeted type requires a generic editable text or search control.",
+                code="invalid_input",
+            )
+        return element
+
+    def _fresh_exact_type_element(
         self,
         target: Target,
         observation: Observation,
         element: CuaElement,
     ) -> tuple[Observation, CuaElement]:
-        """Require fresh exact native proof of an already-selected caret target."""
+        """Fresh-rematch exactly one insertion-capable semantic target."""
 
-        match_key = self._structural_geometry_match_key(observation, element)
+        match_key = self._exact_element_match_key(observation, element)
         fresh = self._observation_from_response(
             target,
             self._capture_response(target, include_screenshot=False),
@@ -2626,24 +2725,14 @@ class ComputerUseService:
         matches = tuple(
             candidate
             for candidate in fresh.elements
-            if self._structural_geometry_match_key(fresh, candidate) == match_key
+            if self._exact_element_match_key(fresh, candidate) == match_key
         )
         if len(matches) != 1:
             raise ComputerUseError(
                 "The type target is stale, missing, or ambiguous in the fresh native observation.",
-                code="target_not_selected",
+                code="ambiguous_target" if len(matches) > 1 else "stale_observation",
             )
-        selected = matches[0]
-        if (
-            selected.enabled is not True
-            or selected.selected is not True
-            or _normalized_role(selected.role) not in _MODEL_CARET_EDITABLE_ROLES
-        ):
-            raise ComputerUseError(
-                "The type target is not an enabled, selected caret-bearing control.",
-                code="target_not_selected",
-            )
-        return fresh, selected
+        return fresh, self._validate_type_element(matches[0])
 
     @staticmethod
     def _target_interior_visual_change(
@@ -2713,57 +2802,143 @@ class ComputerUseService:
         thread_id: str = "",
         generation_id: str = "",
     ) -> bool:
-        """Return generation-scoped completion truth without mutation payloads."""
+        """Return generation-scoped unresolved truth without mutation payloads."""
 
         with self._lock:
             if owner is not None:
-                latch = self._unresolved_completions.get(owner.key)
-                return bool(latch and latch.status is _CompletionStatus.UNRESOLVED)
+                return any(
+                    entry.status is _CompletionStatus.UNRESOLVED
+                    for entry in self._completion_ledger.get(owner.key, ())
+                )
             if thread_id or generation_id:
                 return any(
-                    latch.status is _CompletionStatus.UNRESOLVED
-                    and (not thread_id or latch.owner_key[0] == str(thread_id))
+                    entry.status is _CompletionStatus.UNRESOLVED
+                    and (not thread_id or entry.owner_key[0] == str(thread_id))
                     and (
                         not generation_id
-                        or latch.owner_key[1] == str(generation_id)
+                        or entry.owner_key[1] == str(generation_id)
                     )
-                    for latch in self._unresolved_completions.values()
+                    for entries in self._completion_ledger.values()
+                    for entry in entries
                 )
             if self._owner is not None:
-                latch = self._unresolved_completions.get(self._owner.key)
-                return bool(latch and latch.status is _CompletionStatus.UNRESOLVED)
+                return any(
+                    entry.status is _CompletionStatus.UNRESOLVED
+                    for entry in self._completion_ledger.get(self._owner.key, ())
+                )
             return any(
-                latch.status is _CompletionStatus.UNRESOLVED
-                for latch in self._unresolved_completions.values()
+                entry.status is _CompletionStatus.UNRESOLVED
+                for entries in self._completion_ledger.values()
+                for entry in entries
             )
 
-    def _set_unresolved_completion(self, owner: LeaseOwner, action_family: str) -> None:
+    def completion_evidence_statuses(
+        self,
+        owner: LeaseOwner,
+    ) -> tuple[dict[str, str], ...]:
+        """Return only the bounded privacy-safe ledger projection for tests/finalization."""
+
+        with self._lock:
+            return tuple(
+                {
+                    "target_id": entry.target_id,
+                    "element_fingerprint": entry.element_fingerprint,
+                    "action_family": entry.action_family.value,
+                    "reason": entry.reason.value,
+                    "status": entry.status.value,
+                }
+                for entry in self._completion_ledger.get(owner.key, ())
+            )
+
+    def consume_completion_evidence(
+        self,
+        *,
+        thread_id: str,
+        generation_id: str,
+    ) -> tuple[dict[str, str], ...]:
+        """Consume the privacy-safe ledger only at the generation final gate."""
+
+        consumed: list[_CompletionEvidence] = []
+        with self._lock:
+            matching_keys = [
+                key
+                for key in self._completion_ledger
+                if (not thread_id or key[0] == str(thread_id))
+                and (not generation_id or key[1] == str(generation_id))
+            ]
+            for key in matching_keys:
+                consumed.extend(self._completion_ledger.pop(key, ()))
+        return tuple(
+            {
+                "target_id": entry.target_id,
+                "element_fingerprint": entry.element_fingerprint,
+                "action_family": entry.action_family.value,
+                "reason": entry.reason.value,
+                "status": entry.status.value,
+            }
+            for entry in consumed
+        )
+
+    @staticmethod
+    def _element_fingerprint(match_key: tuple[Any, ...]) -> str:
+        return hashlib.sha256(repr(match_key).encode("utf-8")).hexdigest()[:20]
+
+    def _record_completion_evidence(
+        self,
+        owner: LeaseOwner,
+        *,
+        target_id: str,
+        element_fingerprint: str,
+        action_family: str,
+        status: _CompletionStatus,
+        reason: _CompletionReason,
+        supersede_prior: bool = False,
+    ) -> None:
         try:
             action = _CompletionActionFamily(str(action_family or ""))
         except ValueError as exc:
             raise ValueError("Unsupported Computer completion action family") from exc
         with self._lock:
-            self._unresolved_completions[owner.key] = _UnresolvedCompletion(
-                owner_key=owner.key,
-                action_family=action,
-                reason=_CompletionReason.EXACT_TARGET_POSTCONDITION_UNVERIFIED,
-            )
-            while len(self._unresolved_completions) > 32:
-                oldest = next(iter(self._unresolved_completions))
-                self._unresolved_completions.pop(oldest, None)
-
-    def _clear_unresolved_completion(
-        self,
-        owner_key: tuple[str, str, str],
-        action_family: str,
-    ) -> None:
-        with self._lock:
-            latch = self._unresolved_completions.get(owner_key)
-            if (
-                latch is not None
-                and latch.action_family.value == str(action_family)
-            ):
-                self._unresolved_completions.pop(owner_key, None)
+            entries = self._completion_ledger.setdefault(owner.key, [])
+            matching = [
+                entry
+                for entry in entries
+                if entry.target_id == str(target_id)
+                and entry.element_fingerprint == str(element_fingerprint)
+                and entry.action_family is action
+                and entry.status is _CompletionStatus.UNRESOLVED
+            ]
+            if matching and supersede_prior:
+                matching[-1].status = _CompletionStatus.SUPERSEDED
+                entries.append(
+                    _CompletionEvidence(
+                        owner_key=owner.key,
+                        target_id=str(target_id),
+                        element_fingerprint=str(element_fingerprint),
+                        action_family=action,
+                        reason=reason,
+                        status=status,
+                    )
+                )
+            elif matching and status is not _CompletionStatus.UNRESOLVED:
+                matching[-1].status = status
+                matching[-1].reason = reason
+            elif not matching:
+                entries.append(
+                    _CompletionEvidence(
+                        owner_key=owner.key,
+                        target_id=str(target_id),
+                        element_fingerprint=str(element_fingerprint),
+                        action_family=action,
+                        reason=reason,
+                        status=status,
+                    )
+                )
+            if len(entries) > 16:
+                del entries[:-16]
+            while len(self._completion_ledger) > 32:
+                oldest = next(iter(self._completion_ledger))
+                self._completion_ledger.pop(oldest, None)
 
     def _pending_applies_to(self, target: Target) -> bool:
         with self._lock:
@@ -2778,8 +2953,21 @@ class ComputerUseService:
                 and (pending.pid, pending.window_id) == (target.pid, target.window_id)
             )
 
-    def _guard_pending_mutation(self, action: str, target: Target, keys: str) -> None:
+    def _guard_pending_mutation(
+        self,
+        action: str,
+        target: Target,
+        keys: str,
+        *,
+        element_token: str = "",
+        text: str | None = None,
+    ) -> None:
         if not self._pending_applies_to(target):
+            return
+        with self._lock:
+            pending = self._pending_mutation
+            observation = self._observation
+        if pending is None:
             return
         normalized_keys = {
             part.strip().casefold()
@@ -2793,11 +2981,50 @@ class ComputerUseService:
                 and normalized_keys & {"ctrl", "control", "cmd", "command", "meta"}
             )
         )
-        if action in {"type", "replace_text"} or (action == "key" and commit_key):
+        if action == "key" and commit_key:
             raise ComputerUseError(
-                "A prior exact text mutation remains unverified; capture fresh evidence, take over, or stop before a dependent mutation.",
+                "A prior exact text mutation remains unresolved; capture exact semantic evidence before commit input.",
                 code="pending_mutation",
             )
+        if action not in {"type", "replace_text"}:
+            return
+        if element_token:
+            if observation is None or observation.target.target_id != target.target_id:
+                raise ComputerUseError(
+                    "A prior exact text mutation remains unresolved; refresh semantic state before another targeted mutation.",
+                    code="pending_mutation",
+                )
+            candidate = next(
+                (
+                    element
+                    for element in observation.elements
+                    if element.token == str(element_token)
+                ),
+                None,
+            )
+            if candidate is None:
+                raise ComputerUseError(
+                    "A prior exact text mutation remains unresolved; the next target token is stale.",
+                    code="pending_mutation",
+                )
+            next_fingerprint = self._element_fingerprint(
+                self._exact_element_match_key(observation, candidate)
+            )
+        else:
+            next_fingerprint = self._element_fingerprint(("focused_caret",))
+        if next_fingerprint != pending.element_fingerprint:
+            return
+        if (
+            action == "replace_text"
+            and pending.action_family == "replace_text"
+            and str(text or "") != pending.requested_value
+        ):
+            return
+        raise ComputerUseError(
+            "The same exact insertion remains unresolved; capture evidence or explicitly replace it with a different value. Never replay the insertion.",
+            code="pending_mutation",
+        )
+
     def _invalidate_pending_comparison_for_recovery(
         self,
         action: str,
@@ -2832,36 +3059,124 @@ class ComputerUseService:
         ):
             return
         matches = self._exact_element_matches(observation, pending.match_key)
-        if len(matches) != 1 or matches[0].value != pending.requested_value:
+        if len(matches) != 1 or pending.action_family != "replace_text":
             return
-        baseline = Observation(
-            target=observation.target,
-            generation=0,
-            connection_generation=observation.connection_generation,
-            width=pending.baseline_width,
-            height=pending.baseline_height,
-            scale_factor=observation.scale_factor,
-            elements=(),
-            screenshot=pending.baseline_screenshot,
+        matched = matches[0]
+        if not matched.value_available:
+            return
+        if (
+            matched.value == pending.requested_value
+            and matched.in_web_content
+            and pending.driver_verdict == "unverifiable"
+        ):
+            return
+        status = (
+            _CompletionStatus.VERIFIED
+            if matched.value == pending.requested_value
+            else _CompletionStatus.FAILED
         )
-        if self._target_interior_visual_change(baseline, observation, matches[0]) != "changed":
-            return
+        reason = (
+            _CompletionReason.EXACT_TARGET_POSTCONDITION_MATCHED
+            if status is _CompletionStatus.VERIFIED
+            else _CompletionReason.EXACT_TARGET_POSTCONDITION_CONTRADICTED
+        )
         with self._lock:
             if self._pending_mutation is pending:
                 self._pending_mutation = None
-                self._clear_unresolved_completion(
-                    pending.owner_key,
-                    pending.action_family,
-                )
+        self._record_completion_evidence(
+            owner,
+            target_id=pending.target_id,
+            element_fingerprint=pending.element_fingerprint,
+            action_family=pending.action_family,
+            status=status,
+            reason=reason,
+        )
 
-    def _prepare_foreground_fallback(
+    def _record_type_evidence(
+        self,
+        owner: LeaseOwner,
+        target: Target,
+        observation: Observation,
+        element: CuaElement | None,
+        *,
+        requested_text: str,
+        driver_verdict: str,
+        dispatched: bool,
+    ) -> bool:
+        """Record exact-driver typing evidence without retaining text in the ledger."""
+
+        match_key = (
+            self._exact_element_match_key(observation, element)
+            if element is not None
+            else ("focused_caret",)
+        )
+        fingerprint = self._element_fingerprint(match_key)
+        resolved = bool(dispatched and driver_verdict == "confirmed")
+        effect_verified = bool(resolved and element is not None)
+        unresolved = bool(dispatched and not resolved)
+        with self._lock:
+            pending = self._pending_mutation
+            matching_pending = bool(
+                pending is not None
+                and pending.owner_key == owner.key
+                and pending.target_id == target.target_id
+                and pending.element_fingerprint == fingerprint
+            )
+            if unresolved:
+                self._pending_mutation = _PendingMutation(
+                    owner_key=owner.key,
+                    lease_id=self._lease_id,
+                    target_id=target.target_id,
+                    pid=target.pid,
+                    window_id=target.window_id,
+                    action_family="type",
+                    match_key=match_key,
+                    requested_value=requested_text,
+                    element_fingerprint=fingerprint,
+                    baseline_value=element.value if element is not None else "",
+                    baseline_value_available=(
+                        element.value_available if element is not None else False
+                    ),
+                    in_web_content=(
+                        element.in_web_content if element is not None else False
+                    ),
+                    driver_verdict=driver_verdict,
+                )
+            elif matching_pending:
+                self._pending_mutation = None
+        self._record_completion_evidence(
+            owner,
+            target_id=target.target_id,
+            element_fingerprint=fingerprint,
+            action_family="type",
+            status=(
+                _CompletionStatus.VERIFIED
+                if resolved
+                else _CompletionStatus.UNRESOLVED
+                if unresolved
+                else _CompletionStatus.FAILED
+            ),
+            reason=(
+                _CompletionReason.EXACT_TARGET_POSTCONDITION_MATCHED
+                if resolved
+                else _CompletionReason.INSERTION_UNVERIFIABLE
+                if unresolved
+                else _CompletionReason.DRIVER_REFUSED
+            ),
+            supersede_prior=resolved,
+        )
+        return effect_verified
+
+    def _authorize_foreground_delivery(
         self,
         target: Target,
         owner: LeaseOwner | None,
         *,
         approval_mode: object,
+        action_family: str,
+        verify_target: bool = True,
     ) -> None:
-        """Revalidate every safety boundary before one reviewed foreground retry."""
+        """Revalidate safety for one driver-owned foreground transaction."""
 
         self._check_cancelled()
         self._require_existing_owner(owner)
@@ -2886,11 +3201,11 @@ class ComputerUseService:
             self._notify()
             outcome = self._gate_optional_approval(
                 approval_payload(
-                    "focus",
+                    action_family,
                     app_name=target.app_name,
                     window_title="Selected app window (title hidden)",
                     target_label="exact selected window",
-                    expected_effect="Prepare exact foreground input delivery",
+                    expected_effect="Permit one exact foreground delivery transaction",
                     reversible=True,
                 ),
                 approval_mode=approval_mode,
@@ -2899,9 +3214,36 @@ class ComputerUseService:
                 if outcome == "take_over":
                     self.take_over()
                 raise ComputerUseError(
-                    "Computer focus was not approved.",
+                    "Computer foreground delivery was not approved.",
                     code="approval_denied",
                 )
+        if verify_target:
+            verified = self._verify_target_exists(target)
+            if verified is False:
+                self._clear_prepared_foreground_target()
+                raise ComputerUseError(
+                    "The exact Computer target disappeared before foreground delivery.",
+                    code="target_mismatch",
+                )
+        self._check_cancelled()
+
+    def _prepare_foreground_fallback(
+        self,
+        target: Target,
+        owner: LeaseOwner | None,
+        *,
+        approval_mode: object,
+        action_family: str,
+    ) -> None:
+        """Prepare ordinary foreground input; targeted type never uses this path."""
+
+        self._authorize_foreground_delivery(
+            target,
+            owner,
+            approval_mode=approval_mode,
+            action_family=action_family,
+            verify_target=False,
+        )
         focus = self._driver_call(
             "focus",
             {"pid": target.pid, "window_id": target.window_id},
@@ -3016,6 +3358,7 @@ class ComputerUseService:
                 target,
                 owner,
                 approval_mode=approval_mode,
+                action_family="menu",
             )
         with self._mutation_lock:
             self._state = SessionState.ACTING
@@ -3101,7 +3444,15 @@ class ComputerUseService:
                 "replace_text cannot mutate a disabled semantic control.",
                 code="invalid_input",
             )
-        if _normalized_role(element.role) not in _MODEL_EDITABLE_ROLES:
+        if element.read_only is True:
+            raise ComputerUseError(
+                "replace_text cannot mutate a read-only semantic control.",
+                code="invalid_input",
+            )
+        role = _normalized_role(element.role)
+        if role not in _MODEL_EDITABLE_ROLES and not (
+            role == "combobox" and element.editable is True
+        ):
             raise ComputerUseError(
                 "replace_text is limited to generic writable or editable semantic controls.",
                 code="invalid_input",
@@ -3112,39 +3463,51 @@ class ComputerUseService:
         self,
         observation: Observation,
         *,
-        outcome: str,
-        dispatched: bool,
-        driver_effect: str,
-        visual_change: str,
+        evidence: _ActionEvidence,
         native_change: str,
         delivery_mode: str,
         route: str,
         cause: str,
         match_key: tuple[Any, ...],
         requested_value: str,
+        fresh_element: CuaElement,
         baseline: Observation,
     ) -> Observation:
-        verified = outcome in {"already_satisfied", "displayed_postcondition_observed"}
-        observation.outcome = outcome
-        observation.verified_scope = "displayed_target" if verified else ""
-        observation.action_effect = outcome
+        verified = evidence.outcome == "verified"
+        dispatched = evidence.dispatch == "dispatched"
+        fingerprint = self._element_fingerprint(match_key)
+        observation.dispatch_state = evidence.dispatch
+        observation.driver_verdict = evidence.driver_verdict
+        observation.semantic_postcondition = evidence.semantic_postcondition
+        observation.visual_observation = evidence.visual_observation
+        observation.outcome = evidence.outcome
+        observation.verified_scope = "exact_semantic_value" if verified else ""
+        observation.action_effect = evidence.outcome
         observation.action_dispatched = dispatched
         observation.action_completed = verified
-        observation.driver_effect = driver_effect
-        observation.visual_change = visual_change
+        observation.driver_effect = evidence.driver_verdict
+        observation.visual_change = (
+            "unknown"
+            if evidence.visual_observation == "unavailable"
+            else evidence.visual_observation
+        )
         observation.native_change = native_change
         observation.effect_verified = verified
         observation.delivery_mode = delivery_mode
         observation.route = route
         observation.cause = cause
+        owner = self._require_existing_owner(self._owner)
         with self._lock:
-            if dispatched and outcome in {
-                "provider_echo_unverified",
-                "suspected_noop",
-                "unverified",
-            }:
-                assert self._owner is not None
-                owner = self._owner
+            previous_pending = self._pending_mutation
+            supersede_prior = bool(
+                previous_pending is not None
+                and previous_pending.owner_key == owner.key
+                and previous_pending.target_id == observation.target.target_id
+                and previous_pending.element_fingerprint == fingerprint
+                and previous_pending.action_family == "replace_text"
+                and previous_pending.requested_value != requested_value
+            )
+            if dispatched and evidence.outcome == "delivered_unverified":
                 self._pending_mutation = _PendingMutation(
                     owner_key=owner.key,
                     lease_id=self._lease_id,
@@ -3154,29 +3517,53 @@ class ComputerUseService:
                     action_family="replace_text",
                     match_key=match_key,
                     requested_value=requested_value,
+                    element_fingerprint=fingerprint,
+                    baseline_value=fresh_element.value,
+                    baseline_value_available=fresh_element.value_available,
+                    in_web_content=fresh_element.in_web_content,
+                    driver_verdict=evidence.driver_verdict,
                     baseline_screenshot=baseline.screenshot,
                     baseline_width=baseline.width,
                     baseline_height=baseline.height,
                 )
-                self._set_unresolved_completion(owner, "replace_text")
             else:
                 self._pending_mutation = None
-                if self._owner is not None:
-                    self._clear_unresolved_completion(
-                        self._owner.key,
-                        "replace_text",
-                    )
-            observation.computer_use_completion_blocked = (
-                self.computer_use_completion_blocked(self._owner)
-            )
             self._action_count += 1
             self._last_action = "replace_text (value hidden)"
-            self._last_effect = outcome
-            self._last_driver_effect = driver_effect
-            self._last_visual_change = visual_change
+            self._last_effect = evidence.outcome
+            self._last_driver_effect = evidence.driver_verdict
+            self._last_visual_change = observation.visual_change
             self._last_effect_verified = verified
             self._last_action_completed = verified
             self._state = SessionState.OBSERVING
+        status = (
+            _CompletionStatus.UNRESOLVED
+            if evidence.outcome == "delivered_unverified"
+            else _CompletionStatus.VERIFIED
+            if verified
+            else _CompletionStatus.FAILED
+        )
+        reason = (
+            _CompletionReason.EXACT_TARGET_POSTCONDITION_MATCHED
+            if verified
+            else _CompletionReason.EXACT_TARGET_POSTCONDITION_CONTRADICTED
+            if evidence.semantic_postcondition == "contradicted"
+            else _CompletionReason.DRIVER_REFUSED
+            if evidence.driver_verdict == "refused"
+            else _CompletionReason.EXACT_TARGET_POSTCONDITION_UNVERIFIED
+        )
+        self._record_completion_evidence(
+            owner,
+            target_id=observation.target.target_id,
+            element_fingerprint=fingerprint,
+            action_family="replace_text",
+            status=status,
+            reason=reason,
+            supersede_prior=supersede_prior,
+        )
+        observation.computer_use_completion_blocked = (
+            self.computer_use_completion_blocked(owner)
+        )
         self._record_action_success()
         self._notify()
         return observation
@@ -3299,21 +3686,28 @@ class ComputerUseService:
                     f"USER TAKEOVER REQUIRED: {fresh_decision.reason}",
                     code="handoff_required",
                 )
-            if fresh_element.value == requested_value:
+            if (
+                fresh_element.value_available
+                and fresh_element.value == requested_value
+            ):
                 if capture_after and visual_question:
                     baseline.vision_text = self._analyze_vision(baseline, visual_question)
                 return self._finish_exact_replacement(
                     baseline,
-                    outcome="already_satisfied",
-                    dispatched=False,
-                    driver_effect="unverifiable",
-                    visual_change="unchanged",
+                    evidence=_ActionEvidence(
+                        dispatch="rejected",
+                        driver_verdict="unverifiable",
+                        semantic_postcondition="matched",
+                        visual_observation="unchanged",
+                        outcome="verified",
+                    ),
                     native_change="unchanged",
                     delivery_mode="not_applicable",
                     route="accessibility",
-                    cause="",
+                    cause="already_satisfied",
                     match_key=match_key,
                     requested_value=requested_value,
+                    fresh_element=fresh_element,
                     baseline=baseline,
                 )
 
@@ -3384,6 +3778,7 @@ class ComputerUseService:
             after_matches = self._exact_element_matches(completed, match_key)
             visual_change = "unknown"
             native_change = "unknown"
+            semantic_postcondition = "unavailable"
             if len(after_matches) == 1:
                 after_element = after_matches[0]
                 visual_change = self._target_interior_visual_change(
@@ -3391,35 +3786,49 @@ class ComputerUseService:
                     completed,
                     fresh_element,
                 )
-                native_change = (
-                    "unchanged"
-                    if after_element.value == fresh_element.value
-                    else "changed"
-                )
-                if after_element.value == requested_value:
-                    outcome = (
-                        "displayed_postcondition_observed"
-                        if visual_change == "changed"
-                        else "provider_echo_unverified"
+                if after_element.value_available:
+                    native_change = (
+                        "unchanged"
+                        if after_element.value == fresh_element.value
+                        else "changed"
                     )
-                else:
-                    outcome = "suspected_noop"
-            else:
-                outcome = "unverified"
+                    semantic_postcondition = (
+                        "matched"
+                        if after_element.value == requested_value
+                        else "contradicted"
+                    )
+            elif len(after_matches) > 1:
+                semantic_postcondition = "ambiguous"
             if not dispatched:
-                outcome = "unverified"
+                outcome = "refused"
+            elif semantic_postcondition == "matched" and not (
+                after_matches[0].in_web_content and driver_effect == "unverifiable"
+            ):
+                outcome = "verified"
+            elif semantic_postcondition == "contradicted":
+                outcome = "suspected_noop"
+            else:
+                outcome = "delivered_unverified"
             return self._finish_exact_replacement(
                 completed,
-                outcome=outcome,
-                dispatched=dispatched,
-                driver_effect=driver_effect,
-                visual_change=visual_change,
+                evidence=_ActionEvidence(
+                    dispatch="dispatched" if dispatched else "rejected",
+                    driver_verdict=driver_effect,
+                    semantic_postcondition=semantic_postcondition,
+                    visual_observation=(
+                        "unavailable" if visual_change == "unknown" else visual_change
+                    ),
+                    outcome=outcome,
+                ),
                 native_change=native_change,
                 delivery_mode=delivery_mode,
                 route=route,
-                cause=_safe_driver_cause(result.error_code),
+                cause=_safe_driver_cause(
+                    result.structured.get("cause") or result.error_code
+                ),
                 match_key=match_key,
                 requested_value=requested_value,
+                fresh_element=fresh_element,
                 baseline=baseline,
             )
 
@@ -3472,7 +3881,13 @@ class ComputerUseService:
         self._check_failure_budget()
         owner = self._require_owner(owner)
         target = self._target(target_id)
-        self._guard_pending_mutation(action, target, keys)
+        self._guard_pending_mutation(
+            action,
+            target,
+            keys,
+            element_token=element_token,
+            text=text,
+        )
         if action == "focus":
             self._clear_prepared_foreground_target()
             foreground_prepared = False
@@ -3558,23 +3973,6 @@ class ComputerUseService:
                         f"USER TAKEOVER REQUIRED: {decision.reason}",
                         code="handoff_required",
                     )
-                if action == "replace_text":
-                    if element is None:
-                        raise ComputerUseError(
-                            "replace_text requires one current semantic element token.",
-                            code="invalid_input",
-                        )
-                    if element.enabled is False:
-                        raise ComputerUseError(
-                            "replace_text cannot mutate a disabled semantic control.",
-                            code="invalid_input",
-                        )
-                    if _normalized_role(element.role) not in _MODEL_EDITABLE_ROLES:
-                        raise ComputerUseError(
-                            "replace_text is limited to generic writable or editable semantic controls.",
-                            code="invalid_input",
-                        )
-
                 from row_bot.approval_policy import decision_for_action
 
                 mode_decision = decision_for_action(approval_mode)
@@ -3585,6 +3983,11 @@ class ComputerUseService:
                     )
                 if decision.outcome is PolicyOutcome.CONSEQUENTIAL and mode_decision == "ask":
                     old_element = element
+                    old_match_key = (
+                        self._exact_element_match_key(observation, old_element)
+                        if old_element is not None
+                        else None
+                    )
                     with self._lock:
                         self._state = SessionState.WAITING_APPROVAL
                     self._notify()
@@ -3623,7 +4026,8 @@ class ComputerUseService:
                         matches = [
                             item
                             for item in observation.elements
-                            if item.role == old_element.role and item.label == old_element.label
+                            if self._exact_element_match_key(observation, item)
+                            == old_match_key
                         ]
                         if len(matches) != 1:
                             raise StaleObservationError(
@@ -3632,7 +4036,7 @@ class ComputerUseService:
                         element = matches[0]
 
                 needs_foreground = bool(
-                    original_action in {"type", "key", "scroll", "drag"}
+                    original_action == "drag"
                     or (
                         coordinate_only
                         and original_action in {"click", "double_click", "right_click"}
@@ -3648,11 +4052,12 @@ class ComputerUseService:
                         target,
                         owner,
                         approval_mode=approval_mode,
+                        action_family=original_action,
                     )
                     foreground_prepared = True
 
                 if original_action == "type" and element is not None:
-                    observation, element = self._validate_selected_type_element(
+                    observation, element = self._fresh_exact_type_element(
                         target,
                         observation,
                         element,
@@ -3662,12 +4067,10 @@ class ComputerUseService:
                     "pid": target.pid,
                     "window_id": target.window_id,
                 }
-                # Cua's Windows element-targeted type_text path uses
-                # ValuePattern.SetValue and replaces the control's complete
-                # value. A Row-Bot type action always means ordinary keyboard
-                # insertion at the current selection/caret, so the token is
-                # validated above but never forwarded for type.
-                if element is not None and action != "type":
+                # Targeted typing is a Cua-owned exact semantic focus-and-insert
+                # transaction. Tokenless typing intentionally preserves the
+                # current focused caret/selection and omits an element token.
+                if element is not None:
                     args["element_token"] = element.token
                 if x is not None and y is not None:
                     args.update({"x": int(x), "y": int(y)})
@@ -3714,7 +4117,6 @@ class ComputerUseService:
                 self._notify()
                 driver_action = "key" if action == "key_hotkey" else action
                 if foreground_prepared and original_action in {
-                    "type",
                     "key",
                     "scroll",
                     "click",
@@ -3734,12 +4136,28 @@ class ComputerUseService:
                     and result.error_code == "background_unavailable"
                     and original_action != "replace_text"
                 ):
-                    self._prepare_foreground_fallback(
-                        target,
-                        owner,
-                        approval_mode=approval_mode,
-                    )
+                    if original_action == "type":
+                        self._authorize_foreground_delivery(
+                            target,
+                            owner,
+                            approval_mode=approval_mode,
+                            action_family=original_action,
+                        )
+                    else:
+                        self._prepare_foreground_fallback(
+                            target,
+                            owner,
+                            approval_mode=approval_mode,
+                            action_family=original_action,
+                        )
                     fallback_args = dict(args)
+                    if original_action == "type" and element is not None:
+                        observation, element = self._fresh_exact_type_element(
+                            target,
+                            observation,
+                            element,
+                        )
+                        fallback_args["element_token"] = element.token
                     fallback_args["delivery_mode"] = "foreground"
                     with self._lock:
                         self._last_action = (
@@ -3757,7 +4175,9 @@ class ComputerUseService:
                             "Cua rejected a stale element token; capture again."
                         )
                     error_code = (
-                        "driver_unavailable"
+                        "focus_refused"
+                        if result.error_code == "focus_refused"
+                        else "driver_unavailable"
                         if result.error_code in {"permission_denied", "driver_unavailable"}
                         else "transient_driver_failure"
                         if result.error_code in {"timeout", "temporarily_unavailable"}
@@ -3780,7 +4200,6 @@ class ComputerUseService:
                     result.structured.get("effect"),
                     verified=bool(result.structured.get("verified")),
                 )
-                effect_verified = False
                 delivery_mode = _standard_delivery(
                     result.structured.get("delivery_mode")
                     or args.get("delivery_mode")
@@ -3790,6 +4209,23 @@ class ComputerUseService:
                     result.structured.get("route") or result.structured.get("path")
                 )
                 dispatched = driver_effect != "refused"
+                click_like = bool(
+                    element is not None
+                    and original_action in {"click", "double_click", "right_click"}
+                )
+                effect_verified = (
+                    self._record_type_evidence(
+                        owner,
+                        target,
+                        observation,
+                        element,
+                        requested_text=str(text or ""),
+                        driver_verdict=driver_effect,
+                        dispatched=dispatched,
+                    )
+                    if original_action == "type"
+                    else bool(click_like and driver_effect == "confirmed")
+                )
                 visual_mutation = bool(
                     coordinate_only
                     and driver_action in {
@@ -3857,6 +4293,17 @@ class ComputerUseService:
                                 completed_observation,
                                 target_element=element,
                             )
+                        exact_state_transition = bool(
+                            click_like
+                            and self._exact_semantic_state_transition(
+                                observation,
+                                completed_observation,
+                                target_element=element,
+                            )
+                        )
+                        effect_verified = bool(
+                            effect_verified or exact_state_transition
+                        )
                         # All actions stay on the native fast path by default.
                         # Honor one explicit post-action Vision request without
                         # treating its prose as authorization or verification.
@@ -3867,12 +4314,72 @@ class ComputerUseService:
                             )
                         completed_observation.action_effect = "unverified"
                         completed_observation.action_dispatched = dispatched
-                        completed_observation.action_completed = False
+                        completed_observation.action_completed = effect_verified
                         completed_observation.driver_effect = driver_effect
                         completed_observation.visual_change = visual_change
                         completed_observation.native_change = native_change
                         completed_observation.effect_verified = effect_verified
-                        completed_observation.outcome = "unverified"
+                        if original_action == "type":
+                            completed_observation.dispatch_state = (
+                                "dispatched" if dispatched else "rejected"
+                            )
+                            completed_observation.driver_verdict = driver_effect
+                            completed_observation.semantic_postcondition = "unavailable"
+                            completed_observation.visual_observation = (
+                                "unavailable"
+                                if visual_change == "unknown"
+                                else visual_change
+                            )
+                            completed_observation.outcome = (
+                                "verified"
+                                if effect_verified
+                                else "delivered_unverified"
+                                if dispatched
+                                else "refused"
+                            )
+                            completed_observation.action_effect = (
+                                completed_observation.outcome
+                            )
+                            completed_observation.verified_scope = (
+                                "exact_driver_transaction"
+                                if effect_verified
+                                else ""
+                            )
+                            completed_observation.computer_use_completion_blocked = (
+                                self.computer_use_completion_blocked(owner)
+                            )
+                        else:
+                            completed_observation.dispatch_state = (
+                                "dispatched" if dispatched else "rejected"
+                            )
+                            completed_observation.driver_verdict = driver_effect
+                            completed_observation.semantic_postcondition = (
+                                "matched" if exact_state_transition else "unavailable"
+                            )
+                            completed_observation.visual_observation = (
+                                "unavailable"
+                                if visual_change == "unknown"
+                                else visual_change
+                            )
+                            completed_observation.outcome = (
+                                "verified"
+                                if effect_verified
+                                else "delivered_unverified"
+                                if dispatched
+                                else "refused"
+                            )
+                            completed_observation.action_effect = (
+                                completed_observation.outcome
+                            )
+                            completed_observation.action_completed = effect_verified
+                            completed_observation.effect_verified = effect_verified
+                            completed_observation.verified_scope = (
+                                "exact_semantic_state_transition"
+                                if exact_state_transition
+                                else "exact_driver_transaction"
+                                if effect_verified
+                                else ""
+                            )
                         completed_observation.delivery_mode = delivery_mode
                         completed_observation.route = route
                         completed_observation.cause = _safe_driver_cause(
@@ -3886,10 +4393,10 @@ class ComputerUseService:
                         action_family=driver_action,
                         revision=self._observation_generation,
                         dispatched=dispatched,
-                        completed=False,
+                        completed=effect_verified,
                         backend_effect=driver_effect,
                         visual_change=visual_change,
-                        verified_outcome=False,
+                        verified_outcome=effect_verified,
                         delivery=delivery_mode,
                         route=route,
                         cause=_safe_driver_cause(
@@ -4238,12 +4745,7 @@ class ComputerUseService:
             )
         self._require_owner(owner)
         self._clear_prepared_foreground_target()
-        try:
-            inventory = self.list_apps(owner)
-        except ComputerUseError:
-            if not _canonical_browser_identity(name):
-                raise
-            inventory = []
+        inventory = self.list_apps(owner)
         resolved_name = _resolve_app_identity(
             name,
             [str(row.get("name") or "") for row in inventory],
@@ -4440,6 +4942,7 @@ class ComputerUseService:
                 self._approved_apps.clear()
                 self._app_display_names.clear()
                 self._app_package_families.clear()
+                self._app_pids.clear()
                 self._observation = None
                 self._preview_observation = None
                 self._observation_generation += 1

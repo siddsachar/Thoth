@@ -4720,9 +4720,9 @@ def _route_waiting_parent_input(user_input: str, config: dict):
 
 
 _COMPUTER_USE_UNVERIFIED_FINAL = (
-    "I could not verify the requested target change. I stopped the dependent "
-    "Computer Use action chain; capture fresh exact-target evidence, take over, "
-    "or stop the session before making a success claim."
+    "I could not verify the requested target change, so no success can be "
+    "reported. Use fresh exact semantic evidence where available; do not replay "
+    "an unresolved insertion."
 )
 
 
@@ -4731,8 +4731,9 @@ def _apply_computer_use_final_status_gate(
     config: dict,
     *,
     service=None,
+    consume: bool = True,
 ) -> str | dict:
-    """Prevent a success claim while this task owns an uncertain mutation."""
+    """Apply and consume the generation's privacy-safe completion evidence."""
 
     if not isinstance(result, str):
         return result
@@ -4744,12 +4745,16 @@ def _apply_computer_use_final_status_gate(
         configurable = (config or {}).get("configurable") or {}
         thread_id = str(configurable.get("thread_id") or "")
         generation_id = str(configurable.get("generation_id") or "")
-        if not service.computer_use_completion_blocked(
+        blocked = service.computer_use_completion_blocked(
             thread_id=thread_id,
             generation_id=generation_id,
-        ):
-            return result
-        return _COMPUTER_USE_UNVERIFIED_FINAL
+        )
+        if consume and thread_id and generation_id:
+            service.consume_completion_evidence(
+                thread_id=thread_id,
+                generation_id=generation_id,
+            )
+        return _COMPUTER_USE_UNVERIFIED_FINAL if blocked else result
     except Exception:
         logger.debug("Computer Use final-status gate check failed safely", exc_info=True)
         return result
@@ -5532,6 +5537,7 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
                 gated_token = _apply_computer_use_final_status_gate(
                     str(event[1] or ""),
                     config,
+                    consume=False,
                 )
                 if gated_token == _COMPUTER_USE_UNVERIFIED_FINAL:
                     continue

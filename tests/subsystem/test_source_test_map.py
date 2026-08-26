@@ -207,6 +207,15 @@ def test_computer_tool_guide_selects_runtime_and_prompt_ownership() -> None:
     assert not selection.unmatched_files
 
 
+def test_computer_architecture_document_selects_computer_use_ownership() -> None:
+    selection = select_tests_for_changes(["docs/ARCHITECTURE.md"])
+
+    assert "computer_use" in selection.matched_rules
+    assert "tests/subsystem/computer_use" in selection.test_paths
+    assert "tests/integration/computer_use" in selection.test_paths
+    assert not selection.unmatched_files
+
+
 def test_prompt_context_change_selects_prompt_and_provider_regressions() -> None:
     selection = select_tests_for_changes([
         "src/row_bot/agent.py",

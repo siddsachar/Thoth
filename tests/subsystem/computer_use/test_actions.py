@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 
 import pytest
+from PIL import Image
 
 from row_bot.computer_use.service import (
     ActionReceipt,
@@ -70,7 +73,7 @@ def test_ordinary_platform_labels_do_not_block_safe_exact_semantic_actions(
     assert [name for name, _args in fake_transport.calls].count("click") == 1
 
 
-def test_app_scoped_capture_discovers_and_captures_exactly_once_without_vision(
+def test_app_scoped_capture_honors_explicit_visual_question_once(
     fake_client,
     fake_transport,
 ) -> None:
@@ -99,12 +102,12 @@ def test_app_scoped_capture_discovers_and_captures_exactly_once_without_vision(
     assert names.count("list_windows") == 1
     assert names.count("get_window_state") == 1
     assert observation.target.app_name == "Calculator"
-    assert observation.vision_deferred is True
-    assert observation.vision_text == ""
-    assert vision.calls == 0
+    assert observation.vision_deferred is False
+    assert observation.vision_text.endswith("unused")
+    assert vision.calls == 1
     payload = json.loads(_observation_payload(observation))
-    assert payload["visual_analysis_deferred"] is True
-    assert "no visual question was answered" in payload["fresh_observation"].casefold()
+    assert "visual_analysis_deferred" not in payload
+    assert "vision evidence" in payload["fresh_observation"].casefold()
 
 
 def test_app_scope_approval_precedes_target_pixel_request(
@@ -142,6 +145,7 @@ def test_app_scope_approval_precedes_target_pixel_request(
 )
 def test_every_routine_mutation_maps_once_without_an_implicit_post_capture(service, fake_transport, action, kwargs, driver_tool) -> None:
     target, observation = _target_and_capture(service)
+    exact_semantic_click = action in {"click", "double_click", "right_click"}
     call_kwargs = dict(kwargs)
     index = call_kwargs.pop("element", None)
     if index is not None:
@@ -152,10 +156,10 @@ def test_every_routine_mutation_maps_once_without_an_implicit_post_capture(servi
     assert names[mutation_index + 1:] == []
     assert isinstance(result, ActionReceipt)
     assert result.action_dispatched is True
-    assert result.action_completed is False
+    assert result.action_completed is exact_semantic_click
     assert result.driver_effect == "confirmed"
     assert result.visual_change == "unknown"
-    assert result.effect_verified is False
+    assert result.effect_verified is exact_semantic_click
     assert "private typed value" not in repr(result)
     assert service.ephemeral_screenshot()
 
@@ -174,6 +178,7 @@ def test_replace_text_uses_one_exact_semantic_set_value_delivery(
     role: str,
     selected: bool,
 ) -> None:
+    fake_transport.scenario.delivery_profile = "native_exact_set_value"
     replacement = f"private replacement for {role}"
     fake_transport.scenario.semantic_elements = (
         {
@@ -210,9 +215,10 @@ def test_replace_text_uses_one_exact_semantic_set_value_delivery(
     ]
     assert fake_transport.document_value == replacement
     assert isinstance(result, Observation)
-    assert result.outcome == "provider_echo_unverified"
-    assert result.effect_verified is False
-    assert result.action_completed is False
+    assert result.outcome == "verified"
+    assert result.semantic_postcondition == "matched"
+    assert result.effect_verified is True
+    assert result.action_completed is True
     assert all(name != "press_key" for name, _args in fake_transport.calls[calls_before:])
 
 
@@ -394,7 +400,12 @@ def test_replace_text_driver_refusal_or_unverified_effect_is_never_replayed(
     fake_transport,
 ) -> None:
     fake_transport.scenario.semantic_elements = (
-        {"role": "Edit", "label": "Current value", "enabled": True},
+        {
+            "role": "Edit",
+            "label": "Web Composer",
+            "enabled": True,
+            "in_web_content": True,
+        },
     )
     target, observation = _target_and_capture(service)
     fake_transport.scenario.background_unavailable_tools = frozenset({"set_value"})
@@ -416,7 +427,7 @@ def test_replace_text_driver_refusal_or_unverified_effect_is_never_replayed(
     assert all(name not in {"bring_to_front", "press_key"} for name, _args in refused_calls)
 
     fake_transport.scenario.background_unavailable_tools = frozenset()
-    fake_transport.scenario.element_type_effect = "unverifiable"
+    fake_transport.scenario.delivery_profile = "web_targeted_unverifiable"
     observation = service.capture(target, OWNER)
     calls_before = len(fake_transport.calls)
     result = service.act(
@@ -429,12 +440,41 @@ def test_replace_text_driver_refusal_or_unverified_effect_is_never_replayed(
 
     unverified_calls = fake_transport.calls[calls_before:]
     assert isinstance(result, Observation)
-    assert result.outcome == "provider_echo_unverified"
+    assert result.outcome == "delivered_unverified"
+    assert result.semantic_postcondition == "matched"
     assert result.effect_verified is False
     assert result.driver_effect == "unverifiable"
     assert [name for name, _args in unverified_calls].count("set_value") == 1
     assert all(name != "type_text" for name, _args in unverified_calls)
     assert all(name != "press_key" for name, _args in unverified_calls)
+
+
+def test_retina_scale_coordinates_remain_screenshot_local_without_double_scaling(
+    service,
+    fake_transport,
+) -> None:
+    image = Image.new("RGB", (200, 100), "white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    fake_transport.scenario.capture_dimensions = (200, 100)
+    fake_transport.scenario.capture_images = (
+        base64.b64encode(buffer.getvalue()).decode("ascii"),
+    )
+    fake_transport.scenario.scale_factor = 2.0
+    target, observation = _target_and_capture(service)
+
+    service.act(
+        "click",
+        target,
+        OWNER,
+        x=120,
+        y=60,
+        approval_mode="allow_all",
+    )
+
+    click = [args for name, args in fake_transport.calls if name == "click"][-1]
+    assert observation.scale_factor == 2.0
+    assert (click["x"], click["y"]) == (120, 60)
 
 
 def test_replace_text_keeps_secure_handoff_and_consequential_approval(
@@ -655,6 +695,43 @@ def test_changed_native_evidence_resets_same_family_no_progress_streak(
     assert changes == ["unchanged", "changed", "unchanged"]
     assert service.status_snapshot()["consecutive_visual_no_effects"] == 1
     assert service.status_snapshot()["state"] == "observing"
+
+
+@pytest.mark.parametrize(
+    ("role", "state_name"),
+    [
+        ("togglebutton", "selected"),
+        ("checkbox", "checked"),
+        ("button", "expanded"),
+    ],
+)
+def test_fresh_exact_click_state_transition_verifies_only_the_action_scope(
+    service,
+    fake_transport,
+    role: str,
+    state_name: str,
+) -> None:
+    before = ({"role": role, "label": "Generic control", state_name: False},)
+    after = ({"role": role, "label": "Generic control", state_name: True},)
+    fake_transport.scenario.semantic_snapshots = (before, after)
+    fake_transport.scenario.effect = "unverifiable"
+    target, observation = _target_and_capture(service)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        capture_after=True,
+    )
+
+    assert result.dispatch_state == "dispatched"
+    assert result.driver_verdict == "unverifiable"
+    assert result.semantic_postcondition == "matched"
+    assert result.visual_observation == "unavailable"
+    assert result.outcome == "verified"
+    assert result.verified_scope == "exact_semantic_state_transition"
+    assert result.effect_verified is True
 
 
 def test_semantic_terminal_action_succeeds_when_exact_target_disappears_after_dispatch(
@@ -1073,6 +1150,7 @@ def _capability_service(fake_transport, *capabilities: str):
 
 def test_service_derived_verify_state_is_exact_bounded_and_screenshot_free(fake_transport) -> None:
     service = _capability_service(fake_transport, "verify_state")
+    fake_transport.scenario.background_unavailable_tools = frozenset({"press_key"})
     fake_transport.scenario.apps = (
         {"name": "Notepad", "running": True, "active": False},
     )

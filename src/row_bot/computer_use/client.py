@@ -62,14 +62,41 @@ class CuaElement:
     index: int
     role: str
     label: str
-    value: str
+    value: str = field(repr=False)
     bounds: tuple[float, float, float, float]
     depth: int
     parent_index: int | None = None
     visible: bool | None = None
     enabled: bool | None = None
     selected: bool | None = None
+    checked: bool | None = None
+    expanded: bool | None = None
+    pressed: bool | None = None
+    toggled: bool | None = None
+    editable: bool | None = None
+    read_only: bool | None = None
+    value_available: bool = True
     in_web_content: bool = False
+
+
+@dataclass(frozen=True)
+class CuaLaunchProfile:
+    argv: tuple[str, ...]
+    permission_identity: str
+
+
+def cua_launch_profile() -> CuaLaunchProfile:
+    """Return the reviewed private MCP process profile for this host."""
+
+    if platform.system().casefold() == "darwin":
+        return CuaLaunchProfile(
+            argv=("mcp", "--direct"),
+            permission_identity="row_bot_host",
+        )
+    return CuaLaunchProfile(
+        argv=("mcp",),
+        permission_identity="interactive_windows_session",
+    )
 
 
 @dataclass(frozen=True)
@@ -123,6 +150,7 @@ _MUTATION_ERROR_CODES = frozenset(
         "unsupported_capability",
         "unsupported_role",
         "value_not_supported",
+        "focus_refused",
     }
 )
 
@@ -162,8 +190,9 @@ def build_cua_environment(session_id: str, environ: dict[str, str] | None = None
     result = {key: str(value) for key, value in source.items() if key in allowed and value is not None}
     result["CUA_DRIVER_RS_UPDATE_CHECK"] = "0"
     result["ROW_BOT_CUA_SESSION_ID"] = str(session_id)
-    if platform.system() == "Darwin":
-        result["CUA_DRIVER_EMBEDDED"] = "1"
+    result.pop("CUA_DRIVER_EMBEDDED", None)
+    result.pop("CUA_DRIVER_PARENT_LIVENESS_STDIN", None)
+    result.pop("CUA_DRIVER_HOST_BUNDLE_ID", None)
     result.pop("CUA_DRIVER_RS_TELEMETRY_ENABLED", None)
     result.pop("CUA_DRIVER_RS_TELEMETRY_DEBUG", None)
     return result
@@ -312,6 +341,17 @@ def parse_cua_result(result: Any) -> CuaResponse:
             visible=(bool(item["visible"]) if "visible" in item else None),
             enabled=(bool(item["enabled"]) if "enabled" in item else None),
             selected=(bool(item["selected"]) if "selected" in item else None),
+            checked=(bool(item["checked"]) if "checked" in item else None),
+            expanded=(bool(item["expanded"]) if "expanded" in item else None),
+            pressed=(bool(item["pressed"]) if "pressed" in item else None),
+            toggled=(bool(item["toggled"]) if "toggled" in item else None),
+            editable=(bool(item["editable"]) if "editable" in item else None),
+            read_only=(
+                bool(item.get("read_only", item.get("readonly")))
+                if "read_only" in item or "readonly" in item
+                else None
+            ),
+            value_available="value" in item and item.get("value") is not None,
             in_web_content=bool(item.get("in_web_content")),
         )
         element_bytes = sum(
@@ -383,14 +423,24 @@ class CuaClient:
         self.executable = str(Path(executable))
         self.session_id = session_id or f"row-bot-{uuid.uuid4().hex}"
         self._transport_factory = transport_factory or self._default_transport
+        self.launch_profile = cua_launch_profile()
         self.contract_version = str(contract_version)
         self.capabilities = frozenset(capabilities or ())
         self._transport: CuaTransport | None = None
         self.connection_generation = 0
 
-    @staticmethod
-    def _default_transport(executable: str, _session_id: str, env: dict[str, str]) -> CuaTransport:
-        return PrivateMcpSession(command=executable, args=["mcp"], env=env, timeout=120.0)
+    def _default_transport(
+        self,
+        executable: str,
+        _session_id: str,
+        env: dict[str, str],
+    ) -> CuaTransport:
+        return PrivateMcpSession(
+            command=executable,
+            args=list(self.launch_profile.argv),
+            env=env,
+            timeout=120.0,
+        )
 
     def start(self) -> None:
         if self._transport is not None:

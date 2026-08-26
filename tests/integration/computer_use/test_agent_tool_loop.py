@@ -155,10 +155,11 @@ def test_exact_replacement_is_atomic_token_bound_and_honors_explicit_vision_once
     assert set_value_calls[0]["element_token"] != token
     assert set_value_calls[0]["value"] == f"<redacted:{len(replacement)} chars>"
     assert replaced["action_dispatched"] is True
-    assert replaced["effect_verified"] is False
-    assert replaced["action_completed"] is False
-    assert replaced["outcome"] == "provider_echo_unverified"
-    assert replaced["computer_use_completion_blocked"] is True
+    assert replaced["effect_verified"] is True
+    assert replaced["action_completed"] is True
+    assert replaced["outcome"] == "verified"
+    assert replaced["semantic_postcondition"] == "matched"
+    assert replaced["computer_use_completion_blocked"] is False
     assert len(vision.calls) == 1
     assert all(name != "press_key" for name, _args in transport.calls)
 
@@ -187,6 +188,7 @@ def test_pending_uncertain_mutation_blocks_successful_agent_final_status(
             {"role": "Edit", "label": "Document body", "enabled": True},
         ),
         set_value_updates_document=False,
+        delivery_profile="catalyst_value_unavailable",
     )
     service, _transport, _vision, tool = _native_browser_tool(
         tmp_path,
@@ -222,6 +224,10 @@ def test_pending_uncertain_mutation_blocks_successful_agent_final_status(
     assert uncertain["computer_use_completion_blocked"] is True
     assert "complete" not in gated.casefold()
     assert "could not verify" in gated.casefold()
+    assert service.computer_use_completion_blocked(
+        thread_id="performance-thread",
+        generation_id="performance-generation",
+    ) is False
 
 
 def test_advisory_vision_and_stop_do_not_resolve_generation_completion(
@@ -246,13 +252,14 @@ def test_advisory_vision_and_stop_do_not_resolve_generation_completion(
         capture_window_id=616,
         semantic_elements=(
             {
-                "role": "GridCell",
+                "role": "Edit",
                 "label": "Document item",
                 "enabled": True,
                 "selected": False,
             },
         ),
         set_value_updates_document=False,
+        delivery_profile="catalyst_value_unavailable",
     )
     service, transport, vision, tool = _native_browser_tool(
         tmp_path,
@@ -389,8 +396,8 @@ def test_unverified_action_payload_forbids_dependent_mutation_assumptions(
 
     assert result["action_dispatched"] is True
     assert result["effect_verified"] is False
-    assert "not proof of focus, caret position, selection, navigation" in result["next_action"]
-    assert "Do not build a dependent mutation chain" in result["next_action"]
+    assert "do not prove a semantic postcondition" in result["next_action"]
+    assert "Never replay an unresolved insertion" in result["next_action"]
     assert [name for name, _args in transport.calls].count("type_text") == 1
     assert vision.calls == []
 
@@ -475,9 +482,11 @@ def test_approval_interrupt_logs_pending_then_one_completed_action(
     assert len(receipts) == 1
     assert "success=true" in receipts[0]
     assert [name for name, _args in transport.calls].count("click") == 1
-    assert completed["action_completed"] is False
+    assert completed["action_completed"] is True
     assert completed["driver_effect"] == "confirmed"
-    assert completed["effect_verified"] is False
+    assert completed["effect_verified"] is True
+    assert completed["action_outcome"] == "verified"
+    assert completed["verified_scope"] == "exact_driver_transaction"
     diagnostics = "\n".join(pending + receipts)
     assert private_label not in diagnostics
     assert token not in diagnostics
@@ -542,7 +551,7 @@ def test_existing_edge_window_tool_loop_preserves_scope_approval_and_target(
 
     listed = json.loads(tool.invoke({
         "action": "list_windows",
-        "app": "Microsoft Edge",
+        "app": "msedge.exe",
         "window_hint": "YouTube",
     }))
     assert len(listed["windows"]) == 1
@@ -559,7 +568,7 @@ def test_existing_edge_window_tool_loop_preserves_scope_approval_and_target(
     assert scrolled["target_id"] == target_id
     assert len(approvals) == 1
     assert approvals[0]["app"] == "msedge.exe"
-    assert "Microsoft Edge" in approvals[0]["label"]
+    assert "msedge.exe" in approvals[0]["label"]
     names = [name for name, _args in transport.calls]
     assert names.count("list_windows") == 1
     assert names.count("get_window_state") == 1
@@ -817,7 +826,9 @@ def test_three_action_capability_flow_meets_computer_and_vision_budgets(
     assert names.count("press_key") == 1
     assert names.count("scroll") == 1
     for name, arguments in transport.calls:
-        if name in {"type_text", "press_key", "scroll"}:
+        if name == "type_text":
+            assert "delivery_mode" not in arguments
+        elif name in {"press_key", "scroll"}:
             assert arguments["delivery_mode"] == "foreground"
 
 

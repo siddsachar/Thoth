@@ -210,7 +210,7 @@ def computer_use_settings_view(
         return ComputerUseSettingsView(
             "Finish setting up Computer Use",
             (
-                "Repair the managed macOS helper before checking access again."
+                "Repair the managed macOS runtime inside Row-Bot before checking access again."
                 if needs_repair
                 else "Run a quick Calculator test to finish setup."
                 if needs_test

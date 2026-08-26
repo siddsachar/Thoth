@@ -46,6 +46,23 @@ SANITIZED_NATIVE_BROWSER_WINDOWS = (
 )
 
 
+def _editable_role(role: object) -> bool:
+    normalized = "".join(
+        character for character in str(role or "").casefold() if character.isalnum()
+    )
+    return normalized in {
+        "combobox",
+        "edit",
+        "entry",
+        "input",
+        "searchfield",
+        "textarea",
+        "textfield",
+        "textinput",
+        "textbox",
+    }
+
+
 @dataclass
 class FakeScenario:
     stale: bool = False
@@ -92,6 +109,8 @@ class FakeScenario:
     rotate_element_tokens: bool = False
     set_value_updates_document: bool = True
     action_error_message: str = "fake action failure"
+    delivery_profile: str = "native_targeted_insertion"
+    scale_factor: float = 1.25
 
 
 class FakeCuaTransport:
@@ -109,6 +128,9 @@ class FakeCuaTransport:
         self.effective_keys: list[str] = []
         self.calculator_display = "0"
         self.element_labels: dict[str, str] = {}
+        self.element_indexes: dict[str, int] = {}
+        self.element_values: dict[int, str] = {}
+        self.mutated_element_indexes: set[int] = set()
         self.capture_index = 0
         self.document_value = self.scenario.document_value
         self.window_snapshot_index = 0
@@ -120,6 +142,16 @@ class FakeCuaTransport:
     def close(self) -> None:
         self.closed = True
         self.release_action.set()
+
+    def value_for_label(self, label: str) -> str:
+        indexes = [
+            index
+            for token, index in self.element_indexes.items()
+            if self.element_labels.get(token) == label
+        ]
+        if len(indexes) != 1:
+            raise KeyError(label)
+        return self.element_values.get(indexes[0], "")
 
     def call_raw(self, name: str, arguments: dict[str, Any] | None = None) -> RawCallResult:
         args = dict(arguments or {})
@@ -235,11 +267,26 @@ class FakeCuaTransport:
             }
             if self.scenario.calculator_semantics:
                 window["app_name"] = app_name
-            package_identity = self.scenario.launch_bundle_id or (
-                "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
-                if app_name.casefold() == "calc.exe"
-                else ""
+            inventory = list(self.scenario.apps) if self.scenario.apps else [
+                {
+                    "name": "Calculator",
+                    "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+                },
+                {"name": "Notepad"},
+            ]
+            matched_app = next(
+                (
+                    row
+                    for row in inventory
+                    if str(row.get("name") or "").casefold() == app_name.casefold()
+                ),
+                {},
             )
+            package_identity = self.scenario.launch_bundle_id or str(
+                matched_app.get("bundle_id") or ""
+            )
+            if package_identity and "!" not in package_identity:
+                package_identity = f"{package_identity}!App"
             return self._result({
                 "pid": self.scenario.launch_pid,
                 "name": package_identity or app_name,
@@ -306,6 +353,7 @@ class FakeCuaTransport:
                 ]
             elements = []
             self.element_labels = {}
+            self.element_indexes = {}
             for index, element_spec in enumerate(element_specs):
                 role, label = element_spec[:2]
                 depth = int(element_spec[2]) if len(element_spec) > 2 else (
@@ -319,6 +367,7 @@ class FakeCuaTransport:
                 )
                 token = f"{token_generation}-element-{index}"
                 self.element_labels[token] = label
+                self.element_indexes[token] = index
                 source_frame = source.get("frame")
                 frame = (
                     dict(source_frame)
@@ -348,17 +397,25 @@ class FakeCuaTransport:
                     }
                     else ""
                 )
+                source_has_value = "value" in source
+                if index not in self.mutated_element_indexes:
+                    self.element_values[index] = str(
+                        source.get("value", default_value) or ""
+                    )
+                exposed_value: str | None = self.element_values.get(index, "")
+                if (
+                    self.scenario.delivery_profile == "catalyst_value_unavailable"
+                    and _editable_role(role)
+                ):
+                    exposed_value = None
+                elif source_has_value and index not in self.mutated_element_indexes:
+                    exposed_value = source.get("value")
                 element = {
                     "element_index": index,
                     "element_token": token,
                     "role": role,
                     "label": label,
-                    "value": str(
-                        source.get(
-                            "value",
-                            default_value,
-                        )
-                    ),
+                    "value": exposed_value,
                     "frame": frame,
                     "depth": depth,
                 }
@@ -367,6 +424,12 @@ class FakeCuaTransport:
                     "visible",
                     "enabled",
                     "selected",
+                    "checked",
+                    "expanded",
+                    "pressed",
+                    "toggled",
+                    "editable",
+                    "read_only",
                     "in_web_content",
                 ):
                     if key in source:
@@ -407,7 +470,7 @@ class FakeCuaTransport:
             if self.scenario.driver_sparse:
                 structured["degraded"] = True
             if self.scenario.include_scale_factor:
-                structured["scale_factor"] = 1.25
+                structured["scale_factor"] = self.scenario.scale_factor
             content = [RawCallContent(kind="text", text="fake window state")]
             if args.get("include_screenshot") is not False:
                 content.append(
@@ -439,20 +502,60 @@ class FakeCuaTransport:
                     self.scenario.action_error_message,
                     self.scenario.action_error_code,
                 )
-            if name in self.scenario.background_unavailable_tools and delivery_mode != "foreground":
+            if (
+                delivery_mode != "foreground"
+                and (
+                    name in self.scenario.background_unavailable_tools
+                    or (
+                        self.scenario.delivery_profile == "background_refused"
+                        and name == "type_text"
+                    )
+                )
+            ):
                 return self._top_level_error(
                     "Background delivery is unavailable for this target.",
                     "background_unavailable",
                 )
             if name == "type_text":
                 typed = str(args.get("text") or "")
-                if args.get("element_token") or args.get("element_index") is not None:
-                    # Pinned Cua Windows behavior: UIA ValuePattern.SetValue is
-                    # an atomic whole-value replacement, not caret insertion.
-                    self.document_value = typed
-                    effect = self.scenario.element_type_effect
+                token = str(args.get("element_token") or "")
+                targeted = bool(token or args.get("element_index") is not None)
+                profile = self.scenario.delivery_profile
+                if profile == "focus_refused" and delivery_mode == "foreground":
+                    return self._top_level_error(
+                        "Exact foreground focus proof failed before input.",
+                        "focus_refused",
+                    )
+                if targeted:
+                    index = self.element_indexes.get(token)
+                    if index is None and args.get("element_index") is not None:
+                        index = int(args["element_index"])
+                    if index is None:
+                        return self._error("element token is stale", "stale_element")
+                    self.element_values[index] = self.element_values.get(index, "") + typed
+                    self.mutated_element_indexes.add(index)
+                    self.document_value = self.element_values[index]
+                    effect = (
+                        "unverifiable"
+                        if profile in {"web_targeted_unverifiable", "catalyst_value_unavailable"}
+                        else "confirmed"
+                        if profile
+                        in {
+                            "macos_native_ax_confirmed",
+                            "windows_native_uia_confirmed",
+                        }
+                        else self.scenario.element_type_effect
+                    )
                     return self._result({
-                        "path": "ax",
+                        "path": (
+                            "key_events"
+                            if profile == "web_targeted_unverifiable"
+                            else "uia"
+                            if profile == "windows_native_uia_confirmed"
+                            else "ax"
+                            if profile == "macos_native_ax_confirmed"
+                            else "accessibility"
+                        ),
                         "effect": effect,
                         "verified": effect == "confirmed",
                         "delivery_mode": delivery_mode,
@@ -470,11 +573,38 @@ class FakeCuaTransport:
                     "delivery_mode": delivery_mode,
                 })
             if name == "set_value":
-                if self.scenario.set_value_updates_document:
-                    self.document_value = str(args.get("value") or "")
-                effect = self.scenario.element_type_effect
+                replacement = str(args.get("value") or "")
+                token = str(args.get("element_token") or "")
+                index = self.element_indexes.get(token)
+                profile = self.scenario.delivery_profile
+                if (
+                    self.scenario.set_value_updates_document
+                    or profile == "native_exact_set_value"
+                ):
+                    self.document_value = replacement
+                    if index is not None:
+                        self.element_values[index] = replacement
+                        self.mutated_element_indexes.add(index)
+                effect = (
+                    "unverifiable"
+                    if profile in {"web_targeted_unverifiable", "catalyst_value_unavailable"}
+                    else "confirmed"
+                    if profile
+                    in {
+                        "native_exact_set_value",
+                        "macos_native_ax_confirmed",
+                        "windows_native_uia_confirmed",
+                    }
+                    else self.scenario.element_type_effect
+                )
                 return self._result({
-                    "path": "ax",
+                    "path": (
+                        "uia"
+                        if profile == "windows_native_uia_confirmed"
+                        else "ax"
+                        if profile == "macos_native_ax_confirmed"
+                        else "accessibility"
+                    ),
                     "effect": effect,
                     "verified": effect == "confirmed",
                     "delivery_mode": delivery_mode,

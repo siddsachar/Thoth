@@ -529,6 +529,7 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "src/row_bot/ui/computer_use.py",
             "src/row_bot/ui/live_control.py",
             "docs/COMPUTER_USE_SECURITY.md",
+            "docs/ARCHITECTURE.md",
             "tool_guides/computer_use_guide/**",
         ),
         (

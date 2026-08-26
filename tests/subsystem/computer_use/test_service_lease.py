@@ -205,6 +205,7 @@ def test_new_generation_never_inherits_prior_unresolved_completion(
         },
     )
     fake_transport.scenario.set_value_updates_document = False
+    fake_transport.scenario.delivery_profile = "catalyst_value_unavailable"
     service.acquire(OWNER_A, validate_context=False)
     target_id = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
     observation = service.capture(target_id, OWNER_A)
@@ -225,6 +226,83 @@ def test_new_generation_never_inherits_prior_unresolved_completion(
         thread_id=OWNER_A.thread_id,
         generation_id=OWNER_A.generation_id,
     ) is True
+
+
+def test_takeover_clears_private_pending_attempt_but_not_completion_evidence(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "Edit",
+            "label": "Native Editor",
+            "value": None,
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.delivery_profile = "catalyst_value_unavailable"
+    service.acquire(OWNER_A, validate_context=False)
+    target_id = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER_A)
+    service.act(
+        "replace_text",
+        target_id,
+        OWNER_A,
+        element_token=observation.elements[0].token,
+        text="private unresolved value",
+    )
+
+    assert service._pending_mutation is not None
+    before = service.completion_evidence_statuses(OWNER_A)
+    service.take_over()
+
+    assert service._pending_mutation is None
+    assert service.completion_evidence_statuses(OWNER_A) == before
+    assert before[-1]["status"] == "unresolved"
+
+
+def test_different_explicit_replacement_supersedes_unresolved_attempt(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "Edit",
+            "label": "Native Editor",
+            "value": None,
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.delivery_profile = "catalyst_value_unavailable"
+    service.acquire(OWNER_A, validate_context=False)
+    target_id = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER_A)
+    first = service.act(
+        "replace_text",
+        target_id,
+        OWNER_A,
+        element_token=observation.elements[0].token,
+        text="first private value",
+    )
+
+    fake_transport.scenario.delivery_profile = "native_targeted_insertion"
+    second = service.act(
+        "replace_text",
+        target_id,
+        OWNER_A,
+        element_token=first.elements[0].token,
+        text="different private value",
+    )
+
+    statuses = service.completion_evidence_statuses(OWNER_A)
+    assert [entry["status"] for entry in statuses[-2:]] == [
+        "superseded",
+        "verified",
+    ]
+    assert second.outcome == "verified"
+    assert service.computer_use_completion_blocked(OWNER_A) is False
+    assert "first private value" not in repr(statuses)
+    assert "different private value" not in repr(statuses)
 
 
 def test_app_approval_denial_is_terminal_and_clears_live_control(fake_client) -> None:

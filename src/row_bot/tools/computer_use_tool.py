@@ -30,17 +30,17 @@ class ComputerUseInput(BaseModel):
     app: str = Field(default="", description="App display name for exact discovery, app-scoped initial capture, or launch; never a path or URL")
     window_hint: str = Field(default="", description="Optional user-provided title fragment used to narrow same-app window discovery; unrelated titles stay private")
     target_id: str = Field(default="", description="Opaque exact target ID. For initial capture of one already-open named app, omit this and pass app instead")
-    element_token: str = Field(default="", description="Opaque token from the latest capture. For type it only validates an already-selected caret-bearing control and never selects or retargets it. replace_text requires it for one exact complete-value replacement")
+    element_token: str = Field(default="", description="Opaque token from the latest capture. Token-bound type fresh-rematches one enabled writable text/search control and asks Cua to focus and insert into that exact target. replace_text requires a token for one exact complete-value replacement")
     x: int = Field(default=-1, description="Window-local screenshot X coordinate; semantic tokens are preferred")
     y: int = Field(default=-1, description="Window-local screenshot Y coordinate; semantic tokens are preferred")
     end_x: int = Field(default=-1, description="Window-local drag end X")
     end_y: int = Field(default=-1, description="Window-local drag end Y")
-    text: str = Field(default="", description="Non-sensitive mutation text, hidden from returned and persisted state. type inserts literally at the current caret or established selection and rejects horizontal tabs; replace_text replaces one exact supported complete value. Never use passwords, OTPs, or payment credentials")
+    text: str = Field(default="", description="Non-sensitive mutation text, hidden from returned and persisted state. Token-bound type inserts into the fresh exact editable target; tokenless type preserves the current caret/selection in the focused control. Horizontal tabs are rejected. replace_text sets one exact supported complete value. Never use passwords, OTPs, or payment credentials")
     keys: str = Field(default="", description="One key or plus-separated chord; for key_sequence, use 1-16 comma-separated Calculator keys such as 7,*,8,= or a compact safe expression such as 7×8=")
     direction: str = Field(default="", description="Scroll direction")
     amount: int = Field(default=0, description="Bounded scroll amount or wait milliseconds")
     capture_after: bool = Field(default=False, description="Capture after the action only when the next decision or final verification needs changed pixels or geometry")
-    visual_question: str = Field(default="", description="Optional question for the configured VisionService, applied to launch_app, target-ID capture, or exactly once after an action when capture_after is true. Initial app-scoped capture always defers Vision. Token actions stay on the native fast path unless this explicit post-action check is requested. Vision is advisory and never a semantic Boolean. Before the first coordinate-only visual action, use one target-ID Vision-grounded capture to identify the screenshot-local control/canvas region")
+    visual_question: str = Field(default="", description="Optional question for the configured VisionService, applied exactly once to launch_app or capture, or exactly once after an action when capture_after is true. Token actions stay on the native fast path unless this explicit post-action check is requested. Vision is advisory, never a semantic Boolean, and never verifies a semantic mutation. Before the first coordinate-only visual action, use one Vision-grounded capture to identify the screenshot-local control/canvas region")
     expected_effect: str = Field(default="", description="Display context only; never authorization")
     destination: str = Field(default="", description="Display context for a recipient/destination; never authorization")
     menu_path: str = Field(default="", description="For menu only: 1-16 exact case-sensitive native menu labels separated by >; no fuzzy matching or coordinate fallback")
@@ -93,8 +93,12 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "ambiguous_target": "More than one exact Computer target matched the requested app scope.",
             "paused_for_takeover": "Computer Use is paused for user control.",
             "driver_unavailable": "The Computer driver is unavailable.",
+            "background_unavailable": (
+                "Cua refused background delivery before input was dispatched."
+            ),
             "transient_driver_failure": "The Computer driver reported a temporary failure.",
             "driver_failed": "Computer action failed safely.",
+            "focus_refused": "Cua refused the exact foreground focus transaction before text input.",
             "hard_blocked": (
                 "Computer Use cannot target Row-Bot or another protected control surface."
                 if protected_controller
@@ -104,17 +108,22 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "approval_denied": "Computer access was denied.",
             "invalid_input": "Computer action input was invalid.",
             "no_progress": "Computer Use stopped because repeated actions made no progress.",
-            "target_not_selected": "The exact Computer target is not a selected caret-bearing control.",
+            "pending_mutation": "The same exact text insertion remains unresolved.",
         }
         remediation = {
             "ambiguous_target": "Select one opaque target_id from the returned candidates, then capture it.",
             "stale_observation": "Capture the exact same target once before retrying.",
             "target_gone": "Use a returned running canonical app name for one deliberate exact retry, or report that the requested app is unavailable.",
             "driver_unavailable": "Run Computer Use diagnostics, then start a new session.",
+            "background_unavailable": (
+                "Use only an explicitly supported foreground rung; do not invent a focus, "
+                "click, key, coordinate, clipboard, shell, or application-specific fallback."
+            ),
             "transient_driver_failure": "Retry this action once; stop if it fails again.",
             "paused_for_takeover": "Resume or Stop the session locally.",
             "no_progress": "Review the target or take over; blind retries are disabled.",
-            "target_not_selected": "Use replace_text for one exact complete value, or explicitly select the exact caret control and capture fresh evidence before type.",
+            "pending_mutation": "Do not replay the insertion. Capture exact semantic evidence, choose a different explicit replacement, or stop.",
+            "focus_refused": "Do not retry with clicks, focus, keys, coordinates, labels, clipboard, shell, or an application-specific route.",
             "hard_blocked": "Do not retry, enumerate aliases, or use another Computer action to bypass this protection.",
         }.get(explicit_code, "")
         payload = _error_payload(
@@ -232,6 +241,10 @@ def _observation_payload(
     effect_verified = bool(getattr(observation, "effect_verified", False))
     outcome = str(getattr(observation, "outcome", "") or "")
     verified_scope = str(getattr(observation, "verified_scope", "") or "")
+    dispatch_state = str(getattr(observation, "dispatch_state", "rejected") or "rejected")
+    driver_verdict = str(getattr(observation, "driver_verdict", "unverifiable") or "unverifiable")
+    semantic_postcondition = str(getattr(observation, "semantic_postcondition", "unavailable") or "unavailable")
+    visual_observation = str(getattr(observation, "visual_observation", "unavailable") or "unavailable")
     payload: dict[str, Any] = {
         "fresh_observation": observation.model_text(),
         "capture_is_fresh": True,
@@ -262,20 +275,41 @@ def _observation_payload(
             "cause": str(getattr(observation, "cause", "") or ""),
             "outcome": outcome or "unverified",
             "verified_scope": verified_scope,
+            "dispatch_state": dispatch_state,
+            "driver_verdict": driver_verdict,
+            "semantic_postcondition": semantic_postcondition,
+            "visual_observation": visual_observation,
+            "action_outcome": outcome or "unverified",
         })
     if next_action:
         payload["next_action"] = str(next_action)
-    elif action_dispatched and not effect_verified:
+    elif outcome == "delivered_unverified":
         payload["next_action"] = (
-            "action_dispatched=true is not proof of focus, caret position, selection, "
-            "navigation, or the requested outcome. Do not build a dependent mutation chain "
-            "on this result; use an exact semantic action, obtain one fresh confirmation when "
-            "necessary, or stop and report the limitation."
+            "The mutation was delivered but remains unresolved. Never replay an insertion. "
+            "A native replacement may be resolved by one fresh exact semantic capture; web "
+            "echo, Catalyst-null evidence, and Vision cannot verify it. Unrelated safe "
+            "navigation may continue, but do not commit or claim success."
+        )
+    elif semantic_postcondition == "contradicted":
+        payload["next_action"] = (
+            "Fresh exact semantic evidence contradicted the requested value. The replay "
+            "barrier is released; choose a different explicit safe action or report the no-op."
         )
     return _json_payload(display_summary, **payload)
 
 
-def _action_payload(receipt: ActionReceipt) -> str:
+def _action_payload(
+    receipt: ActionReceipt,
+    *,
+    computer_use_completion_blocked: bool = False,
+) -> str:
+    outcome = (
+        "verified"
+        if receipt.effect_verified
+        else "delivered_unverified"
+        if receipt.action_dispatched
+        else "refused"
+    )
     summary = (
         f"Driver confirmed {receipt.action.replace('_', ' ')} without an extra capture."
         if receipt.effect_verified
@@ -295,17 +329,34 @@ def _action_payload(receipt: ActionReceipt) -> str:
         visual_change=receipt.visual_change,
         effect=("exact_target_absence_observed" if receipt.cause == "target_disappeared" else "unverified"),
         effect_verified=receipt.effect_verified,
-        outcome=("exact_target_absence_observed" if receipt.cause == "target_disappeared" else "unverified"),
-        verified_scope=("exact_target" if receipt.cause == "target_disappeared" else ""),
-        computer_use_completion_blocked=False,
+        outcome=("exact_target_absence_observed" if receipt.cause == "target_disappeared" else outcome),
+        action_outcome=("exact_target_absence_observed" if receipt.cause == "target_disappeared" else outcome),
+        dispatch_state=("dispatched" if receipt.action_dispatched else "rejected"),
+        driver_verdict=receipt.driver_effect,
+        semantic_postcondition="unavailable",
+        visual_observation=(
+            "unavailable"
+            if receipt.visual_change == "unknown"
+            else receipt.visual_change
+        ),
+        verified_scope=(
+            "exact_target"
+            if receipt.cause == "target_disappeared"
+            else "exact_driver_transaction"
+            if receipt.effect_verified
+            else ""
+        ),
+        computer_use_completion_blocked=computer_use_completion_blocked,
         delivery_mode=receipt.delivery_mode,
         route=receipt.route,
         cause=receipt.cause,
         next_action=(
-            "action_dispatched=true is not proof of focus, caret position, selection, "
-            "navigation, or the requested outcome. Do not build a dependent mutation chain on "
-            "this result. Use an exact semantic action, obtain one fresh confirmation when "
-            "necessary, or stop and report the limitation; never blind-retry it."
+            "The exact action scope was verified. Proceed using newly observed tokens when "
+            "the next decision depends on changed semantic state."
+            if receipt.effect_verified
+            else "Dispatch and driver verdict do not prove a semantic postcondition. Capture "
+            "only when the next decision requires state. Never replay an unresolved "
+            "insertion; unrelated safe navigation may continue."
         ),
     )
 
@@ -485,7 +536,10 @@ class ComputerUseTool(BaseTool):
                     )
                 if normalized == "stop":
                     service.stop()
-                    return "Computer session stopped; queued and future input was cancelled."
+                    return (
+                        "Computer session stopped; queued and future input was cancelled. "
+                        "Stopping does not change unresolved completion evidence into success."
+                    )
                 from row_bot.computer_use.readiness import ReadinessCode, readiness
 
                 ready = readiness(enabled=True)
@@ -635,7 +689,12 @@ class ComputerUseTool(BaseTool):
                         approval_mode=approval_mode,
                     )
                     record_result(menu_receipt)
-                    return _action_payload(menu_receipt)
+                    return _action_payload(
+                        menu_receipt,
+                        computer_use_completion_blocked=(
+                            service.computer_use_completion_blocked()
+                        ),
+                    )
                 result = service.act(
                         normalized,
                         target_id,
@@ -656,7 +715,12 @@ class ComputerUseTool(BaseTool):
                     )
                 record_result(result)
                 if isinstance(result, ActionReceipt):
-                    return _action_payload(result)
+                    return _action_payload(
+                        result,
+                        computer_use_completion_blocked=(
+                            service.computer_use_completion_blocked()
+                        ),
+                    )
                 visual_change = str(getattr(result, "visual_change", "unknown") or "unknown")
                 effect_verified = bool(getattr(result, "effect_verified", False))
                 if effect_verified:
