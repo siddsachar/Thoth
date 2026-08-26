@@ -28,7 +28,9 @@ def test_model_tool_is_one_flat_provider_neutral_schema() -> None:
     assert "complete value" in schema["properties"]["text"]["description"]
     assert "replace_text" in schema["properties"]["element_token"]["description"]
     assert "Before the first coordinate-only visual action" in schema["properties"]["visual_question"]["description"]
-    assert "semantic actions deliberately skip Vision" in schema["properties"]["visual_question"]["description"]
+    assert "Token actions stay on the native fast path" in schema["properties"]["visual_question"]["description"]
+    assert "exactly once" in schema["properties"]["visual_question"]["description"]
+    assert "never a semantic Boolean" in schema["properties"]["visual_question"]["description"]
     assert "visual_question" in ComputerUseTool().description
     assert "never guess coordinates" in ComputerUseTool().description
     assert "action_dispatched=true is not proof" in ComputerUseTool().description

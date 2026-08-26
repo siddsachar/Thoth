@@ -57,7 +57,7 @@ def test_launch_app_can_vision_ground_its_single_fresh_capture(fake_client) -> N
     assert "Equals button" in observed.model_text()
 
 
-def test_semantic_element_action_does_not_add_redundant_vision_call(fake_client) -> None:
+def test_semantic_element_action_honors_one_explicit_post_action_vision_call(fake_client) -> None:
     vision = _Vision()
     service = ComputerUseService(
         client_factory=lambda: fake_client,
@@ -77,7 +77,8 @@ def test_semantic_element_action_does_not_add_redundant_vision_call(fake_client)
         visual_question="Confirm the semantic button changed visually.",
     )
 
-    assert vision.calls == []
+    assert len(vision.calls) == 1
+    assert vision.calls[0][1] == "Confirm the semantic button changed visually."
 
 
 def test_initial_app_capture_defers_vision_then_target_capture_calls_it_once(

@@ -66,7 +66,6 @@ def test_takeover_token_is_exact_one_time_and_never_switches_target(
     assert resumed.target.pid == first.target.pid
     assert resumed.target.window_id == first.target.window_id
     assert [name for name, _args in fake_transport.calls[calls_before:]] == [
-        "set_config",
         "start_session",
         "list_windows",
         "get_window_state",

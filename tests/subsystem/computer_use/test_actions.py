@@ -9,6 +9,7 @@ from row_bot.computer_use.service import (
     ComputerUseError,
     ComputerUseService,
     LeaseOwner,
+    Observation,
     StaleObservationError,
 )
 from row_bot.tools.computer_use_tool import _observation_payload
@@ -151,10 +152,10 @@ def test_every_routine_mutation_maps_once_without_an_implicit_post_capture(servi
     assert names[mutation_index + 1:] == []
     assert isinstance(result, ActionReceipt)
     assert result.action_dispatched is True
-    assert result.action_completed is True
+    assert result.action_completed is False
     assert result.driver_effect == "confirmed"
     assert result.visual_change == "unknown"
-    assert result.effect_verified is True
+    assert result.effect_verified is False
     assert "private typed value" not in repr(result)
     assert service.ephemeral_screenshot()
 
@@ -167,7 +168,7 @@ def test_every_routine_mutation_maps_once_without_an_implicit_post_capture(servi
         ("GridCell", True),
     ],
 )
-def test_replace_text_uses_one_exact_semantic_type_text_delivery(
+def test_replace_text_uses_one_exact_semantic_set_value_delivery(
     service,
     fake_transport,
     role: str,
@@ -193,24 +194,25 @@ def test_replace_text_uses_one_exact_semantic_type_text_delivery(
         text=replacement,
     )
 
-    type_calls = [
+    set_value_calls = [
         args
         for name, args in fake_transport.calls[calls_before:]
-        if name == "type_text"
+        if name == "set_value"
     ]
-    assert type_calls == [
+    assert set_value_calls == [
         {
             "pid": 4242,
             "window_id": 101,
             "element_token": observation.elements[0].token,
-            "text": f"<redacted:{len(replacement)} chars>",
+            "value": f"<redacted:{len(replacement)} chars>",
             "session": "row-bot-test-session",
         }
     ]
     assert fake_transport.document_value == replacement
-    assert isinstance(result, ActionReceipt)
-    assert result.action == "replace_text"
-    assert result.effect_verified is True
+    assert isinstance(result, Observation)
+    assert result.outcome == "provider_echo_unverified"
+    assert result.effect_verified is False
+    assert result.action_completed is False
     assert all(name != "press_key" for name, _args in fake_transport.calls[calls_before:])
 
 
@@ -219,7 +221,9 @@ def test_replace_text_rejects_missing_token_and_coordinates_before_mutation(
     fake_transport,
 ) -> None:
     target, observation = _target_and_capture(service)
-    mutations_before = [name for name, _args in fake_transport.calls].count("type_text")
+    mutations_before = sum(
+        name in {"set_value", "type_text"} for name, _args in fake_transport.calls
+    )
 
     with pytest.raises(ComputerUseError) as missing:
         service.act("replace_text", target, OWNER, text="hidden")
@@ -236,7 +240,9 @@ def test_replace_text_rejects_missing_token_and_coordinates_before_mutation(
 
     assert missing.value.code == "invalid_input"
     assert coordinates.value.code == "invalid_input"
-    assert [name for name, _args in fake_transport.calls].count("type_text") == mutations_before
+    assert sum(
+        name in {"set_value", "type_text"} for name, _args in fake_transport.calls
+    ) == mutations_before
 
 
 @pytest.mark.parametrize(
@@ -265,7 +271,10 @@ def test_replace_text_rejects_disabled_and_unsupported_controls_without_mutation
         )
 
     assert rejected.value.code == "invalid_input"
-    assert all(name != "type_text" for name, _args in fake_transport.calls[calls_before:])
+    assert all(
+        name not in {"set_value", "type_text"}
+        for name, _args in fake_transport.calls[calls_before:]
+    )
 
 
 def test_replace_text_rejects_nonprojected_token_without_mutation(
@@ -288,7 +297,10 @@ def test_replace_text_rejects_nonprojected_token_without_mutation(
             element_token=omitted_token,
             text="hidden",
         )
-    assert all(name != "type_text" for name, _args in fake_transport.calls[calls_before:])
+    assert all(
+        name not in {"set_value", "type_text"}
+        for name, _args in fake_transport.calls[calls_before:]
+    )
 
 
 def test_replace_text_rejects_stale_token_without_mutation(
@@ -309,7 +321,72 @@ def test_replace_text_rejects_stale_token_without_mutation(
             element_token=observation.elements[0].token,
             text="hidden",
         )
-    assert all(name != "type_text" for name, _args in fake_transport.calls[calls_before:])
+    assert all(
+        name not in {"set_value", "type_text"}
+        for name, _args in fake_transport.calls[calls_before:]
+    )
+
+
+def test_replace_text_rejects_ambiguous_fresh_exact_match_without_mutation(
+    service,
+    fake_transport,
+) -> None:
+    target_element = {
+        "role": "Edit",
+        "label": "Repeated field",
+        "enabled": True,
+        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
+    }
+    fake_transport.scenario.semantic_snapshots = (
+        (target_element,),
+        (target_element, dict(target_element)),
+    )
+    target, observation = _target_and_capture(service)
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(ComputerUseError) as ambiguous:
+        service.act(
+            "replace_text",
+            target,
+            OWNER,
+            element_token=observation.elements[0].token,
+            text="hidden",
+        )
+
+    assert ambiguous.value.code == "ambiguous_target"
+    assert all(
+        name not in {"set_value", "type_text"}
+        for name, _args in fake_transport.calls[calls_before:]
+    )
+
+
+def test_replace_text_unsupported_set_value_has_no_fallback(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {"role": "Edit", "label": "Writable field", "enabled": True},
+    )
+    target, observation = _target_and_capture(service)
+    fake_transport.scenario.action_error_code = "unsupported"
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(ComputerUseError) as unsupported:
+        service.act(
+            "replace_text",
+            target,
+            OWNER,
+            element_token=observation.elements[0].token,
+            text="hidden",
+        )
+
+    mutation_calls = [
+        name
+        for name, _args in fake_transport.calls[calls_before:]
+        if name in {"set_value", "type_text", "press_key", "hotkey"}
+    ]
+    assert unsupported.value.code == "unsupported_capability"
+    assert mutation_calls == ["set_value"]
 
 
 def test_replace_text_driver_refusal_or_unverified_effect_is_never_replayed(
@@ -320,7 +397,7 @@ def test_replace_text_driver_refusal_or_unverified_effect_is_never_replayed(
         {"role": "Edit", "label": "Current value", "enabled": True},
     )
     target, observation = _target_and_capture(service)
-    fake_transport.scenario.background_unavailable_tools = frozenset({"type_text"})
+    fake_transport.scenario.background_unavailable_tools = frozenset({"set_value"})
     calls_before = len(fake_transport.calls)
 
     with pytest.raises(ComputerUseError) as refused:
@@ -334,7 +411,8 @@ def test_replace_text_driver_refusal_or_unverified_effect_is_never_replayed(
 
     refused_calls = fake_transport.calls[calls_before:]
     assert refused.value.code == "background_unavailable"
-    assert [name for name, _args in refused_calls].count("type_text") == 1
+    assert [name for name, _args in refused_calls].count("set_value") == 1
+    assert all(name != "type_text" for name, _args in refused_calls)
     assert all(name not in {"bring_to_front", "press_key"} for name, _args in refused_calls)
 
     fake_transport.scenario.background_unavailable_tools = frozenset()
@@ -350,10 +428,12 @@ def test_replace_text_driver_refusal_or_unverified_effect_is_never_replayed(
     )
 
     unverified_calls = fake_transport.calls[calls_before:]
-    assert isinstance(result, ActionReceipt)
+    assert isinstance(result, Observation)
+    assert result.outcome == "provider_echo_unverified"
     assert result.effect_verified is False
     assert result.driver_effect == "unverifiable"
-    assert [name for name, _args in unverified_calls].count("type_text") == 1
+    assert [name for name, _args in unverified_calls].count("set_value") == 1
+    assert all(name != "type_text" for name, _args in unverified_calls)
     assert all(name != "press_key" for name, _args in unverified_calls)
 
 
@@ -401,14 +481,15 @@ def test_replace_text_keeps_secure_handoff_and_consequential_approval(
         approval_mode="approve",
     )
 
-    assert isinstance(result, ActionReceipt)
+    assert isinstance(result, Observation)
     assert len(approvals) == 1
     assert approvals[0]["action"] == "replace_text"
     assert approvals[0]["data_summary"] == (
         f"Text entry ({len(replacement)} characters; value hidden)"
     )
     assert replacement not in repr(approvals)
-    assert [name for name, _args in fake_transport.calls].count("type_text") == 1
+    assert [name for name, _args in fake_transport.calls].count("set_value") == 1
+    assert [name for name, _args in fake_transport.calls].count("type_text") == 0
     assert [name for name, _args in fake_transport.calls].count("press_key") == 0
 
 
@@ -456,7 +537,7 @@ def test_semantic_after_action_reports_truthful_native_change_and_receipt_fields
         OWNER,
         element_token=observation.elements[0].token,
         capture_after=True,
-        visual_question="Do not invoke Vision for semantic input",
+        visual_question="Run the one explicitly requested advisory Vision check",
     )
 
     assert result.native_change == "changed"
@@ -466,7 +547,7 @@ def test_semantic_after_action_reports_truthful_native_change_and_receipt_fields
     assert result.cause == "semantic_target"
     assert result.delivery_mode == "background"
     assert result.driver_effect == "unverifiable"
-    assert service.performance_snapshot()["vision_calls"] == before_vision
+    assert service.performance_snapshot()["vision_calls"] == before_vision + 1
 
 
 def test_unchanged_stateful_semantic_action_remains_delivered_but_unverified(
@@ -487,7 +568,7 @@ def test_unchanged_stateful_semantic_action_remains_delivered_but_unverified(
     )
 
     assert result.native_change == "unchanged"
-    assert result.action_completed is True
+    assert result.action_completed is False
     assert result.effect_verified is False
 
 
@@ -751,7 +832,7 @@ def test_focus_is_confirmed_once_and_prepares_without_an_implicit_capture(servic
     assert names.count("bring_to_front") == 1
     assert names[-1] == "bring_to_front"
     assert isinstance(result, ActionReceipt)
-    assert result.action_completed is True
+    assert result.action_completed is False
     assert service.status_snapshot()["foreground_prepared"] is True
 
 
@@ -980,7 +1061,7 @@ def _capability_service(fake_transport, *capabilities: str):
     client = CuaClient(
         "fake-cua-driver.exe",
         session_id="capability-session",
-        contract_version="0.19.3",
+        contract_version="0.20.0",
         capabilities=frozenset(capabilities),
         transport_factory=lambda *_args: fake_transport,
     )
@@ -1067,7 +1148,7 @@ def test_consequential_menu_reproves_exact_target_and_refusal_has_no_pixel_fallb
 
     client = CuaClient(
         "fake-cua-driver.exe",
-        contract_version="0.19.3",
+        contract_version="0.20.0",
         capabilities=frozenset({"invoke_menu"}),
         transport_factory=lambda *_args: fake_transport,
     )

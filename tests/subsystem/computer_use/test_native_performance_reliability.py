@@ -32,6 +32,20 @@ def _png(*, changed: bool = False) -> str:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
+def _grid_png(*, cursor_badge_only: bool = False, displayed_text: bool = False) -> str:
+    image = Image.new("RGB", (320, 120), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((20, 30, 280, 82), outline="black", width=2)
+    if displayed_text:
+        draw.rectangle((36, 46, 180, 64), fill="navy")
+    if cursor_badge_only:
+        draw.ellipse((132, 44, 158, 70), fill="deepskyblue")
+        draw.rectangle((156, 40, 220, 74), fill="deepskyblue")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
 def _browser_target(service, fake_transport) -> tuple[str, Observation]:
     fake_transport.scenario.apps = SANITIZED_NATIVE_BROWSER_APPS
     fake_transport.scenario.windows = (
@@ -202,7 +216,7 @@ def test_pixel_change_with_unknown_vision_is_not_goal_verification(service, fake
 
     assert isinstance(result, Observation)
     assert result.action_dispatched is True
-    assert result.action_completed is True
+    assert result.action_completed is False
     assert result.driver_effect == "unverifiable"
     assert result.visual_change == "changed"
     assert result.effect_verified is False
@@ -213,6 +227,295 @@ def test_pixel_change_with_unknown_vision_is_not_goal_verification(service, fake
     assert payload["ok"] is True
     assert payload["error"] is False
     assert payload["vision_evidence"]
+
+
+def test_exact_replacement_ignores_unrelated_tree_churn_and_blocks_dependent_mutation(
+    service,
+    fake_transport,
+) -> None:
+    stable_target = {
+        "role": "DataItem",
+        "label": "Selected item",
+        "value": "",
+        "enabled": True,
+        "selected": True,
+        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
+    }
+    volatile_before = tuple(
+        {"role": "Text", "label": f"Status {index:04d}", "value": ""}
+        for index in range(1_800)
+    )
+    volatile_after = tuple(
+        {
+            "role": "Text",
+            "label": f"Status {index:04d}",
+            "value": "changed elsewhere" if index == 1_799 else "",
+        }
+        for index in range(1_800)
+    )
+    fake_transport.scenario.apps = (
+        {"name": "Grid Editor", "running": True, "active": True},
+    )
+    fake_transport.scenario.windows = (
+        {
+            "window_id": 711,
+            "pid": 2711,
+            "app_name": "Grid Editor",
+            "title": "Untitled grid",
+            "bounds": {"x": 0, "y": 0, "width": 320, "height": 120},
+            "is_on_screen": True,
+        },
+    )
+    fake_transport.scenario.capture_pid = 2711
+    fake_transport.scenario.capture_window_id = 711
+    fake_transport.scenario.capture_dimensions = (320, 120)
+    fake_transport.scenario.capture_images = (
+        _grid_png(),
+        _grid_png(),
+        _grid_png(cursor_badge_only=True),
+    )
+    fake_transport.scenario.semantic_snapshots = (
+        (stable_target, *volatile_before),
+        (stable_target, *volatile_before),
+        (stable_target, *volatile_after),
+    )
+    fake_transport.scenario.rotate_element_tokens = True
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Grid Editor")[0]["target_id"]
+    initial = service.capture(target_id, OWNER)
+    replacement = "private requested value"
+
+    result = service.act(
+        "replace_text",
+        target_id,
+        OWNER,
+        element_token=initial.elements[0].token,
+        text=replacement,
+        capture_after=True,
+    )
+
+    assert isinstance(result, Observation)
+    assert result.action_dispatched is True
+    assert result.action_completed is False
+    assert result.effect_verified is False
+    assert result.native_change == "unchanged"
+    assert result.outcome == "suspected_noop"
+    assert result.verified_scope == ""
+    names_before_block = [name for name, _args in fake_transport.calls]
+
+    with pytest.raises(ComputerUseError) as dependent_text:
+        service.act(
+            "replace_text",
+            target_id,
+            OWNER,
+            element_token=result.elements[0].token,
+            text="second dependent value",
+        )
+    with pytest.raises(ComputerUseError) as dependent_commit:
+        service.act("key", target_id, OWNER, keys="enter")
+
+    assert dependent_text.value.code == "pending_mutation"
+    assert dependent_commit.value.code == "pending_mutation"
+    assert [name for name, _args in fake_transport.calls] == names_before_block
+    assert service.computer_use_completion_blocked(OWNER) is True
+
+
+def test_provider_echo_without_displayed_target_change_is_unverified(
+    service,
+    fake_transport,
+) -> None:
+    old = {
+        "role": "Edit",
+        "label": "Document field",
+        "value": "old",
+        "enabled": True,
+        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
+    }
+    echoed = {**old, "value": "new"}
+    fake_transport.scenario.capture_dimensions = (320, 120)
+    fake_transport.scenario.capture_images = (
+        _grid_png(),
+        _grid_png(),
+        _grid_png(cursor_badge_only=True),
+    )
+    fake_transport.scenario.semantic_snapshots = ((old,), (old,), (echoed,))
+    fake_transport.scenario.rotate_element_tokens = True
+    target_id, initial = _browser_target(service, fake_transport)
+
+    result = service.act(
+        "replace_text",
+        target_id,
+        OWNER,
+        element_token=initial.elements[0].token,
+        text="new",
+        capture_after=True,
+    )
+
+    assert result.outcome == "provider_echo_unverified"
+    assert result.native_change == "changed"
+    assert result.visual_change == "unchanged"
+    assert result.effect_verified is False
+    assert result.action_completed is False
+
+
+def test_exact_replacement_with_target_display_change_is_displayed_scope_only(
+    service,
+    fake_transport,
+) -> None:
+    old = {
+        "role": "Edit",
+        "label": "Document field",
+        "value": "old",
+        "enabled": True,
+        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
+    }
+    changed = {**old, "value": "new"}
+    fake_transport.scenario.capture_dimensions = (320, 120)
+    fake_transport.scenario.capture_images = (
+        _grid_png(),
+        _grid_png(),
+        _grid_png(displayed_text=True),
+    )
+    fake_transport.scenario.semantic_snapshots = ((old,), (old,), (changed,))
+    fake_transport.scenario.rotate_element_tokens = True
+    target_id, initial = _browser_target(service, fake_transport)
+
+    result = service.act(
+        "replace_text",
+        target_id,
+        OWNER,
+        element_token=initial.elements[0].token,
+        text="new",
+        capture_after=True,
+    )
+
+    assert result.outcome == "displayed_postcondition_observed"
+    assert result.effect_verified is True
+    assert result.action_completed is True
+    assert result.verified_scope == "displayed_target"
+
+
+def test_exact_replacement_already_satisfied_skips_dispatch(service, fake_transport) -> None:
+    satisfied = {
+        "role": "Edit",
+        "label": "Document field",
+        "value": "already",
+        "enabled": True,
+        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
+    }
+    fake_transport.scenario.capture_dimensions = (320, 120)
+    fake_transport.scenario.capture_images = (_grid_png(), _grid_png())
+    fake_transport.scenario.semantic_snapshots = ((satisfied,), (satisfied,))
+    fake_transport.scenario.rotate_element_tokens = True
+    target_id, initial = _browser_target(service, fake_transport)
+    calls_before = len(fake_transport.calls)
+
+    result = service.act(
+        "replace_text",
+        target_id,
+        OWNER,
+        element_token=initial.elements[0].token,
+        text="already",
+        capture_after=True,
+    )
+
+    assert result.outcome == "already_satisfied"
+    assert result.action_dispatched is False
+    assert result.action_completed is True
+    assert result.effect_verified is True
+    assert result.verified_scope == "displayed_target"
+    assert all(name != "set_value" for name, _args in fake_transport.calls[calls_before:])
+
+
+def test_fresh_exact_capture_clears_pending_only_with_displayed_target_evidence(
+    service,
+    fake_transport,
+) -> None:
+    old = {
+        "role": "Edit",
+        "label": "Document field",
+        "value": "old",
+        "enabled": True,
+        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
+    }
+    requested = {**old, "value": "new"}
+    fake_transport.scenario.capture_dimensions = (320, 120)
+    fake_transport.scenario.capture_images = (
+        _grid_png(),
+        _grid_png(),
+        _grid_png(cursor_badge_only=True),
+        _grid_png(displayed_text=True),
+    )
+    fake_transport.scenario.semantic_snapshots = (
+        (old,),
+        (old,),
+        (requested,),
+        (requested,),
+    )
+    fake_transport.scenario.rotate_element_tokens = True
+    target_id, initial = _browser_target(service, fake_transport)
+
+    uncertain = service.act(
+        "replace_text",
+        target_id,
+        OWNER,
+        element_token=initial.elements[0].token,
+        text="new",
+    )
+    resolved = service.capture(target_id, OWNER)
+
+    assert uncertain.outcome == "provider_echo_unverified"
+    assert uncertain.computer_use_completion_blocked is True
+    assert resolved.computer_use_completion_blocked is False
+    assert service.computer_use_completion_blocked(OWNER) is False
+
+
+def test_permitted_recovery_click_invalidates_pending_pixel_comparison(
+    service,
+    fake_transport,
+) -> None:
+    old = {
+        "role": "Edit",
+        "label": "Document field",
+        "value": "old",
+        "enabled": True,
+        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
+    }
+    requested = {**old, "value": "new"}
+    fake_transport.scenario.capture_dimensions = (320, 120)
+    fake_transport.scenario.capture_images = (
+        _grid_png(),
+        _grid_png(),
+        _grid_png(cursor_badge_only=True),
+        _grid_png(displayed_text=True),
+    )
+    fake_transport.scenario.semantic_snapshots = (
+        (old,),
+        (old,),
+        (requested,),
+        (requested,),
+    )
+    fake_transport.scenario.rotate_element_tokens = True
+    target_id, initial = _browser_target(service, fake_transport)
+    uncertain = service.act(
+        "replace_text",
+        target_id,
+        OWNER,
+        element_token=initial.elements[0].token,
+        text="new",
+    )
+
+    service.act(
+        "click",
+        target_id,
+        OWNER,
+        element_token=uncertain.elements[0].token,
+        approval_mode="allow_all",
+    )
+    later = service.capture(target_id, OWNER)
+
+    assert later.computer_use_completion_blocked is True
+    assert service.computer_use_completion_blocked(OWNER) is True
 
 
 def test_single_accepted_unchanged_coordinate_action_is_not_a_tool_error(
@@ -230,7 +533,7 @@ def test_single_accepted_unchanged_coordinate_action_is_not_a_tool_error(
     assert payload["ok"] is True
     assert payload["error"] is False
     assert payload["action_dispatched"] is True
-    assert payload["action_completed"] is True
+    assert payload["action_completed"] is False
     assert payload["visual_change"] == "unchanged"
     assert payload["effect_verified"] is False
     assert "error_code" not in payload
@@ -507,7 +810,7 @@ def test_unknown_visual_comparisons_do_not_consume_no_progress_budget(
             approval_mode="allow_all",
         )
         assert result.visual_change == "unknown"
-        assert result.action_completed is True
+        assert result.action_completed is False
 
     assert service.status_snapshot()["consecutive_visual_no_effects"] == 0
     assert service.status_snapshot()["state"] == "observing"

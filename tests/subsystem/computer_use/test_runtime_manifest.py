@@ -5,9 +5,9 @@ from row_bot.computer_use.readiness import load_cua_manifest
 
 def test_reviewed_manifest_is_exact_and_never_latest() -> None:
     manifest = load_cua_manifest()
-    assert manifest["version"] == "0.19.3"
-    assert manifest["tag"] == "cua-driver-rs-v0.19.3"
-    assert manifest["commit"] == "a1672e7b11951275ecfba3384264d4530185d0db"
+    assert manifest["version"] == "0.20.0"
+    assert manifest["tag"] == "cua-driver-rs-v0.20.0"
+    assert manifest["commit"] == "bb8c86049cad1bf0853c6d25c03c14875d0d047f"
     assert manifest["license"] == "MIT"
     assert manifest["telemetry_notice_version"] == 2
     assert manifest["reviewed_service_capabilities"] == ["verify_state", "invoke_menu"]
@@ -15,13 +15,13 @@ def test_reviewed_manifest_is_exact_and_never_latest() -> None:
         key: value["sha256"]
         for key, value in manifest["assets"].items()
     } == {
-        "windows-x86_64": "e48b0117e343cec2577fc12693c741e094f389f8d4aef91e06284960bb03bce1",
-        "windows-arm64": "693cff4618fdcb6b0ea797e2f5b17eb6291dcea4b62da7bc6b5c373f1aa1852f",
-        "macos-universal": "a5b064bd3e05c3d97c4aaba1b8818e7b4203081ffc5f3186220005d356574aaa",
+        "windows-x86_64": "bd27528e0d81bf78c03cdd77be28a3ea31899a370eaf06938ad21edac73290bd",
+        "windows-arm64": "a01686a90725d9c902d558c053a0dd95bd181faff0418d9acb495da63f04a6a1",
+        "macos-universal": "d5e61fecebd9a620e50c2b8b608c8e7e8141f74c6faebc2ae9ef5d0d96cce7b8",
     }
     for asset in manifest["assets"].values():
         assert len(asset["sha256"]) == 64
-        assert "/cua-driver-rs-v0.19.3/" in asset["url"]
+        assert "/cua-driver-rs-v0.20.0/" in asset["url"]
         assert "latest" not in asset["url"]
 
 

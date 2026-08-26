@@ -89,6 +89,9 @@ class FakeScenario:
     verify_status: str = "satisfied"
     menu_error_code: str = ""
     close_target_after_labels: frozenset[str] = field(default_factory=frozenset)
+    rotate_element_tokens: bool = False
+    set_value_updates_document: bool = True
+    action_error_message: str = "fake action failure"
 
 
 class FakeCuaTransport:
@@ -123,6 +126,8 @@ class FakeCuaTransport:
         recorded = dict(args)
         if name == "type_text" and "text" in recorded:
             recorded["text"] = f"<redacted:{len(str(recorded['text']))} chars>"
+        if name == "set_value" and "value" in recorded:
+            recorded["value"] = f"<redacted:{len(str(recorded['value']))} chars>"
         self.calls.append((name, recorded))
         if self.scenario.disconnect:
             self.scenario.disconnect = False
@@ -307,8 +312,42 @@ class FakeCuaTransport:
                     index if self.scenario.oversized_tree else 1
                 )
                 source = element_spec[3] if len(element_spec) > 3 else {}
-                token = f"g{self.generation}-element-{index}"
+                token_generation = (
+                    f"g{self.generation}-s{self.capture_index}"
+                    if self.scenario.rotate_element_tokens
+                    else f"g{self.generation}"
+                )
+                token = f"{token_generation}-element-{index}"
                 self.element_labels[token] = label
+                source_frame = source.get("frame")
+                frame = (
+                    dict(source_frame)
+                    if isinstance(source_frame, dict)
+                    else {
+                        "x": self.scenario.element_frame[0],
+                        "y": self.scenario.element_frame[1],
+                        "w": self.scenario.element_frame[2],
+                        "h": self.scenario.element_frame[3],
+                    }
+                )
+                default_value = (
+                    self.document_value
+                    if str(role).casefold()
+                    in {
+                        "cell",
+                        "dataitem",
+                        "edit",
+                        "entry",
+                        "gridcell",
+                        "input",
+                        "tablecell",
+                        "textfield",
+                        "textinput",
+                        "textbox",
+                        "text_field",
+                    }
+                    else ""
+                )
                 element = {
                     "element_index": index,
                     "element_token": token,
@@ -317,15 +356,10 @@ class FakeCuaTransport:
                     "value": str(
                         source.get(
                             "value",
-                            self.document_value if index == 2 else "",
+                            default_value,
                         )
                     ),
-                    "frame": {
-                        "x": self.scenario.element_frame[0],
-                        "y": self.scenario.element_frame[1],
-                        "w": self.scenario.element_frame[2],
-                        "h": self.scenario.element_frame[3],
-                    },
+                    "frame": frame,
                     "depth": depth,
                 }
                 for key in (
@@ -386,7 +420,7 @@ class FakeCuaTransport:
                 content=tuple(content),
                 structured_content=structured,
             )
-        if name in {"click", "double_click", "right_click", "type_text", "press_key", "hotkey", "scroll", "drag", "bring_to_front"}:
+        if name in {"click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "scroll", "drag", "bring_to_front"}:
             delivery_mode = str(args.get("delivery_mode") or "background")
             accepted_noop = bool(
                 name in self.scenario.accepted_background_noop_tools
@@ -402,7 +436,7 @@ class FakeCuaTransport:
                 return self._error("element token is stale", "stale_element")
             if self.scenario.action_error_code:
                 return self._error(
-                    "fake action failure",
+                    self.scenario.action_error_message,
                     self.scenario.action_error_code,
                 )
             if name in self.scenario.background_unavailable_tools and delivery_mode != "foreground":
@@ -431,6 +465,16 @@ class FakeCuaTransport:
                 )
                 return self._result({
                     "path": "key_events",
+                    "effect": effect,
+                    "verified": effect == "confirmed",
+                    "delivery_mode": delivery_mode,
+                })
+            if name == "set_value":
+                if self.scenario.set_value_updates_document:
+                    self.document_value = str(args.get("value") or "")
+                effect = self.scenario.element_type_effect
+                return self._result({
+                    "path": "ax",
                     "effect": effect,
                     "verified": effect == "confirmed",
                     "delivery_mode": delivery_mode,

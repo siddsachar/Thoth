@@ -342,7 +342,7 @@ def build_computer_use_settings_card(tool_registry: Any) -> None:
     with disclosure, ui.card().classes("q-pa-lg").style("width: 680px; max-width: 94vw;"):
         ui.label("Cua Driver telemetry warning").classes("text-h6")
         ui.label(DISCLOSURE_TEXT).classes("text-sm")
-        ui.link("Learn more", "https://github.com/trycua/cua/blob/cua-driver-rs-v0.19.3/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs", new_tab=True)
+        ui.link("Learn more", "https://github.com/trycua/cua/blob/cua-driver-rs-v0.20.0/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs", new_tab=True)
         with ui.row().classes("w-full justify-end gap-2"):
             def _cancel() -> None:
                 cancel_disclosure()

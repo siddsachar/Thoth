@@ -69,7 +69,8 @@ def test_coordinate_drag_uses_screenshot_coordinates_once_and_verifies_changed_r
     }]
     assert [name for name, _args in calls] == ["drag", "get_window_state"]
     assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
+    assert result.action_effect == "unverified"
+    assert result.visual_change == "changed"
     assert result.visual_change == "changed"
     assert result.effect_verified is False
 
@@ -170,7 +171,8 @@ def test_three_varied_accepted_no_effect_drags_stop_with_needs_attention(
                 capture_after=True,
             )
             assert isinstance(result, Observation)
-            assert result.action_effect == "unchanged"
+            assert result.action_effect == "unverified"
+            assert result.visual_change == "unchanged"
         else:
             with pytest.raises(ComputerUseError, match="no visual effect") as exc_info:
                 service.act(
@@ -210,7 +212,8 @@ def test_changed_toolbar_clicks_do_not_reset_no_effect_canvas_drag_budget(
                 capture_after=True,
             )
             assert isinstance(result, Observation)
-            assert result.action_effect == "unchanged"
+            assert result.action_effect == "unverified"
+            assert result.visual_change == "unchanged"
         else:
             with pytest.raises(ComputerUseError, match="no visual effect") as exc_info:
                 service.act(

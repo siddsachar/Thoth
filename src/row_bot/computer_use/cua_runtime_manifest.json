@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "version": "0.19.3",
-  "tag": "cua-driver-rs-v0.19.3",
-  "commit": "a1672e7b11951275ecfba3384264d4530185d0db",
+  "version": "0.20.0",
+  "tag": "cua-driver-rs-v0.20.0",
+  "commit": "bb8c86049cad1bf0853c6d25c03c14875d0d047f",
   "license": "MIT",
   "telemetry_contract": "cua-rs-telemetry-v3-reviewed-by-row-bot-v2",
   "telemetry_notice_version": 2,
@@ -12,7 +12,7 @@
     "product, platform, architecture, transport, and install/update lifecycle",
     "bounded client, provider, model, and agent categories",
     "tool and operation categories, success, bounded refusal/error class, duration bucket, output type, and output-size bucket",
-    "aggregate session counts and bounded capture-scope, browser, cursor, recording, and config-usage flags",
+    "aggregate session counts and bounded window/desktop modality, capture-scope, browser, cursor, recording, and config-usage flags",
     "bounded permission-gate state and duration"
   ],
   "telemetry_excluded_content": [
@@ -28,24 +28,24 @@
     "raw errors"
   ],
   "reviewed_service_capabilities": ["verify_state", "invoke_menu"],
-  "release_url": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.19.3",
+  "release_url": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.20.0",
   "assets": {
     "windows-x86_64": {
-      "name": "cua-driver-rs-0.19.3-windows-x86_64.zip",
-      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.19.3/cua-driver-rs-0.19.3-windows-x86_64.zip",
-      "sha256": "e48b0117e343cec2577fc12693c741e094f389f8d4aef91e06284960bb03bce1",
+      "name": "cua-driver-rs-0.20.0-windows-x86_64.zip",
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.20.0/cua-driver-rs-0.20.0-windows-x86_64.zip",
+      "sha256": "bd27528e0d81bf78c03cdd77be28a3ea31899a370eaf06938ad21edac73290bd",
       "executable_candidates": ["cua-driver.exe", "bin/cua-driver.exe"]
     },
     "windows-arm64": {
-      "name": "cua-driver-rs-0.19.3-windows-arm64.zip",
-      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.19.3/cua-driver-rs-0.19.3-windows-arm64.zip",
-      "sha256": "693cff4618fdcb6b0ea797e2f5b17eb6291dcea4b62da7bc6b5c373f1aa1852f",
+      "name": "cua-driver-rs-0.20.0-windows-arm64.zip",
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.20.0/cua-driver-rs-0.20.0-windows-arm64.zip",
+      "sha256": "a01686a90725d9c902d558c053a0dd95bd181faff0418d9acb495da63f04a6a1",
       "executable_candidates": ["cua-driver.exe", "bin/cua-driver.exe"]
     },
     "macos-universal": {
-      "name": "cua-driver-rs-0.19.3-darwin-universal.tar.gz",
-      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.19.3/cua-driver-rs-0.19.3-darwin-universal.tar.gz",
-      "sha256": "a5b064bd3e05c3d97c4aaba1b8818e7b4203081ffc5f3186220005d356574aaa",
+      "name": "cua-driver-rs-0.20.0-darwin-universal.tar.gz",
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.20.0/cua-driver-rs-0.20.0-darwin-universal.tar.gz",
+      "sha256": "d5e61fecebd9a620e50c2b8b608c8e7e8141f74c6faebc2ae9ef5d0d96cce7b8",
       "executable_candidates": ["CuaDriver.app/Contents/MacOS/cua-driver", "CuaDriver.app/Contents/MacOS/CuaDriver"]
     }
   }

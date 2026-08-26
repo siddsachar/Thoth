@@ -20,14 +20,15 @@ from row_bot.data_paths import get_row_bot_data_dir
 NOTICE_VERSION = 2
 RUNTIME_ID = "cua-driver"
 DISCLOSURE_TEXT = (
-    "Computer Use is powered by the open-source Cua Driver 0.19.3. Cua telemetry "
+    "Computer Use is powered by the open-source Cua Driver 0.20.0. Cua telemetry "
     "is enabled upstream by default and sends pseudonymous product analytics to "
     "Cua's EU PostHog endpoint. Events can include random installation and "
     "process-session identifiers; Cua/platform/architecture/transport versions; "
     "bounded client, provider, model, and agent categories; tool/operation, "
     "success, refusal/error class, duration bucket, output type/size bucket; "
-    "aggregate session counts and capture-scope/browser/cursor/recording/config "
-    "usage flags; permission-gate state; and install/update lifecycle events. "
+    "aggregate session counts and window/desktop modality, capture-scope/browser/"
+    "cursor/recording/config usage flags; permission-gate state; and install/update "
+    "lifecycle events. "
     "Row-Bot disables Cua update checks and does not expose Cua recording, browser, "
     "desktop-wide, updater, autostart, clipboard, or arbitrary execution tools. "
     "Based on the reviewed tagged source, telemetry does not receive prompts, "

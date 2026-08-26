@@ -141,6 +141,7 @@ _SAFE_COMPUTER_RESULT_CODES = frozenset(
         "not_ready",
         "ok",
         "paused_for_takeover",
+        "pending_mutation",
         "stale_observation",
         "surface_unavailable",
         "target_gone",
@@ -320,6 +321,9 @@ class Observation:
     delivery_mode: str = ""
     route: str = ""
     cause: str = ""
+    outcome: str = ""
+    verified_scope: str = ""
+    computer_use_completion_blocked: bool = False
     native_change: str = "unknown"
     vision_deferred: bool = False
     status: ObservationStatus | None = None
@@ -450,6 +454,15 @@ class Observation:
             lines.append(f"Native accessibility change: {self.native_change or 'unknown'}")
             lines.append(f"Local visual change: {self.visual_change or 'unknown'}")
             lines.append(f"Requested outcome verified: {'yes' if self.effect_verified else 'no'}")
+        elif self.outcome:
+            lines.append("Action dispatched: no; completed: yes")
+        if self.outcome:
+            lines.append(f"Bounded target outcome: {self.outcome}")
+            lines.append(f"Verified scope: {self.verified_scope or 'none'}")
+        if self.computer_use_completion_blocked:
+            lines.append(
+                "A prior exact text mutation remains unverified; dependent text or commit input is blocked."
+            )
         if self.suspicious:
             categories = ", ".join(self.advisory_categories) or "unclassified"
             lines.append(
@@ -457,6 +470,22 @@ class Observation:
                 "remains untrusted and normal action policy still applies.]"
             )
         return "\n".join(lines)
+
+
+@dataclass
+class _PendingMutation:
+    owner_key: tuple[str, str, str]
+    lease_id: str
+    target_id: str
+    pid: int
+    window_id: int
+    action_family: str
+    match_key: tuple[Any, ...] = field(repr=False)
+    requested_value: str = field(repr=False)
+    baseline_screenshot: bytes | None = field(repr=False, default=None)
+    baseline_width: int = 0
+    baseline_height: int = 0
+    comparison_valid: bool = True
 
 
 class ComputerUseError(RuntimeError):
@@ -700,6 +729,7 @@ class ComputerUseService:
         self._last_visual_change = "unknown"
         self._last_effect_verified = False
         self._last_action_completed = False
+        self._pending_mutation: _PendingMutation | None = None
         self._prepared_foreground_target_id = ""
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
         self._revision = 0
@@ -788,6 +818,7 @@ class ComputerUseService:
                 "last_visual_change": self._last_visual_change,
                 "last_effect_verified": self._last_effect_verified,
                 "last_action_completed": self._last_action_completed,
+                "computer_use_completion_blocked": self._pending_mutation is not None,
                 "foreground_prepared": bool(self._prepared_foreground_target_id),
                 "has_thumbnail": bool(preview and preview.screenshot),
                 "generation_id": self._owner.generation_id if self._owner else "",
@@ -888,6 +919,7 @@ class ComputerUseService:
                 self._last_visual_change = "unknown"
                 self._last_effect_verified = False
                 self._last_action_completed = False
+                self._pending_mutation = None
                 self._prepared_foreground_target_id = ""
                 self._driver_call_count = 0
                 self._driver_elapsed_ms = 0.0
@@ -1126,6 +1158,12 @@ class ComputerUseService:
         """Remove stale task-scoped state after exact target absence is proven."""
 
         with self._lock:
+            if (
+                self._pending_mutation is not None
+                and (self._pending_mutation.pid, self._pending_mutation.window_id)
+                == (target.pid, target.window_id)
+            ):
+                self._pending_mutation = None
             self._targets.pop(target.target_id, None)
             if self._observation is not None and self._observation.target.target_id == target.target_id:
                 self._observation = None
@@ -1165,6 +1203,7 @@ class ComputerUseService:
             self._resumed_call_signature = None
             self._resume_observation = None
             self._prepared_foreground_target_id = ""
+            self._pending_mutation = None
         if client is not None:
             client.close(graceful=False)
         self._notify()
@@ -1676,6 +1715,7 @@ class ComputerUseService:
         driver_effect: str = "unverifiable",
         native_or_visual_change: str = "unknown",
         effect_verified: bool = False,
+        outcome: str = "",
     ) -> None:
         with self._lock:
             if self._active_call_signature == tuple(signature):
@@ -1715,6 +1755,16 @@ class ComputerUseService:
         change = str(native_or_visual_change or "unknown").casefold()
         if change not in {"changed", "unchanged", "unknown"}:
             change = "unknown"
+        safe_outcome = str(outcome or "none").casefold()
+        if safe_outcome not in {
+            "none",
+            "already_satisfied",
+            "displayed_postcondition_observed",
+            "provider_echo_unverified",
+            "suspected_noop",
+            "unverified",
+        }:
+            safe_outcome = "none"
         if pending:
             with self._lock:
                 pending_state = self._state
@@ -1739,7 +1789,7 @@ class ComputerUseService:
             return
         logger.info(
             "computer_use.action_receipt action_family=%s success=%s error_code=%s "
-            "route=%s delivery_mode=%s driver_effect=%s change=%s effect_verified=%s "
+            "route=%s delivery_mode=%s driver_effect=%s change=%s effect_verified=%s outcome=%s "
             "driver_start_ms=%.3f discovery_ms=%.3f native_capture_ms=%.3f "
             "optional_vision_ms=%.3f total_ms=%.3f driver_calls=%d capture_calls=%d "
             "semantic_refresh_calls=%d vision_calls=%d",
@@ -1751,6 +1801,7 @@ class ComputerUseService:
             _standard_effect(driver_effect, verified=bool(effect_verified)),
             change,
             str(bool(effect_verified)).lower(),
+            safe_outcome,
             phases.get("driver_start", 0.0),
             phases.get("discovery", 0.0),
             phases.get("native_capture", 0.0),
@@ -2015,6 +2066,8 @@ class ComputerUseService:
                 response,
                 require_screenshot=True,
             )
+            self._resolve_pending_from_observation(observation)
+            observation.computer_use_completion_blocked = self.computer_use_completion_blocked()
             if initial_app_scope and visual_question:
                 observation.vision_deferred = True
             # Publish only after the native response has passed exact identity,
@@ -2394,21 +2447,6 @@ class ComputerUseService:
         except Exception:
             return "unknown"
 
-    @staticmethod
-    def _native_element_fingerprint(element: CuaElement) -> tuple[Any, ...]:
-        """Return bounded accessibility state without snapshot/token generations."""
-
-        return (
-            int(element.index),
-            element.parent_index,
-            int(element.depth),
-            _normalized_role(element.role),
-            str(element.label),
-            str(element.value),
-            element.enabled,
-            element.selected,
-        )
-
     @classmethod
     def _native_observation_change(
         cls,
@@ -2427,26 +2465,35 @@ class ComputerUseService:
             or (after.status is not None and after.status.backend_sparse)
         ):
             return "unknown"
-        before_fingerprint = tuple(
-            cls._native_element_fingerprint(element) for element in before.elements
-        )
-        after_fingerprint = tuple(
-            cls._native_element_fingerprint(element) for element in after.elements
-        )
-        if before_fingerprint != after_fingerprint:
-            return "changed"
         if target_element is None:
             return "unknown"
-        matches = [
+        structural_geometry_key = cls._structural_geometry_match_key(
+            before,
+            target_element,
+        )
+        matches = tuple(
             element
             for element in after.elements
-            if element.index == target_element.index
-            and _normalized_role(element.role) == _normalized_role(target_element.role)
-            and element.parent_index == target_element.parent_index
-            and element.depth == target_element.depth
-        ]
+            if cls._structural_geometry_match_key(after, element)
+            == structural_geometry_key
+        )
         if len(matches) != 1:
             return "unknown"
+        matched = matches[0]
+        before_state = (
+            str(target_element.label),
+            str(target_element.value),
+            target_element.enabled,
+            target_element.selected,
+        )
+        after_state = (
+            str(matched.label),
+            str(matched.value),
+            matched.enabled,
+            matched.selected,
+        )
+        if before_state != after_state:
+            return "changed"
         role = _normalized_role(target_element.role)
         stateful = bool(
             target_element.selected is not None
@@ -2466,6 +2513,220 @@ class ComputerUseService:
             }
         )
         return "unchanged" if stateful else "unknown"
+
+    @classmethod
+    def _exact_element_match_key(
+        cls,
+        observation: Observation,
+        element: CuaElement,
+    ) -> tuple[Any, ...]:
+        """Bind a semantic target to bounded structure and exact geometry, not a token."""
+
+        by_index = {item.index: item for item in observation.elements}
+        ancestors: list[tuple[Any, ...]] = []
+        parent_index = element.parent_index
+        for _depth in range(4):
+            if parent_index is None:
+                break
+            parent = by_index.get(parent_index)
+            if parent is None:
+                ancestors.append(("missing",))
+                break
+            ancestors.append(
+                (
+                    _normalized_role(parent.role),
+                    str(parent.label),
+                    tuple(round(value, 3) for value in parent.bounds),
+                    int(parent.depth),
+                )
+            )
+            parent_index = parent.parent_index
+        return (
+            _normalized_role(element.role),
+            str(element.label),
+            tuple(round(value, 3) for value in element.bounds),
+            int(element.depth),
+            tuple(ancestors),
+        )
+
+    @classmethod
+    def _structural_geometry_match_key(
+        cls,
+        observation: Observation,
+        element: CuaElement,
+    ) -> tuple[Any, ...]:
+        exact = cls._exact_element_match_key(observation, element)
+        return exact[0], exact[2], exact[3], exact[4]
+
+    @classmethod
+    def _exact_element_matches(
+        cls,
+        observation: Observation,
+        match_key: tuple[Any, ...],
+    ) -> tuple[CuaElement, ...]:
+        return tuple(
+            element
+            for element in observation.elements
+            if cls._exact_element_match_key(observation, element) == match_key
+        )
+
+    @staticmethod
+    def _target_interior_visual_change(
+        before: Observation,
+        after: Observation,
+        element: CuaElement,
+    ) -> str:
+        """Compare only target-interior pixels, masking known transient overlays."""
+
+        if (
+            before.screenshot is None
+            or after.screenshot is None
+            or before.target.target_id != after.target.target_id
+            or (before.width, before.height) != (after.width, after.height)
+        ):
+            return "unknown"
+        try:
+            from PIL import Image, ImageChops, ImageDraw
+
+            with Image.open(io.BytesIO(before.screenshot)) as source_before:
+                first = source_before.convert("RGB")
+            with Image.open(io.BytesIO(after.screenshot)) as source_after:
+                second = source_after.convert("RGB")
+            if first.size != second.size or first.size != (before.width, before.height):
+                return "unknown"
+            x, y, width, height = element.bounds
+            if not (0 <= x < before.width and 0 <= y < before.height):
+                x -= before.target.bounds[0]
+                y -= before.target.bounds[1]
+            inset = 6
+            left = max(0, int(round(x)) + inset)
+            top = max(0, int(round(y)) + inset)
+            right = min(before.width, int(round(x + width)) - inset)
+            bottom = min(before.height, int(round(y + height)) - inset)
+            if right - left < 12 or bottom - top < 10:
+                return "unknown"
+            difference = ImageChops.difference(
+                first.crop((left, top, right, bottom)),
+                second.crop((left, top, right, bottom)),
+            ).convert("L")
+            # Cua's transient cursor, badge, and pulse occupy a deterministic
+            # central overlay zone. Exclude it, as well as the inset border,
+            # from displayed-target evidence.
+            overlay_width = min(152, max(28, (difference.width * 3) // 5))
+            overlay_height = min(42, max(20, difference.height - 4))
+            center_x = difference.width // 2
+            center_y = difference.height // 2
+            ImageDraw.Draw(difference).rectangle(
+                (
+                    center_x - overlay_width // 2,
+                    center_y - overlay_height // 2,
+                    center_x + overlay_width // 2,
+                    center_y + overlay_height // 2,
+                ),
+                fill=0,
+            )
+            changed_pixels = sum(difference.histogram()[13:])
+            comparable_area = max(1, difference.width * difference.height)
+            return "changed" if changed_pixels >= max(8, comparable_area // 700) else "unchanged"
+        except Exception:
+            return "unknown"
+
+    def computer_use_completion_blocked(self, owner: LeaseOwner | None = None) -> bool:
+        """Return a bounded status bit without exposing the pending mutation value."""
+
+        with self._lock:
+            pending = self._pending_mutation
+            current = self._owner
+            if pending is None or current is None:
+                return False
+            if owner is not None and owner.key != current.key:
+                return False
+            return pending.owner_key == current.key and pending.lease_id == self._lease_id
+
+    def _pending_applies_to(self, target: Target) -> bool:
+        with self._lock:
+            pending = self._pending_mutation
+            owner = self._owner
+            return bool(
+                pending is not None
+                and owner is not None
+                and pending.owner_key == owner.key
+                and pending.lease_id == self._lease_id
+                and pending.target_id == target.target_id
+                and (pending.pid, pending.window_id) == (target.pid, target.window_id)
+            )
+
+    def _guard_pending_mutation(self, action: str, target: Target, keys: str) -> None:
+        if not self._pending_applies_to(target):
+            return
+        normalized_keys = {
+            part.strip().casefold()
+            for part in str(keys or "").replace("+", ",").split(",")
+            if part.strip()
+        }
+        commit_key = bool(
+            normalized_keys & {"enter", "return", "tab"}
+            or (
+                "s" in normalized_keys
+                and normalized_keys & {"ctrl", "control", "cmd", "command", "meta"}
+            )
+        )
+        if action in {"type", "replace_text"} or (action == "key" and commit_key):
+            raise ComputerUseError(
+                "A prior exact text mutation remains unverified; capture fresh evidence, take over, or stop before a dependent mutation.",
+                code="pending_mutation",
+            )
+    def _invalidate_pending_comparison_for_recovery(
+        self,
+        action: str,
+        target: Target,
+    ) -> None:
+        if action not in {
+            "click",
+            "double_click",
+            "right_click",
+            "focus",
+            "scroll",
+            "drag",
+            "key",
+        } or not self._pending_applies_to(target):
+            return
+        with self._lock:
+            if self._pending_mutation is not None:
+                self._pending_mutation.comparison_valid = False
+
+    def _resolve_pending_from_observation(self, observation: Observation) -> None:
+        with self._lock:
+            pending = self._pending_mutation
+            owner = self._owner
+        if (
+            pending is None
+            or owner is None
+            or pending.owner_key != owner.key
+            or pending.lease_id != self._lease_id
+            or (pending.pid, pending.window_id)
+            != (observation.target.pid, observation.target.window_id)
+            or not pending.comparison_valid
+        ):
+            return
+        matches = self._exact_element_matches(observation, pending.match_key)
+        if len(matches) != 1 or matches[0].value != pending.requested_value:
+            return
+        baseline = Observation(
+            target=observation.target,
+            generation=0,
+            connection_generation=observation.connection_generation,
+            width=pending.baseline_width,
+            height=pending.baseline_height,
+            scale_factor=observation.scale_factor,
+            elements=(),
+            screenshot=pending.baseline_screenshot,
+        )
+        if self._target_interior_visual_change(baseline, observation, matches[0]) != "changed":
+            return
+        with self._lock:
+            if self._pending_mutation is pending:
+                self._pending_mutation = None
 
     def _prepare_foreground_fallback(
         self,
@@ -2665,12 +2926,12 @@ class ComputerUseService:
                 action_family="menu",
                 revision=self._observation_generation,
                 dispatched=effect != "refused",
-                completed=True,
+                completed=False,
                 backend_effect=effect,
                 delivery=_standard_delivery(delivery_value),
                 route=_standard_route(response.structured.get("route") or "accessibility"),
                 visual_change="unknown",
-                verified_outcome=bool(response.structured.get("verified")),
+                verified_outcome=False,
                 cause=_safe_driver_cause(response.error_code),
             )
             self._action_count += 1
@@ -2696,10 +2957,332 @@ class ComputerUseService:
             self._resumed_call_signature = None
             self._resume_observation = None
             self._prepared_foreground_target_id = ""
+            self._pending_mutation = None
         if client is not None:
             client.close(graceful=False)
         self._notify()
         raise ComputerUseError(message, code="no_progress")
+
+    @staticmethod
+    def _validate_replace_element(element: CuaElement | None) -> CuaElement:
+        if element is None:
+            raise ComputerUseError(
+                "replace_text requires one current semantic element token.",
+                code="invalid_input",
+            )
+        if element.enabled is False:
+            raise ComputerUseError(
+                "replace_text cannot mutate a disabled semantic control.",
+                code="invalid_input",
+            )
+        if _normalized_role(element.role) not in _MODEL_EDITABLE_ROLES:
+            raise ComputerUseError(
+                "replace_text is limited to generic writable or editable semantic controls.",
+                code="invalid_input",
+            )
+        return element
+
+    def _finish_exact_replacement(
+        self,
+        observation: Observation,
+        *,
+        outcome: str,
+        dispatched: bool,
+        driver_effect: str,
+        visual_change: str,
+        native_change: str,
+        delivery_mode: str,
+        route: str,
+        cause: str,
+        match_key: tuple[Any, ...],
+        requested_value: str,
+        baseline: Observation,
+    ) -> Observation:
+        verified = outcome in {"already_satisfied", "displayed_postcondition_observed"}
+        observation.outcome = outcome
+        observation.verified_scope = "displayed_target" if verified else ""
+        observation.action_effect = outcome
+        observation.action_dispatched = dispatched
+        observation.action_completed = verified
+        observation.driver_effect = driver_effect
+        observation.visual_change = visual_change
+        observation.native_change = native_change
+        observation.effect_verified = verified
+        observation.delivery_mode = delivery_mode
+        observation.route = route
+        observation.cause = cause
+        with self._lock:
+            if outcome in {"provider_echo_unverified", "suspected_noop", "unverified"}:
+                assert self._owner is not None
+                self._pending_mutation = _PendingMutation(
+                    owner_key=self._owner.key,
+                    lease_id=self._lease_id,
+                    target_id=observation.target.target_id,
+                    pid=observation.target.pid,
+                    window_id=observation.target.window_id,
+                    action_family="replace_text",
+                    match_key=match_key,
+                    requested_value=requested_value,
+                    baseline_screenshot=baseline.screenshot,
+                    baseline_width=baseline.width,
+                    baseline_height=baseline.height,
+                )
+            else:
+                self._pending_mutation = None
+            observation.computer_use_completion_blocked = self._pending_mutation is not None
+            self._action_count += 1
+            self._last_action = "replace_text (value hidden)"
+            self._last_effect = outcome
+            self._last_driver_effect = driver_effect
+            self._last_visual_change = visual_change
+            self._last_effect_verified = verified
+            self._last_action_completed = verified
+            self._state = SessionState.OBSERVING
+        self._record_action_success()
+        self._notify()
+        return observation
+
+    def _act_exact_replace_text(
+        self,
+        target: Target,
+        owner: LeaseOwner,
+        *,
+        element_token: str,
+        requested_value: str,
+        expected_effect: str,
+        destination: str,
+        approval_mode: object,
+        capture_after: bool,
+        visual_question: str,
+    ) -> Observation:
+        """Perform one exact Cua set_value with contemporaneous target-local evidence."""
+
+        with self._mutation_lock:
+            self._check_cancelled()
+            with self._lock:
+                current_observation = self._observation
+            if (
+                current_observation is None
+                or current_observation.target.target_id != target.target_id
+            ):
+                raise StaleObservationError(
+                    "A fresh observation is required before using this element token."
+                )
+            original_element = self._current_element(element_token)
+            match_key = self._exact_element_match_key(
+                current_observation,
+                original_element,
+            )
+            decision = classify_action(
+                "replace_text",
+                app_name=target.app_name,
+                window_title=target.window_title,
+                role=original_element.role,
+                label=original_element.label,
+                expected_effect=expected_effect,
+                destination=destination,
+            )
+            if decision.outcome is PolicyOutcome.BLOCKED:
+                raise ComputerUseError(f"BLOCKED: {decision.reason}", code="hard_blocked")
+            if decision.outcome is PolicyOutcome.HANDOFF:
+                self.take_over()
+                raise ComputerUseError(
+                    f"USER TAKEOVER REQUIRED: {decision.reason}",
+                    code="handoff_required",
+                )
+            original_element = self._validate_replace_element(original_element)
+            from row_bot.approval_policy import decision_for_action
+
+            mode_decision = decision_for_action(approval_mode)
+            if mode_decision == "block":
+                raise ComputerUseError(
+                    "BLOCKED: Computer input is unavailable while this thread is in Block approval mode.",
+                    code="hard_blocked",
+                )
+            if decision.outcome is PolicyOutcome.CONSEQUENTIAL and mode_decision == "ask":
+                with self._lock:
+                    self._state = SessionState.WAITING_APPROVAL
+                self._notify()
+                approval = self._gate_optional_approval(
+                    approval_payload(
+                        "replace_text",
+                        app_name=target.app_name,
+                        window_title="Selected app window (title hidden)",
+                        target_label=original_element.label,
+                        expected_effect=expected_effect,
+                        reversible=decision.reversible,
+                        typed_text=requested_value,
+                    ),
+                    approval_mode=approval_mode,
+                )
+                if approval != "allow":
+                    if approval == "take_over":
+                        self.take_over()
+                    else:
+                        self.stop()
+                    raise ComputerUseError(
+                        "Computer action was denied.",
+                        code="approval_denied",
+                    )
+                self._check_cancelled()
+
+            # The pre-action pixels, semantics, and mutation token are all from
+            # this same new target-window generation.
+            baseline = self._observation_from_response(
+                target,
+                self._capture_response(target, include_screenshot=True),
+                require_screenshot=True,
+            )
+            fresh_matches = self._exact_element_matches(baseline, match_key)
+            if len(fresh_matches) != 1:
+                raise ComputerUseError(
+                    "The exact approved semantic target became missing or ambiguous before replacement.",
+                    code="ambiguous_target" if len(fresh_matches) > 1 else "stale_observation",
+                )
+            fresh_element = self._validate_replace_element(fresh_matches[0])
+            fresh_decision = classify_action(
+                "replace_text",
+                app_name=target.app_name,
+                window_title=target.window_title,
+                role=fresh_element.role,
+                label=fresh_element.label,
+                expected_effect=expected_effect,
+                destination=destination,
+            )
+            if fresh_decision.outcome is PolicyOutcome.BLOCKED:
+                raise ComputerUseError(
+                    f"BLOCKED: {fresh_decision.reason}",
+                    code="hard_blocked",
+                )
+            if fresh_decision.outcome is PolicyOutcome.HANDOFF:
+                self.take_over()
+                raise ComputerUseError(
+                    f"USER TAKEOVER REQUIRED: {fresh_decision.reason}",
+                    code="handoff_required",
+                )
+            if fresh_element.value == requested_value:
+                if capture_after and visual_question:
+                    baseline.vision_text = self._analyze_vision(baseline, visual_question)
+                return self._finish_exact_replacement(
+                    baseline,
+                    outcome="already_satisfied",
+                    dispatched=False,
+                    driver_effect="unverifiable",
+                    visual_change="unchanged",
+                    native_change="unchanged",
+                    delivery_mode="not_applicable",
+                    route="accessibility",
+                    cause="",
+                    match_key=match_key,
+                    requested_value=requested_value,
+                    baseline=baseline,
+                )
+
+            self._state = SessionState.ACTING
+            self._last_action = "replace_text (value hidden)"
+            self._notify()
+            result = self._driver_call(
+                "replace_text",
+                {
+                    "pid": target.pid,
+                    "window_id": target.window_id,
+                    "element_token": fresh_element.token,
+                    "value": requested_value,
+                },
+            )
+            if result.is_error:
+                self.invalidate_observation(result.error_code)
+                if result.error_code == "stale_element":
+                    raise StaleObservationError(
+                        "Cua rejected a stale element token; capture again."
+                    )
+                unsupported_codes = {
+                    "not_supported",
+                    "unsupported",
+                    "unsupported_capability",
+                    "unsupported_role",
+                    "value_not_supported",
+                }
+                error_code = (
+                    "unsupported_capability"
+                    if result.error_code in unsupported_codes
+                    else "background_unavailable"
+                    if result.error_code == "background_unavailable"
+                    else "driver_unavailable"
+                    if result.error_code in {"permission_denied", "driver_unavailable"}
+                    else "transient_driver_failure"
+                    if result.error_code in {"timeout", "temporarily_unavailable"}
+                    else "driver_failed"
+                )
+                raise ComputerUseError(
+                    "Computer replacement failed safely; the requested value is hidden.",
+                    code=error_code,
+                    retryable=error_code == "transient_driver_failure",
+                )
+            self._check_cancelled()
+            driver_effect = _standard_effect(
+                result.structured.get("effect"),
+                verified=bool(result.structured.get("verified")),
+            )
+            delivery_mode = _standard_delivery(
+                result.structured.get("delivery_mode")
+                or result.structured.get("delivery")
+                or "background"
+            )
+            route = _standard_route(
+                result.structured.get("route") or result.structured.get("path")
+            )
+            dispatched = driver_effect != "refused"
+            self._state = SessionState.VERIFYING
+            self._notify()
+            completed = self._observation_from_response(
+                target,
+                self._capture_response(target, include_screenshot=True),
+                require_screenshot=True,
+            )
+            if capture_after and visual_question:
+                completed.vision_text = self._analyze_vision(completed, visual_question)
+            after_matches = self._exact_element_matches(completed, match_key)
+            visual_change = "unknown"
+            native_change = "unknown"
+            if len(after_matches) == 1:
+                after_element = after_matches[0]
+                visual_change = self._target_interior_visual_change(
+                    baseline,
+                    completed,
+                    fresh_element,
+                )
+                native_change = (
+                    "unchanged"
+                    if after_element.value == fresh_element.value
+                    else "changed"
+                )
+                if after_element.value == requested_value:
+                    outcome = (
+                        "displayed_postcondition_observed"
+                        if visual_change == "changed"
+                        else "provider_echo_unverified"
+                    )
+                else:
+                    outcome = "suspected_noop"
+            else:
+                outcome = "unverified"
+            if not dispatched:
+                outcome = "unverified"
+            return self._finish_exact_replacement(
+                completed,
+                outcome=outcome,
+                dispatched=dispatched,
+                driver_effect=driver_effect,
+                visual_change=visual_change,
+                native_change=native_change,
+                delivery_mode=delivery_mode,
+                route=route,
+                cause=_safe_driver_cause(result.error_code),
+                match_key=match_key,
+                requested_value=requested_value,
+                baseline=baseline,
+            )
 
     def act(
         self,
@@ -2748,8 +3331,9 @@ class ComputerUseService:
                     code="invalid_input",
                 )
         self._check_failure_budget()
-        self._require_owner(owner)
+        owner = self._require_owner(owner)
         target = self._target(target_id)
+        self._guard_pending_mutation(action, target, keys)
         if action == "focus":
             self._clear_prepared_foreground_target()
             foreground_prepared = False
@@ -2758,6 +3342,18 @@ class ComputerUseService:
         self._ensure_app_permission(target, approval_mode=approval_mode)
         original_action = action
         try:
+            if action == "replace_text":
+                return self._act_exact_replace_text(
+                    target,
+                    owner,
+                    element_token=element_token,
+                    requested_value=str(text or ""),
+                    expected_effect=expected_effect,
+                    destination=destination,
+                    approval_mode=approval_mode,
+                    capture_after=capture_after,
+                    visual_question=visual_question,
+                )
             with self._mutation_lock:
                 self._check_cancelled()
                 with self._lock:
@@ -2959,6 +3555,10 @@ class ComputerUseService:
                         }
                     )
 
+                self._invalidate_pending_comparison_for_recovery(
+                    original_action,
+                    target,
+                )
                 self._state = SessionState.ACTING
                 self._last_action = (
                     f"{action} (value hidden)"
@@ -3034,7 +3634,7 @@ class ComputerUseService:
                     result.structured.get("effect"),
                     verified=bool(result.structured.get("verified")),
                 )
-                effect_verified = bool(result.structured.get("verified"))
+                effect_verified = False
                 delivery_mode = _standard_delivery(
                     result.structured.get("delivery_mode")
                     or args.get("delivery_mode")
@@ -3111,36 +3711,22 @@ class ComputerUseService:
                                 completed_observation,
                                 target_element=element,
                             )
-                        # Semantic token actions already have a stable native
-                        # target and must remain on the fast path. Vision is for
-                        # coordinate grounding/verification (or explicit
-                        # capture/focus without an element), not an automatic
-                        # cloud round-trip after every toolbar button. ``type``
-                        # is the deliberate exception: its token is validation-
-                        # only, and append/insert flows may request one final
-                        # preservation check in the same call.
-                        if visual_question and (
-                            coordinate_only
-                            or not element_token
-                            or driver_action == "type"
-                        ):
+                        # All actions stay on the native fast path by default.
+                        # Honor one explicit post-action Vision request without
+                        # treating its prose as authorization or verification.
+                        if capture_after and visual_question:
                             completed_observation.vision_text = self._analyze_vision(
                                 completed_observation,
                                 visual_question,
                             )
-                        completed_observation.action_effect = (
-                            visual_change
-                            if visual_change != "unknown"
-                            else native_change
-                            if native_change != "unknown"
-                            else driver_effect
-                        )
+                        completed_observation.action_effect = "unverified"
                         completed_observation.action_dispatched = dispatched
-                        completed_observation.action_completed = True
+                        completed_observation.action_completed = False
                         completed_observation.driver_effect = driver_effect
                         completed_observation.visual_change = visual_change
                         completed_observation.native_change = native_change
                         completed_observation.effect_verified = effect_verified
+                        completed_observation.outcome = "unverified"
                         completed_observation.delivery_mode = delivery_mode
                         completed_observation.route = route
                         completed_observation.cause = _safe_driver_cause(
@@ -3154,9 +3740,10 @@ class ComputerUseService:
                         action_family=driver_action,
                         revision=self._observation_generation,
                         dispatched=dispatched,
+                        completed=False,
                         backend_effect=driver_effect,
                         visual_change=visual_change,
-                        verified_outcome=effect_verified,
+                        verified_outcome=False,
                         delivery=delivery_mode,
                         route=route,
                         cause=_safe_driver_cause(
@@ -3226,7 +3813,7 @@ class ComputerUseService:
         except BaseException as exc:
             if original_action == "focus":
                 self._clear_prepared_foreground_target()
-            if str(getattr(exc, "code", "")) != "no_progress":
+            if str(getattr(exc, "code", "")) not in {"no_progress", "pending_mutation"}:
                 self._record_action_failure(original_action, exc, target_id)
                 self._check_failure_budget()
             raise
@@ -3388,6 +3975,7 @@ class ComputerUseService:
 
         self._require_owner(owner)
         target = self._target(target_id)
+        self._guard_pending_mutation("type", target, keys)
         sequence = self.normalize_routine_keys(keys)
         if "calculator" not in f"{target.app_name} {target.window_title}".casefold():
             raise ComputerUseError(
@@ -3594,6 +4182,7 @@ class ComputerUseService:
                 )
             self._cancel.set()
             self._prepared_foreground_target_id = ""
+            self._pending_mutation = None
             client = self._client
             self._client = None
             self.invalidate_observation("user takeover")
@@ -3724,6 +4313,7 @@ class ComputerUseService:
                 self._last_effect_verified = False
                 self._last_action_completed = False
                 self._prepared_foreground_target_id = ""
+                self._pending_mutation = None
                 self._consecutive_visual_no_effects = 0
                 self._visual_no_effect_target_id = ""
                 self._visual_no_effect_counts.clear()

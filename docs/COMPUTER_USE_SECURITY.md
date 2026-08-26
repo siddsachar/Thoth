@@ -20,15 +20,15 @@ layer, personal-browser attachment, desktop replay, or a VM backend.
 ## Reviewed upstream dependency
 
 - Project: Cua Driver Rust, MIT license
-- Version/tag: `0.19.3` / `cua-driver-rs-v0.19.3`
-- Signed tag commit: `a1672e7b11951275ecfba3384264d4530185d0db`
-- Release: <https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.19.3>
-- Windows x86_64 full archive: `cua-driver-rs-0.19.3-windows-x86_64.zip`
-  (`e48b0117e343cec2577fc12693c741e094f389f8d4aef91e06284960bb03bce1`)
-- Windows ARM64 full archive: `cua-driver-rs-0.19.3-windows-arm64.zip`
-  (`693cff4618fdcb6b0ea797e2f5b17eb6291dcea4b62da7bc6b5c373f1aa1852f`)
-- macOS universal full app archive: `cua-driver-rs-0.19.3-darwin-universal.tar.gz`
-  (`a5b064bd3e05c3d97c4aaba1b8818e7b4203081ffc5f3186220005d356574aaa`)
+- Version/tag: `0.20.0` / `cua-driver-rs-v0.20.0`
+- Signed tag commit: `bb8c86049cad1bf0853c6d25c03c14875d0d047f`
+- Release: <https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.20.0>
+- Windows x86_64 full archive: `cua-driver-rs-0.20.0-windows-x86_64.zip`
+  (`bd27528e0d81bf78c03cdd77be28a3ea31899a370eaf06938ad21edac73290bd`)
+- Windows ARM64 full archive: `cua-driver-rs-0.20.0-windows-arm64.zip`
+  (`a01686a90725d9c902d558c053a0dd95bd181faff0418d9acb495da63f04a6a1`)
+- macOS universal full app archive: `cua-driver-rs-0.20.0-darwin-universal.tar.gz`
+  (`d5e61fecebd9a620e50c2b8b608c8e7e8141f74c6faebc2ae9ef5d0d96cce7b8`)
 
 Row-Bot downloads only the exact selected asset after a separate explicit
 Install action, verifies SHA-256 before safe extraction, and keeps the runtime
@@ -42,14 +42,16 @@ Before any Cua executable invocation, Row-Bot shows a mandatory Continue or
 Cancel disclosure. Notice version 2 invalidates the older 0.7.1 acknowledgement,
 so an upgrade requires explicit consent again.
 
-The reviewed 0.19.3 tagged source sends content-free product events to
+The reviewed 0.20.0 tagged source sends content-free product events to
 `https://eu.i.posthog.com/capture/`. They can include pseudonymous random
 installation and process-session identifiers; product/platform/architecture/
 transport versions; bounded client, provider, model, and agent categories;
 tool and operation categories; success, bounded refusal/error class, duration
 and output-size buckets; output type; aggregate session counts and bounded
-capture-scope/browser/cursor/recording/config usage flags; permission-gate
-state; and install/update lifecycle events.
+window/desktop modality, capture-scope/browser/cursor/recording/config usage
+flags; permission-gate state; and install/update lifecycle events. The 0.20.0
+delta adds only those aggregate modality flags; it does not add a new
+content-bearing telemetry category, so the unreleased notice remains version 2.
 
 The event builders do not receive prompts, tool arguments or results, typed
 text, screenshots, accessibility trees, application/window names, URLs,
@@ -70,7 +72,7 @@ The private client permits only:
 | `launch_app` | allowlisted display-name launch | routine or consequential |
 | `bring_to_front` | explicit foreground escalation | always confirm |
 | `click`, `double_click`, `right_click` | token-first selection | routine or consequential |
-| `type_text`, `press_key`, `hotkey` | non-secret text/input; `type_text` backs distinct caret-insert and exact whole-value-replace Row-Bot actions | routine, consequential, or handoff |
+| `type_text`, `set_value`, `press_key`, `hotkey` | non-secret text/input; `type_text` preserves ordinary focused caret/selection insertion and `set_value` performs exact textual replacement | routine, consequential, or handoff |
 | `scroll`, `drag` | bounded target-window input | routine |
 | `health_report`, `check_permissions` | readiness after disclosure | internal only |
 | `start_session`, `end_session` | private window-scoped lifecycle | internal only |
@@ -100,12 +102,17 @@ maintenance surfaces are forbidden and never model-visible.
   whole-value path. Horizontal-tab payloads are rejected before approval or
   mutation because native tab behavior cannot promise structured paste or grid
   layout; multiline insertion remains supported.
-- `replace_text` atomically replaces one exact current editable semantic
-  control through the reviewed token-targeted Cua `type_text` path. It requires
+- `replace_text` requests one exact current editable semantic control through
+  the reviewed token-targeted Cua `set_value` path. It requires
   the latest projected token, a supported generic editable role, an enabled
   control, and non-sensitive text; accepts no coordinates; and has no caret,
   label, fuzzy, clipboard, shell, or alternate delivery fallback. Stale,
   unsupported, disabled, refused, and unverifiable cases are never replayed.
+  It takes contemporaneous before/after target-window captures and verifies
+  only exact target equality corroborated by target-interior display change.
+  Provider echoes, unrelated tree churn, focus decoration, and cursor overlays
+  cannot establish the requested outcome. Verified scope is only the displayed
+  target, never saved, durable, recalculated, submitted, or whole-document state.
 - Credentials, OTP, CAPTCHA, biometric, UAC/TCC, terminals, password managers,
   Row-Bot itself, secure desktops, and elevation are handed off or blocked.
 - Pixels are captured only for coordinate grounding, visual comparison,
@@ -142,10 +149,10 @@ maintenance surfaces are forbidden and never model-visible.
   the requested outcome. Dependent mutation chains must use an exact semantic
   action, one necessary fresh confirmation, or stop; after a failed final
   verification, only one materially different safe recovery is allowed.
-- Token-based semantic replacement stays on the native fast path and does not
-  invoke Vision. Vision is reserved for a necessary coordinate decision or one
-  final user-visible verification and is not automatically repeated or parsed
-  as authorization or a Boolean postcondition.
+- Token-based semantic replacement stays on the native fast path unless
+  `capture_after=true` and one explicit visual question requests exactly one
+  advisory Vision check. Vision is not automatically repeated or parsed as
+  authorization or a Boolean postcondition.
 - Terminal `hard_blocked` results are reserved for concrete protected targets
   or capabilities and Block approval mode; they remain terminal and must not be
   bypassed by aliases or alternate Computer actions.
@@ -157,8 +164,9 @@ to simulate one.
 
 ## Upstream contract binding
 
-Row-Bot passes `capture_scope="window"` directly to the tagged 0.19.3
-`start_session` contract. It never escalates to desktop scope. The runtime
+Row-Bot uses the tagged 0.20.0 lifecycle session while every capture remains
+bound to the exact PID/window target. It never calls desktop capture or
+escalates to desktop scope. The runtime
 installer uses only the exact full archives above, performs traversal-safe
 staged extraction, and retains a prior known-good managed runtime until the new
 candidate passes diagnostics.

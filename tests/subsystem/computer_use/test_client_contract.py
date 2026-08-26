@@ -9,12 +9,12 @@ from tests.fixtures.fake_cua import FakeCuaTransport, FakeScenario
 from row_bot.mcp_client.results import RawCallContent, RawCallResult
 
 
-def test_client_forces_session_window_capture_config_before_discovery(fake_client, fake_transport) -> None:
+def test_client_starts_tagged_lifecycle_without_arbitrary_config(fake_client, fake_transport) -> None:
     fake_client.start()
-    assert fake_transport.calls[:2] == [
-        ("set_config", {"capture_scope": "window", "max_image_dimension": 1456}),
+    assert fake_transport.calls[:1] == [
         ("start_session", {"session": "row-bot-test-session"}),
     ]
+    assert all(name != "set_config" for name, _args in fake_transport.calls)
 
 
 def test_environment_disables_update_check_but_does_not_override_telemetry(monkeypatch) -> None:
@@ -42,6 +42,57 @@ def test_capture_parses_text_image_and_capped_semantics(fake_client) -> None:
     assert response.image_bytes and response.image_bytes.startswith(b"\x89PNG")
     assert (response.image_width, response.image_height) == (1, 1)
     assert [element.token for element in response.elements] == ["g1-element-0", "g1-element-1", "g1-element-2"]
+
+
+def test_replace_text_maps_to_set_value_with_value_not_type_text(fake_client, fake_transport) -> None:
+    replacement = "private exact replacement"
+
+    response = fake_client.call_action(
+        "replace_text",
+        {
+            "pid": 4242,
+            "window_id": 101,
+            "element_token": "fresh-exact-token",
+            "value": replacement,
+        },
+    )
+
+    assert response.is_error is False
+    assert fake_transport.calls[-1] == (
+        "set_value",
+        {
+            "pid": 4242,
+            "window_id": 101,
+            "element_token": "fresh-exact-token",
+            "value": f"<redacted:{len(replacement)} chars>",
+            "session": "row-bot-test-session",
+        },
+    )
+    assert all(name != "type_text" for name, _args in fake_transport.calls)
+
+
+def test_text_mutation_driver_free_text_is_normalized_at_private_boundary(
+    fake_client,
+    fake_transport,
+) -> None:
+    replacement = "private value interpolated by driver"
+    fake_transport.scenario.action_error_code = "unsupported"
+    fake_transport.scenario.action_error_message = f"could not set {replacement!r}"
+
+    response = fake_client.call_action(
+        "replace_text",
+        {
+            "pid": 4242,
+            "window_id": 101,
+            "element_token": "fresh-exact-token",
+            "value": replacement,
+        },
+    )
+
+    assert response.is_error is True
+    assert response.error_code == "unsupported"
+    assert replacement not in response.text
+    assert replacement not in repr(response.structured)
 
 
 def test_malformed_image_fails_closed(fake_transport) -> None:
@@ -173,13 +224,13 @@ def test_tagged_start_session_owns_window_scope_without_set_config(fake_transpor
     client = CuaClient(
         "fake.exe",
         session_id="tagged-session",
-        contract_version="0.19.3",
+        contract_version="0.20.0",
         transport_factory=lambda *_args: fake_transport,
     )
     client.start()
     assert fake_transport.calls[0] == (
         "start_session",
-        {"session": "tagged-session", "capture_scope": "window"},
+        {"session": "tagged-session"},
     )
     assert all(name != "set_config" for name, _args in fake_transport.calls)
 
@@ -196,7 +247,7 @@ def test_tagged_contract_rejects_arbitrary_config_even_when_legacy_fixture_allow
     client = CuaClient(
         "fake-cua-driver.exe",
         session_id="tagged-no-config",
-        contract_version="0.19.3",
+        contract_version="0.20.0",
         capabilities=frozenset({"verify_state", "invoke_menu", "recording"}),
         transport_factory=lambda _exe, _session, _env: fake_transport,
     )

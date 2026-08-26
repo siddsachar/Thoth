@@ -40,7 +40,7 @@ class ComputerUseInput(BaseModel):
     direction: str = Field(default="", description="Scroll direction")
     amount: int = Field(default=0, description="Bounded scroll amount or wait milliseconds")
     capture_after: bool = Field(default=False, description="Capture after the action only when the next decision or final verification needs changed pixels or geometry")
-    visual_question: str = Field(default="", description="Optional question for the configured VisionService, applied to launch_app, target-ID capture, a coordinate action's fresh post-action capture, or an explicitly requested final type verification. Initial app-scoped capture always defers Vision. Token-based semantic actions deliberately skip Vision so native controls stay fast; final type verification is the exception. Before the first coordinate-only visual action, use one target-ID Vision-grounded capture to identify the screenshot-local control/canvas region")
+    visual_question: str = Field(default="", description="Optional question for the configured VisionService, applied to launch_app, target-ID capture, or exactly once after an action when capture_after is true. Initial app-scoped capture always defers Vision. Token actions stay on the native fast path unless this explicit post-action check is requested. Vision is advisory and never a semantic Boolean. Before the first coordinate-only visual action, use one target-ID Vision-grounded capture to identify the screenshot-local control/canvas region")
     expected_effect: str = Field(default="", description="Display context only; never authorization")
     destination: str = Field(default="", description="Display context for a recipient/destination; never authorization")
     menu_path: str = Field(default="", description="For menu only: 1-16 exact case-sensitive native menu labels separated by >; no fuzzy matching or coordinate fallback")
@@ -228,9 +228,14 @@ def _observation_payload(
     visual_change = str(getattr(observation, "visual_change", "unknown") or "unknown")
     native_change = str(getattr(observation, "native_change", "unknown") or "unknown")
     effect_verified = bool(getattr(observation, "effect_verified", False))
+    outcome = str(getattr(observation, "outcome", "") or "")
+    verified_scope = str(getattr(observation, "verified_scope", "") or "")
     payload: dict[str, Any] = {
         "fresh_observation": observation.model_text(),
         "capture_is_fresh": True,
+        "computer_use_completion_blocked": bool(
+            getattr(observation, "computer_use_completion_blocked", False)
+        ),
     }
     vision_evidence = str(getattr(observation, "vision_text", "") or "")
     if vision_evidence:
@@ -241,8 +246,8 @@ def _observation_payload(
         payload.update({
             "ok": True,
             "error": False,
-            "action_dispatched": action_dispatched or bool(action_effect),
-            "action_completed": action_completed or bool(action_effect),
+            "action_dispatched": action_dispatched,
+            "action_completed": action_completed,
             "driver_effect": driver_effect or (
                 action_effect if action_effect in {"confirmed", "changed"} else "unverifiable"
             ),
@@ -253,6 +258,8 @@ def _observation_payload(
             "delivery_mode": str(getattr(observation, "delivery_mode", "") or ""),
             "route": str(getattr(observation, "route", "") or ""),
             "cause": str(getattr(observation, "cause", "") or ""),
+            "outcome": outcome or "unverified",
+            "verified_scope": verified_scope,
         })
     if next_action:
         payload["next_action"] = str(next_action)
@@ -284,17 +291,16 @@ def _action_payload(receipt: ActionReceipt) -> str:
         driver_effect=receipt.driver_effect,
         backend_effect=receipt.backend_effect,
         visual_change=receipt.visual_change,
-        effect=receipt.effect,
+        effect=("exact_target_absence_observed" if receipt.cause == "target_disappeared" else "unverified"),
         effect_verified=receipt.effect_verified,
+        outcome=("exact_target_absence_observed" if receipt.cause == "target_disappeared" else "unverified"),
+        verified_scope=("exact_target" if receipt.cause == "target_disappeared" else ""),
+        computer_use_completion_blocked=False,
         delivery_mode=receipt.delivery_mode,
         route=receipt.route,
         cause=receipt.cause,
         next_action=(
-            "The exact whole-value replacement is driver-verified; do not press Enter solely "
-            "to commit an assumed edit. Capture only if independent user-visible final evidence "
-            "is still necessary."
-            if receipt.action == "replace_text" and receipt.effect_verified
-            else "action_dispatched=true is not proof of focus, caret position, selection, "
+            "action_dispatched=true is not proof of focus, caret position, selection, "
             "navigation, or the requested outcome. Do not build a dependent mutation chain on "
             "this result. Use an exact semantic action, obtain one fresh confirmation when "
             "necessary, or stop and report the limitation; never blind-retry it."
@@ -360,7 +366,7 @@ class ComputerUseTool(BaseTool):
             "Control native desktop apps and already-open native browser windows in a visible, task-scoped session. Prefer structured tools first and Row-Bot Browser for ordinary website navigation. "
             "When the user refers to this browser, the browser below, or one already-open named app/window, normally begin with one app-scoped capture using app and any title hint. It performs exact discovery and one native capture with zero Vision. Use list_windows only for ambiguity, inspection, or explicit multi-window selection. Do not call launch_app merely to focus an app that is already open, and never attach to a personal browser profile through CDP. "
             "For other native apps, OS dialogs, or visual-only surfaces, use Computer. launch_app already returns a fresh observation, "
-            "so do not capture again. For coordinate-only visual work, pass a visual_question to launch_app or capture once before the first coordinate action; never guess coordinates from semantic element text. Do not attach visual_question to token-based semantic clicks; they intentionally stay on the fast native path. "
+            "so do not capture again. For coordinate-only visual work, pass a visual_question to launch_app or capture once before the first coordinate action; never guess coordinates from semantic element text. Token actions stay on the native fast path unless capture_after and one explicit visual_question request a single advisory post-action Vision check. "
             "Use list_apps active metadata for foreground discovery; when exact app-scoped capture returns running_candidates, retry only with one returned canonical name and never fuzzy-match, infer an alias, or launch a guessed app. When foreground identity is unknown, use an explicit user app/title hint or Take over and never analyze the full screen merely to guess it. "
             "One explicitly approved focus prepares that exact target for foreground type, key, scroll, pointer, and drag delivery in the current task session, but dispatched focus is not proven focus; do not refocus it before every input. "
             "Prefer semantic element tokens and stable application shortcuts over transient coordinates. Set capture_after only for a coordinate-dependent next decision or final verification. "
@@ -455,10 +461,11 @@ class ComputerUseTool(BaseTool):
             log_driver_effect = "unverifiable"
             log_change = "unknown"
             log_effect_verified = False
+            log_outcome = "none"
 
             def record_result(value: Any) -> None:
                 nonlocal log_route, log_delivery, log_driver_effect
-                nonlocal log_change, log_effect_verified
+                nonlocal log_change, log_effect_verified, log_outcome
                 log_route = str(getattr(value, "route", "") or "unknown")
                 log_delivery = str(
                     getattr(value, "delivery_mode", "")
@@ -474,6 +481,7 @@ class ComputerUseTool(BaseTool):
                 visual_change = str(getattr(value, "visual_change", "unknown") or "unknown")
                 log_change = native_change if native_change != "unknown" else visual_change
                 log_effect_verified = bool(getattr(value, "effect_verified", False))
+                log_outcome = str(getattr(value, "outcome", "") or "none")
 
             service.begin_tool_call(signature)
             try:
@@ -712,6 +720,7 @@ class ComputerUseTool(BaseTool):
                     driver_effect=log_driver_effect,
                     native_or_visual_change=log_change,
                     effect_verified=log_effect_verified,
+                    outcome=log_outcome,
                 )
 
         return [StructuredTool.from_function(

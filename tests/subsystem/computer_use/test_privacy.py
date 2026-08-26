@@ -92,6 +92,34 @@ def test_replaced_value_is_absent_from_model_status_receipt_logs_and_fake_histor
     assert "replace_text (value hidden)" in str(service.status_snapshot())
 
 
+def test_driver_interpolated_replacement_is_absent_from_public_error_and_history(
+    service,
+    fake_transport,
+) -> None:
+    secret = "private-driver-interpolated-value"
+    fake_transport.scenario.semantic_elements = (
+        {"role": "Edit", "label": "Document field", "enabled": True},
+    )
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER)
+    fake_transport.scenario.action_error_code = "unsupported"
+    fake_transport.scenario.action_error_message = f"set_value rejected {secret!r}"
+
+    with pytest.raises(ComputerUseError) as failed:
+        service.act(
+            "replace_text",
+            target_id,
+            OWNER,
+            element_token=observation.elements[0].token,
+            text=secret,
+        )
+
+    assert secret not in str(failed.value)
+    assert secret not in repr(fake_transport.calls)
+    assert secret not in str(service.status_snapshot())
+
+
 def test_window_discovery_requires_scope_before_calling_the_driver(service, fake_transport) -> None:
     service.acquire(OWNER, validate_context=False)
 

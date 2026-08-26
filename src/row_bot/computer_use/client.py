@@ -35,7 +35,7 @@ MODEL_ACTION_TO_CUA = {
     "double_click": "double_click",
     "right_click": "right_click",
     "type": "type_text",
-    "replace_text": "type_text",
+    "replace_text": "set_value",
     "key": "press_key",
     "scroll": "scroll",
     "drag": "drag",
@@ -92,6 +92,63 @@ class CuaResponse:
     truncated: bool = False
     is_error: bool = False
     error_code: str = ""
+
+
+_MUTATION_ENUM_FIELDS = {
+    "effect": frozenset(
+        {"changed", "confirmed", "partial", "unverifiable", "suspected_noop", "refused"}
+    ),
+    "delivery": frozenset({"background", "foreground", "not_applicable", "unknown"}),
+    "delivery_mode": frozenset(
+        {"background", "foreground", "not_applicable", "unknown"}
+    ),
+    "route": frozenset(
+        {"ax", "uia", "accessibility", "synthetic_events", "global_input", "unknown"}
+    ),
+    "path": frozenset(
+        {"ax", "uia", "accessibility", "key_events", "send_input", "unknown"}
+    ),
+    "status": frozenset({"satisfied", "unsatisfied", "unknown"}),
+}
+_MUTATION_ERROR_CODES = frozenset(
+    {
+        "background_unavailable",
+        "driver_unavailable",
+        "not_supported",
+        "permission_denied",
+        "stale_element",
+        "temporarily_unavailable",
+        "timeout",
+        "unsupported",
+        "unsupported_capability",
+        "unsupported_role",
+        "value_not_supported",
+    }
+)
+
+
+def _normalized_mutation_response(response: CuaResponse) -> CuaResponse:
+    """Drop driver prose at the private boundary for content-bearing mutations."""
+
+    structured: dict[str, Any] = {}
+    if isinstance(response.structured.get("verified"), bool):
+        structured["verified"] = response.structured["verified"]
+    for key, allowed in _MUTATION_ENUM_FIELDS.items():
+        value = str(response.structured.get(key) or "").strip().casefold().replace("-", "_")
+        if value in allowed:
+            structured[key] = value
+    error_code = str(response.error_code or "").strip().casefold().replace("-", "_")
+    error_code = error_code if error_code in _MUTATION_ERROR_CODES else (
+        "driver_failed" if response.is_error else ""
+    )
+    if error_code:
+        structured["error"] = {"code": error_code}
+    return CuaResponse(
+        text="",
+        structured=structured,
+        is_error=response.is_error,
+        error_code=error_code,
+    )
 
 
 def build_cua_environment(session_id: str, environ: dict[str, str] | None = None) -> dict[str, str]:
@@ -320,7 +377,7 @@ class CuaClient:
         *,
         session_id: str | None = None,
         transport_factory: Callable[[str, str, dict[str, str]], CuaTransport] | None = None,
-        contract_version: str = "0.7.1",
+        contract_version: str = "0.20.0",
         capabilities: frozenset[str] | None = None,
     ) -> None:
         self.executable = str(Path(executable))
@@ -350,14 +407,7 @@ class CuaClient:
         self._transport = transport
         self.connection_generation += 1
         try:
-            if self.contract_version == "0.19.3":
-                self.call_internal(
-                    "start_session",
-                    {"session": self.session_id, "capture_scope": "window"},
-                )
-            else:
-                self.call_internal("set_config", {"capture_scope": "window", "max_image_dimension": MAX_IMAGE_DIMENSION})
-                self.call_internal("start_session", {"session": self.session_id})
+            self.call_internal("start_session", {"session": self.session_id})
         except BaseException:
             self.close()
             raise
@@ -387,13 +437,16 @@ class CuaClient:
         if self._transport is None:
             self.start()
         assert self._transport is not None
-        return parse_cua_result(self._transport.call_raw(tool_name, arguments))
+        response = parse_cua_result(self._transport.call_raw(tool_name, arguments))
+        if tool_name in {"type_text", "set_value"}:
+            return _normalized_mutation_response(response)
+        return response
 
     def call_internal(self, tool_name: str, arguments: dict[str, Any] | None = None) -> CuaResponse:
         if tool_name not in INTERNAL_TOOLS:
             raise PermissionError(f"Cua internal tool is not allowlisted: {tool_name}")
-        if self.contract_version == "0.19.3" and tool_name == "set_config":
-            raise PermissionError("Cua configuration mutation is not approved for the 0.19.3 contract")
+        if tool_name == "set_config":
+            raise PermissionError("Cua configuration mutation is not approved")
         return self._call(tool_name, dict(arguments or {}))
 
     def call_action(self, action: str, arguments: dict[str, Any] | None = None) -> CuaResponse:

@@ -26,13 +26,14 @@ def test_old_notice_acknowledgement_requires_consent_again(tmp_path, monkeypatch
     assert readiness(enabled=True).code is ReadinessCode.DISCLOSURE_REQUIRED
 
 
-def test_notice_describes_expanded_0193_telemetry_and_exclusions() -> None:
+def test_notice_describes_expanded_0200_telemetry_and_exclusions() -> None:
     lowered = DISCLOSURE_TEXT.casefold()
     for expected in (
         "process-session",
         "tool/operation",
         "duration bucket",
         "aggregate session",
+        "window/desktop modality",
         "permission-gate",
         "tool arguments or results",
         "accessibility trees",
@@ -76,7 +77,7 @@ def test_verified_system_override_must_match_exact_reviewed_version(tmp_path, mo
     acknowledge_disclosure()
     class _Completed:
         returncode = 0
-        stdout = "cua-driver 0.19.3"
+        stdout = "cua-driver 0.20.0"
         stderr = ""
     monkeypatch.setattr(readiness_module.subprocess, "run", lambda *_args, **_kwargs: _Completed())
     assert verify_system_cua().code is ReadinessCode.READY
@@ -93,7 +94,7 @@ def test_failed_managed_doctor_rolls_back_to_retained_known_good(tmp_path, monke
     assert asset is not None
     runtime_root = requirements.RUNTIMES_DIR / "cua-driver"
     old_root = runtime_root / "0.7.1"
-    new_root = runtime_root / "0.19.3"
+    new_root = runtime_root / "0.20.0"
     old_root.mkdir(parents=True)
     new_root.mkdir()
     old_executable = old_root / "cua-driver.exe"
@@ -102,7 +103,7 @@ def test_failed_managed_doctor_rolls_back_to_retained_known_good(tmp_path, monke
     new_executable.write_bytes(b"new")
     requirements._write_manifest("cua-driver", {
         "installed": True,
-        "version": "0.19.3",
+        "version": "0.20.0",
         "archive_sha256": asset["sha256"],
         "root": str(new_root),
         "executable_path": str(new_executable),
@@ -147,7 +148,7 @@ def test_macos_legacy_flattened_bundle_requires_repair_before_diagnostics(tmp_pa
     acknowledge_disclosure()
     asset = readiness_module.selected_asset()
     assert asset is not None
-    version_root = requirements.RUNTIMES_DIR / "cua-driver" / "0.19.3"
+    version_root = requirements.RUNTIMES_DIR / "cua-driver" / "0.20.0"
     executable = version_root / "Contents" / "MacOS" / "cua-driver"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"reviewed")
@@ -155,7 +156,7 @@ def test_macos_legacy_flattened_bundle_requires_repair_before_diagnostics(tmp_pa
         "cua-driver",
         {
             "installed": True,
-            "version": "0.19.3",
+            "version": "0.20.0",
             "archive_sha256": asset["sha256"],
             "root": str(version_root),
             "executable_path": str(executable),
@@ -203,7 +204,7 @@ def test_macos_permission_diagnostics_do_not_expose_upstream_internal_hints(
     acknowledge_disclosure()
     asset = readiness_module.selected_asset()
     assert asset is not None
-    version_root = requirements.RUNTIMES_DIR / "cua-driver" / "0.19.3"
+    version_root = requirements.RUNTIMES_DIR / "cua-driver" / "0.20.0"
     executable = version_root / "CuaDriver.app" / "Contents" / "MacOS" / "cua-driver"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"reviewed")
@@ -211,7 +212,7 @@ def test_macos_permission_diagnostics_do_not_expose_upstream_internal_hints(
         "cua-driver",
         {
             "installed": True,
-            "version": "0.19.3",
+            "version": "0.20.0",
             "archive_sha256": asset["sha256"],
             "root": str(version_root),
             "executable_path": str(executable),
