@@ -44,6 +44,7 @@ def test_computer_static_guidance_is_tool_bound_deduplicated_and_within_budget()
     guide = skills.get_skill("computer_use_guide")
     assert guide is not None
     assert guide.tools == ["computer_use"]
+    assert guide.name not in {skill.name for skill in skills.get_manual_skills()}
     assert len(guide.instructions.split()) <= 300
     assert sum(
         1 for line in guide.instructions.splitlines() if line.lstrip().startswith("-")

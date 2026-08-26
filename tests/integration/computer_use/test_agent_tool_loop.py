@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import concurrent.futures
 import json
+import logging
+import threading
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.prebuilt import create_react_agent
 
 from row_bot.computer_use.client import CuaClient
-from row_bot.computer_use.service import ComputerUseService, LeaseOwner
+from row_bot.computer_use.service import ComputerUseError, ComputerUseService, LeaseOwner
 from row_bot.tools import computer_use_tool
 from row_bot.tools.computer_use_tool import ComputerUseTool
 from tests.fixtures.fake_cua import (
@@ -24,6 +30,24 @@ class _CountingVision:
     def analyze(self, _image: bytes, question: str) -> str:
         self.calls.append(question)
         return "The requested visible state is described by this sanitized fake."
+
+
+def test_codex_computer_graph_keeps_provider_parallel_batches_enabled() -> None:
+    from row_bot.providers.transports.codex_responses import ChatCodexResponses
+
+    binding_kwargs: list[dict] = []
+
+    class RecordingCodexResponses(ChatCodexResponses):
+        def bind_tools(self, tools, **kwargs):
+            binding_kwargs.append(dict(kwargs))
+            return super().bind_tools(tools, **kwargs)
+
+    computer_tool = ComputerUseTool().as_langchain_tools()[0]
+    model = RecordingCodexResponses(model_name="gpt-5.6-sol")
+
+    create_react_agent(model=model, tools=[computer_tool])
+
+    assert binding_kwargs == [{}]
 
 
 def _native_browser_tool(tmp_path, monkeypatch, scenario: FakeScenario):
@@ -275,7 +299,7 @@ def test_advisory_vision_and_stop_do_not_create_generation_completion_state(
     assert not hasattr(service, "computer_use_completion_blocked")
 
 
-def test_tabular_type_payload_is_one_literal_caret_action(
+def test_tokenless_tabular_type_payload_is_one_literal_caret_action(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -304,7 +328,6 @@ def test_tabular_type_payload_is_one_literal_caret_action(
     )
     captured = json.loads(tool.invoke({"action": "capture", "app": "Document App"}))
     target_id = captured["fresh_observation"].split("Target ID: ", 1)[1].splitlines()[0]
-    token = captured["fresh_observation"].split("token=", 1)[1].split(" ", 1)[0]
     calls_before = len(transport.calls)
 
     delivered = json.loads(
@@ -312,7 +335,6 @@ def test_tabular_type_payload_is_one_literal_caret_action(
             {
                 "action": "type",
                 "target_id": target_id,
-                "element_token": token,
                 "text": "first\tsecond\nthird\tfourth",
             }
         )
@@ -322,8 +344,135 @@ def test_tabular_type_payload_is_one_literal_caret_action(
     assert delivered["action_dispatched"] is True
     assert [name for name, _args in mutation_calls] == ["type_text"]
     assert mutation_calls[0][1]["text"] == "<redacted:25 chars>"
+    assert "element_token" not in mutation_calls[0][1]
+    assert all(
+        name not in {"bring_to_front", "click", "get_window_state", "set_value"}
+        for name, _args in mutation_calls
+    )
+    assert all(
+        marker not in json.dumps(delivered).casefold()
+        for marker in ("structured_layout", "clipboard", "shell")
+    )
     assert service.current_observation(target_id) is not None
     assert vision.calls == []
+
+
+def test_one_model_batch_of_three_computer_calls_allows_only_one_capture(
+    tmp_path,
+    monkeypatch,
+    caplog,
+) -> None:
+    scenario = FakeScenario(
+        apps=({"name": "Generic App", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 619,
+                "pid": 2619,
+                "app_name": "Generic App",
+                "title": "Generic document",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2619,
+        capture_window_id=619,
+        semantic_elements=({"role": "Button", "label": "Current action"},),
+        rotate_element_tokens=True,
+    )
+    service, transport, vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+    initial = json.loads(tool.invoke({"action": "capture", "app": "Generic App"}))
+    target_id = initial["fresh_observation"].split("Target ID: ", 1)[1].splitlines()[0]
+    generation_before = service.current_observation(target_id).generation
+    caplog.clear()
+
+    capture_entered = threading.Event()
+    release_capture = threading.Event()
+    overlap_rejected = threading.Event()
+    rejected_count = 0
+    rejected_lock = threading.Lock()
+    original_call_raw = transport.call_raw
+    original_begin_tool_call = service.begin_tool_call
+
+    def blocking_call_raw(name, arguments=None):
+        if name == "get_window_state":
+            capture_entered.set()
+            assert release_capture.wait(timeout=5)
+        return original_call_raw(name, arguments)
+
+    def tracked_begin_tool_call(signature):
+        nonlocal rejected_count
+        try:
+            return original_begin_tool_call(signature)
+        except ComputerUseError as exc:
+            if exc.code == "parallel_calls_not_supported":
+                with rejected_lock:
+                    rejected_count += 1
+                    if rejected_count == 2:
+                        overlap_rejected.set()
+            raise
+
+    monkeypatch.setattr(transport, "call_raw", blocking_call_raw)
+    monkeypatch.setattr(service, "begin_tool_call", tracked_begin_tool_call)
+
+    class ToolBatchModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            del tools, kwargs
+            return self
+
+    calls = [
+        {
+            "name": "computer_use",
+            "args": {"action": "capture", "target_id": target_id},
+            "id": f"capture-{index}",
+            "type": "tool_call",
+        }
+        for index in range(3)
+    ]
+    graph = create_react_agent(
+        model=ToolBatchModel(
+            responses=[AIMessage(content="", tool_calls=calls), AIMessage(content="done")]
+        ),
+        tools=[tool],
+        version="v2",
+    )
+
+    with caplog.at_level(logging.INFO, logger="row_bot.computer_use.service"):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                graph.invoke,
+                {"messages": [HumanMessage(content="Capture the current target three times.")]},
+            )
+            assert capture_entered.wait(timeout=5)
+            assert overlap_rejected.wait(timeout=5)
+            release_capture.set()
+            result = future.result(timeout=10)
+
+    payloads = [
+        json.loads(message.content)
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+    ]
+    assert sum(
+        payload.get("error_code") == "parallel_calls_not_supported"
+        for payload in payloads
+    ) == 2
+    assert sum("fresh_observation" in payload for payload in payloads) == 1
+    assert [name for name, _args in transport.calls].count("get_window_state") == 2
+    assert service.current_observation(target_id).generation == generation_before + 1
+    assert vision.calls == []
+    receipts = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("computer_use.action_receipt ")
+    ]
+    assert len(receipts) == 1
+    assert "driver_calls=1" in receipts[0]
+    assert "capture_calls=1" in receipts[0]
+    assert "vision_calls=0" in receipts[0]
 
 
 def test_unverified_action_payload_allows_later_work_without_replay(
@@ -705,6 +854,84 @@ def test_native_foreground_discovery_uses_active_metadata_without_vision(
     assert names.count("list_windows") == 1
     assert "launch_app" not in names
     assert "get_window_state" not in names
+
+
+def test_generic_semantic_control_flow_uses_no_vision_until_explicitly_requested(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    scenario = FakeScenario(
+        apps=({"name": "Generic Client", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 620,
+                "pid": 2620,
+                "app_name": "Generic Client",
+                "title": "Generic content",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2620,
+        capture_window_id=620,
+        semantic_elements=(
+            {"role": "ComboBox", "label": "Search", "value": ""},
+            {"role": "DataItem", "label": "Result"},
+            {"role": "Button", "label": "Queue items"},
+            {"role": "Button", "label": "Next item"},
+            {"role": "Button", "label": "Pause item"},
+        ),
+    )
+    service, transport, vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+
+    captured = json.loads(tool.invoke({"action": "capture", "app": "Generic Client"}))
+    observation = captured["fresh_observation"]
+    target_id = observation.split("Target ID: ", 1)[1].splitlines()[0]
+    tokens = {
+        line.split('label="', 1)[1].split('"', 1)[0]: line.split("token=", 1)[1].split(" ", 1)[0]
+        for line in observation.splitlines()
+        if line.startswith("- token=")
+    }
+    tool.invoke(
+        {
+            "action": "replace_text",
+            "target_id": target_id,
+            "element_token": tokens["Search"],
+            "text": "bounded query",
+        }
+    )
+    for label in ("Result", "Queue items", "Next item", "Pause item"):
+        tool.invoke(
+            {
+                "action": "click",
+                "target_id": target_id,
+                "element_token": tokens[label],
+            }
+        )
+    routine_refresh = json.loads(
+        tool.invoke({"action": "capture", "target_id": target_id})
+    )
+
+    assert "fresh_observation" in routine_refresh
+    assert vision.calls == []
+    assert service.performance_snapshot()["vision_calls"] == 0
+
+    visual = json.loads(
+        tool.invoke(
+            {
+                "action": "capture",
+                "target_id": target_id,
+                "visual_question": "Describe the one pixel-only detail.",
+            }
+        )
+    )
+    assert "vision_evidence" in visual
+    assert vision.calls == ["Describe the one pixel-only detail."]
+    assert [name for name, _args in transport.calls].count("get_window_state") == 3
 
 
 @pytest.mark.parametrize(

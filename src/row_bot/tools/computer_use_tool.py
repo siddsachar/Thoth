@@ -35,12 +35,12 @@ class ComputerUseInput(BaseModel):
     y: int = Field(default=-1, description="Window-local screenshot Y coordinate; semantic tokens are preferred")
     end_x: int = Field(default=-1, description="Window-local drag end X")
     end_y: int = Field(default=-1, description="Window-local drag end Y")
-    text: str = Field(default="", description="Non-sensitive mutation text, hidden from returned and persisted state. Token-bound type asks Cua to insert into the current semantic target; tokenless type is one current-caret action. replace_text sets one exact complete value. Never use passwords, OTPs, or payment credentials")
+    text: str = Field(default="", description="Non-sensitive mutation text, hidden from returned and persisted state. Token-bound type asks Cua to insert into the current semantic target; one tokenless type call is one literal current-caret Cua insertion. Tabs and newlines remain literal driver input and do not promise grid, table, form, or multi-control layout. replace_text sets one exact complete value. Never use passwords, OTPs, or payment credentials")
     keys: str = Field(default="", description="One key or plus-separated chord; for key_sequence, use 1-16 comma-separated Calculator keys such as 7,*,8,= or a compact safe expression such as 7×8=")
     direction: str = Field(default="", description="Scroll direction")
     amount: int = Field(default=0, description="Bounded scroll amount or wait milliseconds")
     capture_after: bool = Field(default=False, description="Request at most one later capture only when the next decision needs new state or exact native value readback")
-    visual_question: str = Field(default="", description="Optional explicit Vision question. Routine semantic capture uses zero Vision calls; Vision runs at most once only when semantic state cannot answer the next decision or the user asked for visual inspection")
+    visual_question: str = Field(default="", description="Optional concrete pixel-only Vision question. Routine initial and post-action semantic flows use zero Vision calls. Vision runs at most once only when semantics cannot answer this specific next decision or the user explicitly requested visual inspection")
     semantic_label: str = Field(default="", description="Optional exact normalized accessible label filter for capture; ambiguous exact matches are refused")
     semantic_role: str = Field(default="", description="Optional exact normalized semantic role filter for capture")
     semantic_value_prefix: str = Field(default="", description="Optional exact normalized accessible value-prefix filter for capture; values remain hidden from output")
@@ -83,6 +83,20 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
     lowered = text.casefold()
     explicit_code = str(getattr(exc, "code", "") or "")
     if explicit_code and explicit_code != "computer_failed":
+        raw_candidates = tuple(getattr(exc, "candidates", ()) or ())[:8]
+        semantic_controls = [
+            {
+                "label": str(candidate.get("label") or "")[:200],
+                "role": str(candidate.get("role") or "")[:80],
+            }
+            for candidate in raw_candidates
+            if isinstance(candidate, dict)
+            and "target_id" not in candidate
+            and (candidate.get("label") or candidate.get("role"))
+        ]
+        semantic_ambiguity = bool(
+            explicit_code == "ambiguous_target" and semantic_controls
+        )
         protected_controller = (
             "row-bot" in lowered
             or "row bot" in lowered
@@ -93,7 +107,13 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "stale_observation": "The Computer observation became stale before the action completed.",
             "target_mismatch": "The selected Computer target changed identity.",
             "target_gone": "The selected Computer target is no longer available.",
-            "ambiguous_target": "More than one exact Computer target matched the requested app scope.",
+            "ambiguous_target": (
+                "Multiple current controls matched the exact label/role/value filter."
+                if semantic_ambiguity
+                else "More than one exact Computer target matched the requested app scope."
+            ),
+            "semantic_no_match": "No current control matched the exact label/role/value filter.",
+            "parallel_calls_not_supported": "Parallel Computer Use calls are not supported for one stateful lease.",
             "paused_for_takeover": "Computer Use is paused for user control.",
             "driver_unavailable": "The Computer driver is unavailable.",
             "background_unavailable": (
@@ -112,7 +132,13 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "invalid_input": "Computer action input was invalid.",
         }
         remediation = {
-            "ambiguous_target": "Select one opaque target_id from the returned candidates, then capture it.",
+            "ambiguous_target": (
+                "Use one unfiltered semantic capture on the same target or revise the exact filter."
+                if semantic_ambiguity
+                else "Select one opaque target_id from the returned candidates, then capture it."
+            ),
+            "semantic_no_match": "Use one unfiltered semantic capture on the same target or revise the exact filter.",
+            "parallel_calls_not_supported": "Issue one Computer Use call at a time on a later turn.",
             "stale_observation": "Capture the exact same target once before retrying.",
             "target_gone": "Use a returned running canonical app name for one deliberate exact retry, or report that the requested app is unavailable.",
             "driver_unavailable": "Run Computer Use diagnostics, then start a new session.",
@@ -140,6 +166,11 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             retryable=bool(getattr(exc, "retryable", False)),
             terminal=explicit_code in {"hard_blocked", "handoff_required"},
         )
+        if explicit_code == "semantic_no_match" or semantic_ambiguity:
+            decoded = json.loads(payload)
+            if semantic_controls:
+                decoded["controls"] = semantic_controls
+            return json.dumps(decoded, ensure_ascii=False)
         if explicit_code == "ambiguous_target":
             decoded = json.loads(payload)
             decoded["candidates"] = list(getattr(exc, "candidates", ()) or ())
@@ -529,8 +560,10 @@ class ComputerUseTool(BaseTool):
                 log_effect_verified = bool(getattr(value, "effect_verified", False))
                 log_outcome = str(getattr(value, "outcome", "") or "none")
 
-            service.begin_tool_call(signature)
+            call_started = False
             try:
+                service.begin_tool_call(signature)
+                call_started = True
                 if service.resumed_call_matches(signature):
                     from langgraph.types import interrupt
 
@@ -591,7 +624,7 @@ class ComputerUseTool(BaseTool):
                         windows=windows,
                         discovery_scoped=True,
                         next_action=(
-                            "Use semantic tokens when available. Before any coordinate-only visual action, capture the selected target once with visual_question to obtain a Vision-grounded screenshot-local region."
+                            "For routine state, capture the selected target without visual_question and use semantic tokens. Include visual_question only for one concrete pixel-only question before a coordinate action."
                         ),
                     )
                 if normalized == "launch_app":
@@ -615,7 +648,7 @@ class ComputerUseTool(BaseTool):
                             "next_action": (
                                 "Use the returned fresh Vision grounding directly; do not call capture again."
                                 if observation is not None and observation.vision_text
-                                else "Use the returned fresh semantic observation directly. Before a coordinate-only visual action, capture once with visual_question; otherwise do not capture again."
+                                else "Use the returned fresh semantic observation directly. Request Vision only for one concrete pixel-only question; otherwise do not capture again."
                                 if observation is not None
                                 else "Capture the launched target before acting."
                             ),
@@ -647,12 +680,12 @@ class ComputerUseTool(BaseTool):
                     return _observation_payload(
                         observed,
                         next_action=(
-                            "Initial native acquisition completed with Vision deferred. Use semantic tokens; only make one later target-ID capture with visual_question if coordinate grounding is truly needed."
+                            "Initial native acquisition completed with zero Vision calls. Use semantic tokens; request one later visual_question only for a concrete pixel-only decision."
                             if observed.vision_deferred
                             else
                             "Use this Vision-grounded screenshot-local region for the next bounded coordinate action."
                             if observed.vision_text
-                            else "Use semantic tokens. Before a coordinate-only visual action, capture once with visual_question instead of guessing coordinates."
+                            else "Use semantic tokens. Request Vision only for a concrete pixel-only question before a coordinate action."
                         ),
                     )
                 if normalized == "wait":
@@ -761,19 +794,20 @@ class ComputerUseTool(BaseTool):
                 )
             finally:
                 pending_exception = sys.exc_info()[1]
-                service.end_tool_call(
-                    signature,
-                    pending=type(pending_exception).__name__ == "GraphInterrupt",
-                    action_family=normalized,
-                    success=log_success,
-                    error_code=log_error_code,
-                    route=log_route,
-                    delivery_mode=log_delivery,
-                    driver_effect=log_driver_effect,
-                    native_or_visual_change=log_change,
-                    effect_verified=log_effect_verified,
-                    outcome=log_outcome,
-                )
+                if call_started:
+                    service.end_tool_call(
+                        signature,
+                        pending=type(pending_exception).__name__ == "GraphInterrupt",
+                        action_family=normalized,
+                        success=log_success,
+                        error_code=log_error_code,
+                        route=log_route,
+                        delivery_mode=log_delivery,
+                        driver_effect=log_driver_effect,
+                        native_or_visual_change=log_change,
+                        effect_verified=log_effect_verified,
+                        outcome=log_outcome,
+                    )
 
         return [StructuredTool.from_function(
             func=computer_use,

@@ -138,6 +138,8 @@ _SAFE_COMPUTER_RESULT_CODES = frozenset(
         "not_ready",
         "ok",
         "paused_for_takeover",
+        "parallel_calls_not_supported",
+        "semantic_no_match",
         "snapshot_expired",
         "stale_observation",
         "surface_unavailable",
@@ -601,6 +603,19 @@ def _permission_key(app_name: object) -> str:
     return _normalize_app_identity(_permission_scope_name(app_name))
 
 
+def _window_identity_key(
+    app_name: object,
+    pid: int,
+    window_id: int,
+    window_title: object,
+    bounds: tuple[float, float, float, float],
+) -> tuple[Any, ...]:
+    identity = _permission_key(app_name)
+    if window_id:
+        return identity, int(pid), int(window_id)
+    return identity, int(pid), str(window_title or "").casefold(), *bounds
+
+
 def _resolve_app_identity(requested: str, candidates: list[str]) -> str | None:
     """Resolve one exact canonical identity without aliases or fuzzy matching."""
 
@@ -865,7 +880,6 @@ class ComputerUseService:
                 self._paused_at = 0.0
                 self._lease_id = secrets.token_urlsafe(24)
                 self._takeover_token = ""
-                self._active_call_signature = None
                 self._paused_call_signature = None
                 self._resumed_call_signature = None
                 self._resume_observation = None
@@ -1239,6 +1253,16 @@ class ComputerUseService:
         output: list[dict[str, Any]] = []
         seen_rows: set[tuple[Any, ...]] = set()
         with self._lock:
+            existing_targets = {
+                _window_identity_key(
+                    target.app_name,
+                    target.pid,
+                    target.window_id,
+                    target.window_title,
+                    target.bounds,
+                ): target.target_id
+                for target in self._targets.values()
+            }
             for row in rows:
                 if not isinstance(row, dict):
                     continue
@@ -1263,18 +1287,18 @@ class ComputerUseService:
                 if allowed_pids and pid not in allowed_pids:
                     continue
                 identity = _permission_key(app_name)
-                row_key = (
-                    (identity, pid, window_id)
-                    if window_id
-                    else (
-                        identity,
-                        pid,
-                        window_title.casefold(),
-                        float(bounds.get("x") or 0),
-                        float(bounds.get("y") or 0),
-                        float(bounds.get("width") or 0),
-                        float(bounds.get("height") or 0),
-                    )
+                target_bounds = (
+                    float(bounds.get("x") or 0),
+                    float(bounds.get("y") or 0),
+                    float(bounds.get("width") or 0),
+                    float(bounds.get("height") or 0),
+                )
+                row_key = _window_identity_key(
+                    app_name,
+                    pid,
+                    window_id,
+                    window_title,
+                    target_bounds,
                 )
                 if row_key in seen_rows:
                     continue
@@ -1282,17 +1306,18 @@ class ComputerUseService:
                 friendly_name = str(display_app or app_filter or app_name).strip()[:128]
                 if identity and friendly_name:
                     self._app_display_names[identity] = friendly_name
-                target_id = f"target_{secrets.token_urlsafe(18)}"
+                target_id = existing_targets.get(row_key) or f"target_{secrets.token_urlsafe(18)}"
                 target = Target(
                     target_id=target_id,
                     pid=pid,
                     window_id=window_id,
                     app_name=app_name,
                     window_title=window_title,
-                    bounds=(float(bounds.get("x") or 0), float(bounds.get("y") or 0), float(bounds.get("width") or 0), float(bounds.get("height") or 0)),
+                    bounds=target_bounds,
                     foreground_state=self._app_foreground.get(identity, "unknown"),
                 )
                 self._targets[target_id] = target
+                existing_targets[row_key] = target_id
                 output.append({
                     "target_id": target_id,
                     "app": target.app_name,
@@ -1313,17 +1338,18 @@ class ComputerUseService:
         app_name = str(row.get("app_name") or row.get("name") or "")[:128]
         pid = int(row.get("pid") or 0)
         window_id = int(row.get("window_id") or 0)
-        if window_id:
-            return (_permission_key(app_name), pid, window_id)
         bounds = row.get("bounds") if isinstance(row.get("bounds"), dict) else {}
-        return (
-            _permission_key(app_name),
+        return _window_identity_key(
+            app_name,
             pid,
-            str(row.get("title") or "")[:160].casefold(),
+            window_id,
+            str(row.get("title") or "")[:160],
+            (
             float(bounds.get("x") or 0),
             float(bounds.get("y") or 0),
             float(bounds.get("width") or 0),
             float(bounds.get("height") or 0),
+            ),
         )
 
     def _exact_driver_window_rows(
@@ -1605,6 +1631,11 @@ class ComputerUseService:
         """Register the current privacy-safe call for takeover replay safety."""
 
         with self._lock:
+            if self._active_call_signature is not None:
+                raise ComputerUseError(
+                    "Parallel Computer Use calls are not supported for one stateful lease.",
+                    code="parallel_calls_not_supported",
+                )
             self._active_call_signature = tuple(signature)
             self._tool_call_started_at = time.perf_counter()
             self._tool_call_counters = {
@@ -1641,8 +1672,9 @@ class ComputerUseService:
         outcome: str = "",
     ) -> None:
         with self._lock:
-            if self._active_call_signature == tuple(signature):
-                self._active_call_signature = None
+            if self._active_call_signature != tuple(signature):
+                return
+            self._active_call_signature = None
             started_at = self._tool_call_started_at
             counters_before = dict(self._tool_call_counters)
             phases = dict(self._tool_phase_ms)
@@ -2012,6 +2044,13 @@ class ComputerUseService:
         target = self._target(target_id)
         self._ensure_app_permission(target, approval_mode=approval_mode)
         with self._mutation_lock:
+            with self._lock:
+                published_before = (
+                    self._observation,
+                    self._preview_observation,
+                    self._observation_generation,
+                    self._target_hint,
+                )
             self._state = SessionState.OBSERVING
             response = self._capture_response(target, include_screenshot=True)
             observation = self._observation_from_response(
@@ -2019,12 +2058,23 @@ class ComputerUseService:
                 response,
                 require_screenshot=True,
             )
-            self._apply_semantic_filter(
-                observation,
-                label=semantic_label,
-                role=semantic_role,
-                value_prefix=semantic_value_prefix,
-            )
+            try:
+                self._apply_semantic_filter(
+                    observation,
+                    label=semantic_label,
+                    role=semantic_role,
+                    value_prefix=semantic_value_prefix,
+                )
+            except ComputerUseError as exc:
+                if exc.code in {"ambiguous_target", "semantic_no_match"}:
+                    with self._lock:
+                        (
+                            self._observation,
+                            self._preview_observation,
+                            self._observation_generation,
+                            self._target_hint,
+                        ) = published_before
+                raise
             if initial_app_scope and not visual_question:
                 observation.vision_deferred = True
             # Publish only after the native response has passed exact identity,
@@ -2065,11 +2115,20 @@ class ComputerUseService:
             )
         )
         if len(matches) != 1:
+            controls = tuple(
+                {
+                    "label": str(element.label or "")[:200],
+                    "role": str(element.role or "")[:80],
+                }
+                for element in observation.elements[:8]
+                if str(element.label or "").strip() or str(element.role or "").strip()
+            )
             raise ComputerUseError(
                 "Semantic capture filter matched multiple controls."
                 if len(matches) > 1
                 else "Semantic capture filter did not match a current control.",
-                code="ambiguous_target" if len(matches) > 1 else "target_gone",
+                code="ambiguous_target" if len(matches) > 1 else "semantic_no_match",
+                candidates=controls,
             )
         observation.semantic_filter = matches
 

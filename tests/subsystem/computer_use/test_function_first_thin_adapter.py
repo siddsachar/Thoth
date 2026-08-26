@@ -615,27 +615,70 @@ def test_large_tree_semantic_filter_refuses_multiple_exact_matches(
     service: ComputerUseService,
     fake_transport: FakeCuaTransport,
 ) -> None:
+    target_id, current = _capture_generic(
+        service,
+        fake_transport,
+        ({"role": "Button", "label": "Current action"},),
+    )
+    current_token = current.elements[0].token
+    fake_transport.scenario.rotate_element_tokens = True
     fake_transport.scenario.semantic_elements = (
-        {"role": "DataItem", "label": "Named Cell"},
-        {"role": "DataItem", "label": "Named Cell"},
+        {"role": "DataItem", "label": "Named item"},
+        {"role": "DataItem", "label": "Named item"},
     )
-    fake_transport.scenario.apps = (
-        {"name": "Native Grid.exe", "pid": 7001, "running": True, "active": True},
-    )
-    fake_transport.scenario.windows = (_window(1, app="Native Grid.exe"),)
-    fake_transport.scenario.capture_pid = 7001
-    fake_transport.scenario.capture_window_id = 1
+    generation_before = current.generation
 
     with pytest.raises(ComputerUseError) as ambiguous:
         service.capture(
-            owner=OWNER,
-            app="Native Grid",
-            semantic_label="Named Cell",
+            target_id,
+            OWNER,
+            semantic_label="Named item",
             semantic_role="DataItem",
         )
 
     assert ambiguous.value.code == "ambiguous_target"
-    assert "click" not in [name for name, _args in fake_transport.calls]
+    assert service.current_observation(target_id) is current
+    assert service.current_observation(target_id).generation == generation_before
+    calls_before = len(fake_transport.calls)
+    service.act("click", target_id, OWNER, element_token=current_token)
+    assert [name for name, _args in fake_transport.calls[calls_before:]] == ["click"]
+
+
+def test_semantic_filter_no_match_preserves_current_token_without_rediscovery(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+) -> None:
+    target_id, current = _capture_generic(
+        service,
+        fake_transport,
+        ({"role": "Button", "label": "Current action"},),
+    )
+    current_token = current.elements[0].token
+    fake_transport.scenario.rotate_element_tokens = True
+    fake_transport.scenario.semantic_elements = (
+        {"role": "Button", "label": "Different action"},
+        {"role": "Slider", "label": "Level"},
+    )
+    generation_before = current.generation
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(ComputerUseError) as missing:
+        service.capture(
+            target_id,
+            OWNER,
+            semantic_label="Missing action",
+            semantic_role="Button",
+        )
+
+    assert missing.value.code == "semantic_no_match"
+    assert service.current_observation(target_id) is current
+    assert service.current_observation(target_id).generation == generation_before
+    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
+        "get_window_state"
+    ]
+    calls_before = len(fake_transport.calls)
+    service.act("click", target_id, OWNER, element_token=current_token)
+    assert [name for name, _args in fake_transport.calls[calls_before:]] == ["click"]
 
 
 def test_exact_value_scope_is_not_formula_navigation_or_task_completion(

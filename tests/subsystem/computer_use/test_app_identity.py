@@ -62,6 +62,37 @@ def test_duplicate_native_browser_rows_are_deduplicated_in_stable_order(
     ]
 
 
+def test_repeated_window_discovery_reuses_lease_target_id_until_identity_changes(
+    service,
+    fake_transport,
+) -> None:
+    original = _window(41, "Generic App", "Document", pid=4101)
+    fake_transport.scenario.windows = (original,)
+    service.acquire(OWNER, validate_context=False)
+
+    first = service.list_windows(OWNER, app="Generic App")[0]["target_id"]
+    repeated = service.list_windows(OWNER, app="Generic App")[0]["target_id"]
+
+    assert repeated == first
+
+    fake_transport.scenario.windows = (
+        _window(42, "Generic App", "Document", pid=4101),
+    )
+    changed_window = service.list_windows(OWNER, app="Generic App")[0]["target_id"]
+    assert changed_window != first
+
+    fake_transport.scenario.windows = (
+        _window(42, "Generic App", "Document", pid=4102),
+    )
+    changed_pid = service.list_windows(OWNER, app="Generic App")[0]["target_id"]
+    assert changed_pid not in {first, changed_window}
+
+    service.stop()
+    service.acquire(OWNER, validate_context=False)
+    next_lease = service.list_windows(OWNER, app="Generic App")[0]["target_id"]
+    assert next_lease != changed_pid
+
+
 @pytest.mark.parametrize(
     ("requested", "driver_name"),
     [

@@ -25,10 +25,13 @@ def test_model_tool_is_one_flat_provider_neutral_schema() -> None:
     assert "7,*,8,=" in schema["properties"]["keys"]["description"]
     assert "compact" in schema["properties"]["keys"]["description"].lower()
     assert "current-caret" in schema["properties"]["text"]["description"]
+    assert "one literal" in schema["properties"]["text"]["description"]
+    assert "do not promise grid, table, form, or multi-control layout" in schema["properties"]["text"]["description"]
     assert "complete value" in schema["properties"]["text"]["description"]
     assert "dispatched directly to Cua" in schema["properties"]["element_token"]["description"]
     assert "read-only" in schema["properties"]["element_token"]["description"]
     assert "zero Vision calls" in schema["properties"]["visual_question"]["description"]
+    assert "concrete pixel-only" in schema["properties"]["visual_question"]["description"]
     assert "at most once" in schema["properties"]["visual_question"]["description"]
     assert "exact normalized accessible label" in schema["properties"]["semantic_label"]["description"]
     assert "ambiguous exact matches are refused" in schema["properties"]["semantic_label"]["description"]
@@ -92,6 +95,67 @@ def test_exact_app_recovery_payload_exposes_only_bounded_running_canonical_names
     assert "exactly one canonical name" in payload["next_action"]
     assert "fuzzy" in payload["next_action"]
     assert all(set(row) == {"name", "running", "active"} for row in payload["running_candidates"])
+
+
+def test_semantic_miss_payload_never_recommends_app_rediscovery_or_another_engine() -> None:
+    payload = json.loads(
+        _computer_error_payload(
+            "capture",
+            ComputerUseError(
+                "Semantic capture filter did not match a current control.",
+                code="semantic_no_match",
+                candidates=(
+                    {"label": "Current action", "role": "Button"},
+                    {"label": "Level", "role": "Slider"},
+                ),
+            ),
+        )
+    )
+
+    assert payload["error_code"] == "semantic_no_match"
+    assert "exact label/role/value filter" in payload["display_summary"]
+    assert payload["controls"] == [
+        {"label": "Current action", "role": "Button"},
+        {"label": "Level", "role": "Slider"},
+    ]
+    remediation = payload["remediation"].casefold()
+    assert "same target" in remediation
+    assert "unfiltered semantic capture" in remediation
+    assert all(
+        marker not in remediation
+        for marker in (
+            "list_apps",
+            "list_windows",
+            "relaunch",
+            "coordinate",
+            "shell",
+            "clipboard",
+        )
+    )
+
+
+def test_ambiguous_semantic_filter_reports_controls_not_app_windows() -> None:
+    payload = json.loads(
+        _computer_error_payload(
+            "capture",
+            ComputerUseError(
+                "Semantic capture filter matched multiple controls.",
+                code="ambiguous_target",
+                candidates=(
+                    {"label": "Duplicate", "role": "Button"},
+                    {"label": "Duplicate", "role": "Button"},
+                ),
+            ),
+        )
+    )
+
+    assert "controls" in payload["display_summary"].casefold()
+    assert "app windows" not in payload["display_summary"].casefold()
+    assert payload["controls"] == [
+        {"label": "Duplicate", "role": "Button"},
+        {"label": "Duplicate", "role": "Button"},
+    ]
+    assert "same target" in payload["remediation"].casefold()
 
 
 def test_computer_use_is_off_by_default() -> None:
