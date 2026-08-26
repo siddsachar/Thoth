@@ -17,9 +17,14 @@ from row_bot.access.launcher_control import (
 )
 
 
-def _post(port: int, secret: str, nonce: str) -> int:
+def _post(
+    port: int,
+    secret: str,
+    nonce: str,
+    path: str = "/v1/restart-child",
+) -> int:
     request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/v1/restart-child",
+        f"http://127.0.0.1:{port}{path}",
         data=b"",
         method="POST",
         headers={
@@ -63,6 +68,40 @@ def test_launcher_control_rejects_bad_secret_and_replay() -> None:
             _post(port, server.secret, nonce)
         assert replay.value.code == 409
         assert called.wait(2)
+    finally:
+        server.stop()
+
+
+def test_launcher_control_accepts_authenticated_launcher_shutdown_once() -> None:
+    restarted = threading.Event()
+    shutdown = threading.Event()
+    server = LauncherControlServer(
+        restarted.set,
+        shutdown_launcher=shutdown.set,
+        secret="k" * 43,
+    )
+    port = server.start()
+    nonce = "s" * 24
+    try:
+        assert (
+            _post(port, server.secret, nonce, "/v1/shutdown-launcher") == 202
+        )
+        assert shutdown.wait(2)
+        assert not restarted.is_set()
+        with pytest.raises(urllib.error.HTTPError) as replay:
+            _post(port, server.secret, nonce, "/v1/shutdown-launcher")
+        assert replay.value.code == 409
+    finally:
+        server.stop()
+
+
+def test_launcher_control_hides_shutdown_route_without_callback() -> None:
+    server = LauncherControlServer(lambda: None, secret="h" * 43)
+    port = server.start()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as missing:
+            _post(port, server.secret, "m" * 24, "/v1/shutdown-launcher")
+        assert missing.value.code == 404
     finally:
         server.stop()
 

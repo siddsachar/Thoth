@@ -57,10 +57,15 @@ class FakeScenario:
     delivery_mode: str = "background"
     injection_label: str = ""
     calculator_semantics: bool = False
+    calculator_sparse_after_action: bool = False
     windows: tuple[dict[str, Any], ...] = ()
+    window_snapshots: tuple[tuple[dict[str, Any], ...], ...] = ()
     apps: tuple[dict[str, Any], ...] = ()
     list_apps_error_code: str = ""
     launch_error_code: str = ""
+    launch_pid: int = 4242
+    launch_window_id: int = 101
+    launch_bundle_id: str = ""
     action_error_code: str = ""
     capture_pid: int = 0
     capture_window_id: int = 0
@@ -79,6 +84,7 @@ class FakeScenario:
     driver_sparse: bool = False
     verify_status: str = "satisfied"
     menu_error_code: str = ""
+    close_target_after_labels: frozenset[str] = field(default_factory=frozenset)
 
 
 class FakeCuaTransport:
@@ -98,6 +104,8 @@ class FakeCuaTransport:
         self.element_labels: dict[str, str] = {}
         self.capture_index = 0
         self.document_value = self.scenario.document_value
+        self.window_snapshot_index = 0
+        self.closed_targets: set[tuple[int, int]] = set()
 
     def open(self) -> None:
         self.opened = True
@@ -137,7 +145,12 @@ class FakeCuaTransport:
         if name == "check_permissions":
             return self._result({"accessibility": not self.scenario.permission_denied, "screen_recording": True})
         if name == "verify_state":
-            status = self.scenario.verify_status
+            target = (int(args.get("pid") or 0), int(args.get("window_id") or 0))
+            status = (
+                "unsatisfied"
+                if target in self.closed_targets
+                else self.scenario.verify_status
+            )
             return self._result(
                 {
                     "status": status,
@@ -172,21 +185,62 @@ class FakeCuaTransport:
                     self.scenario.list_apps_error_code,
                 )
             apps = list(self.scenario.apps) if self.scenario.apps else [
-                {"name": "Calculator", "pid": 4242, "running": True, "active": False},
+                {
+                    "name": "Calculator",
+                    "pid": 4242,
+                    "running": True,
+                    "active": False,
+                    "kind": "uwp",
+                    "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+                },
                 {"name": "Notepad", "pid": 4343, "running": True, "active": False},
             ]
             return self._result({"apps": apps})
         if name == "list_windows":
-            windows = list(self.scenario.windows) if self.scenario.windows else [
-                {"window_id": 101, "pid": 4242, "app_name": "Calculator", "title": "Calculator", "bounds": {"x": -100, "y": 20, "width": 800, "height": 600}, "is_on_screen": True},
-                {"window_id": 102, "pid": 4343, "app_name": "Notepad", "title": "Untitled - Notepad", "bounds": {"x": 700, "y": 20, "width": 900, "height": 700}, "is_on_screen": True},
+            if self.scenario.window_snapshots:
+                index = min(
+                    self.window_snapshot_index,
+                    len(self.scenario.window_snapshots) - 1,
+                )
+                windows = list(self.scenario.window_snapshots[index])
+                self.window_snapshot_index += 1
+            else:
+                windows = list(self.scenario.windows) if self.scenario.windows else [
+                    {"window_id": 101, "pid": 4242, "app_name": "Calculator", "title": "Calculator", "bounds": {"x": -100, "y": 20, "width": 800, "height": 600}, "is_on_screen": True},
+                    {"window_id": 102, "pid": 4343, "app_name": "Notepad", "title": "Untitled - Notepad", "bounds": {"x": 700, "y": 20, "width": 900, "height": 700}, "is_on_screen": True},
+                ]
+            windows = [
+                row
+                for row in windows
+                if (int(row.get("pid") or 0), int(row.get("window_id") or 0))
+                not in self.closed_targets
             ]
             return self._result({"windows": windows})
         if name == "launch_app":
             if self.scenario.launch_error_code:
                 return self._error("fake launch failure", self.scenario.launch_error_code)
-            return self._result({"pid": 4242, "name": str(args.get("name") or "Calculator"), "windows": [{"window_id": 101, "title": "Calculator"}]})
+            app_name = str(args.get("name") or "Calculator")
+            window = {
+                "window_id": self.scenario.launch_window_id,
+                "title": "Calculator",
+            }
+            if self.scenario.calculator_semantics:
+                window["app_name"] = app_name
+            package_identity = self.scenario.launch_bundle_id or (
+                "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
+                if app_name.casefold() == "calc.exe"
+                else ""
+            )
+            return self._result({
+                "pid": self.scenario.launch_pid,
+                "name": package_identity or app_name,
+                "bundle_id": package_identity,
+                "windows": [window],
+            })
         if name == "get_window_state":
+            target = (int(args.get("pid") or 0), int(args.get("window_id") or 0))
+            if target in self.closed_targets:
+                return self._error("target window no longer exists", "target_not_found")
             if self.scenario.permission_denied:
                 return self._error("permission denied", "permission_denied")
             if self.scenario.semantic_elements:
@@ -199,7 +253,14 @@ class FakeCuaTransport:
                     )
                     for item in self.scenario.semantic_elements
                 ]
-            elif self.scenario.calculator_semantics and not self.scenario.oversized_tree:
+            elif (
+                self.scenario.calculator_semantics
+                and not self.scenario.oversized_tree
+                and not (
+                    self.scenario.calculator_sparse_after_action
+                    and self.pressed_keys
+                )
+            ):
                 element_specs = [("text", f"Display {self.calculator_display}")] + [
                     ("button", label) for label in _CALCULATOR_BUTTON_LABELS
                 ]
@@ -361,6 +422,10 @@ class FakeCuaTransport:
                 if key:
                     self.pressed_keys.append(key)
                     self.effective_keys.append(key)
+                if label in self.scenario.close_target_after_labels:
+                    self.closed_targets.add(
+                        (int(args.get("pid") or 0), int(args.get("window_id") or 0))
+                    )
             if self.pressed_keys[-4:] == ["7", "*", "8", "="]:
                 self.calculator_display = "56"
             effect = "unverifiable" if accepted_noop else (

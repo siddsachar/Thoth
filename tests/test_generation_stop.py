@@ -52,6 +52,14 @@ def teardown_function() -> None:
     _active_generations.clear()
 
 
+def test_browser_task_stop_copy_is_distinct_from_ordinary_generation_cancel() -> None:
+    assert streaming._stopped_marker("browser_task_stop") == "*[Browser task stopped]*"
+    assert streaming._stopped_marker("user") == "*[Stopped]*"
+    assert streaming._stopped_marker("browser_takeover") == (
+        "*[Browser automation paused for takeover]*"
+    )
+
+
 def test_suspended_orchestration_does_not_block_durable_transcript_refresh() -> None:
     gen = _generation("thread-orchestration-wait")
     gen.status = "streaming"

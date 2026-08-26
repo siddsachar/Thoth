@@ -10,6 +10,7 @@ class _Page:
         self.protected = protected
         self.front_count = 0
         self.screenshot_count = 0
+        self.visibility = "visible"
 
     def is_closed(self) -> bool:
         return False
@@ -19,6 +20,9 @@ class _Page:
 
     def bring_to_front(self) -> None:
         self.front_count += 1
+
+    def evaluate(self, _script: str) -> str:
+        return self.visibility
 
     def query_selector(self, _selector: str):
         return object() if self.protected else None
@@ -67,6 +71,18 @@ def test_take_over_foregrounds_only_existing_task_tab_without_creating_one() -> 
     assert page.front_count == 1
     assert session.status_snapshot("thread-a")["state"] == "waiting_user"
     assert "thread-b" not in session._thread_pages
+
+
+def test_take_over_refuses_to_claim_success_when_window_remains_hidden() -> None:
+    session = BrowserSession()
+    page = _Page("https://example.com", "Example")
+    page.visibility = "hidden"
+    session._launched = True
+    session._thread_pages = {"thread-a": page}
+    session._run_on_pw_thread = lambda fn: fn()
+
+    assert session.take_over("thread-a") is False
+    assert session.status_snapshot("thread-a")["state"] == "needs_attention"
 
 
 def test_manager_listener_registered_before_session_creation_receives_events() -> None:

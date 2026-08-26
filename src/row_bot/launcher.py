@@ -2701,7 +2701,10 @@ class RowBotTray:
     def _ensure_launcher_control(self) -> None:
         if self._launcher_control is not None:
             return
-        control = LauncherControlServer(self._restart_child_from_control)
+        control = LauncherControlServer(
+            self._restart_child_from_control,
+            shutdown_launcher=self._on_quit,
+        )
         control.start()
         self._launcher_control = control
         _set_process_launch_environment(

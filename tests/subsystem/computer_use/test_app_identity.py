@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from row_bot.computer_use import service as service_module
 from row_bot.computer_use.service import ComputerUseError, ComputerUseService, LeaseOwner
 
 
@@ -98,11 +99,300 @@ def test_unknown_or_partial_app_name_is_not_fuzzily_resolved(service, fake_trans
     fake_transport.scenario.windows = (
         _window(1, "chrome.exe", "Target"),
         _window(2, "msedge.exe", "Target"),
+        _window(3, "CalculatorApp.exe", "Calculator"),
     )
     service.acquire(OWNER, validate_context=False)
 
     assert service.list_windows(OWNER, app="Browser") == []
     assert service.list_windows(OWNER, app="Chrom") == []
+    assert service.list_windows(OWNER, app="Calc") == []
+
+
+@pytest.mark.parametrize(
+    ("requested", "driver_name"),
+    [
+        ("Calculator", "Windows Calculator"),
+        ("Calculator", "CalculatorApp.exe"),
+        ("Windows Calculator", "CalculatorApp.exe"),
+    ],
+)
+def test_explicit_calculator_identity_group_matches_inventory_and_window_names(
+    service,
+    fake_transport,
+    requested: str,
+    driver_name: str,
+) -> None:
+    fake_transport.scenario.windows = (
+        _window(1, driver_name, "Calculator"),
+        _window(2, "unrelated.exe", "Calculator notes"),
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    rows = service.list_windows(OWNER, app=requested)
+
+    assert len(rows) == 1
+    assert rows[0]["app"] == driver_name
+
+
+def test_calculator_window_discovery_accepts_only_the_exact_packaged_host_title(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.windows = (
+        _window(1, "ApplicationFrameHost.exe", "Calculator"),
+        _window(2, "ApplicationFrameHost.exe", "Calculator notes"),
+        _window(3, "unrelated.exe", "Calculator"),
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    rows = service.list_windows(OWNER, app="Calculator")
+
+    assert len(rows) == 1
+    target = service._target(rows[0]["target_id"])
+    assert (target.app_name, target.window_title) == (
+        "ApplicationFrameHost.exe",
+        "Calculator",
+    )
+
+
+def test_packaged_host_discovery_is_exact_for_any_reviewed_app_name(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.windows = (
+        _window(1, "ApplicationFrameHost.exe", "Photos"),
+        _window(2, "ApplicationFrameHost.exe", "Photos notes"),
+        _window(3, "unrelated.exe", "Photos"),
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    rows = service.list_windows(OWNER, app="Photos")
+
+    assert len(rows) == 1
+    target = service._target(rows[0]["target_id"])
+    assert (target.app_name, target.window_title) == (
+        "ApplicationFrameHost.exe",
+        "Photos",
+    )
+
+
+def test_calculator_launch_resolves_windows_inventory_name_under_local_ui_grant(
+    fake_client,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
+    approvals: list[dict] = []
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "kind": "uwp",
+            "running": False,
+        },
+    )
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda payload: approvals.append(payload) or True,
+    )
+    service.acquire(OWNER, validate_context=False)
+    service.grant_app_permission_for_local_ui(OWNER, "Calculator")
+
+    windows = service.launch_app("Calculator", OWNER)
+
+    launch_args = next(args for name, args in fake_transport.calls if name == "launch_app")
+    assert launch_args["name"] == "calc.exe"
+    assert windows[0]["app"] == "Calculator"
+    assert [name for name, _args in fake_transport.calls].count("list_windows") == 3
+    assert approvals == []
+
+
+def test_packaged_calculator_launch_never_trusts_an_unidentified_launch_row(
+    fake_client,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "kind": "uwp",
+            "running": False,
+        },
+    )
+    fake_transport.scenario.windows = (
+        _window(1, "unrelated.exe", "Calculator notes"),
+    )
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.PACKAGED_LAUNCH_STABILITY_TIMEOUT_SECONDS = 0.0
+    service.acquire(OWNER, validate_context=False)
+
+    with pytest.raises(ComputerUseError) as exc_info:
+        service.launch_app("Calculator", OWNER)
+
+    assert exc_info.value.code == "target_gone"
+    assert [name for name, _args in fake_transport.calls].count("launch_app") == 1
+    assert [name for name, _args in fake_transport.calls].count("list_windows") == 1
+    assert "get_window_state" not in [name for name, _args in fake_transport.calls]
+
+
+def test_packaged_calculator_launch_rebinds_only_after_replacement_is_stable(
+    fake_client,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "kind": "uwp",
+            "running": False,
+        },
+    )
+    transient = _window(1, "CalculatorApp.exe", "Calculator", pid=111)
+    replacement = _window(2, "CalculatorApp.exe", "Calculator", pid=222)
+    fake_transport.scenario.window_snapshots = (
+        (transient,),
+        (replacement,),
+        (replacement,),
+        (replacement,),
+    )
+    fake_transport.scenario.launch_pid = 222
+    fake_transport.scenario.launch_window_id = 2
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.PACKAGED_LAUNCH_POLL_INTERVAL_SECONDS = 0.0
+    service.acquire(OWNER, validate_context=False)
+    service.grant_app_permission_for_local_ui(OWNER, "Calculator")
+
+    windows = service.launch_app("Calculator", OWNER)
+
+    target = service._target(windows[0]["target_id"])
+    assert (target.pid, target.window_id) == (222, 2)
+    assert [name for name, _args in fake_transport.calls].count("list_windows") == 4
+
+
+def test_packaged_calculator_launch_binds_exact_package_window_under_shared_host(
+    fake_client,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "kind": "uwp",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "running": False,
+        },
+    )
+    trusted = _window(7, "ApplicationFrameHost.exe", "Calculator", pid=777)
+    decoy = _window(8, "ApplicationFrameHost.exe", "Calculator", pid=777)
+    fake_transport.scenario.window_snapshots = (
+        (trusted, decoy),
+        (trusted, decoy),
+        (trusted, decoy),
+    )
+    fake_transport.scenario.launch_pid = 777
+    fake_transport.scenario.launch_window_id = 7
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.PACKAGED_LAUNCH_POLL_INTERVAL_SECONDS = 0.0
+    service.acquire(OWNER, validate_context=False)
+    service.grant_app_permission_for_local_ui(OWNER, "Calculator")
+
+    windows = service.launch_app("Calculator", OWNER)
+
+    assert len(windows) == 1
+    target = service._target(windows[0]["target_id"])
+    assert (target.app_name, target.pid, target.window_id) == (
+        "Calculator",
+        777,
+        7,
+    )
+
+
+def test_packaged_calculator_launch_rejects_untrusted_package_identity(
+    fake_client,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(service_module.platform, "system", lambda: "Windows")
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "kind": "uwp",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "running": False,
+        },
+    )
+    fake_transport.scenario.launch_bundle_id = "Unrelated.Package_123!App"
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.acquire(OWNER, validate_context=False)
+    service.grant_app_permission_for_local_ui(OWNER, "Calculator")
+
+    with pytest.raises(ComputerUseError) as exc_info:
+        service.launch_app("Calculator", OWNER)
+
+    assert exc_info.value.code == "target_gone"
+    assert "get_window_state" not in [name for name, _args in fake_transport.calls]
+
+
+def test_any_reviewed_packaged_app_uses_package_proven_shared_host_binding(
+    fake_client,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = (
+        {
+            "name": "Contoso Notes",
+            "kind": "uwp",
+            "bundle_id": "Contoso.Notes_abcd1234",
+            "running": False,
+        },
+    )
+    trusted = _window(
+        17,
+        "ContosoNotes.exe",
+        "Quarterly plan - Contoso Notes",
+        pid=1717,
+    )
+    fake_transport.scenario.window_snapshots = (
+        (trusted,),
+        (trusted,),
+        (trusted,),
+    )
+    fake_transport.scenario.launch_pid = 1717
+    fake_transport.scenario.launch_window_id = 17
+    fake_transport.scenario.launch_bundle_id = "Contoso.Notes_abcd1234!App"
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.PACKAGED_LAUNCH_POLL_INTERVAL_SECONDS = 0.0
+    service.acquire(OWNER, validate_context=False)
+    service.grant_app_permission_for_local_ui(OWNER, "Contoso Notes")
+
+    windows = service.launch_app("Contoso Notes", OWNER)
+
+    assert len(windows) == 1
+    target = service._target(windows[0]["target_id"])
+    assert (target.app_name, target.pid, target.window_id) == (
+        "Contoso Notes",
+        1717,
+        17,
+    )
 
 
 def test_launch_resolves_edge_once_and_keeps_friendly_approval_copy(

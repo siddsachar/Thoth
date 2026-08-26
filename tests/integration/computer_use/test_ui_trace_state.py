@@ -56,6 +56,9 @@ def test_active_session_and_settings_sources_expose_required_local_controls() ->
         "This task tab only",
     ):
         assert label in live_control
+    assert 'resume_button.set_text("Resume")' in live_control
+    assert 'else "Done"' not in live_control
+    assert 'reason = "browser_task_stop"' in live_control
     assert "fit=contain" in live_control
     assert "width: min(100%, 420px)" in live_control
     assert "previous.engine != view.engine" in live_control

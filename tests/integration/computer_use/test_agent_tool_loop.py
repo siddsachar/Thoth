@@ -248,7 +248,7 @@ def test_calculator_fast_path_needs_only_three_model_tool_calls(tmp_path, monkey
         "stop",
     ]
     assert [name for name, _args in transport.calls].count("get_window_state") == 2
-    assert "list_windows" not in [name for name, _args in transport.calls]
+    assert [name for name, _args in transport.calls].count("list_windows") == 3
 
 
 def test_generic_notepad_wait_after_approval_surface_uses_existing_lease(

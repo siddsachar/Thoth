@@ -21,6 +21,14 @@ _WORKSPACE = pathlib.Path(
 )
 
 
+def _launch_playwright_browser(playwright):
+    """Launch only Row-Bot's reviewed Python-matched Chromium runtime."""
+
+    from row_bot.browser.runtime import playwright_chromium_launch_options
+
+    return playwright.chromium.launch(**playwright_chromium_launch_options())
+
+
 class ExportedBytes(bytes):
     """Bytes payload annotated with the actual path written to disk."""
 
@@ -496,14 +504,14 @@ def export_pdf(
 
     pdf_pages = []
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = _launch_playwright_browser(pw)
         for i, page in selected:
             html = render_page_html(project, page.html, page_index=i)
             ctx = browser.new_context(
                 viewport={"width": project.canvas_width, "height": project.canvas_height}
             )
             pg = ctx.new_page()
-            pg.set_content(html, wait_until="networkidle")
+            pg.set_content(html, wait_until="load")
             pdf_pages.append(
                 pg.pdf(
                     width=f"{project.canvas_width}px",
@@ -546,14 +554,14 @@ def _render_png_screenshots(project: DesignerProject, pages: Optional[str] = Non
 
     screenshots: list[tuple[str, bytes]] = []
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = _launch_playwright_browser(pw)
         for i, page in selected:
             html = render_page_html(project, page.html, page_index=i)
             ctx = browser.new_context(
                 viewport={"width": project.canvas_width, "height": project.canvas_height},
             )
             pg = ctx.new_page()
-            pg.set_content(html, wait_until="networkidle")
+            pg.set_content(html, wait_until="load")
             png_bytes = pg.screenshot(full_page=False, type="png")
             safe_title = _sanitize_name(page.title, max_len=40)
             screenshots.append((f"page_{i + 1}_{safe_title}.png", png_bytes))
@@ -624,14 +632,14 @@ def export_pptx_screenshot(
     blank_layout = prs.slide_layouts[6]
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = _launch_playwright_browser(pw)
         for i, page in selected:
             html = render_page_html(project, page.html, page_index=i)
             ctx = browser.new_context(
                 viewport={"width": project.canvas_width, "height": project.canvas_height},
             )
             pg = ctx.new_page()
-            pg.set_content(html, wait_until="networkidle")
+            pg.set_content(html, wait_until="load")
             png_bytes = pg.screenshot(full_page=False, type="png")
             ctx.close()
 
@@ -1183,13 +1191,13 @@ def _collect_native_slide(project: DesignerProject, page_html: str, *, page_inde
     screenshot_bytes: dict[str, bytes] = {}
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = _launch_playwright_browser(pw)
         ctx = browser.new_context(
             viewport={"width": project.canvas_width, "height": project.canvas_height},
             device_scale_factor=2,
         )
         pg = ctx.new_page()
-        pg.set_content(html, wait_until="networkidle")
+        pg.set_content(html, wait_until="load")
         snapshot = pg.evaluate(_RENDERED_DOM_EXPORT_SCRIPT)
 
         # Render every raster item in an ISOLATED page.  Using
@@ -1233,7 +1241,7 @@ def _collect_native_slide(project: DesignerProject, page_html: str, *, page_inde
                 )
                 iso = ctx.new_page()
                 iso.set_viewport_size({"width": width, "height": height})
-                iso.set_content(iso_html, wait_until="networkidle")
+                iso.set_content(iso_html, wait_until="load")
                 screenshot_bytes[screenshot_id] = iso.screenshot(
                     full_page=False, omit_background=True, clip={
                         "x": 0, "y": 0, "width": width, "height": height,

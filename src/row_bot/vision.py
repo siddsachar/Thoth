@@ -143,6 +143,11 @@ def _load_settings() -> dict:
 
 
 def _save_settings(settings: dict):
+    from row_bot.docs_capture import is_docs_real_data_capture
+
+    if is_docs_real_data_capture():
+        logger.warning("Suppressed Vision-settings write during authorized real-data docs capture")
+        return
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     _SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
 

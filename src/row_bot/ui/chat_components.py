@@ -1150,11 +1150,11 @@ def build_chat_input_bar(
     build_live_control_dock(
         state,
         p,
-        stop_generation=lambda thread_id: request_generation_stop(
+        stop_generation=lambda thread_id, reason="live_control": request_generation_stop(
             thread_id,
             state=state,
             p=p,
-            reason="live_control",
+            reason=reason,
         ),
     )
 

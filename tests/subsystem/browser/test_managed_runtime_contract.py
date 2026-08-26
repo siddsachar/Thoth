@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from row_bot.browser import runtime
 
 
@@ -124,3 +126,24 @@ def test_packaged_runtime_requires_exact_python_playwright_revision(tmp_path) ->
     )
     assert ready.ready
     assert not mismatch.ready and mismatch.code == "runtime_mismatch"
+
+
+def test_render_launch_options_require_the_reviewed_matching_runtime(monkeypatch) -> None:
+    missing = runtime.BrowserRuntimeReadiness(False, "missing", "missing")
+    ready = runtime.BrowserRuntimeReadiness(
+        True,
+        "ready",
+        "ready",
+        executable_path="C:/synthetic/managed/chrome.exe",
+    )
+    monkeypatch.setattr(runtime, "check_packaged_browser_runtime", lambda: missing)
+    monkeypatch.setattr(runtime, "check_managed_browser_runtime", lambda: ready)
+
+    assert runtime.playwright_chromium_launch_options() == {
+        "headless": True,
+        "executable_path": "C:/synthetic/managed/chrome.exe",
+    }
+
+    monkeypatch.setattr(runtime, "check_managed_browser_runtime", lambda: missing)
+    with pytest.raises(RuntimeError, match="Browser Automation"):
+        runtime.playwright_chromium_launch_options()

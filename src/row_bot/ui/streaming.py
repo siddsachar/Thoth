@@ -620,6 +620,17 @@ def _generation_is_terminal(gen: GenerationState) -> bool:
     return str(getattr(gen, "status", "")).lower() in {"done", "error", "stopped"}
 
 
+def _stopped_marker(reason: object = "") -> str:
+    normalized = str(reason or "").strip().casefold()
+    if normalized == "browser_task_stop":
+        return "*[Browser task stopped]*"
+    if normalized == "computer_task_stop":
+        return "*[Computer task stopped]*"
+    if normalized == "browser_takeover":
+        return "*[Browser automation paused for takeover]*"
+    return "*[Stopped]*"
+
+
 def _render_thinking_collapse(gen: GenerationState) -> bool:
     """Persist streamed reasoning as a collapsed disclosure.
 
@@ -3296,8 +3307,9 @@ async def consume_generation(
         _emit_buddy_terminal_stop(gen, reason)
         gen.stopped_marker_rendered = True
         _set_realtime_generation_state("stopped", detail=reason)
-        if "*[Stopped]*" not in str(gen.accumulated or ""):
-            gen.accumulated += "\n\n*[Stopped]*"
+        marker = _stopped_marker(gen.stop_reason or reason)
+        if marker not in str(gen.accumulated or ""):
+            gen.accumulated += f"\n\n{marker}"
         if not gen.detached:
             try:
                 if gen.thinking_label:

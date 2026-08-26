@@ -98,7 +98,7 @@ def build_live_control_dock(
     state: Any,
     p: Any,
     *,
-    stop_generation: Callable[[str], Any],
+    stop_generation: Callable[..., Any],
 ) -> Any:
     """Mount the persistent chat control dock without action-path polling."""
 
@@ -249,7 +249,7 @@ def build_live_control_dock(
         scope_label.set_text(view.scope)
         takeover_button.set_visibility(view.can_take_over)
         resume_button.set_visibility(view.can_resume or (view.engine == "browser" and view.state == "waiting_user"))
-        resume_button.set_text("Resume" if view.engine == "computer" else "Done")
+        resume_button.set_text("Resume")
         preview_button.set_visibility(view.can_preview)
         if previous.engine != view.engine or previous.active != view.active:
             _clear_preview(reset_preference=True)
@@ -287,11 +287,17 @@ def build_live_control_dock(
 
     def _stop() -> None:
         view = current["view"]
+        reason = "live_control"
         if view.engine == "computer":
             computer_service.stop()
+            reason = "computer_task_stop"
         elif view.engine == "browser":
             browser_manager.end_activity(str(getattr(state, "thread_id", "") or ""))
-        stop_generation(str(getattr(state, "thread_id", "") or ""))
+            reason = "browser_task_stop"
+        stop_generation(
+            str(getattr(state, "thread_id", "") or ""),
+            reason=reason,
+        )
         _clear_preview(reset_preference=True)
         _refresh()
 
@@ -304,7 +310,7 @@ def build_live_control_dock(
             )
         elif view.engine == "browser":
             thread_id = str(getattr(state, "thread_id", "") or "")
-            stop_generation(thread_id)
+            stop_generation(thread_id, reason="browser_takeover")
             browser_manager.take_over(thread_id)
         _clear_preview()
         _refresh()

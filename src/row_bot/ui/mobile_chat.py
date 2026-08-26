@@ -515,11 +515,11 @@ def _build_mobile_thread_composer(
         build_live_control_dock(
             state,
             p,
-            stop_generation=lambda thread_id: request_generation_stop(
+            stop_generation=lambda thread_id, reason="mobile_live_control": request_generation_stop(
                 thread_id,
                 state=state,
                 p=p,
-                reason="mobile_live_control",
+                reason=reason,
             ),
         )
         _build_file_chips(p)

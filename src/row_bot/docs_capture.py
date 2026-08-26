@@ -23,6 +23,7 @@ DOCS_DISABLE_NETWORK_ENV = "ROW_BOT_DOCS_DISABLE_NETWORK"
 DOCS_DISABLE_AUTOSTART_ENV = "ROW_BOT_DOCS_DISABLE_AUTOSTART"
 DOCS_REDUCE_MOTION_ENV = "ROW_BOT_DOCS_REDUCE_MOTION"
 DOCS_FAKE_PROVIDERS_ENV = "ROW_BOT_DOCS_FAKE_PROVIDERS"
+DOCS_REAL_DATA_ENV = "ROW_BOT_DOCS_REAL_DATA"
 DOCS_DEMO_STATE_FILE = "docs_real_ui_demo_state.json"
 DEMO_THREAD_ID = "docs-demo-chat"
 
@@ -61,6 +62,12 @@ def _truthy(value: object) -> bool:
 
 def is_docs_capture() -> bool:
     return _truthy(os.environ.get(DOCS_CAPTURE_ENV))
+
+
+def is_docs_real_data_capture() -> bool:
+    """Return whether this already-opted-in docs process uses the real profile."""
+
+    return is_docs_capture() and _truthy(os.environ.get(DOCS_REAL_DATA_ENV))
 
 
 def docs_capture_fixed_now() -> datetime:
@@ -449,24 +456,38 @@ def configure_docs_capture_state(
         "dialog": query.get("dialog", ""),
         "mobile_view": query.get("mobile_view", ""),
     }
-    demo = load_docs_capture_demo_state()
+    real_data = is_docs_real_data_capture()
+    demo = {} if real_data else load_docs_capture_demo_state()
     state.active_designer_project = None
     state.active_developer_workspace_id = None
     if intent["mobile_view"]:
         state.mobile_view = intent["mobile_view"].strip().title()
     if intent["surface"] == "designer-editor":
-        from row_bot.designer.storage import load_project
+        from row_bot.designer.storage import list_projects, load_project
 
         project_id = str((demo.get("designer") or {}).get("project_id") or "")
+        if real_data:
+            projects = list_projects()
+            project_id = str(projects[0].get("id") or "") if projects else ""
         state.active_designer_project = load_project(project_id)
         state.thread_id = "docs-designer-thread"
-        state.thread_name = "Community Workshop Deck"
+        state.thread_name = (
+            str(getattr(state.active_designer_project, "name", "") or "Designer project")
+            if real_data
+            else "Community Workshop Deck"
+        )
         state.messages = []
         return intent
     if intent["surface"] == "developer-workspace":
-        state.active_developer_workspace_id = str((demo.get("developer") or {}).get("workspace_id") or "")
+        workspace_id = str((demo.get("developer") or {}).get("workspace_id") or "")
+        if real_data:
+            from row_bot.developer.storage import list_workspaces
+
+            workspaces = list_workspaces()
+            workspace_id = str(workspaces[0].id) if workspaces else ""
+        state.active_developer_workspace_id = workspace_id
         state.thread_id = "docs-developer-thread"
-        state.thread_name = "Demo release notes"
+        state.thread_name = "Developer workspace" if real_data else "Demo release notes"
         state.messages = []
         return intent
     if intent["home_tab"]:
@@ -496,11 +517,29 @@ def configure_docs_capture_state(
         return intent
     if intent["surface"].startswith("chat") or query.get("thread_id"):
         thread_id = query.get("thread_id") or str(demo.get("thread_id") or DEMO_THREAD_ID)
+        thread_name = str(demo.get("thread_name") or "Demo thread")
+        if real_data and (not thread_id or thread_id == DEMO_THREAD_ID):
+            from row_bot.threads import _list_threads
+
+            rows = _list_threads(include_details=True)
+            row = next(
+                (
+                    item
+                    for item in rows
+                    if str(item[6] or "chat").casefold() in {"", "chat"}
+                ),
+                None,
+            )
+            if row is not None:
+                thread_id = str(row[0])
+                thread_name = str(row[1] or "Conversation")
         state.thread_id = thread_id
-        state.thread_name = str(demo.get("thread_name") or "Demo thread")
+        state.thread_name = thread_name
         state.thread_model_override = str(demo.get("model") or "")
         loaded = load_messages(thread_id) if load_messages else []
         state.messages = loaded or list(demo.get("messages") or [])
+        if intent["mobile_view"] and thread_id:
+            state.mobile_chat_mode = "thread"
         return intent
     state.thread_id = None
     state.thread_name = None

@@ -21,7 +21,12 @@ from row_bot.automation.contracts import (
     AutomationSurface,
     sanitize_automation_error,
 )
-from row_bot.browser.observation import BrowserObservationRegistry, StaleBrowserObservation
+from row_bot.browser.observation import (
+    BrowserObservation,
+    BrowserObservationRegistry,
+    StaleBrowserObservation,
+    target_fingerprint,
+)
 from row_bot.browser.policy import history_url
 from row_bot.browser.runtime import (
     check_managed_browser_runtime,
@@ -35,6 +40,7 @@ from row_bot.data_paths import get_row_bot_data_dir
 logger = logging.getLogger(__name__)
 PROFILE_DIR = get_row_bot_data_dir() / "browser_profile"
 VIEWPORT = {"width": 1280, "height": 900}
+_TERMINAL_GENERATION_STATES = frozenset({"done", "error", "stopped"})
 
 
 def browser_runs_headless() -> bool:
@@ -60,6 +66,23 @@ def _installed_channel() -> str | None:
     else:
         candidates = (("chrome", shutil.which("google-chrome") or ""),)
     return next((channel for channel, path in candidates if path and Path(path).is_file()), None)
+
+
+def _active_generation_thread_ids() -> set[str]:
+    """Return only genuinely running UI generations, not stale terminal rows."""
+
+    try:
+        from row_bot.ui.state import _active_generations
+    except Exception:
+        return set()
+    active: set[str] = set()
+    for thread_id, generation in list(_active_generations.items()):
+        status = str(getattr(generation, "status", "streaming") or "streaming").casefold()
+        stop_event = getattr(generation, "stop_event", None)
+        stopped = bool(stop_event is not None and stop_event.is_set())
+        if status not in _TERMINAL_GENERATION_STATES and not stopped:
+            active.add(str(thread_id))
+    return active
 
 
 @dataclass
@@ -115,6 +138,10 @@ class ManagedBrowserService:
         self._activity_listeners: list[Any] = []
         self._preview_by_thread: dict[str, bytes] = {}
         self._preview_shielded: set[str] = set()
+        # LangGraph resumes an interrupted tool call by re-running its function
+        # from the beginning.  Preserve only the exact target proof needed to
+        # re-bind that one approved action; never store typed text here.
+        self._pending_approval_proofs: dict[str, dict[str, Any]] = {}
         self.browser_tool_calls = 0
         self._preview_capture_count = 0
 
@@ -135,11 +162,36 @@ class ManagedBrowserService:
             self._navigation_generations.setdefault(page, 0)
         return identity
 
+    def _dispose_observations_on_owner(
+        self,
+        observations: BrowserObservation | list[BrowserObservation] | None,
+    ) -> None:
+        if observations is None:
+            return
+        pending = observations if isinstance(observations, list) else [observations]
+        if not pending:
+            return
+
+        def dispose() -> None:
+            for observation in pending:
+                observation.dispose()
+
+        owner = self._pw_thread
+        if owner is None or threading.current_thread() is owner:
+            dispose()
+            return
+        if owner.is_alive() and self._launched and not self._closed:
+            self._work_q.put(
+                BrowserWorkItem(dispose, concurrent.futures.Future(), None)
+            )
+
     def _invalidate(self, thread_id: str) -> None:
-        self._observations.invalidate(thread_id)
+        previous = self._observations.invalidate(thread_id, dispose=False)
+        self._dispose_observations_on_owner(previous)
 
     def _invalidate_all(self) -> None:
-        self._observations.invalidate_all()
+        previous = self._observations.invalidate_all(dispose=False)
+        self._dispose_observations_on_owner(previous)
 
     def _bump_navigation(self, page: Any) -> None:
         self._navigation_generations[page] = self._navigation_generations.get(page, 0) + 1
@@ -197,6 +249,32 @@ class ManagedBrowserService:
         )
         return page, target
 
+    def _reprove_approved_target(
+        self,
+        expected_metadata: dict[str, Any],
+        thread_id: str,
+    ):
+        """Re-observe once and bind one exact target after an approval wait."""
+
+        page = self._get_page_for_thread(thread_id)
+        observation = self._observations.observe(
+            page,
+            task_id=thread_id,
+            page_identity=self._page_identity(page),
+            navigation_generation=self._navigation_generations.get(page, 0),
+            context_generation=self._context_generation,
+        )
+        expected = target_fingerprint(dict(expected_metadata or {}))
+        matches = [
+            target
+            for target in observation.targets.values()
+            if target.fingerprint == expected
+        ]
+        if len(matches) != 1:
+            self._invalidate(thread_id)
+            return page, None
+        return page, matches[0]
+
     @staticmethod
     def _error(action: str, exc: BaseException | str) -> str:
         error = sanitize_automation_error(AutomationSurface.BROWSER, action, exc)
@@ -215,6 +293,32 @@ class ManagedBrowserService:
             verified_outcome=verified,
         )
         return "Action receipt: " + json.dumps(receipt.to_dict(compatibility=False), sort_keys=True)
+
+    def _changed_page_receipt(self, page: Any, revision: int) -> str:
+        """Confirm a click-driven page change without creating target handles.
+
+        The next semantic observation must be explicit.  Returning only
+        non-interactive page facts here keeps the common navigate/search/open
+        journey at two bounded observations while still making a navigation
+        race a truthful success.
+        """
+
+        page_facts = {
+            "title": self._safe_title(page),
+            "url": history_url(str(getattr(page, "url", "") or "")),
+        }
+        return (
+            self._receipt("click", revision, effect="confirmed", verified=True)
+            + "\nPage-change receipt: "
+            + json.dumps(page_facts, sort_keys=True)
+        )
+
+    @staticmethod
+    def _approval_target_changed() -> str:
+        return (
+            "ERROR [approval_target_changed]: The approved page target changed or became ambiguous. "
+            "Review the current page and choose the intended target again."
+        )
 
     # ---- Local metadata/live control -------------------------------------------------
 
@@ -308,6 +412,39 @@ class ManagedBrowserService:
         self._invalidate(thread_id)
         self._publish_activity(thread_id, state="waiting_approval", action=action)
 
+    def stage_approval_proof(
+        self,
+        thread_id: str,
+        action: str,
+        ref: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Retain one text-free exact-target proof across graph replay."""
+
+        with self._activity_lock:
+            self._pending_approval_proofs[str(thread_id)] = {
+                "action": str(action),
+                "ref": str(ref),
+                "metadata": dict(metadata),
+            }
+
+    def pending_approval_proof(
+        self,
+        thread_id: str,
+        action: str,
+        ref: str,
+    ) -> dict[str, Any] | None:
+        with self._activity_lock:
+            proof = dict(self._pending_approval_proofs.get(str(thread_id)) or {})
+        if proof.get("action") != str(action) or proof.get("ref") != str(ref):
+            return None
+        metadata = proof.get("metadata")
+        return dict(metadata) if isinstance(metadata, dict) else None
+
+    def clear_approval_proof(self, thread_id: str) -> None:
+        with self._activity_lock:
+            self._pending_approval_proofs.pop(str(thread_id), None)
+
     def _run_activity(self, thread_id: str, action: str, fn: Any) -> Any:
         self.browser_tool_calls += 1
         self._publish_activity(thread_id, state="acting", action=action)
@@ -327,11 +464,25 @@ class ManagedBrowserService:
 
         ensure_profile_engine(PROFILE_DIR)
         self._pw = sync_playwright().start()
+        headless = browser_runs_headless()
+        launch_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+        if not headless:
+            launch_args.extend(
+                ["--start-maximized", "--window-position=0,0"]
+            )
         common: dict[str, Any] = {
-            "user_data_dir": str(PROFILE_DIR), "headless": browser_runs_headless(),
-            "viewport": VIEWPORT,
-            "args": ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check"],
+            "user_data_dir": str(PROFILE_DIR),
+            "headless": headless,
+            "args": launch_args,
         }
+        if headless:
+            common["viewport"] = VIEWPORT
+        else:
+            common["no_viewport"] = True
         channel = _installed_channel()
         attempts: list[dict[str, Any]] = []
         if channel:
@@ -381,7 +532,9 @@ class ManagedBrowserService:
 
     def _on_disconnected(self, *_args: Any) -> None:
         self._launched = False
-        self._invalidate_all()
+        # The browser is already gone. Drop exact handles logically without
+        # asking a disconnected Playwright transport to dispose them.
+        self._observations.invalidate_all(dispose=False)
         self._thread_pages.clear()
         self._page_owners.clear()
         self._page_identities.clear()
@@ -528,6 +681,7 @@ class ManagedBrowserService:
 
     def release_thread(self, thread_id: str) -> None:
         self._invalidate(thread_id)
+        self.clear_approval_proof(thread_id)
         if not self._launched or self._closed:
             self.end_activity(thread_id)
             return
@@ -538,8 +692,16 @@ class ManagedBrowserService:
             for page in pages:
                 self._page_owners.pop(page, None)
                 try:
-                    if not page.is_closed() and len(self._context.pages) > 1:
-                        page.close()
+                    if page.is_closed():
+                        continue
+                    # A persistent Chromium context may exit when its final page
+                    # closes.  Keep the context alive with a fresh blank page,
+                    # but always close the released task's page so its URL and
+                    # document cannot be reclaimed by a later task.
+                    if len([candidate for candidate in self._context.pages if not candidate.is_closed()]) <= 1:
+                        replacement = self._context.new_page()
+                        self._page_identity(replacement)
+                    page.close()
                 except Exception:
                     pass
         try:
@@ -551,11 +713,7 @@ class ManagedBrowserService:
     def evict_idle(self, ttl_seconds: float = 600.0) -> int:
         if not self._launched or self._closed:
             return 0
-        try:
-            from row_bot.ui.state import _active_generations
-            active = set(_active_generations)
-        except Exception:
-            active = set()
+        active = _active_generation_thread_ids()
         cutoff = time.monotonic() - ttl_seconds
         expired = [task for task, used in self._thread_pages_last_used.items() if task not in active and used < cutoff]
         for task in expired:
@@ -563,8 +721,10 @@ class ManagedBrowserService:
         return len(expired)
 
     def close(self) -> None:
-        self._closed = True
         self._invalidate_all()
+        self._closed = True
+        with self._activity_lock:
+            self._pending_approval_proofs.clear()
         for task in list(self._activity_by_thread):
             self.end_activity(task)
         try:
@@ -572,7 +732,9 @@ class ManagedBrowserService:
         except Exception:
             pass
         if self._pw_thread and self._pw_thread.is_alive():
-            self._pw_thread.join(timeout=10)
+            self._pw_thread.join(timeout=25)
+            if self._pw_thread.is_alive():
+                logger.warning("Managed Browser owner thread did not stop within the shutdown deadline")
         self._thread_pages.clear()
         self._page_owners.clear()
         self._page_identities.clear()
@@ -594,6 +756,23 @@ class ManagedBrowserService:
                 return False
             self._invalidate(thread_id)
             page.bring_to_front()
+            if not browser_runs_headless():
+                try:
+                    visibility = page.evaluate(
+                        "() => { window.focus(); return document.visibilityState; }"
+                    )
+                except AttributeError:
+                    visibility = "visible"  # deterministic minimal-page fake
+                except Exception:
+                    visibility = "hidden"
+                if str(visibility or "").casefold() != "visible":
+                    self._publish_activity(
+                        thread_id,
+                        state="needs_attention",
+                        action="Could not expose the managed browser window",
+                        page=page,
+                    )
+                    return False
             self._publish_activity(thread_id, state="waiting_user", action="You took over this tab", page=page)
             return True
         return bool(self._run_on_pw_thread(front))
@@ -623,36 +802,83 @@ class ManagedBrowserService:
                 return self._error("navigate", exc)
         return self._run_activity(thread_id, "Open website", action)
 
+    def _click_resolved(self, page: Any, target: Any, thread_id: str) -> str:
+        observation = self._observations.current(thread_id)
+        revision = observation.revision if observation else 0
+        old_url = str(getattr(page, "url", "") or "")
+        old_pages = len(self._context.pages)
+        old_dom = self._dom_signature(page)
+        click_error: BaseException | None = None
+        try:
+            target.handle.click(timeout=5_000)
+        except BaseException as exc:
+            click_error = exc
+        current_page = self._thread_pages.get(thread_id, page)
+        changed = (
+            current_page is not page
+            or old_url != str(getattr(current_page, "url", "") or "")
+            or len(self._context.pages) != old_pages
+            or self._dom_signature(current_page) != old_dom
+        )
+        self._invalidate(thread_id)
+        if click_error is not None and not changed:
+            return self._error("click", click_error)
+        if changed:
+            self._bump_navigation(current_page)
+            result = self._changed_page_receipt(current_page, revision)
+        else:
+            result = self._receipt("click", revision)
+        self._publish_activity(thread_id, state="observing", action="Clicked a page control", page=current_page)
+        return result
+
     def click(self, ref: str, thread_id: str = "default") -> str:
+
         def action() -> str:
             try:
                 page, target = self._resolve(str(ref), thread_id)
             except BaseException as exc:
                 return self._error("click", exc)
-            observation = self._observations.current(thread_id)
-            revision = observation.revision if observation else 0
-            old_url = str(getattr(page, "url", "") or "")
-            old_pages = len(self._context.pages)
-            old_dom = self._dom_signature(page)
-            try:
-                target.handle.click(timeout=5_000)
-            except BaseException as exc:
-                self._invalidate(thread_id)
-                return self._error("click", exc)
-            self._invalidate(thread_id)
-            changed = (
-                old_url != str(getattr(page, "url", "") or "")
-                or len(self._context.pages) != old_pages
-                or self._dom_signature(page) != old_dom
-            )
-            if changed:
-                self._bump_navigation(page)
-                result = self._observe(self._thread_pages.get(thread_id, page), thread_id)
-            else:
-                result = self._receipt("click", revision)
-            self._publish_activity(thread_id, state="observing", action="Clicked a page control", page=page)
-            return result
+            return self._click_resolved(page, target, thread_id)
         return self._run_activity(thread_id, "Click page control", action)
+
+    def click_after_approval(
+        self,
+        expected_metadata: dict[str, Any],
+        thread_id: str = "default",
+    ) -> str:
+        def action() -> str:
+            page, target = self._reprove_approved_target(expected_metadata, thread_id)
+            if target is None:
+                return self._approval_target_changed()
+            return self._click_resolved(page, target, thread_id)
+
+        return self._run_activity(thread_id, "Click approved page control", action)
+
+    def _type_resolved(
+        self,
+        page: Any,
+        target: Any,
+        text: str,
+        submit: bool,
+        thread_id: str,
+    ) -> str:
+        observation = self._observations.current(thread_id)
+        revision = observation.revision if observation else 0
+        try:
+            target.handle.fill(text, timeout=5_000)
+            if submit:
+                target.handle.press("Enter", timeout=5_000)
+        except BaseException as exc:
+            self._invalidate(thread_id)
+            return self._error("type", exc)
+        self._invalidate(thread_id)
+        if submit:
+            self._bump_navigation(page)
+            result = self._observe(self._thread_pages.get(thread_id, page), thread_id)
+        else:
+            result = self._receipt("type", revision)
+        self._publish_activity(thread_id, state="observing", action="Entered text (value hidden)", page=page)
+        return result
 
     def type_text(self, ref: str, text: str, submit: bool = False, thread_id: str = "default") -> str:
         def action() -> str:
@@ -660,24 +886,23 @@ class ManagedBrowserService:
                 page, target = self._resolve(str(ref), thread_id)
             except BaseException as exc:
                 return self._error("type", exc)
-            observation = self._observations.current(thread_id)
-            revision = observation.revision if observation else 0
-            try:
-                target.handle.fill(text, timeout=5_000)
-                if submit:
-                    target.handle.press("Enter", timeout=5_000)
-            except BaseException as exc:
-                self._invalidate(thread_id)
-                return self._error("type", exc)
-            self._invalidate(thread_id)
-            if submit:
-                self._bump_navigation(page)
-                result = self._observe(self._thread_pages.get(thread_id, page), thread_id)
-            else:
-                result = self._receipt("type", revision)
-            self._publish_activity(thread_id, state="observing", action="Entered text (value hidden)", page=page)
-            return result
+            return self._type_resolved(page, target, text, submit, thread_id)
         return self._run_activity(thread_id, "Enter text (value hidden)", action)
+
+    def type_text_after_approval(
+        self,
+        expected_metadata: dict[str, Any],
+        text: str,
+        submit: bool = False,
+        thread_id: str = "default",
+    ) -> str:
+        def action() -> str:
+            page, target = self._reprove_approved_target(expected_metadata, thread_id)
+            if target is None:
+                return self._approval_target_changed()
+            return self._type_resolved(page, target, text, submit, thread_id)
+
+        return self._run_activity(thread_id, "Enter approved text (value hidden)", action)
 
     def scroll(self, direction: str = "down", amount: int = 3, thread_id: str = "default") -> str:
         def action() -> str:
@@ -851,6 +1076,13 @@ class BrowserSessionManager:
         with self._lock:
             session = self._shared_session
         return session.ephemeral_screenshot(thread_id) if session else None
+
+    def evict_idle(self, ttl_seconds: float = 600.0) -> int:
+        """Delegate scheduled cleanup to the shared managed session."""
+
+        with self._lock:
+            session = self._shared_session
+        return session.evict_idle(ttl_seconds=ttl_seconds) if session else 0
 
     def kill_session(self, thread_id: str) -> None:
         with self._lock:

@@ -17,6 +17,27 @@ def test_policy_covers_routine_consequential_handoff_and_blocked() -> None:
     assert classify_action("menu", app_name="Notepad", label="File > Save").outcome is PolicyOutcome.CONSEQUENTIAL
 
 
+def test_row_bot_controller_block_does_not_block_content_in_another_app() -> None:
+    assert classify_action("click", app_name="Row-Bot").outcome is PolicyOutcome.BLOCKED
+    assert (
+        classify_action(
+            "click",
+            app_name="python.exe",
+            window_title="Row-Bot",
+        ).outcome
+        is PolicyOutcome.BLOCKED
+    )
+    assert (
+        classify_action(
+            "focus",
+            app_name="msedge.exe",
+            window_title="Row-Bot E2E Profile Persisted",
+            foreground=True,
+        ).outcome
+        is PolicyOutcome.CONSEQUENTIAL
+    )
+
+
 def test_approval_payload_redacts_typed_values_and_has_no_media_identifier() -> None:
     secret = "correct horse battery staple"
     payload = approval_payload("type", app_name="Mail", window_title="Compose", target_label="Send", expected_effect="send message", reversible=False, typed_text=secret)

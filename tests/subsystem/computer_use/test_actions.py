@@ -76,6 +76,67 @@ def test_capture_after_performs_exactly_one_fresh_post_action_capture(
     assert service.performance_snapshot()["captures"] == captures_before + 1
 
 
+def test_semantic_terminal_action_succeeds_when_exact_target_disappears_after_dispatch(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {"role": "button", "label": "Don't save"},
+    )
+    fake_transport.scenario.close_target_after_labels = frozenset({"Don't save"})
+    target, observation = _target_and_capture(service)
+    calls_before = len(fake_transport.calls)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        expected_effect="Close without saving",
+        approval_mode="allow_all",
+        capture_after=True,
+    )
+
+    assert isinstance(result, ActionReceipt)
+    assert result.action_completed is True
+    assert result.effect_verified is True
+    assert result.cause == "target_disappeared"
+    assert service.current_observation(target) is None
+    assert service.status_snapshot()["consecutive_failures"] == 0
+    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
+        "click",
+        "get_window_state",
+        "list_windows",
+    ]
+    with pytest.raises(ComputerUseError) as expired:
+        service.capture(target, OWNER)
+    assert expired.value.code == "target_gone"
+
+
+def test_capture_failure_is_not_hidden_for_non_terminal_semantic_action(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {"role": "button", "label": "Apply"},
+    )
+    fake_transport.scenario.close_target_after_labels = frozenset({"Apply"})
+    target, observation = _target_and_capture(service)
+
+    with pytest.raises(ComputerUseError, match="could not be observed safely"):
+        service.act(
+            "click",
+            target,
+            OWNER,
+            element_token=observation.elements[0].token,
+            expected_effect="Apply the selected setting",
+            approval_mode="allow_all",
+            capture_after=True,
+        )
+
+    assert service.status_snapshot()["consecutive_failures"] == 1
+
+
 def test_general_canvas_drag_uses_one_native_action_and_one_requested_capture(
     service,
     fake_transport,
@@ -236,11 +297,16 @@ def test_launch_requires_app_scope_and_captures_after_launch(fake_client, fake_t
     windows = service.launch_app("Calculator", OWNER)
     assert windows
     names = [name for name, _args in fake_transport.calls]
-    assert names[names.index("launch_app") + 1] == "get_window_state"
-    assert "list_windows" not in names
+    assert names[names.index("launch_app") + 1] == "list_windows"
+    assert names[names.index("launch_app") + 1 : names.index("launch_app") + 5] == [
+        "list_windows",
+        "list_windows",
+        "get_window_state",
+        "list_windows",
+    ]
     capture_args = next(args for tool, args in fake_transport.calls if tool == "get_window_state")
     assert capture_args["pid"] == 4242
-    assert names[-1] == "get_window_state"
+    assert names[-1] == "list_windows"
     assert approvals[0]["action"] == "task_session_app_permission"
 
 
@@ -311,6 +377,22 @@ def test_routine_key_sequence_stale_button_fails_without_retry(
         service.act_key_sequence(target, "7,*,8,=", OWNER)
 
     assert [name for name, _args in fake_transport.calls].count("click") == 1
+
+
+def test_routine_key_sequence_refuses_to_claim_unverified_sparse_result(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.calculator_semantics = True
+    fake_transport.scenario.calculator_sparse_after_action = True
+    target, _observation = _target_and_capture(service)
+
+    with pytest.raises(ComputerUseError) as raised:
+        service.act_key_sequence(target, "7,*,8,=", OWNER)
+
+    assert raised.value.code == "driver_failed"
+    assert "could not be verified" in str(raised.value)
+    assert [name for name, _args in fake_transport.calls].count("click") == 4
 
 
 @pytest.mark.parametrize(

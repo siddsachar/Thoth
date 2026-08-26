@@ -152,14 +152,24 @@ class BrowserObservationRegistry:
     def current(self, task_id: str) -> BrowserObservation | None:
         return self._current.get(str(task_id))
 
-    def invalidate(self, task_id: str) -> None:
+    def invalidate(
+        self,
+        task_id: str,
+        *,
+        dispose: bool = True,
+    ) -> BrowserObservation | None:
         previous = self._current.pop(str(task_id), None)
-        if previous is not None:
+        if previous is not None and dispose:
             previous.dispose()
+        return previous
 
-    def invalidate_all(self) -> None:
+    def invalidate_all(self, *, dispose: bool = True) -> list[BrowserObservation]:
+        previous: list[BrowserObservation] = []
         for task_id in list(self._current):
-            self.invalidate(task_id)
+            observation = self.invalidate(task_id, dispose=dispose)
+            if observation is not None:
+                previous.append(observation)
+        return previous
 
     def observe(
         self,

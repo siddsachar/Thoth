@@ -156,7 +156,7 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
         "unsupported computer action",
         "no active computer session",
     )
-    if action == "key_sequence" or any(fragment in lowered for fragment in invalid_fragments):
+    if any(fragment in lowered for fragment in invalid_fragments):
         remediation = (
             "Use 1-16 bounded Calculator keys, for example 7,*,8,=, or a compact safe expression."
             if action == "key_sequence"

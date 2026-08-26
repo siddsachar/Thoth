@@ -57,10 +57,12 @@ class LauncherControlServer:
         self,
         restart_child: Callable[[], None],
         *,
+        shutdown_launcher: Callable[[], None] | None = None,
         secret: str | None = None,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
         self.restart_child = restart_child
+        self.shutdown_launcher = shutdown_launcher
         self.secret = secret or secrets.token_urlsafe(32)
         self._now = now
         self._httpd: ThreadingHTTPServer | None = None
@@ -130,7 +132,12 @@ class LauncherControlServer:
                 if not _is_loopback(self.client_address[0]):
                     self._respond(403, {"ok": False, "error": "loopback_required"})
                     return
-                if self.path != "/v1/restart-child":
+                callbacks = {
+                    "/v1/restart-child": controller.restart_child,
+                    "/v1/shutdown-launcher": controller.shutdown_launcher,
+                }
+                callback = callbacks.get(self.path)
+                if callback is None:
                     self._respond(404, {"ok": False, "error": "not_found"})
                     return
                 authorization = str(self.headers.get("Authorization") or "")
@@ -154,9 +161,13 @@ class LauncherControlServer:
                     return
                 self._respond(202, {"ok": True, "accepted": True})
                 threading.Thread(
-                    target=controller.restart_child,
+                    target=callback,
                     daemon=True,
-                    name="row-bot-child-restart",
+                    name=(
+                        "row-bot-launcher-shutdown"
+                        if self.path == "/v1/shutdown-launcher"
+                        else "row-bot-child-restart"
+                    ),
                 ).start()
 
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

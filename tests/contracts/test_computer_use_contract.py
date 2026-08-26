@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 
 from row_bot.computer_use.client import ALLOWED_CUA_TOOLS, FORBIDDEN_TOOL_FAMILIES, MODEL_ACTION_TO_CUA
-from row_bot.tools.computer_use_tool import ComputerUseInput, ComputerUseTool
+from row_bot.computer_use.service import ComputerUseError
+from row_bot.tools.computer_use_tool import ComputerUseInput, ComputerUseTool, _computer_error_payload
 from row_bot.providers.models import TransportMode
 from row_bot.providers.tool_schema import apply_tool_schema_compatibility
 
@@ -28,6 +29,18 @@ def test_model_tool_is_one_flat_provider_neutral_schema() -> None:
     assert "semantic actions deliberately skip Vision" in schema["properties"]["visual_question"]["description"]
     assert "visual_question" in ComputerUseTool().description
     assert "never guess coordinates" in ComputerUseTool().description
+
+
+def test_key_sequence_driver_failure_is_not_misreported_as_invalid_input() -> None:
+    payload = json.loads(
+        _computer_error_payload(
+            "key_sequence",
+            ComputerUseError("The operation completed successfully. (0x00000000)"),
+        )
+    )
+
+    assert payload["error_code"] == "driver_failed"
+    assert payload["display_summary"] == "Computer action failed safely."
 
 
 def test_beta_action_map_and_internal_allowlist_exclude_maintenance() -> None:

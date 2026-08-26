@@ -24,11 +24,13 @@ class PolicyDecision:
 
 
 _BLOCKED_APP = re.compile(
-    r"(?:row[- ]?bot|terminal|powershell|command prompt|cmd\.exe|console|shell|repl|"
+    r"(?:terminal|powershell|command prompt|cmd\.exe|console|shell|repl|"
     r"password manager|1password|bitwarden|keepass|keychain access|credential manager|"
     r"lock screen|login window|secure desktop|security settings)",
     re.IGNORECASE,
 )
+_ROW_BOT_APP = re.compile(r"row[- ]?bot", re.IGNORECASE)
+_PYTHON_HOST_APP = re.compile(r"(?:^|[\\/])pythonw?(?:\.exe)?$", re.IGNORECASE)
 _HANDOFF = re.compile(
     r"(?:password|passcode|recovery code|payment card|credit card|bank credential|"
     r"one[- ]?time|otp|2fa|mfa|captcha|biometric|passkey|uac|user account control|"
@@ -69,7 +71,14 @@ def classify_action(
     action = str(action or "").strip().lower()
     surface = " ".join((app_name, window_title)).strip()
     target = " ".join((role, label, expected_effect, destination)).strip()
-    if _BLOCKED_APP.search(surface):
+    row_bot_controller = bool(
+        _ROW_BOT_APP.search(app_name)
+        or (
+            _PYTHON_HOST_APP.search(str(app_name or "").strip())
+            and _ROW_BOT_APP.search(window_title)
+        )
+    )
+    if row_bot_controller or _BLOCKED_APP.search(surface):
         return PolicyDecision(PolicyOutcome.BLOCKED, "This app or protected surface is not available to Computer Use.", False)
     if _HANDOFF.search(" ".join((surface, target))):
         return PolicyDecision(PolicyOutcome.HANDOFF, "Sensitive credentials or a protected system surface require user takeover.", False)

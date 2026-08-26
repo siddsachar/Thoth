@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import concurrent.futures
 import io
+import platform
+import re
 import secrets
 import threading
 import time
@@ -60,6 +62,11 @@ _SAFE_ROUTES = frozenset(
     }
 )
 _SAFE_DELIVERY = frozenset({"background", "foreground", "not_applicable", "unknown"})
+_TERMINAL_OR_DISMISS_INTENT = re.compile(
+    r"(?:\b(?:cancel|close|discard|dismiss|exit|quit|terminate)\b|"
+    r"\bdon['\u2019]?t\s+save\b|\bdo\s+not\s+save\b|\bwithout\s+saving\b)",
+    re.IGNORECASE,
+)
 
 
 def _standard_effect(value: object, *, verified: bool = False) -> str:
@@ -102,6 +109,16 @@ def _safe_driver_cause(code: object) -> str:
     if value in {"unsupported", "unknown_tool", "not_supported"}:
         return "unsupported_capability"
     return "backend_refusal" if value else ""
+
+
+def _is_terminal_or_dismiss_intent(label: object, expected_effect: object) -> bool:
+    """Recognize generic semantic actions expected to dismiss their target."""
+
+    intent = unicodedata.normalize(
+        "NFKC",
+        " ".join((str(label or ""), str(expected_effect or ""))),
+    )
+    return bool(_TERMINAL_OR_DISMISS_INTENT.search(intent))
 
 
 def _normalized_role(value: object) -> str:
@@ -298,6 +315,14 @@ _BROWSER_CANONICAL_BY_ALIAS = {
     "brave": "brave.exe",
     "safari": "Safari.app",
 }
+_CALCULATOR_IDENTITIES = frozenset(
+    {
+        "calculator",
+        "windowscalculator",
+        "calculatorapp",
+    }
+)
+_WINDOWS_PACKAGED_WINDOW_HOSTS = frozenset({"applicationframehost"})
 
 
 def _normalize_app_identity(value: object) -> str:
@@ -315,6 +340,44 @@ def _canonical_browser_identity(value: object) -> str:
     return _BROWSER_CANONICAL_BY_ALIAS.get(_normalize_app_identity(value), "")
 
 
+def _canonical_calculator_identity(value: object) -> str:
+    normalized = _normalize_app_identity(value)
+    if normalized == "calc" and str(value or "").strip().casefold().endswith(".exe"):
+        return "Calculator"
+    return "Calculator" if normalized in _CALCULATOR_IDENTITIES else ""
+
+
+def _windows_package_family(value: object) -> str:
+    """Return one validated Windows package family or an empty string."""
+
+    candidate = str(value or "").strip().casefold()
+    prefix = "shell:appsfolder\\"
+    if candidate.startswith(prefix):
+        candidate = candidate[len(prefix) :]
+    family = candidate.split("!", 1)[0]
+    if (
+        not family
+        or len(family) > 200
+        or "_" not in family
+        or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789._-" for character in family)
+    ):
+        return ""
+    return family
+
+
+def _window_row_matches_app(requested: object, row: dict[str, Any]) -> bool:
+    """Match a reviewed app or one exact Windows packaged-app host row."""
+
+    app_name = str(row.get("app_name") or row.get("name") or "")[:128]
+    if _app_identities_match(requested, app_name):
+        return True
+    return bool(
+        _normalize_app_identity(app_name) in _WINDOWS_PACKAGED_WINDOW_HOSTS
+        and _normalize_app_identity(row.get("title"))
+        == _normalize_app_identity(_permission_scope_name(requested))
+    )
+
+
 def _app_identities_match(requested: object, candidate: object) -> bool:
     requested_normalized = _normalize_app_identity(requested)
     candidate_normalized = _normalize_app_identity(candidate)
@@ -324,11 +387,22 @@ def _app_identities_match(requested: object, candidate: object) -> bool:
     candidate_browser = _canonical_browser_identity(candidate)
     if requested_browser or candidate_browser:
         return bool(requested_browser and requested_browser == candidate_browser)
+    requested_calculator = _canonical_calculator_identity(requested)
+    candidate_calculator = _canonical_calculator_identity(candidate)
+    if requested_calculator or candidate_calculator:
+        return bool(
+            requested_calculator
+            and requested_calculator == candidate_calculator
+        )
     return requested_normalized == candidate_normalized
 
 
 def _permission_scope_name(app_name: object) -> str:
-    return _canonical_browser_identity(app_name) or str(app_name or "").strip()[:128]
+    return (
+        _canonical_browser_identity(app_name)
+        or _canonical_calculator_identity(app_name)
+        or str(app_name or "").strip()[:128]
+    )
 
 
 def _permission_key(app_name: object) -> str:
@@ -339,12 +413,20 @@ def _resolve_app_identity(requested: str, candidates: list[str]) -> str | None:
     """Resolve exact identities plus the explicit browser groups only."""
 
     known_browser = _canonical_browser_identity(requested)
+    known_calculator = _canonical_calculator_identity(requested)
     matches: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
         if not _app_identities_match(requested, candidate):
             continue
-        resolved = known_browser or str(candidate).strip()[:128]
+        resolved = (
+            known_browser
+            or (
+                "calc.exe"
+                if known_calculator and platform.system().casefold() == "windows"
+                else str(candidate).strip()[:128]
+            )
+        )
         key = _permission_key(resolved)
         if not key or key in seen:
             continue
@@ -352,6 +434,8 @@ def _resolve_app_identity(requested: str, candidates: list[str]) -> str | None:
         matches.append(resolved)
     if known_browser:
         return known_browser
+    if known_calculator and platform.system().casefold() == "windows":
+        return "calc.exe" if matches else None
     return matches[0] if len(matches) == 1 else None
 
 
@@ -391,6 +475,8 @@ class ComputerUseService:
 
     TAKEOVER_TIMEOUT_SECONDS = 10 * 60.0
     SCREENSHOT_TTL_SECONDS = 5 * 60.0
+    PACKAGED_LAUNCH_STABILITY_TIMEOUT_SECONDS = 5.0
+    PACKAGED_LAUNCH_POLL_INTERVAL_SECONDS = 0.1
 
     def __init__(
         self,
@@ -417,6 +503,7 @@ class ComputerUseService:
         self._observation_generation = 0
         self._approved_apps: set[str] = set()
         self._app_display_names: dict[str, str] = {}
+        self._app_package_families: dict[str, str] = {}
         self._paused_at = 0.0
         self._lease_id = ""
         self._takeover_token = ""
@@ -591,6 +678,7 @@ class ComputerUseService:
                 self._preview_observation = None
                 self._approved_apps.clear()
                 self._app_display_names.clear()
+                self._app_package_families.clear()
                 self._paused_at = 0.0
                 self._lease_id = secrets.token_urlsafe(24)
                 self._takeover_token = ""
@@ -788,6 +876,56 @@ class ComputerUseService:
             return False
         return None
 
+    def _probe_exact_target_exists(self, target: Target) -> bool | None:
+        """Prove exact target presence, with window inventory as a safe fallback."""
+
+        verified = self._verify_target_exists(target)
+        if verified is not None:
+            return verified
+        try:
+            response = self._driver_call("list_windows", {})
+        except ComputerUseError:
+            return None
+        if response.is_error:
+            return None
+        rows = response.structured.get("windows")
+        if not isinstance(rows, list):
+            return None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                pid = int(row.get("pid") or 0)
+                window_id = int(row.get("window_id") or 0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if (pid, window_id) != (target.pid, target.window_id):
+                continue
+            app_name = str(row.get("app_name") or row.get("name") or "")[:128]
+            title = str(row.get("title") or "")[:160]
+            if _is_protected_controller_target(app_name, title):
+                return None
+            return True
+        return False
+
+    def _expire_disappeared_target(self, target: Target) -> None:
+        """Remove stale task-scoped state after exact target absence is proven."""
+
+        with self._lock:
+            self._targets.pop(target.target_id, None)
+            if self._observation is not None and self._observation.target.target_id == target.target_id:
+                self._observation = None
+            if (
+                self._preview_observation is not None
+                and self._preview_observation.target.target_id == target.target_id
+            ):
+                self._preview_observation = None
+            if self._target_hint is not None and self._target_hint.target_id == target.target_id:
+                self._target_hint = None
+            if self._prepared_foreground_target_id == target.target_id:
+                self._prepared_foreground_target_id = ""
+            self._observation_generation += 1
+
     def _abort_driver_session(self) -> None:
         """Release all state after a crash without retrying an input call."""
 
@@ -801,6 +939,7 @@ class ComputerUseService:
             self._app_hint = ""
             self._approved_apps.clear()
             self._app_display_names.clear()
+            self._app_package_families.clear()
             self._observation = None
             self._preview_observation = None
             self._observation_generation += 1
@@ -848,6 +987,23 @@ class ComputerUseService:
         if response.is_error:
             raise ComputerUseError(response.text or response.error_code)
         apps = self._safe_app_rows(response)
+        package_families: dict[str, str] = {}
+        raw_apps = response.structured.get("apps")
+        if not isinstance(raw_apps, list):
+            raw_apps = []
+        safe_keys = {_permission_key(row["name"]) for row in apps}
+        for row in raw_apps:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "")[:128]
+            key = _permission_key(name)
+            if not key or key not in safe_keys:
+                continue
+            family = _windows_package_family(
+                row.get("bundle_id") or row.get("launch_path")
+            )
+            if family:
+                package_families[key] = family
         with self._lock:
             self._app_foreground = {
                 _permission_key(row["name"]): (
@@ -855,6 +1011,7 @@ class ComputerUseService:
                 )
                 for row in apps
             }
+            self._app_package_families = package_families
         return apps
 
     def list_windows(
@@ -901,6 +1058,7 @@ class ComputerUseService:
         fallback_app: str = "",
         fallback_pid: int = 0,
         display_app: str = "",
+        target_app_override: str = "",
     ) -> list[dict[str, Any]]:
         """Convert reviewed driver window rows to private task-scoped target ids."""
 
@@ -910,13 +1068,20 @@ class ComputerUseService:
             for row in rows:
                 if not isinstance(row, dict):
                     continue
-                app_name = str(row.get("app_name") or row.get("name") or fallback_app)[:128]
-                if app_filter and not _app_identities_match(app_filter, app_name):
+                reported_app_name = str(
+                    row.get("app_name") or row.get("name") or fallback_app
+                )[:128]
+                filter_row = dict(row)
+                filter_row.setdefault("app_name", reported_app_name)
+                if app_filter and not _window_row_matches_app(app_filter, filter_row):
                     continue
                 window_title = str(row.get("title") or "")[:160]
-                if _is_protected_controller_target(app_name, window_title):
+                if _is_protected_controller_target(reported_app_name, window_title):
                     continue
                 if window_filter and window_filter.casefold() not in window_title.casefold():
+                    continue
+                app_name = str(target_app_override or reported_app_name)[:128]
+                if _is_protected_controller_target(app_name, window_title):
                     continue
                 bounds = row.get("bounds") if isinstance(row.get("bounds"), dict) else {}
                 pid = int(row.get("pid") or fallback_pid)
@@ -959,6 +1124,197 @@ class ComputerUseService:
                     "on_screen": bool(row.get("is_on_screen", True)),
                 })
         return output
+
+    @staticmethod
+    def _window_row_signature(row: dict[str, Any]) -> tuple[Any, ...]:
+        """Return the exact driver identity used to prove a stable OS window."""
+
+        app_name = str(row.get("app_name") or row.get("name") or "")[:128]
+        pid = int(row.get("pid") or 0)
+        window_id = int(row.get("window_id") or 0)
+        if window_id:
+            return (_permission_key(app_name), pid, window_id)
+        bounds = row.get("bounds") if isinstance(row.get("bounds"), dict) else {}
+        return (
+            _permission_key(app_name),
+            pid,
+            str(row.get("title") or "")[:160].casefold(),
+            float(bounds.get("x") or 0),
+            float(bounds.get("y") or 0),
+            float(bounds.get("width") or 0),
+            float(bounds.get("height") or 0),
+        )
+
+    def _exact_driver_window_rows(
+        self,
+        app_name: str,
+        *,
+        trusted_pid: int = 0,
+        trusted_window_ids: frozenset[int] = frozenset(),
+        allow_trusted_launch_identity: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Read exact app rows without registering transient packaged targets."""
+
+        response = self._driver_call("list_windows", {})
+        if response.is_error:
+            raise ComputerUseError(
+                response.text or response.error_code or "Cua window discovery failed",
+                code=response.error_code or "driver_failed",
+            )
+        rows = response.structured.get("windows")
+        if not isinstance(rows, list):
+            return []
+        exact: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            reported_app = str(row.get("app_name") or row.get("name") or "")
+            title = str(row.get("title") or "")
+            if _is_protected_controller_target(reported_app, title):
+                continue
+            try:
+                pid = int(row.get("pid") or 0)
+                window_id = int(row.get("window_id") or 0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            ordinary_match = _window_row_matches_app(app_name, row)
+            trusted_launch_match = bool(
+                allow_trusted_launch_identity
+                and trusted_pid
+                and trusted_window_ids
+                and pid == trusted_pid
+                and window_id in trusted_window_ids
+            )
+            if not ordinary_match and not trusted_launch_match:
+                continue
+            if trusted_pid and pid != trusted_pid:
+                continue
+            if trusted_window_ids and window_id not in trusted_window_ids:
+                continue
+            exact.append(row)
+        return exact
+
+    @staticmethod
+    def _trusted_packaged_launch_identity(
+        response: CuaResponse,
+        expected_package_family: str,
+    ) -> tuple[int, frozenset[int]]:
+        """Return the package-proven host pid and exact launched window ids."""
+
+        expected = _windows_package_family(expected_package_family)
+        if not expected:
+            return 0, frozenset()
+        structured = response.structured
+        if not any(
+            _windows_package_family(structured.get(field)) == expected
+            for field in ("bundle_id", "name")
+        ):
+            return 0, frozenset()
+        try:
+            pid = int(structured.get("pid") or 0)
+        except (TypeError, ValueError, OverflowError):
+            return 0, frozenset()
+        rows = structured.get("windows")
+        if pid <= 0 or not isinstance(rows, list):
+            return 0, frozenset()
+        window_ids: set[int] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                window_id = int(row.get("window_id") or 0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if window_id > 0:
+                window_ids.add(window_id)
+        return pid, frozenset(window_ids)
+
+    def _verified_packaged_launch_windows(
+        self,
+        app_name: str,
+        launch_response: CuaResponse,
+        expected_package_family: str,
+        owner: LeaseOwner | None,
+        *,
+        approval_mode: object,
+        visual_question: str,
+    ) -> list[dict[str, Any]]:
+        """Wait for one stable exact packaged-app identity and verify it once."""
+
+        trusted_pid, trusted_window_ids = self._trusted_packaged_launch_identity(
+            launch_response,
+            expected_package_family,
+        )
+        if not trusted_pid or not trusted_window_ids:
+            return []
+        deadline = time.monotonic() + max(
+            0.0,
+            float(self.PACKAGED_LAUNCH_STABILITY_TIMEOUT_SECONDS),
+        )
+        previous_signatures: set[tuple[Any, ...]] = set()
+        while True:
+            rows = self._exact_driver_window_rows(
+                app_name,
+                trusted_pid=trusted_pid,
+                trusted_window_ids=trusted_window_ids,
+                allow_trusted_launch_identity=True,
+            )
+            signatures = {
+                self._window_row_signature(row)
+                for row in rows
+            }
+            stable_signatures = signatures & previous_signatures
+            if stable_signatures:
+                stable_rows = [
+                    row
+                    for row in rows
+                    if self._window_row_signature(row) in stable_signatures
+                ]
+                windows = self._register_window_rows(
+                    stable_rows,
+                    display_app=app_name,
+                    target_app_override=app_name,
+                )
+                if windows:
+                    target_id = str(windows[0]["target_id"])
+                    try:
+                        self.capture(
+                            target_id,
+                            owner,
+                            visual_question=visual_question,
+                            approval_mode=approval_mode,
+                        )
+                        current_signatures = {
+                            self._window_row_signature(row)
+                            for row in self._exact_driver_window_rows(
+                                app_name,
+                                trusted_pid=trusted_pid,
+                                trusted_window_ids=trusted_window_ids,
+                                allow_trusted_launch_identity=True,
+                            )
+                        }
+                        if any(
+                            self._window_row_signature(row) in current_signatures
+                            for row in stable_rows
+                        ):
+                            return windows
+                    except ComputerUseError as exc:
+                        if exc.code not in {"target_gone", "stale_observation"}:
+                            raise
+                    with self._lock:
+                        self._targets.pop(target_id, None)
+                    previous_signatures = set()
+                    continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return []
+            previous_signatures = signatures
+            self._cancel.wait(
+                min(
+                    max(0.0, float(self.PACKAGED_LAUNCH_POLL_INTERVAL_SECONDS)),
+                    remaining,
+                )
+            )
 
     def _target(self, target_id: str) -> Target:
         with self._lock:
@@ -2144,47 +2500,79 @@ class ComputerUseService:
                 if must_capture:
                     self._state = SessionState.VERIFYING
                     self._notify()
-                    completed_observation = self._observation_from_response(
-                        target,
-                        self._capture_response(target, include_screenshot=True),
-                        require_screenshot=True,
-                    )
-                    if visual_mutation:
-                        visual_change = self._visual_effect_in_region(
-                            observation,
-                            completed_observation,
-                            x=int(x or 0),
-                            y=int(y or 0),
-                            end_x=end_x,
-                            end_y=end_y,
+                    try:
+                        completed_observation = self._observation_from_response(
+                            target,
+                            self._capture_response(target, include_screenshot=True),
+                            require_screenshot=True,
                         )
-                    # Semantic token actions already have a stable native
-                    # target and must remain on the fast path. Vision is for
-                    # coordinate grounding/verification (or explicit
-                    # capture/focus without an element), not an automatic
-                    # cloud round-trip after every toolbar button. ``type``
-                    # is the deliberate exception: its token is validation-
-                    # only, and append/insert flows may request one final
-                    # preservation check in the same call.
-                    if visual_question and (
-                        coordinate_only
-                        or not element_token
-                        or driver_action == "type"
-                    ):
-                        completed_observation.vision_text = self._analyze_vision(
-                            completed_observation,
-                            visual_question,
+                    except ComputerUseError:
+                        terminal_semantic_action = bool(
+                            dispatched
+                            and element is not None
+                            and _model_actionable(element)
+                            and driver_action in {"click", "double_click", "right_click"}
+                            and _is_terminal_or_dismiss_intent(
+                                element.label,
+                                expected_effect,
+                            )
                         )
-                    completed_observation.action_effect = (
-                        visual_change if visual_change != "unknown" else driver_effect
-                    )
-                    completed_observation.action_dispatched = dispatched
-                    completed_observation.action_completed = True
-                    completed_observation.driver_effect = driver_effect
-                    completed_observation.visual_change = visual_change
-                    completed_observation.effect_verified = effect_verified
-                    completed_observation.delivery_mode = delivery_mode
-                    completed: Observation | ActionReceipt = completed_observation
+                        if (
+                            not terminal_semantic_action
+                            or self._probe_exact_target_exists(target) is not False
+                        ):
+                            raise
+                        self._expire_disappeared_target(target)
+                        completed: Observation | ActionReceipt = ActionReceipt(
+                            surface=AutomationSurface.COMPUTER,
+                            target_id=target.target_id,
+                            action_family=driver_action,
+                            revision=self._observation_generation,
+                            dispatched=True,
+                            backend_effect=driver_effect,
+                            visual_change="unknown",
+                            verified_outcome=True,
+                            delivery=delivery_mode,
+                            route=route,
+                            cause="target_disappeared",
+                        )
+                    else:
+                        if visual_mutation:
+                            visual_change = self._visual_effect_in_region(
+                                observation,
+                                completed_observation,
+                                x=int(x or 0),
+                                y=int(y or 0),
+                                end_x=end_x,
+                                end_y=end_y,
+                            )
+                        # Semantic token actions already have a stable native
+                        # target and must remain on the fast path. Vision is for
+                        # coordinate grounding/verification (or explicit
+                        # capture/focus without an element), not an automatic
+                        # cloud round-trip after every toolbar button. ``type``
+                        # is the deliberate exception: its token is validation-
+                        # only, and append/insert flows may request one final
+                        # preservation check in the same call.
+                        if visual_question and (
+                            coordinate_only
+                            or not element_token
+                            or driver_action == "type"
+                        ):
+                            completed_observation.vision_text = self._analyze_vision(
+                                completed_observation,
+                                visual_question,
+                            )
+                        completed_observation.action_effect = (
+                            visual_change if visual_change != "unknown" else driver_effect
+                        )
+                        completed_observation.action_dispatched = dispatched
+                        completed_observation.action_completed = True
+                        completed_observation.driver_effect = driver_effect
+                        completed_observation.visual_change = visual_change
+                        completed_observation.effect_verified = effect_verified
+                        completed_observation.delivery_mode = delivery_mode
+                        completed = completed_observation
                 else:
                     completed = ActionReceipt(
                         surface=AutomationSurface.COMPUTER,
@@ -2295,14 +2683,16 @@ class ComputerUseService:
         text = str(keys or "")
         if any(character in text for character in "\r\n\t"):
             raise ComputerUseError(
-                "key_sequence does not accept control whitespace or navigation input."
+                "key_sequence does not accept control whitespace or navigation input.",
+                code="invalid_input",
             )
 
         if "," in text:
             raw = [part.strip() for part in text.split(",")]
             if not raw or any(not part for part in raw):
                 raise ComputerUseError(
-                    "key_sequence requires non-empty comma-separated Calculator keys."
+                    "key_sequence requires non-empty comma-separated Calculator keys.",
+                    code="invalid_input",
                 )
             normalized = [
                 cls._ROUTINE_KEY_ALIASES.get(part.casefold(), part)
@@ -2321,12 +2711,14 @@ class ComputerUseService:
 
         if not normalized or len(normalized) > cls.MAX_ROUTINE_KEY_STEPS:
             raise ComputerUseError(
-                f"key_sequence requires 1-{cls.MAX_ROUTINE_KEY_STEPS} bounded Calculator steps."
+                f"key_sequence requires 1-{cls.MAX_ROUTINE_KEY_STEPS} bounded Calculator steps.",
+                code="invalid_input",
             )
         for key in normalized:
             if len(key) != 1 or key not in cls._ROUTINE_KEYS:
                 raise ComputerUseError(
-                    "key_sequence accepts only calculator-style digits, operators, parentheses, decimal, percent, and equals."
+                    "key_sequence accepts only calculator-style digits, operators, parentheses, decimal, percent, and equals.",
+                    code="invalid_input",
                 )
         return tuple(normalized)
 
@@ -2386,7 +2778,9 @@ class ComputerUseService:
             if len(matches) != 1:
                 raise ComputerUseError(
                     "key_sequence requires one current semantic Calculator button for every step; "
-                    "capture again or use ordinary approved Computer actions."
+                    "capture again or use ordinary approved Computer actions.",
+                    code="stale_observation",
+                    retryable=True,
                 )
             resolved.append(matches[0])
         return tuple(resolved)
@@ -2405,7 +2799,10 @@ class ComputerUseService:
         target = self._target(target_id)
         sequence = self.normalize_routine_keys(keys)
         if "calculator" not in f"{target.app_name} {target.window_title}".casefold():
-            raise ComputerUseError("key_sequence is limited to a Calculator target.")
+            raise ComputerUseError(
+                "key_sequence is limited to a Calculator target.",
+                code="invalid_input",
+            )
         decision = classify_action(
             "key_sequence",
             app_name=target.app_name,
@@ -2475,6 +2872,15 @@ class ComputerUseService:
                     self._capture_response(target, include_screenshot=True),
                     require_screenshot=True,
                 )
+                if not any(
+                    element.role.strip().casefold() in {"text", "label", "statictext"}
+                    and element.label.strip().casefold().startswith("display")
+                    for element in verified.elements
+                ):
+                    raise ComputerUseError(
+                        "Calculator input was delivered, but the final display could not be verified safely.",
+                        code="driver_failed",
+                    )
             except BaseException:
                 if delivered:
                     self.invalidate_observation("routine key sequence interrupted")
@@ -2526,6 +2932,11 @@ class ComputerUseService:
                 f"Could not resolve the native app identity for {name!r} from the reviewed app inventory.",
                 code="target_gone",
             )
+        with self._lock:
+            expected_package_family = self._app_package_families.get(
+                _permission_key(name),
+                self._app_package_families.get(_permission_key(resolved_name), ""),
+            )
         if _is_protected_controller_target(resolved_name, name):
             raise ComputerUseError(
                 "Row-Bot and its Computer control surfaces cannot be targeted.",
@@ -2557,15 +2968,36 @@ class ComputerUseService:
                 code=response.error_code or "driver_failed",
             )
         launch_rows = response.structured.get("windows") if isinstance(response.structured.get("windows"), list) else []
-        windows = self._register_window_rows(
-            launch_rows,
-            fallback_app=resolved_name,
-            fallback_pid=int(response.structured.get("pid") or 0),
-            display_app=name,
+        # A packaged-app launch may return only the broker/stub pid and title.
+        # Never turn that incomplete row into a trusted target by filling in the
+        # requested identity locally.  Accept launch rows only when Cua reports
+        # an exact reviewed app identity; otherwise re-list and filter windows.
+        requires_exact_post_launch_discovery = bool(expected_package_family)
+        windows = (
+            self._verified_packaged_launch_windows(
+                name,
+                response,
+                expected_package_family,
+                owner,
+                approval_mode=approval_mode,
+                visual_question=visual_question,
+            )
+            if requires_exact_post_launch_discovery
+            else self._register_window_rows(
+                launch_rows,
+                fallback_app=resolved_name,
+                fallback_pid=int(response.structured.get("pid") or 0),
+                display_app=name,
+            )
         )
-        if not windows:
+        if not windows and not requires_exact_post_launch_discovery:
             windows = self.list_windows(owner, app=name)
-        if windows:
+        if not windows:
+            raise ComputerUseError(
+                f"The native app launch completed, but no exact {name!r} window could be verified.",
+                code="target_gone",
+            )
+        if windows and not requires_exact_post_launch_discovery:
             self.capture(
                 windows[0]["target_id"],
                 owner,
@@ -2705,6 +3137,7 @@ class ComputerUseService:
                 self._app_hint = ""
                 self._approved_apps.clear()
                 self._app_display_names.clear()
+                self._app_package_families.clear()
                 self._observation = None
                 self._preview_observation = None
                 self._observation_generation += 1

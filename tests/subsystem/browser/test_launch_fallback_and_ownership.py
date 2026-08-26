@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 import playwright.sync_api
@@ -67,6 +68,9 @@ def test_selected_installed_channel_succeeds_without_probe_launch(monkeypatch, t
     session._launch_context()
     assert len(chromium.calls) == 1
     assert chromium.calls[0]["channel"] == "chrome"
+    assert chromium.calls[0]["headless"] is False
+    assert chromium.calls[0]["no_viewport"] is True
+    assert "--start-maximized" in chromium.calls[0]["args"]
 
 
 def test_channel_failure_falls_back_once_to_ready_matching_managed_chromium(monkeypatch, tmp_path) -> None:
@@ -106,3 +110,40 @@ def test_popup_inherits_only_a_recognized_opener_task() -> None:
     assert session._page_owners[popup] == "task-a"
     assert session._thread_pages["task-a"] is popup
     assert quarantined not in session._page_owners
+
+
+def test_close_stops_context_and_playwright_on_the_owner_thread(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class _ClosingContext:
+        pages = []
+
+        @staticmethod
+        def close() -> None:
+            calls.append(("context", threading.current_thread().name))
+
+    class _ClosingPlaywright:
+        @staticmethod
+        def stop() -> None:
+            calls.append(("playwright", threading.current_thread().name))
+
+    session = BrowserSession()
+
+    def _launch() -> None:
+        session._context = _ClosingContext()
+        session._pw = _ClosingPlaywright()
+        session._context_generation += 1
+        session._launched = True
+
+    monkeypatch.setattr(session, "_launch_context", _launch)
+    session._start()
+    owner = session._pw_thread
+    assert owner is not None and owner.is_alive()
+
+    session.close()
+
+    assert owner.is_alive() is False
+    assert calls == [
+        ("context", "row-bot-pw"),
+        ("playwright", "row-bot-pw"),
+    ]

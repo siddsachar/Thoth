@@ -200,6 +200,27 @@ def check_packaged_browser_runtime(
     )
 
 
+def playwright_chromium_launch_options(*, headless: bool = True) -> dict[str, Any]:
+    """Return launch options for the reviewed Python-matched render runtime.
+
+    Rendering/export callers must not fall back to Playwright's global cache:
+    that cache may be absent or contain a revision owned by another package.
+    """
+
+    readiness = check_packaged_browser_runtime()
+    if not readiness.ready:
+        readiness = check_managed_browser_runtime()
+    if not readiness.ready or not readiness.executable_path:
+        raise RuntimeError(
+            "The Python Playwright-matched Chromium runtime is not ready. "
+            "Install or repair Browser Automation in Settings."
+        )
+    return {
+        "headless": bool(headless),
+        "executable_path": readiness.executable_path,
+    }
+
+
 def _find_chromium_executable(browsers_dir: Path, revision: str) -> Path | None:
     base = browsers_dir / f"chromium-{revision}"
     patterns = {

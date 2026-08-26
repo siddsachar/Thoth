@@ -26,6 +26,7 @@ from row_bot.tools import registry
 from row_bot.tools.base import BaseTool
 
 
+DATA_DIR = _DEFAULT_HISTORY_PATH.parent
 _HISTORY_PATH = _DEFAULT_HISTORY_PATH
 
 
@@ -165,13 +166,18 @@ class BrowserTool(BaseTool):
 
             thread_id = _get_thread_id()
             session = _session_manager.get_session(thread_id)
-            metadata = session.describe_ref(ref, thread_id)
+            metadata = session.pending_approval_proof(thread_id, "click", ref)
+            replaying_approval = metadata is not None
+            if metadata is None:
+                metadata = session.describe_ref(ref, thread_id)
             if not metadata:
                 return "ERROR [stale_observation]: Observe the same managed page again before retrying."
             consequence = _consequential_browser_target(metadata)
             if consequence:
                 from row_bot.tools.approval_gate import gate_action
 
+                if not replaying_approval:
+                    session.stage_approval_proof(thread_id, "click", ref, metadata)
                 session.mark_waiting_approval(thread_id, "Approve page action")
                 blocked = gate_action({
                     "tool": "browser_click", "label": "Managed Browser consequential action",
@@ -179,10 +185,15 @@ class BrowserTool(BaseTool):
                     "reason": consequence,
                 })
                 if blocked:
+                    session.clear_approval_proof(thread_id)
                     session.end_activity(thread_id)
                     return blocked
-                return "ERROR [stale_observation]: Approval invalidated the page snapshot; observe and re-approve the exact target."
-            result = session.click(ref, thread_id)
+                try:
+                    result = session.click_after_approval(metadata, thread_id)
+                finally:
+                    session.clear_approval_proof(thread_id)
+            else:
+                result = session.click(ref, thread_id)
             append_browser_history(thread_id, {
                 "action": "click", "target_token_revision": str(ref).split("_", 1)[0],
                 "timestamp": datetime.now().isoformat(),
@@ -194,13 +205,18 @@ class BrowserTool(BaseTool):
 
             thread_id = _get_thread_id()
             session = _session_manager.get_session(thread_id)
-            metadata = session.describe_ref(ref, thread_id)
+            metadata = session.pending_approval_proof(thread_id, "type", ref)
+            replaying_approval = metadata is not None
+            if metadata is None:
+                metadata = session.describe_ref(ref, thread_id)
             if not metadata:
                 return "ERROR [stale_observation]: Observe the same managed page again before retrying."
             consequence = _consequential_browser_target(metadata, submit=submit)
             if consequence:
                 from row_bot.tools.approval_gate import gate_action
 
+                if not replaying_approval:
+                    session.stage_approval_proof(thread_id, "type", ref, metadata)
                 session.mark_waiting_approval(thread_id, "Approve form action")
                 blocked = gate_action({
                     "tool": "browser_type", "label": "Managed Browser form action",
@@ -209,10 +225,20 @@ class BrowserTool(BaseTool):
                     "data_summary": f"Text entry ({len(text)} characters; value hidden)",
                 })
                 if blocked:
+                    session.clear_approval_proof(thread_id)
                     session.end_activity(thread_id)
                     return blocked
-                return "ERROR [stale_observation]: Approval invalidated the page snapshot; observe and re-approve the exact target."
-            result = session.type_text(ref, text, submit, thread_id)
+                try:
+                    result = session.type_text_after_approval(
+                        metadata,
+                        text,
+                        submit,
+                        thread_id,
+                    )
+                finally:
+                    session.clear_approval_proof(thread_id)
+            else:
+                result = session.type_text(ref, text, submit, thread_id)
             append_browser_history(thread_id, {
                 "action": "type", "target_token_revision": str(ref).split("_", 1)[0],
                 "text_length": len(text), "submit": submit, "timestamp": datetime.now().isoformat(),
@@ -289,7 +315,11 @@ class BrowserTool(BaseTool):
             ),
             StructuredTool.from_function(
                 func=browser_type, name="browser_type",
-                description="Enter hidden text into an exact current managed-browser input target.",
+                description=(
+                    "Enter hidden text into an exact current managed-browser input target. "
+                    "For a search field, use submit=true so this call returns the post-submit observation; "
+                    "do not add a separate snapshot before opening a result."
+                ),
                 args_schema=_TypeInput,
             ),
             StructuredTool.from_function(
