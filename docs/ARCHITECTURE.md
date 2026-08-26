@@ -751,8 +751,8 @@ and telemetry decision is documented in
 - **Target-window capture** — the session forces window-only capture and a bounded image dimension; desktop-wide capture, recording, browser/CDP, autostart, process-kill, update, maintenance, telemetry mutation, and arbitrary config surfaces remain blocked
 - **Generation-bound references** — application/window targets and accessibility elements are opaque, observation-generation-bound tokens invalidated by mutation, reconnect, target drift, approval waits, Stop, and takeover; exact-name recovery returns only a bounded running canonical-app inventory and never performs fuzzy acquisition
 - **Selected/document-aware projection** — the 80-element and 12 KiB model limits remain fixed while visible selected elements and a small generic document/grid quota survive chrome-heavy captures; values, geometry, parent trees, and typed content remain model-hidden
-- **Semantic editing contract** — `type` retains literal caret/selection insertion and rejects horizontal-tab structured payloads before approval or mutation. `replace_text` requires one current projected enabled editable token and calls the reviewed Cua `set_value` route exactly once, with no coordinate, caret, label, clipboard, shell, fuzzy, alternate delivery, or replay fallback
-- **Selective observation loop** — every input action requires current scope, policy, target, and element validation; dispatch, driver verdict, exact target-local evidence, displayed-target verification, and completion stay distinct. Exact replacement uses contemporaneous before/after target-window captures, ignores unrelated tree churn and transient overlays, and keeps an uncertain same-target mutation pending until fresh exact evidence, takeover, expiry, or Stop. One explicitly requested post-action Vision check is advisory and non-authoritative
+- **Semantic editing contract** — tokenless `type` retains literal caret/selection insertion and rejects horizontal-tab structured payloads before approval or mutation. A token supplied to `type` validates, but never selects or retargets, an already-selected enabled caret-bearing control against an immediate semantic refresh; document/grid value roles are rejected for that path. `replace_text` requires one current projected enabled editable token and calls the reviewed Cua `set_value` route exactly once, with no coordinate, caret, label, clipboard, shell, fuzzy, alternate delivery, or replay fallback
+- **Selective observation loop** — every input action requires current scope, policy, target, and element validation; dispatch, driver verdict, exact target-local evidence, displayed-target verification, and completion stay distinct. Exact replacement uses contemporaneous before/after target-window captures and ignores unrelated tree churn and transient overlays. Its replayable private mutation record clears at lifecycle boundaries, while a separate value-free generation completion latch remains unresolved until fresh exact evidence verifies the postcondition; advisory Vision, provider echo, Stop, cancel, or takeover cannot turn it into success
 - **Point-of-risk policy** — `computer_use/policy.py` classifies routine, consequential, always-confirm, handoff, and blocked actions. Credentials, OTPs, CAPTCHAs, biometrics, UAC/TCC, terminals, password managers, Row-Bot itself, secure desktops, and elevation cannot be automated
 - **Ephemeral privacy** — screenshot bytes are not written to media or checkpoints; typed values are excluded from logs, histories, tool traces, approval payloads, memory, and durable state
 - **Vision fallback** — accessibility information remains primary. When it is insufficient, only the current target-window screenshot can be sent to the configured Vision provider, whose local/cloud disclosure is shown before setup; Vision is bounded to coordinate decisions or one final user-visible check and its free-form prose is not authorization or a Boolean postcondition
@@ -1165,9 +1165,10 @@ Tool guides are lightweight `SKILL.md` packages that attach contextual instructi
 
 - **Skill-like format** — each guide is a directory with a `SKILL.md` file and YAML frontmatter, just like a manual skill
 - **`tools:` activation field** — guides declare the tools they apply to; when any linked tool is in the active tool belt, the guide is injected automatically
-- **Prompt injection** — `prompts.py` discovers active guides and appends them to the system prompt at runtime
+- **Prompt injection** — `skills.py` discovers guides and selects them from the effective active tool names; `agent.py` assembles their instructions into the stable `skills.tool_guides` prompt section. The existing compact custom OpenAI-compatible endpoint policy omits all skill injection at context sizes of 32,768 tokens or less
 - **Invisible to the manual skill toggles** — tool guides are auto-managed and do not clutter the user-facing skill list
-- **22 bundled guides** — Agents, Browser, Calendar, Chart, Custom Tool Builder, Designer, Developer, Email, Filesystem, Goal, Math, MCP, Shell, Telegram, Row-Bot Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X
+- **23 bundled guides** — Agents, Browser, Calendar, Chart, Computer Use, Custom Tool Builder, Designer, Developer, Email, Filesystem, Goal, Math, MCP, Shell, Telegram, Row-Bot Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X
+- **Instruction ownership** — the root prompt keeps universal behavior and compact cross-tool routing; active guides own tool workflows; schemas define argument meaning; services enforce target, policy, privacy, dispatch, and verification contracts
 - **Consistency benefits** — guide content can evolve independently of the main prompt, reducing drift and duplicated instructions
 
 ---
@@ -1792,7 +1793,7 @@ Row-Bot includes a stability layer for the kinds of failures that are hard to ca
 
 Skills are reusable instruction packs that shape how the agent thinks and responds. Each skill is a `SKILL.md` file with YAML frontmatter (display name, icon, description, required tools, tags) and freeform instructions injected into the system prompt when enabled.
 
-Row-Bot ships with **17 manual bundled skills** and **22 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available.
+Row-Bot ships with **17 manual bundled skills** and **23 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available, except under the compact custom-endpoint skill-injection policy described above.
 
 | Skill | Description |
 |-------|-------------|
@@ -1918,7 +1919,7 @@ Runtime code is packaged under `src/row_bot`. The paths below are package-relati
 | **`capability_search.py`** + **`skill_discovery.py`** + **`skills_activation.py`** + **`slash_commands.py`** | Deterministic local capability ranking, unified enabled manual/plugin skill snapshots, safe progressive search/load bridges and reference confinement, persistent capped per-task automatic activation, pinned/manual defaults, explicit skill commands, draft suggestions, disabled-skill handling, and slash-command parsing |
 | **`skills_hub/`** | Skills Hub source adapters, import detection, installers, provenance, scanner, search index, source registry, and UI models |
 | **`bundled_skills/`** | 17 built-in manual skills as `SKILL.md` packages |
-| **`tool_guides/`** | 22 built-in tool-specific auto-activation guides |
+| **`tool_guides/`** | 23 built-in tool-specific auto-activation guides |
 | **`tasks.py`** | Workflow engine, SQLite persistence, schema validation/repair, APScheduler scheduling, profile-first workflow migration, pipeline execution, run history, safety mode, delivery routing, and shared storage connection used by Agent Profiles/Runs/Goals/Developer worktrees |
 | **`notifications.py`** | Unified desktop, sound, and toast notification system |
 | **`channels/`** | Channel ABC, registry, shared streaming/finalization engine, orchestration-aware delivery, durable thread notifications, checkpoint persistence, media helpers, auth/secret-file helpers, approval routing, command handling, tool generation, plugin-channel bridge integration, and bundled channel adapters |

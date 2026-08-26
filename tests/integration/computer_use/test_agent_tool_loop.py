@@ -224,6 +224,78 @@ def test_pending_uncertain_mutation_blocks_successful_agent_final_status(
     assert "could not verify" in gated.casefold()
 
 
+def test_advisory_vision_and_stop_do_not_resolve_generation_completion(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from row_bot.agent import _apply_computer_use_final_status_gate
+
+    scenario = FakeScenario(
+        apps=({"name": "Document Surface", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 616,
+                "pid": 2616,
+                "app_name": "Document Surface",
+                "title": "Untitled surface",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2616,
+        capture_window_id=616,
+        semantic_elements=(
+            {
+                "role": "GridCell",
+                "label": "Document item",
+                "enabled": True,
+                "selected": False,
+            },
+        ),
+        set_value_updates_document=False,
+    )
+    service, transport, vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+    captured = json.loads(tool.invoke({"action": "capture", "app": "Document Surface"}))
+    target_id = captured["fresh_observation"].split("Target ID: ", 1)[1].splitlines()[0]
+    token = captured["fresh_observation"].split("token=", 1)[1].split(" ", 1)[0]
+
+    uncertain = json.loads(
+        tool.invoke(
+            {
+                "action": "replace_text",
+                "target_id": target_id,
+                "element_token": token,
+                "text": "private complete value",
+                "capture_after": True,
+                "visual_question": "Describe the visible item after the mutation.",
+            }
+        )
+    )
+    stopped = tool.invoke({"action": "stop"})
+    gated = _apply_computer_use_final_status_gate(
+        "Done — the exact document change is complete.",
+        {
+            "configurable": {
+                "thread_id": "performance-thread",
+                "generation_id": "performance-generation",
+            }
+        },
+        service=service,
+    )
+
+    assert uncertain["action_dispatched"] is True
+    assert uncertain["effect_verified"] is False
+    assert len(vision.calls) == 1
+    assert "stopped" in stopped.casefold()
+    assert [name for name, _args in transport.calls].count("set_value") == 1
+    assert "complete" not in gated.casefold()
+    assert "could not verify" in gated.casefold()
+
+
 def test_tabular_type_payload_is_rejected_with_no_hidden_recovery_route(
     tmp_path,
     monkeypatch,

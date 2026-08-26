@@ -192,6 +192,41 @@ def test_new_lease_never_shows_previous_session_action(service) -> None:
     assert service.status_snapshot()["action_count"] == 0
 
 
+def test_new_generation_never_inherits_prior_unresolved_completion(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "Edit",
+            "label": "Document field",
+            "value": "old",
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.set_value_updates_document = False
+    service.acquire(OWNER_A, validate_context=False)
+    target_id = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER_A)
+    service.act(
+        "replace_text",
+        target_id,
+        OWNER_A,
+        element_token=observation.elements[0].token,
+        text="private replacement",
+    )
+
+    service.stop()
+    service.acquire(OWNER_B, validate_context=False)
+
+    assert service.computer_use_completion_blocked(OWNER_B) is False
+    assert service.status_snapshot()["computer_use_completion_blocked"] is False
+    assert service.computer_use_completion_blocked(
+        thread_id=OWNER_A.thread_id,
+        generation_id=OWNER_A.generation_id,
+    ) is True
+
+
 def test_app_approval_denial_is_terminal_and_clears_live_control(fake_client) -> None:
     service = ComputerUseService(
         client_factory=lambda: fake_client,

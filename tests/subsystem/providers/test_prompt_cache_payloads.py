@@ -89,3 +89,73 @@ def test_prompt_cache_markers_are_provider_gated(
         agent.set_active_model_override("")
 
     assert not any(_has_cache_control(message) for message in result)
+
+
+def test_computer_guide_is_a_tool_belt_bound_stable_section(tmp_path, monkeypatch):
+    agent = _fresh_agent(tmp_path, monkeypatch)
+    import row_bot.skills as skills
+
+    skills.load_skills()
+    monkeypatch.setattr(agent, "get_context_size", lambda: 65_536)
+    monkeypatch.setattr(agent, "get_current_model", lambda: "model:anthropic:test")
+    monkeypatch.setattr(agent, "is_cloud_model", lambda _model: True)
+    monkeypatch.setattr(agent, "get_cloud_provider", lambda _model: "anthropic")
+    monkeypatch.setattr(
+        agent,
+        "_provider_uses_anthropic_messages",
+        lambda provider_id, _model_id=None: provider_id == "anthropic",
+    )
+    monkeypatch.setattr(agent, "is_background_workflow", lambda: False)
+    monkeypatch.setattr("row_bot.self_knowledge.build_static_self_knowledge_block", lambda: "")
+    monkeypatch.setattr("row_bot.self_knowledge.build_dynamic_self_knowledge_block", lambda: "")
+    monkeypatch.setattr("row_bot.plugins.registry.get_skills_prompt", lambda *args, **kwargs: "")
+    decision = SimpleNamespace(
+        allowed=False,
+        reason="disabled",
+        candidates_seen=0,
+        selected=[],
+        trace={},
+    )
+    monkeypatch.setattr("row_bot.memory_policy.build_auto_recall", lambda *args, **kwargs: decision)
+    monkeypatch.setattr("row_bot.memory_policy.touch_selected_memories", lambda _decision: None)
+    monkeypatch.setattr("row_bot.memory_policy.record_recall_trace", lambda _decision, **kwargs: None)
+
+    fingerprints: list[str] = []
+    original_cache_marker = agent.apply_anthropic_system_cache_marker
+
+    def _record_fingerprint(messages, **kwargs):
+        fingerprints.append(str(kwargs.get("stable_fingerprint") or ""))
+        return original_cache_marker(messages, **kwargs)
+
+    monkeypatch.setattr(agent, "apply_anthropic_system_cache_marker", _record_fingerprint)
+
+    def _assemble(active_tools: tuple[str, ...], turn: str):
+        agent._set_active_runtime_context(
+            thread_id="computer-guide-cache",
+            runtime_surface="normal_chat",
+            enabled_tool_names=active_tools,
+        )
+        agent._current_effective_tool_parent_names_var.set(active_tools)
+        result = agent._pre_model_trim(
+            {
+                "execution_budget": new_execution_budget(turn),
+                "messages": [HumanMessage(content="hello")],
+            }
+        )
+        return [
+            str(message.content)
+            for message in result["llm_input_messages"]
+            if isinstance(message, SystemMessage)
+        ]
+
+    no_tools = _assemble((), "computer-guide-cache-none")
+    no_tools_fingerprint = fingerprints[-1]
+    browser_only = _assemble(("browser",), "computer-guide-cache-browser")
+    computer = _assemble(("computer_use",), "computer-guide-cache-computer")
+    computer_fingerprint = fingerprints[-1]
+
+    assert all("COMPUTER USE WORKFLOW" not in content for content in no_tools)
+    assert all("COMPUTER USE WORKFLOW" not in content for content in browser_only)
+    assert "COMPUTER USE WORKFLOW" not in computer[0]
+    assert sum("COMPUTER USE WORKFLOW" in content for content in computer[1:]) == 1
+    assert no_tools_fingerprint != computer_fingerprint

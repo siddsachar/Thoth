@@ -4741,15 +4741,13 @@ def _apply_computer_use_final_status_gate(
             from row_bot.computer_use.service import get_computer_use_service
 
             service = get_computer_use_service()
-        if not service.computer_use_completion_blocked():
-            return result
-        snapshot = service.status_snapshot()
         configurable = (config or {}).get("configurable") or {}
         thread_id = str(configurable.get("thread_id") or "")
         generation_id = str(configurable.get("generation_id") or "")
-        if thread_id and str(snapshot.get("thread_id") or "") != thread_id:
-            return result
-        if generation_id and str(snapshot.get("generation_id") or "") != generation_id:
+        if not service.computer_use_completion_blocked(
+            thread_id=thread_id,
+            generation_id=generation_id,
+        ):
             return result
         return _COMPUTER_USE_UNVERIFIED_FINAL
     except Exception:

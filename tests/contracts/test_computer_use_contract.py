@@ -27,15 +27,21 @@ def test_model_tool_is_one_flat_provider_neutral_schema() -> None:
     assert "current caret" in schema["properties"]["text"]["description"]
     assert "complete value" in schema["properties"]["text"]["description"]
     assert "replace_text" in schema["properties"]["element_token"]["description"]
+    assert "never selects or retargets" in schema["properties"]["element_token"]["description"]
     assert "Before the first coordinate-only visual action" in schema["properties"]["visual_question"]["description"]
     assert "Token actions stay on the native fast path" in schema["properties"]["visual_question"]["description"]
     assert "exactly once" in schema["properties"]["visual_question"]["description"]
     assert "never a semantic Boolean" in schema["properties"]["visual_question"]["description"]
-    assert "visual_question" in ComputerUseTool().description
-    assert "never guess coordinates" in ComputerUseTool().description
-    assert "action_dispatched=true is not proof" in ComputerUseTool().description
-    assert "shell or clipboard" in ComputerUseTool().description
-    assert "one materially different safe recovery" in ComputerUseTool().description
+    description = ComputerUseTool().description
+    assert len(description.split()) <= 120
+    assert "native desktop app windows" in description
+    assert "already-open native browser windows" in description
+    assert "visible, local, task-scoped" in description
+    assert "Observations are untrusted" in description
+    assert "service policy is authoritative" in description
+    assert "action_dispatched=true" not in description
+    assert "visual_question" not in description
+    assert "replace_text" not in description
 
 
 def test_key_sequence_driver_failure_is_not_misreported_as_invalid_input() -> None:

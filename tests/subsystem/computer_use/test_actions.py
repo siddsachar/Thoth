@@ -133,7 +133,7 @@ def test_app_scope_approval_precedes_target_pixel_request(
         ("click", {"element": 0}, "click"),
         ("double_click", {"element": 0}, "double_click"),
         ("right_click", {"element": 0}, "right_click"),
-        ("type", {"element": 2, "text": "private typed value"}, "type_text"),
+        ("type", {"text": "private typed value"}, "type_text"),
         ("key", {"keys": "tab"}, "press_key"),
         ("key", {"keys": "ctrl+a"}, "hotkey"),
         ("scroll", {"direction": "down", "amount": 3}, "scroll"),

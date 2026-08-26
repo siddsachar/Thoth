@@ -187,6 +187,26 @@ def test_live_control_change_selects_computer_browser_and_chat_regressions() -> 
     assert not selection.unmatched_files
 
 
+def test_computer_tool_guide_selects_runtime_and_prompt_ownership() -> None:
+    selection = select_tests_for_changes(
+        ["tool_guides/computer_use_guide/SKILL.md"]
+    )
+
+    assert "computer_use" in selection.matched_rules
+    assert "tests/subsystem/computer_use" in selection.test_paths
+    assert "tests/integration/computer_use" in selection.test_paths
+    assert "tests/test_skills_activation.py" in selection.test_paths
+    assert (
+        "tests/integration/computer_use/test_browser_computer_routing_guidance.py"
+        in selection.test_paths
+    )
+    assert (
+        "tests/subsystem/providers/test_prompt_cache_payloads.py"
+        in selection.test_paths
+    )
+    assert not selection.unmatched_files
+
+
 def test_prompt_context_change_selects_prompt_and_provider_regressions() -> None:
     selection = select_tests_for_changes([
         "src/row_bot/agent.py",

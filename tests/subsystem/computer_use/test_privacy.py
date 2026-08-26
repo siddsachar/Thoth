@@ -32,8 +32,8 @@ def test_typed_value_is_absent_from_service_state_model_output_and_fake_history(
     secret = "never-persist-this-secret"
     service.acquire(OWNER, validate_context=False)
     target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
-    observation = service.capture(target_id, OWNER)
-    result = service.act("type", target_id, OWNER, element_token=observation.elements[2].token, text=secret)
+    service.capture(target_id, OWNER)
+    result = service.act("type", target_id, OWNER, text=secret)
     assert secret not in repr(result)
     assert secret not in str(service.status_snapshot())
     assert secret not in repr(fake_transport.calls)
@@ -118,6 +118,43 @@ def test_driver_interpolated_replacement_is_absent_from_public_error_and_history
     assert secret not in str(failed.value)
     assert secret not in repr(fake_transport.calls)
     assert secret not in str(service.status_snapshot())
+
+
+def test_post_stop_unresolved_completion_latch_contains_no_mutation_payload(
+    service,
+    fake_transport,
+) -> None:
+    secret = "generation-private-complete-value"
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "Edit",
+            "label": "Document field",
+            "value": "old private value",
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.set_value_updates_document = False
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER)
+
+    uncertain = service.act(
+        "replace_text",
+        target_id,
+        OWNER,
+        element_token=observation.elements[0].token,
+        text=secret,
+    )
+    service.stop()
+
+    assert uncertain.effect_verified is False
+    assert service._pending_mutation is None
+    assert service.computer_use_completion_blocked(
+        thread_id=OWNER.thread_id,
+        generation_id=OWNER.generation_id,
+    )
+    assert secret not in repr(service._unresolved_completions)
+    assert "old private value" not in repr(service._unresolved_completions)
 
 
 def test_window_discovery_requires_scope_before_calling_the_driver(service, fake_transport) -> None:

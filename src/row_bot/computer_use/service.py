@@ -96,6 +96,16 @@ _MODEL_EDITABLE_ROLES = frozenset(
         "textbox",
     }
 )
+_MODEL_CARET_EDITABLE_ROLES = frozenset(
+    {
+        "edit",
+        "entry",
+        "input",
+        "textfield",
+        "textinput",
+        "textbox",
+    }
+)
 _BIDI_EMBEDDING_OPENERS = frozenset({"\u202a", "\u202b", "\u202d", "\u202e"})
 _BIDI_ISOLATE_OPENERS = frozenset({"\u2066", "\u2067", "\u2068"})
 _BIDI_CONTROLS = frozenset(
@@ -146,6 +156,7 @@ _SAFE_COMPUTER_RESULT_CODES = frozenset(
         "surface_unavailable",
         "target_gone",
         "target_mismatch",
+        "target_not_selected",
         "transient_driver_failure",
         "unsupported_capability",
     }
@@ -488,6 +499,27 @@ class _PendingMutation:
     comparison_valid: bool = True
 
 
+class _CompletionStatus(str, Enum):
+    UNRESOLVED = "unresolved"
+    VERIFIED = "verified"
+
+
+class _CompletionReason(str, Enum):
+    EXACT_TARGET_POSTCONDITION_UNVERIFIED = "exact_target_postcondition_unverified"
+
+
+class _CompletionActionFamily(str, Enum):
+    REPLACE_TEXT = "replace_text"
+
+
+@dataclass(frozen=True)
+class _UnresolvedCompletion:
+    owner_key: tuple[str, str, str]
+    action_family: _CompletionActionFamily
+    reason: _CompletionReason
+    status: _CompletionStatus = _CompletionStatus.UNRESOLVED
+
+
 class ComputerUseError(RuntimeError):
     def __init__(
         self,
@@ -730,6 +762,10 @@ class ComputerUseService:
         self._last_effect_verified = False
         self._last_action_completed = False
         self._pending_mutation: _PendingMutation | None = None
+        self._unresolved_completions: dict[
+            tuple[str, str, str],
+            _UnresolvedCompletion,
+        ] = {}
         self._prepared_foreground_target_id = ""
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
         self._revision = 0
@@ -818,7 +854,9 @@ class ComputerUseService:
                 "last_visual_change": self._last_visual_change,
                 "last_effect_verified": self._last_effect_verified,
                 "last_action_completed": self._last_action_completed,
-                "computer_use_completion_blocked": self._pending_mutation is not None,
+                "computer_use_completion_blocked": self.computer_use_completion_blocked(
+                    self._owner
+                ),
                 "foreground_prepared": bool(self._prepared_foreground_target_id),
                 "has_thumbnail": bool(preview and preview.screenshot),
                 "generation_id": self._owner.generation_id if self._owner else "",
@@ -2570,6 +2608,43 @@ class ComputerUseService:
             if cls._exact_element_match_key(observation, element) == match_key
         )
 
+    def _validate_selected_type_element(
+        self,
+        target: Target,
+        observation: Observation,
+        element: CuaElement,
+    ) -> tuple[Observation, CuaElement]:
+        """Require fresh exact native proof of an already-selected caret target."""
+
+        match_key = self._structural_geometry_match_key(observation, element)
+        fresh = self._observation_from_response(
+            target,
+            self._capture_response(target, include_screenshot=False),
+            require_screenshot=False,
+            previous=observation,
+        )
+        matches = tuple(
+            candidate
+            for candidate in fresh.elements
+            if self._structural_geometry_match_key(fresh, candidate) == match_key
+        )
+        if len(matches) != 1:
+            raise ComputerUseError(
+                "The type target is stale, missing, or ambiguous in the fresh native observation.",
+                code="target_not_selected",
+            )
+        selected = matches[0]
+        if (
+            selected.enabled is not True
+            or selected.selected is not True
+            or _normalized_role(selected.role) not in _MODEL_CARET_EDITABLE_ROLES
+        ):
+            raise ComputerUseError(
+                "The type target is not an enabled, selected caret-bearing control.",
+                code="target_not_selected",
+            )
+        return fresh, selected
+
     @staticmethod
     def _target_interior_visual_change(
         before: Observation,
@@ -2631,17 +2706,64 @@ class ComputerUseService:
         except Exception:
             return "unknown"
 
-    def computer_use_completion_blocked(self, owner: LeaseOwner | None = None) -> bool:
-        """Return a bounded status bit without exposing the pending mutation value."""
+    def computer_use_completion_blocked(
+        self,
+        owner: LeaseOwner | None = None,
+        *,
+        thread_id: str = "",
+        generation_id: str = "",
+    ) -> bool:
+        """Return generation-scoped completion truth without mutation payloads."""
 
         with self._lock:
-            pending = self._pending_mutation
-            current = self._owner
-            if pending is None or current is None:
-                return False
-            if owner is not None and owner.key != current.key:
-                return False
-            return pending.owner_key == current.key and pending.lease_id == self._lease_id
+            if owner is not None:
+                latch = self._unresolved_completions.get(owner.key)
+                return bool(latch and latch.status is _CompletionStatus.UNRESOLVED)
+            if thread_id or generation_id:
+                return any(
+                    latch.status is _CompletionStatus.UNRESOLVED
+                    and (not thread_id or latch.owner_key[0] == str(thread_id))
+                    and (
+                        not generation_id
+                        or latch.owner_key[1] == str(generation_id)
+                    )
+                    for latch in self._unresolved_completions.values()
+                )
+            if self._owner is not None:
+                latch = self._unresolved_completions.get(self._owner.key)
+                return bool(latch and latch.status is _CompletionStatus.UNRESOLVED)
+            return any(
+                latch.status is _CompletionStatus.UNRESOLVED
+                for latch in self._unresolved_completions.values()
+            )
+
+    def _set_unresolved_completion(self, owner: LeaseOwner, action_family: str) -> None:
+        try:
+            action = _CompletionActionFamily(str(action_family or ""))
+        except ValueError as exc:
+            raise ValueError("Unsupported Computer completion action family") from exc
+        with self._lock:
+            self._unresolved_completions[owner.key] = _UnresolvedCompletion(
+                owner_key=owner.key,
+                action_family=action,
+                reason=_CompletionReason.EXACT_TARGET_POSTCONDITION_UNVERIFIED,
+            )
+            while len(self._unresolved_completions) > 32:
+                oldest = next(iter(self._unresolved_completions))
+                self._unresolved_completions.pop(oldest, None)
+
+    def _clear_unresolved_completion(
+        self,
+        owner_key: tuple[str, str, str],
+        action_family: str,
+    ) -> None:
+        with self._lock:
+            latch = self._unresolved_completions.get(owner_key)
+            if (
+                latch is not None
+                and latch.action_family.value == str(action_family)
+            ):
+                self._unresolved_completions.pop(owner_key, None)
 
     def _pending_applies_to(self, target: Target) -> bool:
         with self._lock:
@@ -2727,6 +2849,10 @@ class ComputerUseService:
         with self._lock:
             if self._pending_mutation is pending:
                 self._pending_mutation = None
+                self._clear_unresolved_completion(
+                    pending.owner_key,
+                    pending.action_family,
+                )
 
     def _prepare_foreground_fallback(
         self,
@@ -3012,10 +3138,15 @@ class ComputerUseService:
         observation.route = route
         observation.cause = cause
         with self._lock:
-            if outcome in {"provider_echo_unverified", "suspected_noop", "unverified"}:
+            if dispatched and outcome in {
+                "provider_echo_unverified",
+                "suspected_noop",
+                "unverified",
+            }:
                 assert self._owner is not None
+                owner = self._owner
                 self._pending_mutation = _PendingMutation(
-                    owner_key=self._owner.key,
+                    owner_key=owner.key,
                     lease_id=self._lease_id,
                     target_id=observation.target.target_id,
                     pid=observation.target.pid,
@@ -3027,9 +3158,17 @@ class ComputerUseService:
                     baseline_width=baseline.width,
                     baseline_height=baseline.height,
                 )
+                self._set_unresolved_completion(owner, "replace_text")
             else:
                 self._pending_mutation = None
-            observation.computer_use_completion_blocked = self._pending_mutation is not None
+                if self._owner is not None:
+                    self._clear_unresolved_completion(
+                        self._owner.key,
+                        "replace_text",
+                    )
+            observation.computer_use_completion_blocked = (
+                self.computer_use_completion_blocked(self._owner)
+            )
             self._action_count += 1
             self._last_action = "replace_text (value hidden)"
             self._last_effect = outcome
@@ -3511,6 +3650,13 @@ class ComputerUseService:
                         approval_mode=approval_mode,
                     )
                     foreground_prepared = True
+
+                if original_action == "type" and element is not None:
+                    observation, element = self._validate_selected_type_element(
+                        target,
+                        observation,
+                        element,
+                    )
 
                 args: dict[str, Any] = {
                     "pid": target.pid,

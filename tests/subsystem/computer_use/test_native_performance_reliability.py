@@ -834,7 +834,7 @@ def test_native_browser_four_action_flow_has_exact_bounded_counts(service, fake_
     target_id, observation = _browser_target(service, fake_transport)
     before = service.performance_snapshot()
     service.act("focus", target_id, OWNER, approval_mode="allow_all")
-    service.act("type", target_id, OWNER, element_token=observation.elements[2].token, text="synthetic query")
+    service.act("type", target_id, OWNER, text="synthetic query")
     service.refresh_semantics(target_id, OWNER)
     current = service.current_observation(target_id)
     service.act("click", target_id, OWNER, element_token=current.elements[0].token)
