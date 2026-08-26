@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import concurrent.futures
+import threading
+
 from row_bot.computer_use.service import ComputerUseService, LeaseOwner
 
 
@@ -75,3 +78,79 @@ def test_semantic_element_action_does_not_add_redundant_vision_call(fake_client)
     )
 
     assert vision.calls == []
+
+
+def test_initial_app_capture_defers_vision_then_target_capture_calls_it_once(
+    fake_client,
+) -> None:
+    vision = _Vision()
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+        vision_service=vision,
+    )
+
+    initial = service.capture(
+        owner=OWNER,
+        app="Calculator",
+        visual_question="Premature visual request",
+    )
+    grounded = service.capture(
+        initial.target.target_id,
+        OWNER,
+        visual_question="Where is Equals?",
+    )
+
+    assert initial.vision_deferred is True
+    assert len(vision.calls) == 1
+    assert vision.calls[0][0] == grounded.screenshot
+
+
+def test_validated_preview_is_published_before_blocked_vision_returns(
+    fake_client,
+) -> None:
+    class _BlockingVision:
+        _model = "local::blocking-vision"
+
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def analyze(self, _image: bytes, _question: str) -> str:
+            self.started.set()
+            assert self.release.wait(timeout=5)
+            return "Vision finished."
+
+    vision = _BlockingVision()
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+        vision_service=vision,
+    )
+    initial = service.capture(owner=OWNER, app="Calculator")
+    published = threading.Event()
+    snapshots: list[dict] = []
+
+    def listener(snapshot: dict) -> None:
+        snapshots.append(snapshot)
+        if snapshot.get("has_thumbnail"):
+            published.set()
+
+    service.add_listener(listener)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            service.capture,
+            initial.target.target_id,
+            OWNER,
+            visual_question="Where is Equals?",
+        )
+        assert published.wait(timeout=5)
+        assert vision.started.wait(timeout=5)
+        assert future.done() is False
+        assert service.ephemeral_screenshot()
+        preview_revision = snapshots[-1]["revision"]
+        vision.release.set()
+        observed = future.result(timeout=5)
+
+    assert observed.vision_text
+    assert snapshots[-1]["revision"] > preview_revision

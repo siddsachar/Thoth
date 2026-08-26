@@ -78,7 +78,10 @@ class FakeScenario:
     document_value: str = ""
     block_foreground: bool = False
     semantic_elements: tuple[dict[str, Any], ...] = ()
+    semantic_snapshots: tuple[tuple[dict[str, Any], ...], ...] = ()
     accepted_background_noop_tools: frozenset[str] = field(default_factory=frozenset)
+    action_route: str = ""
+    action_cause: str = ""
     driver_declared_count: int | None = None
     driver_limited: bool | None = None
     driver_sparse: bool = False
@@ -243,7 +246,21 @@ class FakeCuaTransport:
                 return self._error("target window no longer exists", "target_not_found")
             if self.scenario.permission_denied:
                 return self._error("permission denied", "permission_denied")
-            if self.scenario.semantic_elements:
+            if self.scenario.semantic_snapshots:
+                snapshot_index = min(
+                    self.capture_index,
+                    len(self.scenario.semantic_snapshots) - 1,
+                )
+                element_specs = [
+                    (
+                        str(item.get("role") or "text"),
+                        str(item.get("label") or ""),
+                        int(item.get("depth") or 1),
+                        item,
+                    )
+                    for item in self.scenario.semantic_snapshots[snapshot_index]
+                ]
+            elif self.scenario.semantic_elements:
                 element_specs = [
                     (
                         str(item.get("role") or "text"),
@@ -438,6 +455,8 @@ class FakeCuaTransport:
                 "verified": effect == "confirmed",
                 "delivery_mode": delivery_mode,
                 "escalation": "foreground" if delivery_mode == "foreground" else "",
+                "route": self.scenario.action_route,
+                "cause": self.scenario.action_cause,
             })
         return self._error(f"unknown fake tool: {name}", "unknown_tool")
 

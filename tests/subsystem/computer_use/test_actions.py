@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from row_bot.computer_use.service import (
     ActionReceipt,
     ComputerUseError,
+    ComputerUseService,
     LeaseOwner,
     StaleObservationError,
 )
+from row_bot.tools.computer_use_tool import _observation_payload
 
 
 OWNER = LeaseOwner("actions-thread", "actions-generation", "actions-task")
@@ -17,6 +21,63 @@ def _target_and_capture(service):
     service.acquire(OWNER, validate_context=False)
     target = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
     return target, service.capture(target, OWNER)
+
+
+def test_app_scoped_capture_discovers_and_captures_exactly_once_without_vision(
+    fake_client,
+    fake_transport,
+) -> None:
+    class _Vision:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def analyze(self, _image: bytes, _question: str) -> str:
+            self.calls += 1
+            return "unused"
+
+    vision = _Vision()
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+        vision_service=vision,
+    )
+
+    observation = service.capture(
+        owner=OWNER,
+        app="Calculator",
+        visual_question="Premature initial question",
+    )
+
+    names = [name for name, _args in fake_transport.calls]
+    assert names.count("list_windows") == 1
+    assert names.count("get_window_state") == 1
+    assert observation.target.app_name == "Calculator"
+    assert observation.vision_deferred is True
+    assert observation.vision_text == ""
+    assert vision.calls == 0
+    payload = json.loads(_observation_payload(observation))
+    assert payload["visual_analysis_deferred"] is True
+    assert "no visual question was answered" in payload["fresh_observation"].casefold()
+
+
+def test_app_scope_approval_precedes_target_pixel_request(
+    fake_client,
+    fake_transport,
+) -> None:
+    calls_at_approval: list[list[str]] = []
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: calls_at_approval.append(
+            [name for name, _args in fake_transport.calls]
+        )
+        or True,
+    )
+
+    service.capture(owner=OWNER, app="Calculator")
+
+    assert len(calls_at_approval) == 1
+    assert "list_windows" in calls_at_approval[0]
+    assert "get_window_state" not in calls_at_approval[0]
 
 
 @pytest.mark.parametrize(
@@ -74,6 +135,146 @@ def test_capture_after_performs_exactly_one_fresh_post_action_capture(
         "get_window_state",
     ]
     assert service.performance_snapshot()["captures"] == captures_before + 1
+
+
+def test_semantic_after_action_reports_truthful_native_change_and_receipt_fields(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_snapshots = (
+        ({"role": "button", "label": "Play", "enabled": True},),
+        ({"role": "button", "label": "Pause", "enabled": True},),
+    )
+    fake_transport.scenario.effect = "unverifiable"
+    fake_transport.scenario.action_route = "accessibility"
+    fake_transport.scenario.action_cause = "semantic_target"
+    target, observation = _target_and_capture(service)
+    before_vision = service.performance_snapshot()["vision_calls"]
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        capture_after=True,
+        visual_question="Do not invoke Vision for semantic input",
+    )
+
+    assert result.native_change == "changed"
+    assert result.visual_change == "unknown"
+    assert result.effect_verified is False
+    assert result.route == "accessibility"
+    assert result.cause == "semantic_target"
+    assert result.delivery_mode == "background"
+    assert result.driver_effect == "unverifiable"
+    assert service.performance_snapshot()["vision_calls"] == before_vision
+
+
+def test_unchanged_stateful_semantic_action_remains_delivered_but_unverified(
+    service,
+    fake_transport,
+) -> None:
+    state = ({"role": "togglebutton", "label": "Playback", "selected": False},)
+    fake_transport.scenario.semantic_snapshots = (state, state)
+    fake_transport.scenario.effect = "unverifiable"
+    target, observation = _target_and_capture(service)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        capture_after=True,
+    )
+
+    assert result.native_change == "unchanged"
+    assert result.action_completed is True
+    assert result.effect_verified is False
+
+
+def test_unchanged_momentary_semantic_control_remains_unknown(
+    service,
+    fake_transport,
+) -> None:
+    momentary = ({"role": "button", "label": "Next"},)
+    fake_transport.scenario.semantic_snapshots = (momentary, momentary)
+    fake_transport.scenario.effect = "unverifiable"
+    target, observation = _target_and_capture(service)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        capture_after=True,
+    )
+
+    assert result.native_change == "unknown"
+    assert service.status_snapshot()["consecutive_visual_no_effects"] == 0
+
+
+def test_three_conservative_semantic_no_progress_results_stop_blind_attempts(
+    service,
+    fake_transport,
+) -> None:
+    state = ({"role": "togglebutton", "label": "Playback", "selected": False},)
+    fake_transport.scenario.semantic_snapshots = (state, state, state, state)
+    fake_transport.scenario.effect = "unverifiable"
+    target, observation = _target_and_capture(service)
+
+    for attempt in range(3):
+        if attempt:
+            observation = service.current_observation(target)
+            assert observation is not None
+        if attempt < 2:
+            result = service.act(
+                "click",
+                target,
+                OWNER,
+                element_token=observation.elements[0].token,
+                capture_after=True,
+            )
+            assert result.native_change == "unchanged"
+        else:
+            with pytest.raises(ComputerUseError) as stopped:
+                service.act(
+                    "click",
+                    target,
+                    OWNER,
+                    element_token=observation.elements[0].token,
+                    capture_after=True,
+                )
+            assert stopped.value.code == "no_progress"
+
+    assert [name for name, _args in fake_transport.calls].count("click") == 3
+    assert service.status_snapshot()["state"] == "needs_attention"
+
+
+def test_changed_native_evidence_resets_same_family_no_progress_streak(
+    service,
+    fake_transport,
+) -> None:
+    off = ({"role": "togglebutton", "label": "Playback", "selected": False},)
+    on = ({"role": "togglebutton", "label": "Playback", "selected": True},)
+    fake_transport.scenario.semantic_snapshots = (off, off, on, on)
+    fake_transport.scenario.effect = "unverifiable"
+    target, observation = _target_and_capture(service)
+
+    changes: list[str] = []
+    for _attempt in range(3):
+        result = service.act(
+            "click",
+            target,
+            OWNER,
+            element_token=observation.elements[0].token,
+            capture_after=True,
+        )
+        changes.append(result.native_change)
+        observation = result
+
+    assert changes == ["unchanged", "changed", "unchanged"]
+    assert service.status_snapshot()["consecutive_visual_no_effects"] == 1
+    assert service.status_snapshot()["state"] == "observing"
 
 
 def test_semantic_terminal_action_succeeds_when_exact_target_disappears_after_dispatch(

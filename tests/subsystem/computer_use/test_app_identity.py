@@ -108,6 +108,52 @@ def test_unknown_or_partial_app_name_is_not_fuzzily_resolved(service, fake_trans
     assert service.list_windows(OWNER, app="Calc") == []
 
 
+def test_app_scoped_capture_zero_matches_returns_target_gone_without_pixels(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.windows = (_window(1, "Notepad", "Untitled - Notepad"),)
+
+    with pytest.raises(ComputerUseError) as missing:
+        service.capture(owner=OWNER, app="Calculator")
+
+    assert missing.value.code == "target_gone"
+    assert [name for name, _args in fake_transport.calls].count("list_windows") == 1
+    assert "get_window_state" not in [name for name, _args in fake_transport.calls]
+
+
+def test_app_scoped_capture_multiple_matches_returns_opaque_ambiguity_without_pixels(
+    service,
+    fake_transport,
+) -> None:
+    private_titles = ("Private workbook A", "Private workbook B")
+    fake_transport.scenario.windows = (
+        _window(1, "Notepad", private_titles[0]),
+        _window(2, "Notepad", private_titles[1]),
+    )
+
+    with pytest.raises(ComputerUseError) as ambiguous:
+        service.capture(owner=OWNER, app="Notepad")
+
+    assert ambiguous.value.code == "ambiguous_target"
+    assert len(ambiguous.value.candidates) == 2
+    assert all(str(row["target_id"]).startswith("target_") for row in ambiguous.value.candidates)
+    assert all(title not in repr(ambiguous.value.candidates) for title in private_titles)
+    assert "get_window_state" not in [name for name, _args in fake_transport.calls]
+
+
+def test_protected_app_scoped_capture_is_blocked_before_driver_start(
+    service,
+    fake_transport,
+) -> None:
+    with pytest.raises(ComputerUseError) as blocked:
+        service.capture(owner=OWNER, app="python.exe", window_hint="Row-Bot")
+
+    assert blocked.value.code == "hard_blocked"
+    assert fake_transport.opened is False
+    assert fake_transport.calls == []
+
+
 @pytest.mark.parametrize(
     ("requested", "driver_name"),
     [
@@ -395,6 +441,116 @@ def test_any_reviewed_packaged_app_uses_package_proven_shared_host_binding(
     )
 
 
+def test_classic_office_launch_stabilizes_from_start_surface_to_workbook(
+    fake_client,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = (
+        {"name": "EXCEL.EXE", "running": False, "active": False},
+    )
+    transient = _window(1, "EXCEL.EXE", "Excel", pid=900)
+    workbook = _window(2, "EXCEL.EXE", "Book1 - Excel", pid=900)
+    fake_transport.scenario.window_snapshots = (
+        (transient,),
+        (workbook,),
+        (workbook,),
+        (workbook,),
+    )
+    fake_transport.scenario.launch_pid = 900
+    fake_transport.scenario.launch_window_id = 1
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.PACKAGED_LAUNCH_POLL_INTERVAL_SECONDS = 0.0
+    service.acquire(OWNER, validate_context=False)
+
+    windows = service.launch_app("EXCEL.EXE", OWNER)
+
+    target = service._target(windows[0]["target_id"])
+    assert (target.app_name, target.pid, target.window_id) == ("EXCEL.EXE", 900, 2)
+    assert service.current_observation(target.target_id) is not None
+
+
+def test_classic_launch_never_binds_unrelated_exact_app_decoy(
+    fake_client,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = ({"name": "EXCEL.EXE", "running": False},)
+    workbook = _window(2, "EXCEL.EXE", "Book1 - Excel", pid=900)
+    decoy = _window(3, "EXCEL.EXE", "Existing workbook - Excel", pid=901)
+    fake_transport.scenario.window_snapshots = (
+        (workbook, decoy),
+        (workbook, decoy),
+        (workbook, decoy),
+    )
+    fake_transport.scenario.launch_pid = 900
+    fake_transport.scenario.launch_window_id = 2
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.PACKAGED_LAUNCH_POLL_INTERVAL_SECONDS = 0.0
+    service.acquire(OWNER, validate_context=False)
+
+    windows = service.launch_app("EXCEL.EXE", OWNER)
+
+    target = service._target(windows[0]["target_id"])
+    assert (target.pid, target.window_id) == (900, 2)
+
+
+def test_classic_launch_rejects_fuzzy_same_pid_fallback_row(
+    fake_client,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = ({"name": "EXCEL.EXE", "running": False},)
+    fake_transport.scenario.windows = (
+        _window(2, "Microsoft Excel", "Book1 - Excel", pid=900),
+    )
+    fake_transport.scenario.launch_pid = 900
+    fake_transport.scenario.launch_window_id = 2
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.PACKAGED_LAUNCH_STABILITY_TIMEOUT_SECONDS = 0.0
+    service.acquire(OWNER, validate_context=False)
+
+    with pytest.raises(ComputerUseError) as rejected:
+        service.launch_app("EXCEL.EXE", OWNER)
+
+    assert rejected.value.code == "target_gone"
+    assert "get_window_state" not in [name for name, _args in fake_transport.calls]
+
+
+def test_classic_launch_stabilization_wait_is_cancellable(
+    fake_client,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    fake_transport.scenario.apps = ({"name": "EXCEL.EXE", "running": False},)
+    fake_transport.scenario.windows = ()
+    fake_transport.scenario.launch_pid = 900
+    fake_transport.scenario.launch_window_id = 2
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    def cancel_during_wait(_timeout: float) -> bool:
+        service._cancel.set()
+        return True
+
+    monkeypatch.setattr(service._cancel, "wait", cancel_during_wait)
+
+    with pytest.raises(Exception) as cancelled:
+        service.launch_app("EXCEL.EXE", OWNER)
+
+    assert type(cancelled.value).__name__ == "CancelledError"
+    assert "get_window_state" not in [name for name, _args in fake_transport.calls]
+
+
 def test_launch_resolves_edge_once_and_keeps_friendly_approval_copy(
     fake_client,
     fake_transport,
@@ -403,6 +559,9 @@ def test_launch_resolves_edge_once_and_keeps_friendly_approval_copy(
     fake_transport.scenario.apps = (
         {"name": "msedge.exe", "running": True},
         {"name": "msedge.exe", "running": True},
+    )
+    fake_transport.scenario.windows = (
+        _window(101, "msedge.exe", "Microsoft Edge", pid=4242),
     )
     service = ComputerUseService(
         client_factory=lambda: fake_client,
@@ -425,6 +584,9 @@ def test_known_browser_executable_remains_resolvable_when_inventory_scan_fails(
     fake_transport,
 ) -> None:
     fake_transport.scenario.list_apps_error_code = "uwp_scan_failed"
+    fake_transport.scenario.windows = (
+        _window(101, "msedge.exe", "Microsoft Edge", pid=4242),
+    )
     service = ComputerUseService(
         client_factory=lambda: fake_client,
         approval_callback=lambda _payload: True,

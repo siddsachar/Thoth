@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import io
+import logging
 import platform
 import re
 import secrets
@@ -23,6 +24,9 @@ from row_bot.automation.contracts import (
 from row_bot.cancellation import current_cancellation_scope
 from row_bot.computer_use.client import CuaClient, CuaElement, CuaResponse
 from row_bot.computer_use.policy import PolicyOutcome, approval_payload, classify_action
+
+
+logger = logging.getLogger(__name__)
 
 
 MODEL_MAX_ELEMENTS = 80
@@ -67,6 +71,58 @@ _TERMINAL_OR_DISMISS_INTENT = re.compile(
     r"\bdon['\u2019]?t\s+save\b|\bdo\s+not\s+save\b|\bwithout\s+saving\b)",
     re.IGNORECASE,
 )
+_BIDI_EMBEDDING_OPENERS = frozenset({"\u202a", "\u202b", "\u202d", "\u202e"})
+_BIDI_ISOLATE_OPENERS = frozenset({"\u2066", "\u2067", "\u2068"})
+_BIDI_CONTROLS = frozenset(
+    _BIDI_EMBEDDING_OPENERS | _BIDI_ISOLATE_OPENERS | {"\u202c", "\u2069"}
+)
+_PROHIBITED_INVISIBLE_CONTROLS = frozenset(
+    _BIDI_CONTROLS | {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"}
+)
+_SAFE_COMPUTER_ACTION_FAMILIES = frozenset(
+    {
+        "capture",
+        "click",
+        "double_click",
+        "drag",
+        "focus",
+        "key",
+        "key_sequence",
+        "launch_app",
+        "list_apps",
+        "list_windows",
+        "menu",
+        "right_click",
+        "scroll",
+        "stop",
+        "type",
+        "wait",
+    }
+)
+_SAFE_COMPUTER_RESULT_CODES = frozenset(
+    {
+        "ambiguous_target",
+        "approval_denied",
+        "background_unavailable",
+        "cancelled",
+        "driver_failed",
+        "driver_unavailable",
+        "hard_blocked",
+        "handoff_required",
+        "invalid_input",
+        "lease_busy",
+        "no_progress",
+        "not_ready",
+        "ok",
+        "paused_for_takeover",
+        "stale_observation",
+        "surface_unavailable",
+        "target_gone",
+        "target_mismatch",
+        "transient_driver_failure",
+        "unsupported_capability",
+    }
+)
 
 
 def _standard_effect(value: object, *, verified: bool = False) -> str:
@@ -98,6 +154,15 @@ def _standard_delivery(value: object) -> str:
 
 def _safe_driver_cause(code: object) -> str:
     value = str(code or "").casefold()
+    if value in {
+        "direct",
+        "driver_verified",
+        "foreground_fallback",
+        "native_dispatch",
+        "semantic_target",
+        "target_disappeared",
+    }:
+        return value
     if value in {"permission_denied", "driver_unavailable"}:
         return "permission_or_driver_unavailable"
     if value in {"timeout", "temporarily_unavailable"}:
@@ -123,6 +188,26 @@ def _is_terminal_or_dismiss_intent(label: object, expected_effect: object) -> bo
 
 def _normalized_role(value: object) -> str:
     return "".join(character for character in str(value or "").casefold() if character.isalnum())
+
+
+def _native_field_for_injection_scan(value: object) -> str:
+    """Remove only one balanced outer bidi wrapper from one native field."""
+
+    text = str(value or "")
+    if len(text) < 2:
+        return text
+    opener = text[0]
+    closer = text[-1]
+    matching_outer_pair = bool(
+        (opener in _BIDI_EMBEDDING_OPENERS and closer == "\u202c")
+        or (opener in _BIDI_ISOLATE_OPENERS and closer == "\u2069")
+    )
+    if not matching_outer_pair:
+        return text
+    interior = text[1:-1]
+    if any(character in _PROHIBITED_INVISIBLE_CONTROLS for character in interior):
+        return text
+    return interior
 
 
 def _model_actionable(element: CuaElement) -> bool:
@@ -189,6 +274,10 @@ class Observation:
     visual_change: str = "unknown"
     effect_verified: bool = False
     delivery_mode: str = ""
+    route: str = ""
+    cause: str = ""
+    native_change: str = "unknown"
+    vision_deferred: bool = False
     status: ObservationStatus | None = None
     created_at: float = field(default_factory=time.monotonic)
 
@@ -269,9 +358,15 @@ class Observation:
             )
         if self.vision_text:
             lines.append(f"Vision evidence (not parsed as a Boolean result): {self.vision_text}")
+        elif self.vision_deferred:
+            lines.append(
+                "Vision analysis was deferred for this initial native acquisition; "
+                "no visual question was answered."
+            )
         if self.action_dispatched:
             lines.append(f"Action dispatched: yes; completed: {'yes' if self.action_completed else 'no'}")
             lines.append(f"Driver-reported effect: {self.driver_effect or 'unverifiable'}")
+            lines.append(f"Native accessibility change: {self.native_change or 'unknown'}")
             lines.append(f"Local visual change: {self.visual_change or 'unknown'}")
             lines.append(f"Requested outcome verified: {'yes' if self.effect_verified else 'no'}")
         if self.suspicious:
@@ -286,10 +381,12 @@ class ComputerUseError(RuntimeError):
         *,
         code: str = "computer_failed",
         retryable: bool = False,
+        candidates: tuple[dict[str, Any], ...] = (),
     ) -> None:
         super().__init__(message)
         self.code = str(code)
         self.retryable = bool(retryable)
+        self.candidates = tuple(dict(candidate) for candidate in candidates)
 
 
 class LeaseBusyError(ComputerUseError):
@@ -534,6 +631,14 @@ class ComputerUseService:
         self._consecutive_visual_no_effects = 0
         self._visual_no_effect_target_id = ""
         self._visual_no_effect_counts: dict[str, int] = {}
+        self._tool_call_started_at = 0.0
+        self._tool_call_counters: dict[str, int] = {}
+        self._tool_phase_ms = {
+            "driver_start": 0.0,
+            "discovery": 0.0,
+            "native_capture": 0.0,
+            "optional_vision": 0.0,
+        }
 
     @staticmethod
     def _default_client() -> CuaClient:
@@ -637,6 +742,11 @@ class ComputerUseService:
                 ) if self._session_started_at else 0.0,
             }
 
+    def _record_tool_phase(self, phase: str, elapsed_ms: float) -> None:
+        with self._lock:
+            if self._tool_call_started_at and phase in self._tool_phase_ms:
+                self._tool_phase_ms[phase] += max(0.0, float(elapsed_ms))
+
     def ephemeral_screenshot(self) -> bytes | None:
         with self._lock:
             observation = self._preview_observation or self._observation
@@ -699,6 +809,13 @@ class ComputerUseService:
                 self._capture_count = 0
                 self._semantic_refresh_count = 0
                 self._vision_call_count = 0
+                if self._tool_call_started_at:
+                    self._tool_call_counters = {
+                        "driver_calls": 0,
+                        "capture_calls": 0,
+                        "semantic_refresh_calls": 0,
+                        "vision_calls": 0,
+                    }
                 self._session_started_at = time.perf_counter()
                 self._consecutive_failures = 0
                 self._last_failure_signature = None
@@ -707,6 +824,7 @@ class ComputerUseService:
                 self._consecutive_visual_no_effects = 0
                 self._visual_no_effect_target_id = ""
                 self._visual_no_effect_counts.clear()
+                driver_start_started = time.perf_counter()
                 self._client = self._client_factory()
                 try:
                     self._client.start()
@@ -715,6 +833,11 @@ class ComputerUseService:
                     self._client = None
                     self._state = SessionState.FAILED
                     raise
+                finally:
+                    self._record_tool_phase(
+                        "driver_start",
+                        (time.perf_counter() - driver_start_started) * 1000.0,
+                    )
                 self._state = SessionState.OBSERVING
                 self._notify()
             return owner
@@ -809,6 +932,10 @@ class ComputerUseService:
             with self._lock:
                 self._driver_call_count += 1
                 self._driver_elapsed_ms += elapsed_ms
+            if action in {"list_apps", "list_windows", "launch_app"}:
+                self._record_tool_phase("discovery", elapsed_ms)
+            elif action == "capture" and arguments.get("include_screenshot") is not False:
+                self._record_tool_phase("native_capture", elapsed_ms)
         self._check_cancelled()
         return response
 
@@ -1153,7 +1280,7 @@ class ComputerUseService:
         trusted_window_ids: frozenset[int] = frozenset(),
         allow_trusted_launch_identity: bool = False,
     ) -> list[dict[str, Any]]:
-        """Read exact app rows without registering transient packaged targets."""
+        """Read exact same-process app rows without registering transient targets."""
 
         response = self._driver_call("list_windows", {})
         if response.is_error:
@@ -1188,8 +1315,6 @@ class ComputerUseService:
             if not ordinary_match and not trusted_launch_match:
                 continue
             if trusted_pid and pid != trusted_pid:
-                continue
-            if trusted_window_ids and window_id not in trusted_window_ids:
                 continue
             exact.append(row)
         return exact
@@ -1229,9 +1354,42 @@ class ComputerUseService:
                 window_ids.add(window_id)
         return pid, frozenset(window_ids)
 
-    def _verified_packaged_launch_windows(
+    @staticmethod
+    def _trusted_classic_launch_identity(
+        response: CuaResponse,
+        expected_app_identity: str,
+    ) -> tuple[int, frozenset[int]]:
+        """Return exact launch-response identity for one reviewed classic app."""
+
+        structured = response.structured
+        if not _app_identities_match(
+            expected_app_identity,
+            structured.get("name"),
+        ):
+            return 0, frozenset()
+        try:
+            pid = int(structured.get("pid") or 0)
+        except (TypeError, ValueError, OverflowError):
+            return 0, frozenset()
+        rows = structured.get("windows")
+        if pid <= 0 or not isinstance(rows, list):
+            return 0, frozenset()
+        window_ids: set[int] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                window_id = int(row.get("window_id") or 0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if window_id > 0:
+                window_ids.add(window_id)
+        return pid, frozenset(window_ids)
+
+    def _verified_launch_windows(
         self,
         app_name: str,
+        resolved_app_identity: str,
         launch_response: CuaResponse,
         expected_package_family: str,
         owner: LeaseOwner | None,
@@ -1239,13 +1397,20 @@ class ComputerUseService:
         approval_mode: object,
         visual_question: str,
     ) -> list[dict[str, Any]]:
-        """Wait for one stable exact packaged-app identity and verify it once."""
+        """Wait for one stable exact launched-app identity and verify it once."""
 
-        trusted_pid, trusted_window_ids = self._trusted_packaged_launch_identity(
-            launch_response,
-            expected_package_family,
-        )
-        if not trusted_pid or not trusted_window_ids:
+        packaged = bool(_windows_package_family(expected_package_family))
+        if packaged:
+            trusted_pid, preferred_window_ids = self._trusted_packaged_launch_identity(
+                launch_response,
+                expected_package_family,
+            )
+        else:
+            trusted_pid, preferred_window_ids = self._trusted_classic_launch_identity(
+                launch_response,
+                resolved_app_identity,
+            )
+        if not trusted_pid:
             return []
         deadline = time.monotonic() + max(
             0.0,
@@ -1256,27 +1421,39 @@ class ComputerUseService:
             rows = self._exact_driver_window_rows(
                 app_name,
                 trusted_pid=trusted_pid,
-                trusted_window_ids=trusted_window_ids,
-                allow_trusted_launch_identity=True,
+                trusted_window_ids=preferred_window_ids,
+                allow_trusted_launch_identity=packaged,
             )
+            preferred_rows = [
+                row
+                for row in rows
+                if int(row.get("window_id") or 0) in preferred_window_ids
+            ]
+            candidate_rows = preferred_rows or rows
+            # If the launched transient is gone, a single exact same-process
+            # replacement may be trusted. Multiple same-process windows remain
+            # ambiguous and are never selected by order.
+            if not preferred_rows and len(candidate_rows) != 1:
+                candidate_rows = []
             signatures = {
                 self._window_row_signature(row)
-                for row in rows
+                for row in candidate_rows
             }
             stable_signatures = signatures & previous_signatures
             if stable_signatures:
                 stable_rows = [
                     row
-                    for row in rows
+                    for row in candidate_rows
                     if self._window_row_signature(row) in stable_signatures
                 ]
                 windows = self._register_window_rows(
                     stable_rows,
                     display_app=app_name,
-                    target_app_override=app_name,
+                    target_app_override=(app_name if packaged else resolved_app_identity),
                 )
                 if windows:
                     target_id = str(windows[0]["target_id"])
+                    transient_target = self._target(target_id)
                     try:
                         self.capture(
                             target_id,
@@ -1289,8 +1466,8 @@ class ComputerUseService:
                             for row in self._exact_driver_window_rows(
                                 app_name,
                                 trusted_pid=trusted_pid,
-                                trusted_window_ids=trusted_window_ids,
-                                allow_trusted_launch_identity=True,
+                                trusted_window_ids=preferred_window_ids,
+                                allow_trusted_launch_identity=packaged,
                             )
                         }
                         if any(
@@ -1301,8 +1478,7 @@ class ComputerUseService:
                     except ComputerUseError as exc:
                         if exc.code not in {"target_gone", "stale_observation"}:
                             raise
-                    with self._lock:
-                        self._targets.pop(target_id, None)
+                    self._expire_disappeared_target(transient_target)
                     previous_signatures = set()
                     continue
             remaining = deadline - time.monotonic()
@@ -1381,16 +1557,100 @@ class ComputerUseService:
 
         with self._lock:
             self._active_call_signature = tuple(signature)
+            self._tool_call_started_at = time.perf_counter()
+            self._tool_call_counters = {
+                "driver_calls": self._driver_call_count,
+                "capture_calls": self._capture_count,
+                "semantic_refresh_calls": self._semantic_refresh_count,
+                "vision_calls": self._vision_call_count,
+            }
+            self._tool_phase_ms = {
+                "driver_start": 0.0,
+                "discovery": 0.0,
+                "native_capture": 0.0,
+                "optional_vision": 0.0,
+            }
             if (
                 self._state is SessionState.WAITING_USER
                 and self._paused_call_signature is None
             ):
                 self._paused_call_signature = tuple(signature)
 
-    def end_tool_call(self, signature: tuple[Any, ...]) -> None:
+    def end_tool_call(
+        self,
+        signature: tuple[Any, ...],
+        *,
+        action_family: str = "",
+        success: bool = True,
+        error_code: str = "ok",
+        route: str = "unknown",
+        delivery_mode: str = "unknown",
+        driver_effect: str = "unverifiable",
+        native_or_visual_change: str = "unknown",
+        effect_verified: bool = False,
+    ) -> None:
         with self._lock:
             if self._active_call_signature == tuple(signature):
                 self._active_call_signature = None
+            started_at = self._tool_call_started_at
+            counters_before = dict(self._tool_call_counters)
+            phases = dict(self._tool_phase_ms)
+            counters_after = {
+                "driver_calls": self._driver_call_count,
+                "capture_calls": self._capture_count,
+                "semantic_refresh_calls": self._semantic_refresh_count,
+                "vision_calls": self._vision_call_count,
+            }
+            self._tool_call_started_at = 0.0
+            self._tool_call_counters = {}
+            self._tool_phase_ms = {
+                "driver_start": 0.0,
+                "discovery": 0.0,
+                "native_capture": 0.0,
+                "optional_vision": 0.0,
+            }
+        safe_action = str(action_family or "").casefold()
+        if safe_action not in _SAFE_COMPUTER_ACTION_FAMILIES:
+            safe_action = "unknown"
+        safe_code = str(error_code or ("ok" if success else "driver_failed")).casefold()
+        if safe_code not in _SAFE_COMPUTER_RESULT_CODES:
+            safe_code = "driver_failed" if not success else "ok"
+        total_ms = (
+            max(0.0, (time.perf_counter() - started_at) * 1000.0)
+            if started_at
+            else 0.0
+        )
+        deltas = {
+            key: max(0, int(counters_after.get(key, 0)) - int(counters_before.get(key, 0)))
+            for key in counters_after
+        }
+        change = str(native_or_visual_change or "unknown").casefold()
+        if change not in {"changed", "unchanged", "unknown"}:
+            change = "unknown"
+        logger.info(
+            "computer_use.action_receipt action_family=%s success=%s error_code=%s "
+            "route=%s delivery_mode=%s driver_effect=%s change=%s effect_verified=%s "
+            "driver_start_ms=%.3f discovery_ms=%.3f native_capture_ms=%.3f "
+            "optional_vision_ms=%.3f total_ms=%.3f driver_calls=%d capture_calls=%d "
+            "semantic_refresh_calls=%d vision_calls=%d",
+            safe_action,
+            str(bool(success)).lower(),
+            safe_code,
+            _standard_route(route),
+            _standard_delivery(delivery_mode),
+            _standard_effect(driver_effect, verified=bool(effect_verified)),
+            change,
+            str(bool(effect_verified)).lower(),
+            phases.get("driver_start", 0.0),
+            phases.get("discovery", 0.0),
+            phases.get("native_capture", 0.0),
+            phases.get("optional_vision", 0.0),
+            total_ms,
+            deltas["driver_calls"],
+            deltas["capture_calls"],
+            deltas["semantic_refresh_calls"],
+            deltas["vision_calls"],
+        )
 
     def paused_call_matches(self, signature: tuple[Any, ...]) -> bool:
         with self._lock:
@@ -1577,13 +1837,46 @@ class ComputerUseService:
 
     def capture(
         self,
-        target_id: str,
+        target_id: str = "",
         owner: LeaseOwner | None = None,
         *,
+        app: str = "",
+        window_hint: str = "",
         visual_question: str = "",
         approval_mode: object = "approve",
     ) -> Observation:
+        initial_app_scope = not str(target_id or "").strip()
+        if initial_app_scope:
+            app_name = str(app or "").strip()
+            if not app_name:
+                raise ComputerUseError(
+                    "capture requires a target_id or a non-empty app name.",
+                    code="invalid_input",
+                )
+            if _is_protected_controller_target(app_name, window_hint):
+                raise ComputerUseError(
+                    "Row-Bot and its Computer control surfaces cannot be targeted.",
+                    code="hard_blocked",
+                )
         self._require_owner(owner)
+        if initial_app_scope:
+            candidates = self.list_windows(
+                owner,
+                app=app_name,
+                window_hint=window_hint,
+            )
+            if not candidates:
+                raise ComputerUseError(
+                    "No exact native window matched the requested app scope.",
+                    code="target_gone",
+                )
+            if len(candidates) > 1:
+                raise ComputerUseError(
+                    "More than one exact native window matched; select one opaque target_id.",
+                    code="ambiguous_target",
+                    candidates=tuple(candidates),
+                )
+            target_id = str(candidates[0]["target_id"])
         target = self._target(target_id)
         with self._lock:
             prepared_target_id = self._prepared_foreground_target_id
@@ -1598,9 +1891,15 @@ class ComputerUseService:
                 response,
                 require_screenshot=True,
             )
-            if visual_question:
+            if initial_app_scope and visual_question:
+                observation.vision_deferred = True
+            # Publish only after the native response has passed exact identity,
+            # screenshot, semantic, protected-target, and injection validation.
+            # Keep the mutation lock and target lease while optional Vision runs.
+            self._notify()
+            if visual_question and not initial_app_scope:
                 observation.vision_text = self._analyze_vision(observation, visual_question)
-        self._notify()
+                self._notify()
         return observation
 
     def refresh_semantics(
@@ -1654,6 +1953,8 @@ class ComputerUseService:
             code = (
                 "driver_unavailable"
                 if response.error_code in {"permission_denied", "driver_unavailable"}
+                else "target_gone"
+                if response.error_code in {"target_not_found", "window_not_found"}
                 else "transient_driver_failure"
                 if response.error_code in {"timeout", "temporarily_unavailable"}
                 else "driver_failed"
@@ -1748,8 +2049,9 @@ class ComputerUseService:
                 from row_bot.agent import _scan_injection_patterns
 
                 full_semantic_text = "\n".join(
-                    f"{element.role} {element.label}"
+                    _native_field_for_injection_scan(field)
                     for element in observation.elements
+                    for field in (element.role, element.label, element.value)
                 )
                 observation.suspicious = bool(_scan_injection_patterns(full_semantic_text))
             except Exception:
@@ -1761,6 +2063,7 @@ class ComputerUseService:
             return observation
 
     def _analyze_vision(self, observation: Observation, question: str) -> str:
+        started = time.perf_counter()
         self._check_cancelled()
         service = self._vision_service
         if service is None:
@@ -1781,9 +2084,15 @@ class ComputerUseService:
             prefix = "Analyzed by the configured VisionService. "
         with self._lock:
             self._vision_call_count += 1
-        result = service.analyze(observation.screenshot, str(question)[:1000])
-        self._check_cancelled()
-        return (prefix + str(result))[:4096]
+        try:
+            result = service.analyze(observation.screenshot, str(question)[:1000])
+            self._check_cancelled()
+            return (prefix + str(result))[:4096]
+        finally:
+            self._record_tool_phase(
+                "optional_vision",
+                (time.perf_counter() - started) * 1000.0,
+            )
 
     def invalidate_observation(self, _reason: str = "") -> None:
         with self._lock:
@@ -1815,7 +2124,7 @@ class ComputerUseService:
             )
         if exhausted:
             message = (
-                "Computer Use stopped after three actions produced no visual effect."
+                "Computer Use stopped after three actions produced no conservative progress evidence."
                 if self._consecutive_visual_no_effects >= 3
                 else "Computer Use stopped after repeated actions made no progress."
             )
@@ -1864,7 +2173,7 @@ class ComputerUseService:
         target_id: str,
         action: str,
     ) -> int:
-        """Track ephemeral no-effect streaks independently by action family."""
+        """Track conservative ephemeral no-progress streaks by target/family."""
 
         with self._lock:
             if self._visual_no_effect_target_id != target_id:
@@ -1952,6 +2261,78 @@ class ComputerUseService:
                 return "changed" if changed_pixels >= threshold else "unchanged"
         except Exception:
             return "unknown"
+
+    @staticmethod
+    def _native_element_fingerprint(element: CuaElement) -> tuple[Any, ...]:
+        """Return bounded accessibility state without snapshot/token generations."""
+
+        return (
+            int(element.index),
+            element.parent_index,
+            int(element.depth),
+            _normalized_role(element.role),
+            str(element.label),
+            str(element.value),
+            element.enabled,
+            element.selected,
+        )
+
+    @classmethod
+    def _native_observation_change(
+        cls,
+        before: Observation,
+        after: Observation,
+        *,
+        target_element: CuaElement | None,
+    ) -> str:
+        """Classify conservative native progress without claiming causality."""
+
+        if (
+            before.target.target_id != after.target.target_id
+            or not before.elements
+            or not after.elements
+            or (before.status is not None and before.status.backend_sparse)
+            or (after.status is not None and after.status.backend_sparse)
+        ):
+            return "unknown"
+        before_fingerprint = tuple(
+            cls._native_element_fingerprint(element) for element in before.elements
+        )
+        after_fingerprint = tuple(
+            cls._native_element_fingerprint(element) for element in after.elements
+        )
+        if before_fingerprint != after_fingerprint:
+            return "changed"
+        if target_element is None:
+            return "unknown"
+        matches = [
+            element
+            for element in after.elements
+            if element.index == target_element.index
+            and _normalized_role(element.role) == _normalized_role(target_element.role)
+            and element.parent_index == target_element.parent_index
+            and element.depth == target_element.depth
+        ]
+        if len(matches) != 1:
+            return "unknown"
+        role = _normalized_role(target_element.role)
+        stateful = bool(
+            target_element.selected is not None
+            or role
+            in {
+                "checkbox",
+                "combobox",
+                "edit",
+                "radiobutton",
+                "slider",
+                "spinbutton",
+                "tabitem",
+                "textfield",
+                "textbox",
+                "togglebutton",
+            }
+        )
+        return "unchanged" if stateful else "unknown"
 
     def _prepare_foreground_fallback(
         self,
@@ -2156,7 +2537,7 @@ class ComputerUseService:
                 delivery=_standard_delivery(delivery_value),
                 route=_standard_route(response.structured.get("route") or "accessibility"),
                 visual_change="unknown",
-                verified_outcome=bool(response.structured.get("verified")) or effect == "confirmed",
+                verified_outcome=bool(response.structured.get("verified")),
                 cause=_safe_driver_cause(response.error_code),
             )
             self._action_count += 1
@@ -2476,7 +2857,7 @@ class ComputerUseService:
                     result.structured.get("effect"),
                     verified=bool(result.structured.get("verified")),
                 )
-                effect_verified = bool(result.structured.get("verified")) or driver_effect == "confirmed"
+                effect_verified = bool(result.structured.get("verified"))
                 delivery_mode = _standard_delivery(
                     result.structured.get("delivery_mode")
                     or args.get("delivery_mode")
@@ -2497,6 +2878,7 @@ class ComputerUseService:
                 )
                 must_capture = bool(capture_after)
                 visual_change = "unknown"
+                native_change = "unknown"
                 if must_capture:
                     self._state = SessionState.VERIFYING
                     self._notify()
@@ -2546,6 +2928,12 @@ class ComputerUseService:
                                 end_x=end_x,
                                 end_y=end_y,
                             )
+                        if element is not None:
+                            native_change = self._native_observation_change(
+                                observation,
+                                completed_observation,
+                                target_element=element,
+                            )
                         # Semantic token actions already have a stable native
                         # target and must remain on the fast path. Vision is for
                         # coordinate grounding/verification (or explicit
@@ -2564,14 +2952,23 @@ class ComputerUseService:
                                 visual_question,
                             )
                         completed_observation.action_effect = (
-                            visual_change if visual_change != "unknown" else driver_effect
+                            visual_change
+                            if visual_change != "unknown"
+                            else native_change
+                            if native_change != "unknown"
+                            else driver_effect
                         )
                         completed_observation.action_dispatched = dispatched
                         completed_observation.action_completed = True
                         completed_observation.driver_effect = driver_effect
                         completed_observation.visual_change = visual_change
+                        completed_observation.native_change = native_change
                         completed_observation.effect_verified = effect_verified
                         completed_observation.delivery_mode = delivery_mode
+                        completed_observation.route = route
+                        completed_observation.cause = _safe_driver_cause(
+                            result.structured.get("cause") or result.error_code
+                        )
                         completed = completed_observation
                 else:
                     completed = ActionReceipt(
@@ -2585,7 +2982,9 @@ class ComputerUseService:
                         verified_outcome=effect_verified,
                         delivery=delivery_mode,
                         route=route,
-                        cause=_safe_driver_cause(result.error_code),
+                        cause=_safe_driver_cause(
+                            result.structured.get("cause") or result.error_code
+                        ),
                     )
                 if original_action == "focus":
                     self._prepare_foreground_target(target)
@@ -2598,6 +2997,11 @@ class ComputerUseService:
             )
             completed_driver_effect = completed.driver_effect
             completed_visual_change = completed.visual_change
+            completed_native_change = (
+                completed.native_change
+                if isinstance(completed, Observation)
+                else "unknown"
+            )
             with self._lock:
                 self._last_effect = completed_effect
                 self._last_driver_effect = completed_driver_effect
@@ -2607,7 +3011,11 @@ class ComputerUseService:
             self._record_action_success()
             progress_class = classify_no_progress(
                 backend_effect=completed_driver_effect,
-                visual_change=completed_visual_change,
+                visual_change=(
+                    completed_visual_change
+                    if completed_visual_change != "unknown"
+                    else completed_native_change
+                ),
                 verified_outcome=completed.effect_verified,
             )
             progress_signal = (
@@ -2617,18 +3025,24 @@ class ComputerUseService:
                 if progress_class == "no_progress"
                 else "unknown"
             )
+            conservative_change_evidence = bool(
+                visual_mutation
+                or completed_native_change in {"changed", "unchanged"}
+            )
             visual_no_effects = (
                 self._record_visual_effect(
                     progress_signal,
                     target.target_id,
                     driver_action,
                 )
-                if visual_mutation
+                if conservative_change_evidence
                 else self._consecutive_visual_no_effects
             )
-            if visual_mutation and visual_no_effects >= 3:
+            if conservative_change_evidence and visual_no_effects >= 3:
                 self._fail_needs_attention(
                     "Computer Use stopped after three actions produced no visual effect."
+                    if visual_mutation
+                    else "Computer Use stopped after three actions produced no conservative progress evidence."
                 )
             self._notify()
             return completed
@@ -2967,42 +3381,22 @@ class ComputerUseService:
                 response.text or response.error_code or "Cua app launch failed",
                 code=response.error_code or "driver_failed",
             )
-        launch_rows = response.structured.get("windows") if isinstance(response.structured.get("windows"), list) else []
-        # A packaged-app launch may return only the broker/stub pid and title.
-        # Never turn that incomplete row into a trusted target by filling in the
-        # requested identity locally.  Accept launch rows only when Cua reports
-        # an exact reviewed app identity; otherwise re-list and filter windows.
-        requires_exact_post_launch_discovery = bool(expected_package_family)
-        windows = (
-            self._verified_packaged_launch_windows(
-                name,
-                response,
-                expected_package_family,
-                owner,
-                approval_mode=approval_mode,
-                visual_question=visual_question,
-            )
-            if requires_exact_post_launch_discovery
-            else self._register_window_rows(
-                launch_rows,
-                fallback_app=resolved_name,
-                fallback_pid=int(response.structured.get("pid") or 0),
-                display_app=name,
-            )
+        # Every launch uses bounded exact rediscovery. Packaged apps retain
+        # package-family proof; classic apps require an exact reviewed launch
+        # identity and stay on that launch pid while transient windows churn.
+        windows = self._verified_launch_windows(
+            name,
+            resolved_name,
+            response,
+            expected_package_family,
+            owner,
+            approval_mode=approval_mode,
+            visual_question=visual_question,
         )
-        if not windows and not requires_exact_post_launch_discovery:
-            windows = self.list_windows(owner, app=name)
         if not windows:
             raise ComputerUseError(
                 f"The native app launch completed, but no exact {name!r} window could be verified.",
                 code="target_gone",
-            )
-        if windows and not requires_exact_post_launch_discovery:
-            self.capture(
-                windows[0]["target_id"],
-                owner,
-                visual_question=visual_question,
-                approval_mode=approval_mode,
             )
         return windows
 

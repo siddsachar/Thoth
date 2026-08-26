@@ -59,3 +59,46 @@ def test_prompt_injection_observation_stops_mutation(service, fake_transport) ->
     assert observation.suspicious is True
     with pytest.raises(ComputerUseError, match="Suspicious"):
         service.act("click", target, owner, element_token=observation.elements[0].token)
+
+
+def test_balanced_outer_office_bidi_wrapper_is_not_suspicious(
+    service,
+    fake_transport,
+) -> None:
+    from row_bot.computer_use.service import LeaseOwner
+
+    owner = LeaseOwner("office", "generation", "task")
+    fake_transport.scenario.semantic_elements = (
+        {"role": "text", "label": "\u202aBook1 - Excel\u202c"},
+    )
+
+    observation = service.capture(owner=owner, app="Calculator")
+
+    assert observation.suspicious is False
+    assert observation.elements[0].label == "\u202aBook1 - Excel\u202c"
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Book\u202e1 - Excel",
+        "\u202aBook1 - Excel",
+        "\u202aBook\u202b1\u202c - Excel\u202c",
+        "Book\u200b1 - Excel",
+    ],
+)
+def test_internal_unbalanced_nested_and_zero_width_controls_remain_suspicious(
+    service,
+    fake_transport,
+    label: str,
+) -> None:
+    from row_bot.computer_use.service import LeaseOwner
+
+    owner = LeaseOwner("office-controls", "generation", "task")
+    fake_transport.scenario.semantic_elements = (
+        {"role": "text", "label": label},
+    )
+
+    observation = service.capture(owner=owner, app="Calculator")
+
+    assert observation.suspicious is True

@@ -26,9 +26,9 @@ class ComputerUseInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: str = Field(description="list_apps, list_windows, launch_app, capture, focus, click, double_click, right_click, type, key, key_sequence, scroll, drag, capability-gated menu, wait, or stop")
-    app: str = Field(default="", description="App display name for discovery or launch; never a path or URL")
+    app: str = Field(default="", description="App display name for exact discovery, app-scoped initial capture, or launch; never a path or URL")
     window_hint: str = Field(default="", description="Optional user-provided title fragment used to narrow same-app window discovery; unrelated titles stay private")
-    target_id: str = Field(default="", description="Opaque target ID returned by list_windows")
+    target_id: str = Field(default="", description="Opaque exact target ID. For initial capture of one already-open named app, omit this and pass app instead")
     element_token: str = Field(default="", description="Opaque element token from the latest capture. For type, it validates the intended control but does not replace that control's complete value")
     x: int = Field(default=-1, description="Window-local screenshot X coordinate; semantic tokens are preferred")
     y: int = Field(default=-1, description="Window-local screenshot Y coordinate; semantic tokens are preferred")
@@ -39,7 +39,7 @@ class ComputerUseInput(BaseModel):
     direction: str = Field(default="", description="Scroll direction")
     amount: int = Field(default=0, description="Bounded scroll amount or wait milliseconds")
     capture_after: bool = Field(default=False, description="Capture after the action only when the next decision or final verification needs changed pixels or geometry")
-    visual_question: str = Field(default="", description="Optional question for the configured VisionService, applied to launch_app/capture, a coordinate action's fresh post-action capture, or an explicitly requested final type verification. Token-based semantic actions deliberately skip Vision so native controls stay fast; final type verification is the exception. Before the first coordinate-only visual action, use one Vision-grounded capture to identify the screenshot-local control/canvas region")
+    visual_question: str = Field(default="", description="Optional question for the configured VisionService, applied to launch_app, target-ID capture, a coordinate action's fresh post-action capture, or an explicitly requested final type verification. Initial app-scoped capture always defers Vision. Token-based semantic actions deliberately skip Vision so native controls stay fast; final type verification is the exception. Before the first coordinate-only visual action, use one target-ID Vision-grounded capture to identify the screenshot-local control/canvas region")
     expected_effect: str = Field(default="", description="Display context only; never authorization")
     destination: str = Field(default="", description="Display context for a recipient/destination; never authorization")
     menu_path: str = Field(default="", description="For menu only: 1-16 exact case-sensitive native menu labels separated by >; no fuzzy matching or coordinate fallback")
@@ -89,6 +89,7 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "stale_observation": "The Computer observation became stale before the action completed.",
             "target_mismatch": "The selected Computer target changed identity.",
             "target_gone": "The selected Computer target is no longer available.",
+            "ambiguous_target": "More than one exact Computer target matched the requested app scope.",
             "paused_for_takeover": "Computer Use is paused for user control.",
             "driver_unavailable": "The Computer driver is unavailable.",
             "transient_driver_failure": "The Computer driver reported a temporary failure.",
@@ -104,6 +105,7 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "no_progress": "Computer Use stopped because repeated actions made no progress.",
         }
         remediation = {
+            "ambiguous_target": "Select one opaque target_id from the returned candidates, then capture it.",
             "stale_observation": "Capture the exact same target once before retrying.",
             "driver_unavailable": "Run Computer Use diagnostics, then start a new session.",
             "transient_driver_failure": "Retry this action once; stop if it fails again.",
@@ -111,13 +113,19 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "no_progress": "Review the target or take over; blind retries are disabled.",
             "hard_blocked": "Do not retry, enumerate aliases, or use another Computer action to bypass this protection.",
         }.get(explicit_code, "")
-        return _error_payload(
+        payload = _error_payload(
             explicit_code,
             summaries.get(explicit_code, "Computer action failed safely."),
             remediation=remediation,
             retryable=bool(getattr(exc, "retryable", False)),
             terminal=explicit_code in {"hard_blocked", "handoff_required", "no_progress"},
         )
+        if explicit_code == "ambiguous_target":
+            decoded = json.loads(payload)
+            decoded["candidates"] = list(getattr(exc, "candidates", ()) or ())
+            decoded["next_action"] = remediation
+            return json.dumps(decoded, ensure_ascii=False)
+        return payload
     if isinstance(exc, LeaseBusyError):
         return _error_payload(
             "lease_busy",
@@ -187,6 +195,7 @@ def _observation_payload(
     action_completed = bool(getattr(observation, "action_completed", False))
     driver_effect = str(getattr(observation, "driver_effect", "") or "")
     visual_change = str(getattr(observation, "visual_change", "unknown") or "unknown")
+    native_change = str(getattr(observation, "native_change", "unknown") or "unknown")
     effect_verified = bool(getattr(observation, "effect_verified", False))
     payload: dict[str, Any] = {
         "fresh_observation": observation.model_text(),
@@ -195,6 +204,8 @@ def _observation_payload(
     vision_evidence = str(getattr(observation, "vision_text", "") or "")
     if vision_evidence:
         payload["vision_evidence"] = vision_evidence
+    if bool(getattr(observation, "vision_deferred", False)):
+        payload["visual_analysis_deferred"] = True
     if action_dispatched or action_effect:
         payload.update({
             "ok": True,
@@ -205,9 +216,12 @@ def _observation_payload(
                 action_effect if action_effect in {"confirmed", "changed"} else "unverifiable"
             ),
             "visual_change": visual_change,
+            "native_change": native_change,
             "effect": action_effect,
             "effect_verified": effect_verified,
             "delivery_mode": str(getattr(observation, "delivery_mode", "") or ""),
+            "route": str(getattr(observation, "route", "") or ""),
+            "cause": str(getattr(observation, "cause", "") or ""),
         })
     if next_action:
         payload["next_action"] = str(next_action)
@@ -301,7 +315,7 @@ class ComputerUseTool(BaseTool):
     def description(self) -> str:
         return (
             "Control native desktop apps and already-open native browser windows in a visible, task-scoped session. Prefer structured tools first and Row-Bot Browser for ordinary website navigation. "
-            "When the user refers to this browser, the browser below, or an existing named browser window, use Computer: call list_windows with app and any title hint, then capture or focus that target. Do not call launch_app merely to focus an app that is already open, and never attach to a personal browser profile through CDP. "
+            "When the user refers to this browser, the browser below, or one already-open named app/window, normally begin with one app-scoped capture using app and any title hint. It performs exact discovery and one native capture with zero Vision. Use list_windows only for ambiguity, inspection, or explicit multi-window selection. Do not call launch_app merely to focus an app that is already open, and never attach to a personal browser profile through CDP. "
             "For other native apps, OS dialogs, or visual-only surfaces, use Computer. launch_app already returns a fresh observation, "
             "so do not capture again. For coordinate-only visual work, pass a visual_question to launch_app or capture once before the first coordinate action; never guess coordinates from semantic element text. Do not attach visual_question to token-based semantic clicks; they intentionally stay on the fast native path. "
             "Use list_apps active metadata for foreground discovery; when it is unknown, use an explicit user app/title hint or Take over and never analyze the full screen merely to guess the foreground app. "
@@ -390,17 +404,45 @@ class ComputerUseTool(BaseTool):
                 capture_after=capture_after,
                 menu_path=exact_menu_path,
             )
-            if service.resumed_call_matches(signature):
-                from langgraph.types import interrupt
+            log_success = True
+            log_error_code = "ok"
+            log_route = "unknown"
+            log_delivery = "unknown"
+            log_driver_effect = "unverifiable"
+            log_change = "unknown"
+            log_effect_verified = False
 
-                interrupt(service.takeover_interrupt_payload())
-                resumed = service.consume_resumed_call(signature)
-                return _observation_payload(
-                    resumed,
-                    display_summary="Computer control resumed from a fresh same-target capture; the interrupted action was not replayed.",
+            def record_result(value: Any) -> None:
+                nonlocal log_route, log_delivery, log_driver_effect
+                nonlocal log_change, log_effect_verified
+                log_route = str(getattr(value, "route", "") or "unknown")
+                log_delivery = str(
+                    getattr(value, "delivery_mode", "")
+                    or getattr(value, "delivery", "")
+                    or "unknown"
                 )
+                log_driver_effect = str(
+                    getattr(value, "driver_effect", "")
+                    or getattr(value, "backend_effect", "")
+                    or "unverifiable"
+                )
+                native_change = str(getattr(value, "native_change", "unknown") or "unknown")
+                visual_change = str(getattr(value, "visual_change", "unknown") or "unknown")
+                log_change = native_change if native_change != "unknown" else visual_change
+                log_effect_verified = bool(getattr(value, "effect_verified", False))
+
             service.begin_tool_call(signature)
             try:
+                if service.resumed_call_matches(signature):
+                    from langgraph.types import interrupt
+
+                    interrupt(service.takeover_interrupt_payload())
+                    resumed = service.consume_resumed_call(signature)
+                    record_result(resumed)
+                    return _observation_payload(
+                        resumed,
+                        display_summary="Computer control resumed from a fresh same-target capture; the interrupted action was not replayed.",
+                    )
                 if normalized == "stop":
                     service.stop()
                     return "Computer session stopped; queued and future input was cancelled."
@@ -408,6 +450,8 @@ class ComputerUseTool(BaseTool):
 
                 ready = readiness(enabled=True)
                 if ready.code is not ReadinessCode.READY:
+                    log_success = False
+                    log_error_code = "not_ready"
                     return _error_payload(
                         "not_ready",
                         str(ready.message or "Computer Use is not ready."),
@@ -434,7 +478,7 @@ class ComputerUseTool(BaseTool):
                         },
                         foreground_unknown=not foreground_known,
                         next_action=(
-                            f"Call list_windows with app={active_apps[0]['name']!r} and any available user title hint; do not use full-screen Vision to identify the app."
+                            f"Call capture with app={active_apps[0]['name']!r} and any available user title hint for one exact native-only acquisition; do not use full-screen Vision to identify the app."
                             if foreground_known
                             else "Use a user-provided app/title hint or Take over. Do not guess, launch an alias, open the managed Browser, or use full-screen Vision merely to identify the foreground app."
                         ),
@@ -460,6 +504,8 @@ class ComputerUseTool(BaseTool):
                         if windows
                         else None
                     )
+                    if observation is not None:
+                        record_result(observation)
                     return json.dumps(
                         {
                             "windows": windows,
@@ -477,32 +523,44 @@ class ComputerUseTool(BaseTool):
                         ensure_ascii=False,
                     )
                 if normalized == "capture":
-                    if not target_id:
+                    if not target_id and not str(app or "").strip():
+                        log_success = False
+                        log_error_code = "invalid_input"
                         return _error_payload(
                             "invalid_input",
-                            "Capture requires a selected Computer target.",
-                            remediation="Use target_id from the latest scoped window discovery.",
+                            "Capture requires an exact target or a named app scope.",
+                            remediation="Pass app for one-call initial acquisition, or target_id for a selected exact window.",
                             retryable=False,
                         )
                     observed = service.capture(
                             target_id,
+                            app=app,
+                            window_hint=window_hint,
                             visual_question=visual_question,
                             approval_mode=approval_mode,
                         )
+                    record_result(observed)
                     return _observation_payload(
                         observed,
                         next_action=(
+                            "Initial native acquisition completed with Vision deferred. Use semantic tokens; only make one later target-ID capture with visual_question if coordinate grounding is truly needed."
+                            if observed.vision_deferred
+                            else
                             "Use this Vision-grounded screenshot-local region for the next bounded coordinate action."
                             if observed.vision_text
                             else "Use semantic tokens. Before a coordinate-only visual action, capture once with visual_question instead of guessing coordinates."
                         ),
                     )
                 if normalized == "wait":
+                    waited = service.wait_and_capture(target_id, amount or 500)
+                    record_result(waited)
                     return _observation_payload(
-                        service.wait_and_capture(target_id, amount or 500),
+                        waited,
                         display_summary="Waited on the selected target and captured a fresh observation.",
                     )
                 if normalized not in {"focus", "click", "double_click", "right_click", "type", "key", "key_sequence", "scroll", "drag", "menu"}:
+                    log_success = False
+                    log_error_code = "invalid_input"
                     return _error_payload(
                         "invalid_input",
                         "Computer action was not recognized.",
@@ -510,6 +568,8 @@ class ComputerUseTool(BaseTool):
                         retryable=False,
                     )
                 if not target_id:
+                    log_success = False
+                    log_error_code = "invalid_input"
                     return _error_payload(
                         "invalid_input",
                         "Computer action requires a selected target.",
@@ -517,23 +577,25 @@ class ComputerUseTool(BaseTool):
                         retryable=False,
                     )
                 if normalized == "key_sequence":
+                    verified_observation = service.act_key_sequence(
+                        target_id,
+                        keys,
+                        approval_mode=approval_mode,
+                    )
+                    record_result(verified_observation)
                     return _observation_payload(
-                        service.act_key_sequence(
-                            target_id,
-                            keys,
-                            approval_mode=approval_mode,
-                        ),
+                        verified_observation,
                         display_summary="Completed the bounded Calculator steps and captured fresh verification.",
                         next_action="This is the final fresh verification. If it confirms the requested result, call stop now; do not capture again.",
                     )
                 if normalized == "menu":
-                    return _action_payload(
-                        service.act_menu(
-                            target_id,
-                            exact_menu_path,
-                            approval_mode=approval_mode,
-                        )
+                    menu_receipt = service.act_menu(
+                        target_id,
+                        exact_menu_path,
+                        approval_mode=approval_mode,
                     )
+                    record_result(menu_receipt)
+                    return _action_payload(menu_receipt)
                 result = service.act(
                         normalized,
                         target_id,
@@ -552,6 +614,7 @@ class ComputerUseTool(BaseTool):
                         capture_after=capture_after,
                         visual_question=visual_question,
                     )
+                record_result(result)
                 if isinstance(result, ActionReceipt):
                     return _action_payload(result)
                 visual_change = str(getattr(result, "visual_change", "unknown") or "unknown")
@@ -566,12 +629,16 @@ class ComputerUseTool(BaseTool):
                     summary = f"Sent {normalized.replace('_', ' ')} and captured the target; visual change and requested outcome remain unknown."
                 return _observation_payload(result, display_summary=summary)
             except concurrent.futures.CancelledError:
+                log_success = False
+                log_error_code = "cancelled"
                 if service.paused_call_matches(signature):
                     from langgraph.types import interrupt
 
                     interrupt(service.takeover_interrupt_payload())
                 raise
             except ComputerUseError as exc:
+                log_success = False
+                log_error_code = str(getattr(exc, "code", "driver_failed") or "driver_failed")
                 if service.paused_call_matches(signature):
                     from langgraph.types import interrupt
 
@@ -580,6 +647,8 @@ class ComputerUseTool(BaseTool):
             except Exception as exc:
                 if type(exc).__name__ in {"CancelledError", "GraphInterrupt"}:
                     raise
+                log_success = False
+                log_error_code = "driver_failed"
                 return _error_payload(
                     "driver_failed",
                     "Computer action failed safely.",
@@ -587,7 +656,17 @@ class ComputerUseTool(BaseTool):
                     retryable=False,
                 )
             finally:
-                service.end_tool_call(signature)
+                service.end_tool_call(
+                    signature,
+                    action_family=normalized,
+                    success=log_success,
+                    error_code=log_error_code,
+                    route=log_route,
+                    delivery_mode=log_delivery,
+                    driver_effect=log_driver_effect,
+                    native_or_visual_change=log_change,
+                    effect_verified=log_effect_verified,
+                )
 
         return [StructuredTool.from_function(
             func=computer_use,

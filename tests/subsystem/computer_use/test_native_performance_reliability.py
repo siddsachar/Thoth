@@ -4,6 +4,7 @@ import base64
 import concurrent.futures
 import io
 import json
+import logging
 
 import pytest
 from PIL import Image, ImageDraw
@@ -42,6 +43,65 @@ def _browser_target(service, fake_transport) -> tuple[str, Observation]:
     service.acquire(OWNER, validate_context=False)
     target_id = service.list_windows(OWNER, app="Microsoft Edge")[0]["target_id"]
     return target_id, service.capture(target_id, OWNER)
+
+
+def test_privacy_safe_action_receipt_logs_phase_timings_and_counts_once(
+    service,
+    fake_transport,
+    caplog,
+) -> None:
+    private_title = "Private workbook alpha.xlsx"
+    private_label = "Secret customer balance"
+    fake_transport.scenario.windows = (
+        {
+            "window_id": 701,
+            "pid": 2701,
+            "app_name": "Notepad",
+            "title": private_title,
+            "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+            "is_on_screen": True,
+        },
+    )
+    fake_transport.scenario.capture_pid = 2701
+    fake_transport.scenario.capture_window_id = 701
+    fake_transport.scenario.semantic_elements = (
+        {"role": "text", "label": private_label},
+    )
+    signature = ("capture", "private-token", 987654321, 123456789)
+
+    with caplog.at_level(logging.INFO, logger="row_bot.computer_use.service"):
+        service.begin_tool_call(signature)
+        observation = service.capture(owner=OWNER, app="Notepad")
+        service.end_tool_call(signature, action_family="capture")
+
+    receipts = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("computer_use.action_receipt ")
+    ]
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert "action_family=capture" in receipt
+    assert "success=true error_code=ok" in receipt
+    assert "driver_start_ms=" in receipt
+    assert "discovery_ms=" in receipt
+    assert "native_capture_ms=" in receipt
+    assert "optional_vision_ms=" in receipt
+    assert "total_ms=" in receipt
+    assert "driver_calls=2" in receipt
+    assert "capture_calls=1" in receipt
+    assert "semantic_refresh_calls=0" in receipt
+    assert "vision_calls=0" in receipt
+    forbidden = (
+        private_title,
+        private_label,
+        observation.elements[0].token,
+        "private-token",
+        "iVBOR",
+        "987654321",
+        "123456789",
+    )
+    assert all(value not in receipt for value in forbidden)
 
 
 def test_active_app_metadata_survives_safe_inventory_projection(service, fake_transport) -> None:

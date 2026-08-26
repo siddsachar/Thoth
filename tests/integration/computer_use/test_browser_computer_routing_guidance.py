@@ -29,7 +29,8 @@ def test_existing_browser_guidance_uses_computer_while_ordinary_navigation_stays
 
     assert "'this browser'" in _AGENT_GUIDELINES
     assert "'the browser below'" in _AGENT_GUIDELINES
-    assert "call list_windows" in _AGENT_GUIDELINES
+    assert "normally begin with one computer_use capture using app" in _AGENT_GUIDELINES
+    assert "Reserve list_windows for ambiguity" in _AGENT_GUIDELINES
     assert "do not call launch_app merely to focus it" in _AGENT_GUIDELINES
     assert "ordinary website navigation" in _AGENT_GUIDELINES
     assert "separate managed browser" in _AGENT_GUIDELINES
