@@ -120,7 +120,7 @@ def test_driver_interpolated_replacement_is_absent_from_public_error_and_history
     assert secret not in str(service.status_snapshot())
 
 
-def test_post_stop_completion_ledger_survives_without_private_mutation_payload(
+def test_post_stop_has_no_replay_or_completion_state_and_keeps_receipt_truthful(
     service,
     fake_transport,
 ) -> None:
@@ -149,15 +149,10 @@ def test_post_stop_completion_ledger_survives_without_private_mutation_payload(
     service.stop()
 
     assert uncertain.effect_verified is False
-    assert service._pending_mutation is None
-    assert service.computer_use_completion_blocked(
-        thread_id=OWNER.thread_id,
-        generation_id=OWNER.generation_id,
-    )
-    ledger = service.completion_evidence_statuses(OWNER)
-    assert ledger[-1]["status"] == "unresolved"
-    assert secret not in repr(ledger)
-    assert "old private value" not in repr(ledger)
+    assert not hasattr(service, "_pending_mutation")
+    assert not hasattr(service, "_completion_ledger")
+    assert secret not in repr(service.status_snapshot())
+    assert "old private value" not in repr(service.status_snapshot())
 
 
 def test_window_discovery_requires_scope_before_calling_the_driver(service, fake_transport) -> None:

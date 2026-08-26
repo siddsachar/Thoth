@@ -145,7 +145,6 @@ def test_app_scope_approval_precedes_target_pixel_request(
 )
 def test_every_routine_mutation_maps_once_without_an_implicit_post_capture(service, fake_transport, action, kwargs, driver_tool) -> None:
     target, observation = _target_and_capture(service)
-    exact_semantic_click = action in {"click", "double_click", "right_click"}
     call_kwargs = dict(kwargs)
     index = call_kwargs.pop("element", None)
     if index is not None:
@@ -156,10 +155,11 @@ def test_every_routine_mutation_maps_once_without_an_implicit_post_capture(servi
     assert names[mutation_index + 1:] == []
     assert isinstance(result, ActionReceipt)
     assert result.action_dispatched is True
-    assert result.action_completed is exact_semantic_click
+    assert result.action_completed is True
     assert result.driver_effect == "confirmed"
     assert result.visual_change == "unknown"
-    assert result.effect_verified is exact_semantic_click
+    assert result.effect_verified is True
+    assert result.verified_scope == "delivery"
     assert "private typed value" not in repr(result)
     assert service.ephemeral_screenshot()
 
@@ -214,9 +214,8 @@ def test_replace_text_uses_one_exact_semantic_set_value_delivery(
         }
     ]
     assert fake_transport.document_value == replacement
-    assert isinstance(result, Observation)
-    assert result.outcome == "verified"
-    assert result.semantic_postcondition == "matched"
+    assert isinstance(result, ActionReceipt)
+    assert result.verified_scope == "exact_value"
     assert result.effect_verified is True
     assert result.action_completed is True
     assert all(name != "press_key" for name, _args in fake_transport.calls[calls_before:])
@@ -255,7 +254,7 @@ def test_replace_text_rejects_missing_token_and_coordinates_before_mutation(
     "element",
     [
         {"role": "Edit", "label": "Disabled field", "enabled": False},
-        {"role": "Button", "label": "Ordinary control", "enabled": True},
+        {"role": "Pane", "label": "Structural control", "enabled": True},
     ],
 )
 def test_replace_text_rejects_disabled_and_unsupported_controls_without_mutation(
@@ -333,37 +332,6 @@ def test_replace_text_rejects_stale_token_without_mutation(
     )
 
 
-def test_replace_text_rejects_ambiguous_fresh_exact_match_without_mutation(
-    service,
-    fake_transport,
-) -> None:
-    target_element = {
-        "role": "Edit",
-        "label": "Repeated field",
-        "enabled": True,
-        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
-    }
-    fake_transport.scenario.semantic_snapshots = (
-        (target_element,),
-        (target_element, dict(target_element)),
-    )
-    target, observation = _target_and_capture(service)
-    calls_before = len(fake_transport.calls)
-
-    with pytest.raises(ComputerUseError) as ambiguous:
-        service.act(
-            "replace_text",
-            target,
-            OWNER,
-            element_token=observation.elements[0].token,
-            text="hidden",
-        )
-
-    assert ambiguous.value.code == "ambiguous_target"
-    assert all(
-        name not in {"set_value", "type_text"}
-        for name, _args in fake_transport.calls[calls_before:]
-    )
 
 
 def test_replace_text_unsupported_set_value_has_no_fallback(
@@ -439,9 +407,9 @@ def test_replace_text_driver_refusal_or_unverified_effect_is_never_replayed(
     )
 
     unverified_calls = fake_transport.calls[calls_before:]
-    assert isinstance(result, Observation)
-    assert result.outcome == "delivered_unverified"
-    assert result.semantic_postcondition == "matched"
+    assert isinstance(result, ActionReceipt)
+    assert result.action_dispatched is True
+    assert result.verified_scope == ""
     assert result.effect_verified is False
     assert result.driver_effect == "unverifiable"
     assert [name for name, _args in unverified_calls].count("set_value") == 1
@@ -521,7 +489,8 @@ def test_replace_text_keeps_secure_handoff_and_consequential_approval(
         approval_mode="approve",
     )
 
-    assert isinstance(result, Observation)
+    assert isinstance(result, ActionReceipt)
+    assert result.verified_scope == "exact_value"
     assert len(approvals) == 1
     assert approvals[0]["action"] == "replace_text"
     assert approvals[0]["data_summary"] == (
@@ -557,218 +526,18 @@ def test_capture_after_performs_exactly_one_fresh_post_action_capture(
     assert service.performance_snapshot()["captures"] == captures_before + 1
 
 
-def test_semantic_after_action_reports_truthful_native_change_and_receipt_fields(
-    service,
-    fake_transport,
-) -> None:
-    fake_transport.scenario.semantic_snapshots = (
-        ({"role": "button", "label": "Play", "enabled": True},),
-        ({"role": "button", "label": "Pause", "enabled": True},),
-    )
-    fake_transport.scenario.effect = "unverifiable"
-    fake_transport.scenario.action_route = "accessibility"
-    fake_transport.scenario.action_cause = "semantic_target"
-    target, observation = _target_and_capture(service)
-    before_vision = service.performance_snapshot()["vision_calls"]
-
-    result = service.act(
-        "click",
-        target,
-        OWNER,
-        element_token=observation.elements[0].token,
-        capture_after=True,
-        visual_question="Run the one explicitly requested advisory Vision check",
-    )
-
-    assert result.native_change == "changed"
-    assert result.visual_change == "unknown"
-    assert result.effect_verified is False
-    assert result.route == "accessibility"
-    assert result.cause == "semantic_target"
-    assert result.delivery_mode == "background"
-    assert result.driver_effect == "unverifiable"
-    assert service.performance_snapshot()["vision_calls"] == before_vision + 1
 
 
-def test_unchanged_stateful_semantic_action_remains_delivered_but_unverified(
-    service,
-    fake_transport,
-) -> None:
-    state = ({"role": "togglebutton", "label": "Playback", "selected": False},)
-    fake_transport.scenario.semantic_snapshots = (state, state)
-    fake_transport.scenario.effect = "unverifiable"
-    target, observation = _target_and_capture(service)
-
-    result = service.act(
-        "click",
-        target,
-        OWNER,
-        element_token=observation.elements[0].token,
-        capture_after=True,
-    )
-
-    assert result.native_change == "unchanged"
-    assert result.action_completed is False
-    assert result.effect_verified is False
 
 
-def test_unchanged_momentary_semantic_control_remains_unknown(
-    service,
-    fake_transport,
-) -> None:
-    momentary = ({"role": "button", "label": "Next"},)
-    fake_transport.scenario.semantic_snapshots = (momentary, momentary)
-    fake_transport.scenario.effect = "unverifiable"
-    target, observation = _target_and_capture(service)
-
-    result = service.act(
-        "click",
-        target,
-        OWNER,
-        element_token=observation.elements[0].token,
-        capture_after=True,
-    )
-
-    assert result.native_change == "unknown"
-    assert service.status_snapshot()["consecutive_visual_no_effects"] == 0
 
 
-def test_three_conservative_semantic_no_progress_results_stop_blind_attempts(
-    service,
-    fake_transport,
-) -> None:
-    state = ({"role": "togglebutton", "label": "Playback", "selected": False},)
-    fake_transport.scenario.semantic_snapshots = (state, state, state, state)
-    fake_transport.scenario.effect = "unverifiable"
-    target, observation = _target_and_capture(service)
-
-    for attempt in range(3):
-        if attempt:
-            observation = service.current_observation(target)
-            assert observation is not None
-        if attempt < 2:
-            result = service.act(
-                "click",
-                target,
-                OWNER,
-                element_token=observation.elements[0].token,
-                capture_after=True,
-            )
-            assert result.native_change == "unchanged"
-        else:
-            with pytest.raises(ComputerUseError) as stopped:
-                service.act(
-                    "click",
-                    target,
-                    OWNER,
-                    element_token=observation.elements[0].token,
-                    capture_after=True,
-                )
-            assert stopped.value.code == "no_progress"
-
-    assert [name for name, _args in fake_transport.calls].count("click") == 3
-    assert service.status_snapshot()["state"] == "needs_attention"
 
 
-def test_changed_native_evidence_resets_same_family_no_progress_streak(
-    service,
-    fake_transport,
-) -> None:
-    off = ({"role": "togglebutton", "label": "Playback", "selected": False},)
-    on = ({"role": "togglebutton", "label": "Playback", "selected": True},)
-    fake_transport.scenario.semantic_snapshots = (off, off, on, on)
-    fake_transport.scenario.effect = "unverifiable"
-    target, observation = _target_and_capture(service)
-
-    changes: list[str] = []
-    for _attempt in range(3):
-        result = service.act(
-            "click",
-            target,
-            OWNER,
-            element_token=observation.elements[0].token,
-            capture_after=True,
-        )
-        changes.append(result.native_change)
-        observation = result
-
-    assert changes == ["unchanged", "changed", "unchanged"]
-    assert service.status_snapshot()["consecutive_visual_no_effects"] == 1
-    assert service.status_snapshot()["state"] == "observing"
 
 
-@pytest.mark.parametrize(
-    ("role", "state_name"),
-    [
-        ("togglebutton", "selected"),
-        ("checkbox", "checked"),
-        ("button", "expanded"),
-    ],
-)
-def test_fresh_exact_click_state_transition_verifies_only_the_action_scope(
-    service,
-    fake_transport,
-    role: str,
-    state_name: str,
-) -> None:
-    before = ({"role": role, "label": "Generic control", state_name: False},)
-    after = ({"role": role, "label": "Generic control", state_name: True},)
-    fake_transport.scenario.semantic_snapshots = (before, after)
-    fake_transport.scenario.effect = "unverifiable"
-    target, observation = _target_and_capture(service)
-
-    result = service.act(
-        "click",
-        target,
-        OWNER,
-        element_token=observation.elements[0].token,
-        capture_after=True,
-    )
-
-    assert result.dispatch_state == "dispatched"
-    assert result.driver_verdict == "unverifiable"
-    assert result.semantic_postcondition == "matched"
-    assert result.visual_observation == "unavailable"
-    assert result.outcome == "verified"
-    assert result.verified_scope == "exact_semantic_state_transition"
-    assert result.effect_verified is True
 
 
-def test_semantic_terminal_action_succeeds_when_exact_target_disappears_after_dispatch(
-    service,
-    fake_transport,
-) -> None:
-    fake_transport.scenario.semantic_elements = (
-        {"role": "button", "label": "Don't save"},
-    )
-    fake_transport.scenario.close_target_after_labels = frozenset({"Don't save"})
-    target, observation = _target_and_capture(service)
-    calls_before = len(fake_transport.calls)
-
-    result = service.act(
-        "click",
-        target,
-        OWNER,
-        element_token=observation.elements[0].token,
-        expected_effect="Close without saving",
-        approval_mode="allow_all",
-        capture_after=True,
-    )
-
-    assert isinstance(result, ActionReceipt)
-    assert result.action_completed is True
-    assert result.effect_verified is True
-    assert result.cause == "target_disappeared"
-    assert service.current_observation(target) is None
-    assert service.status_snapshot()["consecutive_failures"] == 0
-    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
-        "click",
-        "get_window_state",
-        "list_windows",
-    ]
-    with pytest.raises(ComputerUseError) as expired:
-        service.capture(target, OWNER)
-    assert expired.value.code == "target_gone"
 
 
 def test_capture_failure_is_not_hidden_for_non_terminal_semantic_action(
@@ -792,7 +561,7 @@ def test_capture_failure_is_not_hidden_for_non_terminal_semantic_action(
             capture_after=True,
         )
 
-    assert service.status_snapshot()["consecutive_failures"] == 1
+    assert service.status_snapshot()["state"] == "observing"
 
 
 def test_general_canvas_drag_uses_one_native_action_and_one_requested_capture(
@@ -849,68 +618,19 @@ def test_failed_action_never_performs_post_action_capture(service, fake_transpor
     assert [name for name, _args in fake_transport.calls[calls_before:]] == ["click"]
 
 
-def test_three_consecutive_driver_failures_end_with_computer_no_progress(
-    service,
-    fake_transport,
-) -> None:
-    target, observation = _target_and_capture(service)
-    fake_transport.scenario.action_error_code = "action_failed"
-
-    for attempt in range(3):
-        if attempt:
-            observation = service.capture(target, OWNER)
-        expected = "no progress" if attempt == 2 else "refused the requested action safely"
-        with pytest.raises(ComputerUseError, match=expected):
-            service.act(
-                "click",
-                target,
-                OWNER,
-                element_token=observation.elements[0].token,
-            )
-
-    snapshot = service.status_snapshot()
-    assert snapshot["state"] == "needs_attention"
-    assert snapshot["consecutive_failures"] == 3
-    assert [name for name, _args in fake_transport.calls].count("click") == 3
 
 
-def test_stale_recovery_is_limited_to_one_exact_target_recapture(
-    service,
-    fake_transport,
-) -> None:
-    target, observation = _target_and_capture(service)
-    fake_transport.scenario.stale = True
-    with pytest.raises(StaleObservationError):
-        service.act(
-            "click",
-            target,
-            OWNER,
-            element_token=observation.elements[0].token,
-        )
-
-    observation = service.capture(target, OWNER)
-    fake_transport.scenario.stale = True
-    with pytest.raises(ComputerUseError, match="no progress") as exc_info:
-        service.act(
-            "click",
-            target,
-            OWNER,
-            element_token=observation.elements[0].token,
-        )
-
-    assert exc_info.value.code == "no_progress"
-    assert [name for name, _args in fake_transport.calls].count("click") == 2
 
 
-def test_focus_is_confirmed_once_and_prepares_without_an_implicit_capture(service, fake_transport) -> None:
+def test_focus_is_one_confirmed_call_without_an_implicit_capture(service, fake_transport) -> None:
     target, _ = _target_and_capture(service)
     result = service.act("focus", target, OWNER, expected_effect="Bring Calculator forward")
     names = [name for name, _args in fake_transport.calls]
     assert names.count("bring_to_front") == 1
     assert names[-1] == "bring_to_front"
     assert isinstance(result, ActionReceipt)
-    assert result.action_completed is False
-    assert service.status_snapshot()["foreground_prepared"] is True
+    assert result.action_completed is True
+    assert "foreground_prepared" not in service.status_snapshot()
 
 
 def test_approval_wait_recaptures_and_rebinds_semantic_target(fake_client, fake_transport) -> None:
@@ -929,8 +649,10 @@ def test_approval_wait_recaptures_and_rebinds_semantic_target(fake_client, fake_
 def test_stale_driver_token_fails_closed_without_retry(service, fake_transport) -> None:
     target, observation = _target_and_capture(service)
     fake_transport.scenario.stale = True
-    with pytest.raises(StaleObservationError):
+    with pytest.raises(ComputerUseError) as stale:
         service.act("click", target, OWNER, element_token=observation.elements[0].token)
+    assert stale.value.code == "stale_observation"
+    assert isinstance(stale.value.observation, Observation)
     assert [name for name, _args in fake_transport.calls].count("click") == 1
 
 
@@ -1148,31 +870,6 @@ def _capability_service(fake_transport, *capabilities: str):
     )
 
 
-def test_service_derived_verify_state_is_exact_bounded_and_screenshot_free(fake_transport) -> None:
-    service = _capability_service(fake_transport, "verify_state")
-    fake_transport.scenario.background_unavailable_tools = frozenset({"press_key"})
-    fake_transport.scenario.apps = (
-        {"name": "Notepad", "running": True, "active": False},
-    )
-    service.acquire(OWNER, validate_context=False)
-    service.list_apps(OWNER)
-    target = service.list_windows(OWNER, app="Notepad")[0]["target_id"]
-    service.capture(target, OWNER)
-
-    service.act("key", target, OWNER, keys="a", approval_mode="allow_all")
-
-    verify_calls = [args for name, args in fake_transport.calls if name == "verify_state"]
-    assert verify_calls == [
-        {
-            "pid": 4343,
-            "window_id": 102,
-            "expect": [{"window": {"exists": True}}],
-            "timeout_ms": 0,
-            "stable_samples": 1,
-            "include_screenshot": False,
-            "session": "capability-session",
-        }
-    ]
 
 
 def test_exact_menu_is_capability_gated_and_never_falls_back_to_coordinates(
@@ -1212,7 +909,7 @@ def test_exact_safe_menu_invocation_returns_standard_receipt(fake_transport) -> 
             "session": "capability-session",
         }
     ]
-    assert service.current_observation(target) is None
+    assert service.current_observation(target) is observation
     assert all(name not in {"click", "double_click", "right_click"} for name, _args in fake_transport.calls)
     assert observation.elements
 
@@ -1241,6 +938,6 @@ def test_consequential_menu_reproves_exact_target_and_refusal_has_no_pixel_fallb
         service.act_menu(target, ["File", "Save"], OWNER, approval_mode="approve")
 
     assert approvals[-1]["target"] == "File > Save"
-    assert [name for name, _args in fake_transport.calls].count("list_windows") == 2
+    assert [name for name, _args in fake_transport.calls].count("list_windows") == 1
     assert [name for name, _args in fake_transport.calls].count("invoke_menu") == 1
     assert all(name not in {"click", "double_click", "right_click"} for name, _args in fake_transport.calls)

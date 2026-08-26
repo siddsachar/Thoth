@@ -78,7 +78,7 @@ The private client permits only:
 | `list_apps`, `list_windows` | private discovery | observation |
 | `get_window_state` | target-window tree and screenshot | observation |
 | `launch_app` | allowlisted display-name launch | routine or consequential |
-| `bring_to_front` | explicit user-requested focus and ordinary non-text foreground preparation; never targeted typing | always confirm |
+| `bring_to_front` | explicit visible focus of the selected app/window | routine unless the expected effect is consequential |
 | `click`, `double_click`, `right_click` | token-first selection | routine or consequential |
 | `type_text`, `set_value`, `press_key`, `hotkey` | non-secret text/input; token-bound `type_text` is Cua's exact focus-and-insert transaction, tokenless `type_text` preserves the current caret/selection, and `set_value` performs exact textual replacement | routine, consequential, or handoff |
 | `scroll`, `drag` | bounded target-window input | routine |
@@ -105,50 +105,41 @@ maintenance surfaces are forbidden and never model-visible.
   deterministic document/grid share. They expose only labels plus useful
   `selected=true` or `enabled=false` state; values, geometry, and parent trees
   remain model-hidden.
-- Token-bound `type` derives structural and geometry identity from the current
-  token, obtains a new semantic-only snapshot, requires exactly one same-window
-  enabled writable text/search match, and forwards only that fresh token to
-  Cua's reviewed exact focus-and-insert transaction. `selected=true` is not a
-  requirement. Tokenless `type` preserves current-caret/selection insertion
-  without a token. Horizontal-tab payloads are rejected before approval or
-  mutation; multiline insertion remains supported.
-- Targeted typing tries exact background delivery first. Only an explicit
-  pre-dispatch `background_unavailable` refusal permits one newly approved
-  foreground driver call with another fresh token. Row-Bot adds no preliminary
-  click, focus, selection, coordinate, label, clipboard, shell, key sequence,
-  or application-specific fallback, never calls `bring_to_front` automatically
-  for this path, and never replays an unverifiable insertion.
-- `replace_text` requests one exact current editable semantic control through
-  the reviewed token-targeted Cua `set_value` path. It requires
-  the latest projected token, a supported generic editable role, an enabled
-  control, and non-sensitive text; accepts no coordinates; and has no caret,
-  label, fuzzy, clipboard, shell, or alternate delivery fallback. Stale,
-  unsupported, disabled, refused, and unverifiable cases are never replayed.
-  It takes contemporaneous before/after target-window captures. One exact native
-  value readback may verify the requested value even when target pixels do not
-  change. A web-content accessibility echo paired with an unverifiable driver
-  verdict remains unresolved. A macOS Catalyst/null value is unavailable—not a
-  match or contradiction. Provider echoes, unrelated tree churn, focus
-  decoration, cursor overlays, and Vision cannot establish a semantic outcome.
-  Verified scope is only the exact target, never saved, durable, recalculated,
-  submitted, or whole-document state.
+- Token-bound `type` passes the latest current token directly to Cua after
+  Row-Bot rejects only explicit disabled, read-only, secure, protected, and
+  clearly structural targets. Combo controls, cells, data items, and unknown
+  interactive roles may reach Cua. Row-Bot does not pre-capture, geometry-
+  rematch, click, focus, or select. Tokenless `type` is one Cua action at the
+  current caret or selection and preserves literal input.
+- Only an explicit pre-dispatch `background_unavailable` refusal permits one
+  foreground `type_text` call. Cua owns focus establishment; Row-Bot never calls
+  `bring_to_front` as hidden preparation and never replays a dispatched
+  unverifiable insertion.
+- `replace_text` sends one current token to Cua `set_value` with no mandatory
+  baseline, geometry rematch, or post-capture. A caller may request at most one
+  later capture. One unique exact native value readback can upgrade an
+  unverifiable result to `verified_scope=exact_value`; web accessibility echo
+  with an unverifiable driver verdict and an unavailable native value remain
+  delivered/unverified. Exact value proves only the control value, never commit,
+  evaluation, navigation, saved state, or overall task completion.
 - Credentials, OTP, CAPTCHA, biometric, UAC/TCC, terminals, password managers,
   Row-Bot itself, secure desktops, and elevation are handed off or blocked.
-- Pixels are captured only for coordinate grounding, visual comparison,
-  explicit Vision, live preview, or final visual evidence. Tree-only token
-  refreshes request no screenshot; cheap action receipts do not imply a fresh
-  observation.
+- Routine capture obtains target-window pixels and semantics once but makes no
+  Vision call. Tree-only stale refreshes request no screenshot. Routine type,
+  click, and key actions make one mutation call and no hidden capture; cheap
+  action receipts do not imply a fresh observation.
 - Screenshot bytes are ephemeral. Typed values are excluded from logs,
   histories, checkpoints, approval payloads, memory, and durable media.
 - Consequential actions require point-of-risk confirmation even in Auto mode.
-- Unbound Enter/Return remains consequential because it may submit a form or
-  dialog. Exact replacement is the atomic usability path when a separate Enter
-  would only commit an assumed edit; model-authored expected effects do not
-  weaken the Enter policy.
-- App-scoped exact-name failures may return at most eight currently running
-  canonical app names with running/active metadata for a deliberate retry.
-  Row-Bot does not expose unrelated titles, fuzzy-match, auto-select, infer an
-  alias, or silently launch a candidate.
+  Enter/Return, fresh coordinates, and foregrounding are routine when their
+  semantic target and expected effect are non-consequential; send, submit,
+  purchase, delete, permission, and other external effects still require
+  approval.
+- App-scoped acquisition uses generic normalized identity words and prefers the
+  unique active or visible matching window. It may return at most eight running
+  candidates or opaque same-app targets when real ambiguity remains. It never
+  exposes unrelated titles, uses application-specific aliases, or silently
+  launches a candidate.
 - UI text and accessibility content are untrusted tool output and cannot grant
   new scope, recipients, secrets, or authority.
 - Prompt-injection pattern matches in native labels and values are advisory
@@ -164,19 +155,16 @@ maintenance surfaces are forbidden and never model-visible.
   successful completed-action receipt. Resume can dispatch at most once and
   emits one final completed, failed, denied, or cancelled receipt without typed
   text, labels, titles, tokens, coordinates, screenshots, or approval secrets.
-- Dispatch, bounded driver verdict, exact semantic postcondition, visual
-  observation, action outcome, and generation completion are independent.
-  Unresolved insertion replay and commit input are blocked for that exact
-  target, but unrelated safe navigation is not globally frozen. A fresh exact
-  native capture may resolve a replacement; web echo, Catalyst-null evidence,
-  and Vision cannot. A stable contradiction releases replay protection as a
-  truthful failed/no-op outcome.
-- Private pending attempts may temporarily retain only the data needed to block
-  replay and are cleared by Stop, cancellation, or takeover. A separate bounded,
-  value-free generation completion ledger records target fingerprint, action
-  family, reason, and `verified`/`failed`/`superseded`/`unresolved` status. It
-  survives those controls for the final-status gate and is consumed there;
-  those lifecycle actions never promote unresolved work to success.
+- Compact receipts keep transport acceptance, dispatch, driver verification,
+  verified scope, delivery mode, route, error code, and target independent.
+  `ok=true`, dispatched, and unverified is useful delivery. It does not freeze
+  Enter, navigation, later fields, capture, or the model's truthful final
+  answer. Row-Bot stores no pending mutation, replay state, completion ledger,
+  or Computer-specific failure budget.
+- A stale driver refusal returns the original bounded error plus at most one
+  fresh semantic observation. The refused mutation is not replayed and does not
+  consume session-wide progress state. Stop, cancellation, and takeover never
+  rewrite prior receipts as success.
 - Token-based semantic replacement stays on the native fast path unless
   `capture_after=true` and one explicit visual question requests exactly one
   advisory Vision check. Vision is not automatically repeated or parsed as

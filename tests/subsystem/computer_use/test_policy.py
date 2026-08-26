@@ -20,7 +20,7 @@ def test_policy_covers_routine_consequential_handoff_and_blocked() -> None:
     assert classify_action("replace_text", app_name="Form Studio", role="password field").outcome is PolicyOutcome.HANDOFF
 
 
-def test_unbound_enter_remains_consequential_despite_editing_context_claims() -> None:
+def test_enter_is_routine_for_an_edit_but_consequential_for_a_submit_target() -> None:
     decision = classify_action(
         "key",
         app_name="Form Studio",
@@ -30,7 +30,18 @@ def test_unbound_enter_remains_consequential_despite_editing_context_claims() ->
         keys="enter",
     )
 
-    assert decision.outcome is PolicyOutcome.CONSEQUENTIAL
+    assert decision.outcome is PolicyOutcome.ROUTINE
+    assert (
+        classify_action(
+            "key",
+            app_name="Form Studio",
+            role="button",
+            label="Submit",
+            expected_effect="Submit the current form",
+            keys="enter",
+        ).outcome
+        is PolicyOutcome.CONSEQUENTIAL
+    )
 
 
 def test_row_bot_controller_block_does_not_block_content_in_another_app() -> None:
@@ -51,7 +62,7 @@ def test_row_bot_controller_block_does_not_block_content_in_another_app() -> Non
             window_title="Row-Bot E2E Profile Persisted",
             foreground=True,
         ).outcome
-        is PolicyOutcome.CONSEQUENTIAL
+        is PolicyOutcome.ROUTINE
     )
 
 

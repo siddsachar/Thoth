@@ -62,21 +62,21 @@ def test_stop_between_routine_keys_prevents_remaining_sequence(service, fake_tra
     assert service.current_observation(target_id) is None
 
 
-def test_stop_during_foreground_fallback_prevents_capture_or_further_input(
+def test_stop_during_one_text_foreground_attempt_prevents_capture_or_further_input(
     service,
     fake_transport,
 ) -> None:
     service.acquire(OWNER, validate_context=False)
     target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
     service.capture(target_id, OWNER)
-    fake_transport.scenario.background_unavailable_tools = frozenset({"drag"})
+    fake_transport.scenario.background_unavailable_tools = frozenset({"type_text"})
     fake_transport.scenario.block_foreground = True
     fake_transport.block_action.set()
     finished = threading.Event()
 
     def _act() -> None:
         try:
-            service.act("drag", target_id, OWNER, x=0, y=0, end_x=0, end_y=0)
+            service.act("type", target_id, OWNER, text="one literal insertion")
         except BaseException:
             pass
         finally:
@@ -85,11 +85,14 @@ def test_stop_during_foreground_fallback_prevents_capture_or_further_input(
     captures_before = [name for name, _args in fake_transport.calls].count("get_window_state")
     worker = threading.Thread(target=_act)
     worker.start()
-    while len([name for name, _args in fake_transport.calls if name == "drag"]) < 2:
+    while len([name for name, _args in fake_transport.calls if name == "type_text"]) < 2:
         worker.join(timeout=0.01)
     service.stop()
     worker.join(timeout=2)
 
     assert finished.is_set()
-    assert [name for name, _args in fake_transport.calls].count("drag") == 2
+    type_calls = [args for name, args in fake_transport.calls if name == "type_text"]
+    assert len(type_calls) == 2
+    assert "delivery_mode" not in type_calls[0]
+    assert type_calls[1]["delivery_mode"] == "foreground"
     assert [name for name, _args in fake_transport.calls].count("get_window_state") == captures_before

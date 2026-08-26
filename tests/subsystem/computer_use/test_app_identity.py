@@ -65,14 +65,12 @@ def test_duplicate_native_browser_rows_are_deduplicated_in_stable_order(
 @pytest.mark.parametrize(
     ("requested", "driver_name"),
     [
-        ("Microsoft Edge", "msedge.exe"),
-        ("Edge", "msedge.exe"),
         ("Google Chrome", "chrome.exe"),
         ("Mozilla Firefox", "firefox.exe"),
         ("Brave Browser", "brave.exe"),
     ],
 )
-def test_human_browser_aliases_do_not_silently_select_driver_identities(
+def test_unique_friendly_name_with_one_extra_word_resolves_driver_identity(
     service,
     fake_transport,
     requested: str,
@@ -86,7 +84,20 @@ def test_human_browser_aliases_do_not_silently_select_driver_identities(
 
     rows = service.list_windows(OWNER, app=requested)
 
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0]["app"] == driver_name
+
+
+@pytest.mark.parametrize("requested", ["Microsoft Edge", "Edge"])
+def test_names_without_a_shared_exact_word_are_not_guessed(
+    service,
+    fake_transport,
+    requested: str,
+) -> None:
+    fake_transport.scenario.windows = (_window(1, "msedge.exe", "Target"),)
+    service.acquire(OWNER, validate_context=False)
+
+    assert service.list_windows(OWNER, app=requested) == []
 
 
 @pytest.mark.parametrize(
@@ -226,7 +237,6 @@ def test_protected_app_scoped_capture_is_blocked_before_driver_start(
 @pytest.mark.parametrize(
     ("requested", "driver_name"),
     [
-        ("Calculator", "Windows Calculator"),
         ("Calculator", "CalculatorApp.exe"),
         ("Windows Calculator", "CalculatorApp.exe"),
     ],
@@ -246,6 +256,22 @@ def test_noncanonical_calculator_names_do_not_cross_select(
     rows = service.list_windows(OWNER, app=requested)
 
     assert rows == []
+
+
+def test_unique_friendly_name_with_one_vendor_word_selects_visible_window(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.windows = (
+        _window(1, "Windows Calculator", "Calculator"),
+        _window(2, "unrelated.exe", "Calculator notes"),
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    rows = service.list_windows(OWNER, app="Calculator")
+
+    assert len(rows) == 1
+    assert rows[0]["app"] == "Windows Calculator"
 
 
 def test_window_discovery_does_not_infer_app_from_packaged_host_title(

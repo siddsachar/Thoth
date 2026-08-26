@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import base64
-import concurrent.futures
 import io
-import json
 import logging
 
 import pytest
@@ -16,7 +14,6 @@ from row_bot.computer_use.service import (
     LeaseOwner,
     Observation,
 )
-from row_bot.tools.computer_use_tool import _observation_payload
 from tests.fixtures.fake_cua import SANITIZED_NATIVE_BROWSER_APPS
 
 
@@ -154,39 +151,6 @@ def test_duplicate_canonical_app_rows_merge_active_state_in_stable_order(
     ]
 
 
-def test_prepared_focus_makes_accepted_enter_effective_without_refocusing(
-    service,
-    fake_transport,
-) -> None:
-    fake_transport.scenario.accepted_background_noop_tools = frozenset({"press_key"})
-    target_id, _observation = _browser_target(service, fake_transport)
-
-    background = service.act("key", target_id, OWNER, keys="enter")
-    assert background.action_dispatched is True
-    assert fake_transport.effective_keys == []
-
-    service.act("focus", target_id, OWNER)
-    service.act("key", target_id, OWNER, keys="enter")
-    service.act("scroll", target_id, OWNER, direction="down", amount=3)
-    current = service.current_observation(target_id)
-    assert current is not None
-    service.act("click", target_id, OWNER, element_token=current.elements[0].token)
-    service.act("drag", target_id, OWNER, x=0, y=0, end_x=0, end_y=0)
-
-    assert fake_transport.effective_keys == ["enter"]
-    calls = [
-        (name, args)
-        for name, args in fake_transport.calls
-        if name in {"bring_to_front", "press_key", "scroll", "click", "drag"}
-    ]
-    assert [name for name, _args in calls].count("bring_to_front") == 1
-    press_keys = [arguments for name, arguments in calls if name == "press_key"]
-    assert press_keys[0].get("delivery_mode", "background") == "background"
-    assert press_keys[1]["delivery_mode"] == "foreground"
-    for name, arguments in calls:
-        if name in {"scroll", "click", "drag"}:
-            assert arguments["delivery_mode"] == "foreground"
-    assert calls[-1][1]["delivery_mode"] == "foreground"
 
 
 class _UnknownVision:
@@ -198,428 +162,24 @@ class _UnknownVision:
         return "The requested outcome is unknown."
 
 
-def test_pixel_change_with_unknown_vision_is_not_goal_verification(service, fake_transport) -> None:
-    vision = _UnknownVision()
-    service._vision_service = vision
-    fake_transport.scenario.capture_dimensions = (64, 64)
-    fake_transport.scenario.capture_images = (_png(), _png(changed=True))
-    fake_transport.scenario.effect = "unverifiable"
-    target_id, _observation = _browser_target(service, fake_transport)
-
-    result = service.act(
-        "click",
-        target_id,
-        OWNER,
-        x=12,
-        y=12,
-        capture_after=True,
-        visual_question="Is the requested result complete?",
-        approval_mode="allow_all",
-    )
-
-    assert isinstance(result, Observation)
-    assert result.action_dispatched is True
-    assert result.action_completed is False
-    assert result.driver_effect == "unverifiable"
-    assert result.visual_change == "changed"
-    assert result.effect_verified is False
-    assert vision.calls == 1
-    assert service.performance_snapshot()["pixel_captures"] == 2
-    assert service.performance_snapshot()["vision_calls"] == 1
-    payload = json.loads(_observation_payload(result))
-    assert payload["ok"] is True
-    assert payload["error"] is False
-    assert payload["vision_evidence"]
 
 
-def test_exact_replacement_stable_contradiction_fails_and_releases_replay_barrier(
-    service,
-    fake_transport,
-) -> None:
-    stable_target = {
-        "role": "DataItem",
-        "label": "Selected item",
-        "value": "",
-        "enabled": True,
-        "selected": True,
-        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
-    }
-    volatile_before = tuple(
-        {"role": "Text", "label": f"Status {index:04d}", "value": ""}
-        for index in range(1_800)
-    )
-    volatile_after = tuple(
-        {
-            "role": "Text",
-            "label": f"Status {index:04d}",
-            "value": "changed elsewhere" if index == 1_799 else "",
-        }
-        for index in range(1_800)
-    )
-    fake_transport.scenario.apps = (
-        {"name": "Grid Editor", "running": True, "active": True},
-    )
-    fake_transport.scenario.windows = (
-        {
-            "window_id": 711,
-            "pid": 2711,
-            "app_name": "Grid Editor",
-            "title": "Untitled grid",
-            "bounds": {"x": 0, "y": 0, "width": 320, "height": 120},
-            "is_on_screen": True,
-        },
-    )
-    fake_transport.scenario.capture_pid = 2711
-    fake_transport.scenario.capture_window_id = 711
-    fake_transport.scenario.capture_dimensions = (320, 120)
-    fake_transport.scenario.capture_images = (
-        _grid_png(),
-        _grid_png(),
-        _grid_png(cursor_badge_only=True),
-    )
-    fake_transport.scenario.semantic_snapshots = (
-        (stable_target, *volatile_before),
-        (stable_target, *volatile_before),
-        (stable_target, *volatile_after),
-    )
-    fake_transport.scenario.set_value_updates_document = False
-    fake_transport.scenario.rotate_element_tokens = True
-    service.acquire(OWNER, validate_context=False)
-    target_id = service.list_windows(OWNER, app="Grid Editor")[0]["target_id"]
-    initial = service.capture(target_id, OWNER)
-    replacement = "private requested value"
-
-    result = service.act(
-        "replace_text",
-        target_id,
-        OWNER,
-        element_token=initial.elements[0].token,
-        text=replacement,
-        capture_after=True,
-    )
-
-    assert isinstance(result, Observation)
-    assert result.action_dispatched is True
-    assert result.action_completed is False
-    assert result.effect_verified is False
-    assert result.native_change == "unchanged"
-    assert result.outcome == "suspected_noop"
-    assert result.semantic_postcondition == "contradicted"
-    assert result.verified_scope == ""
-    assert service.computer_use_completion_blocked(OWNER) is False
-    names_before_retry = [name for name, _args in fake_transport.calls]
-
-    service.act(
-        "replace_text",
-        target_id,
-        OWNER,
-        element_token=result.elements[0].token,
-        text="second dependent value",
-    )
-
-    assert len(fake_transport.calls) > len(names_before_retry)
-    assert [name for name, _args in fake_transport.calls].count("set_value") == 2
 
 
-def test_native_exact_value_readback_verifies_without_pixel_change(
-    service,
-    fake_transport,
-) -> None:
-    old = {
-        "role": "Edit",
-        "label": "Document field",
-        "value": "old",
-        "enabled": True,
-        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
-    }
-    echoed = {**old, "value": "new"}
-    fake_transport.scenario.capture_dimensions = (320, 120)
-    fake_transport.scenario.capture_images = (
-        _grid_png(),
-        _grid_png(),
-        _grid_png(cursor_badge_only=True),
-    )
-    fake_transport.scenario.semantic_snapshots = ((old,), (old,), (echoed,))
-    fake_transport.scenario.rotate_element_tokens = True
-    target_id, initial = _browser_target(service, fake_transport)
-
-    result = service.act(
-        "replace_text",
-        target_id,
-        OWNER,
-        element_token=initial.elements[0].token,
-        text="new",
-        capture_after=True,
-    )
-
-    assert result.outcome == "verified"
-    assert result.semantic_postcondition == "matched"
-    assert result.native_change == "changed"
-    assert result.visual_change == "unchanged"
-    assert result.effect_verified is True
-    assert result.action_completed is True
-    assert service.computer_use_completion_blocked(OWNER) is False
 
 
-def test_web_accessibility_echo_with_unverifiable_driver_remains_unresolved(
-    service,
-    fake_transport,
-) -> None:
-    old = {
-        "role": "Edit",
-        "label": "Web Composer",
-        "value": "old",
-        "enabled": True,
-        "in_web_content": True,
-        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
-    }
-    echoed = {**old, "value": "new"}
-    fake_transport.scenario.delivery_profile = "web_targeted_unverifiable"
-    fake_transport.scenario.capture_dimensions = (320, 120)
-    fake_transport.scenario.capture_images = (
-        _grid_png(),
-        _grid_png(),
-        _grid_png(cursor_badge_only=True),
-    )
-    fake_transport.scenario.semantic_snapshots = ((old,), (old,), (echoed,))
-    fake_transport.scenario.rotate_element_tokens = True
-    target_id, initial = _browser_target(service, fake_transport)
-
-    result = service.act(
-        "replace_text",
-        target_id,
-        OWNER,
-        element_token=initial.elements[0].token,
-        text="new",
-        capture_after=True,
-    )
-
-    assert result.outcome == "delivered_unverified"
-    assert result.semantic_postcondition == "matched"
-    assert result.driver_verdict == "unverifiable"
-    assert result.visual_change == "unchanged"
-    assert result.effect_verified is False
-    assert service.computer_use_completion_blocked(OWNER) is True
 
 
-def test_catalyst_null_value_is_unavailable_not_verified_or_contradicted(
-    service,
-    fake_transport,
-) -> None:
-    target = {
-        "role": "Edit",
-        "label": "Native Editor",
-        "value": None,
-        "enabled": True,
-        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
-    }
-    fake_transport.scenario.delivery_profile = "catalyst_value_unavailable"
-    fake_transport.scenario.capture_dimensions = (320, 120)
-    fake_transport.scenario.capture_images = (_grid_png(), _grid_png(), _grid_png())
-    fake_transport.scenario.semantic_snapshots = ((target,), (target,), (target,))
-    fake_transport.scenario.rotate_element_tokens = True
-    target_id, initial = _browser_target(service, fake_transport)
-
-    result = service.act(
-        "replace_text",
-        target_id,
-        OWNER,
-        element_token=initial.elements[0].token,
-        text="",
-        capture_after=True,
-    )
-
-    assert result.outcome == "delivered_unverified"
-    assert result.semantic_postcondition == "unavailable"
-    assert result.native_change == "unknown"
-    assert result.effect_verified is False
-    assert service.computer_use_completion_blocked(OWNER) is True
 
 
-def test_exact_replacement_with_target_display_change_is_displayed_scope_only(
-    service,
-    fake_transport,
-) -> None:
-    old = {
-        "role": "Edit",
-        "label": "Document field",
-        "value": "old",
-        "enabled": True,
-        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
-    }
-    changed = {**old, "value": "new"}
-    fake_transport.scenario.capture_dimensions = (320, 120)
-    fake_transport.scenario.capture_images = (
-        _grid_png(),
-        _grid_png(),
-        _grid_png(displayed_text=True),
-    )
-    fake_transport.scenario.semantic_snapshots = ((old,), (old,), (changed,))
-    fake_transport.scenario.rotate_element_tokens = True
-    target_id, initial = _browser_target(service, fake_transport)
-
-    result = service.act(
-        "replace_text",
-        target_id,
-        OWNER,
-        element_token=initial.elements[0].token,
-        text="new",
-        capture_after=True,
-    )
-
-    assert result.outcome == "verified"
-    assert result.semantic_postcondition == "matched"
-    assert result.effect_verified is True
-    assert result.action_completed is True
-    assert result.verified_scope == "exact_semantic_value"
 
 
-def test_exact_replacement_already_satisfied_skips_dispatch(service, fake_transport) -> None:
-    satisfied = {
-        "role": "Edit",
-        "label": "Document field",
-        "value": "already",
-        "enabled": True,
-        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
-    }
-    fake_transport.scenario.capture_dimensions = (320, 120)
-    fake_transport.scenario.capture_images = (_grid_png(), _grid_png())
-    fake_transport.scenario.semantic_snapshots = ((satisfied,), (satisfied,))
-    fake_transport.scenario.rotate_element_tokens = True
-    target_id, initial = _browser_target(service, fake_transport)
-    calls_before = len(fake_transport.calls)
-
-    result = service.act(
-        "replace_text",
-        target_id,
-        OWNER,
-        element_token=initial.elements[0].token,
-        text="already",
-        capture_after=True,
-    )
-
-    assert result.outcome == "verified"
-    assert result.cause == "already_satisfied"
-    assert result.semantic_postcondition == "matched"
-    assert result.action_dispatched is False
-    assert result.action_completed is True
-    assert result.effect_verified is True
-    assert result.verified_scope == "exact_semantic_value"
-    assert all(name != "set_value" for name, _args in fake_transport.calls[calls_before:])
 
 
-def test_fresh_exact_native_capture_clears_pending_without_required_pixel_change(
-    service,
-    fake_transport,
-) -> None:
-    old = {
-        "role": "Edit",
-        "label": "Document field",
-        "value": "old",
-        "enabled": True,
-        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
-    }
-    requested = {**old, "value": "new"}
-    fake_transport.scenario.capture_dimensions = (320, 120)
-    fake_transport.scenario.capture_images = (
-        _grid_png(),
-        _grid_png(),
-        _grid_png(cursor_badge_only=True),
-        _grid_png(displayed_text=True),
-    )
-    fake_transport.scenario.semantic_snapshots = (
-        (old,),
-        (old,),
-        (requested,),
-        (requested,),
-    )
-    fake_transport.scenario.rotate_element_tokens = True
-    target_id, initial = _browser_target(service, fake_transport)
-
-    uncertain = service.act(
-        "replace_text",
-        target_id,
-        OWNER,
-        element_token=initial.elements[0].token,
-        text="new",
-    )
-    resolved = service.capture(target_id, OWNER)
-
-    assert uncertain.outcome == "verified"
-    assert uncertain.computer_use_completion_blocked is False
-    assert resolved.computer_use_completion_blocked is False
-    assert service.computer_use_completion_blocked(OWNER) is False
 
 
-def test_permitted_recovery_click_invalidates_pending_pixel_comparison(
-    service,
-    fake_transport,
-) -> None:
-    old = {
-        "role": "Edit",
-        "label": "Document field",
-        "value": "old",
-        "enabled": True,
-        "in_web_content": True,
-        "frame": {"x": 20, "y": 30, "w": 260, "h": 52},
-    }
-    requested = {**old, "value": "new"}
-    fake_transport.scenario.capture_dimensions = (320, 120)
-    fake_transport.scenario.capture_images = (
-        _grid_png(),
-        _grid_png(),
-        _grid_png(cursor_badge_only=True),
-        _grid_png(displayed_text=True),
-    )
-    fake_transport.scenario.semantic_snapshots = (
-        (old,),
-        (old,),
-        (requested,),
-        (requested,),
-    )
-    fake_transport.scenario.rotate_element_tokens = True
-    fake_transport.scenario.delivery_profile = "web_targeted_unverifiable"
-    target_id, initial = _browser_target(service, fake_transport)
-    uncertain = service.act(
-        "replace_text",
-        target_id,
-        OWNER,
-        element_token=initial.elements[0].token,
-        text="new",
-    )
-
-    service.act(
-        "click",
-        target_id,
-        OWNER,
-        element_token=uncertain.elements[0].token,
-        approval_mode="allow_all",
-    )
-    later = service.capture(target_id, OWNER)
-
-    assert later.computer_use_completion_blocked is True
-    assert service.computer_use_completion_blocked(OWNER) is True
 
 
-def test_single_accepted_unchanged_coordinate_action_is_not_a_tool_error(
-    service,
-    fake_transport,
-) -> None:
-    fake_transport.scenario.capture_dimensions = (64, 64)
-    fake_transport.scenario.capture_images = (_png(), _png())
-    fake_transport.scenario.effect = "unverifiable"
-    target_id, _observation = _browser_target(service, fake_transport)
-
-    result = service.act("click", target_id, OWNER, x=12, y=12, capture_after=True)
-    payload = json.loads(_observation_payload(result))
-
-    assert payload["ok"] is True
-    assert payload["error"] is False
-    assert payload["action_dispatched"] is True
-    assert payload["action_completed"] is False
-    assert payload["visual_change"] == "unchanged"
-    assert payload["effect_verified"] is False
-    assert "error_code" not in payload
 
 
 def test_model_projection_is_bounded_but_full_validated_elements_remain_ephemeral(
@@ -795,111 +355,12 @@ def test_tokens_omitted_from_the_model_projection_cannot_be_used(service, fake_t
     assert [name for name, _args in fake_transport.calls].count("click") == 0
 
 
-def test_prepared_target_clears_on_takeover_and_stays_clear_after_resume(
-    service,
-    fake_transport,
-) -> None:
-    target_id, _observation = _browser_target(service, fake_transport)
-    service.act("focus", target_id, OWNER)
-    assert service.status_snapshot()["foreground_prepared"] is True
-
-    token = service.take_over()
-    assert service.status_snapshot()["foreground_prepared"] is False
-    service.resume(OWNER, takeover_token=token)
-
-    assert service.status_snapshot()["foreground_prepared"] is False
-    service.act("scroll", target_id, OWNER, direction="down", amount=3)
-    scroll_args = [args for name, args in fake_transport.calls if name == "scroll"][-1]
-    assert scroll_args.get("delivery_mode", "background") == "background"
 
 
-def test_prepared_target_clears_on_target_change_focus_failure_and_stop(
-    service,
-    fake_transport,
-) -> None:
-    target_id, _observation = _browser_target(service, fake_transport)
-    service.act("focus", target_id, OWNER)
-    fake_transport.scenario.windows = (
-        {
-            "window_id": 601,
-            "pid": 2601,
-            "app_name": "Notepad",
-            "title": "Example note - Notepad",
-            "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
-            "is_on_screen": True,
-        },
-    )
-    fake_transport.scenario.capture_pid = 2601
-    fake_transport.scenario.capture_window_id = 601
-    other_target = service.list_windows(OWNER, app="Notepad")[0]["target_id"]
-    service.capture(other_target, OWNER)
-    assert service.status_snapshot()["foreground_prepared"] is False
-
-    fake_transport.scenario.action_error_code = "focus_failed"
-    with pytest.raises(ComputerUseError):
-        service.act("focus", other_target, OWNER)
-    assert service.status_snapshot()["foreground_prepared"] is False
-
-    fake_transport.scenario.action_error_code = ""
-    service.act("focus", other_target, OWNER)
-    service.stop()
-    assert service.status_snapshot()["foreground_prepared"] is False
-    assert service.status_snapshot()["active"] is False
 
 
-def test_prepared_target_clears_on_cancellation_and_driver_disconnect(
-    service,
-    fake_transport,
-    monkeypatch,
-) -> None:
-    import row_bot.computer_use.service as service_module
-
-    target_id, _observation = _browser_target(service, fake_transport)
-    service.act("focus", target_id, OWNER)
-    cancelled_scope = type("CancelledScope", (), {"is_cancelled": lambda self: True})()
-    monkeypatch.setattr(service_module, "current_cancellation_scope", lambda: cancelled_scope)
-    with pytest.raises(concurrent.futures.CancelledError, match="stopped"):
-        service.act("scroll", target_id, OWNER, direction="down", amount=3)
-    assert service.status_snapshot()["foreground_prepared"] is False
-
-    monkeypatch.setattr(service_module, "current_cancellation_scope", lambda: None)
-    service.stop()
-    target_id, _observation = _browser_target(service, fake_transport)
-    service.act("focus", target_id, OWNER)
-    fake_transport.scenario.disconnect = True
-    with pytest.raises(ComputerUseError) as exc_info:
-        service.act("scroll", target_id, OWNER, direction="down", amount=3)
-    assert exc_info.value.code == "driver_unavailable"
-    assert service.status_snapshot()["foreground_prepared"] is False
-    assert service.status_snapshot()["active"] is False
 
 
-def test_unknown_visual_comparisons_do_not_consume_no_progress_budget(
-    service,
-    fake_transport,
-    monkeypatch,
-) -> None:
-    fake_transport.scenario.capture_dimensions = (64, 64)
-    fake_transport.scenario.capture_images = tuple(_png() for _ in range(4))
-    fake_transport.scenario.effect = "unverifiable"
-    target_id, _observation = _browser_target(service, fake_transport)
-    monkeypatch.setattr(service, "_visual_effect_in_region", lambda *_args, **_kwargs: "unknown")
-
-    for _attempt in range(3):
-        result = service.act(
-            "click",
-            target_id,
-            OWNER,
-            x=12,
-            y=12,
-            capture_after=True,
-            approval_mode="allow_all",
-        )
-        assert result.visual_change == "unknown"
-        assert result.action_completed is False
-
-    assert service.status_snapshot()["consecutive_visual_no_effects"] == 0
-    assert service.status_snapshot()["state"] == "observing"
 
 
 def test_generic_three_action_flow_stays_inside_native_budget(service, fake_transport) -> None:

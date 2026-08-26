@@ -131,6 +131,7 @@ class ActionReceipt:
     route: str = ""
     visual_change: str = "unknown"
     verified_outcome: bool | None = None
+    verified_scope: str = ""
     cause: str = ""
 
     def __post_init__(self) -> None:
@@ -148,6 +149,12 @@ class ActionReceipt:
             visual if visual in _VISUAL_CHANGES else "unknown",
         )
         object.__setattr__(self, "cause", str(self.cause or "")[:120])
+        scope = str(self.verified_scope or "").casefold()
+        object.__setattr__(
+            self,
+            "verified_scope",
+            scope if scope in {"delivery", "exact_value", "exact_state"} else "",
+        )
 
     @property
     def action(self) -> str:

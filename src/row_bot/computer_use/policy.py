@@ -175,14 +175,8 @@ def classify_action(
         )
     if action in {"list_apps", "list_windows", "capture", "wait", "stop"}:
         return PolicyDecision(PolicyOutcome.OBSERVATION, "Read-only observation or local lifecycle action.")
-    if foreground:
-        return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "Foreground takeover always requires confirmation.")
     if action in _CONSEQUENTIAL_TARGET_ACTIONS and is_consequential_label(target):
         return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "The target may create an external or hard-to-reverse effect.", False)
-    if coordinate_only and action in {"click", "double_click", "right_click", "key"}:
-        return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "An ambiguous coordinate action requires point-of-risk confirmation.")
-    if action == "key" and normalized_keys in {"enter", "return"}:
-        return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "Enter may submit the active form or dialog.", False)
     if action in {"launch_app", "focus", "click", "double_click", "right_click", "type", "replace_text", "key", "key_sequence", "scroll", "drag", "menu"}:
         return PolicyDecision(PolicyOutcome.ROUTINE, "Routine action inside the approved task-scoped target.")
     return PolicyDecision(PolicyOutcome.BLOCKED, "Unknown Computer action fails closed.", False)

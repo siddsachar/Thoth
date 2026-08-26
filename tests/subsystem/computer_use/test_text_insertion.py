@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from row_bot.computer_use.client import CuaClient
 from row_bot.computer_use.service import (
+    ActionReceipt,
     ComputerUseError,
     ComputerUseService,
     LeaseOwner,
@@ -13,369 +15,273 @@ from row_bot.computer_use.service import (
 OWNER = LeaseOwner("text-thread", "text-generation", "text-task")
 
 
-class _Vision:
-    def __init__(self) -> None:
-        self.questions: list[str] = []
-
-    def analyze(self, _image: bytes, question: str) -> str:
-        self.questions.append(question)
-        return "Original content remains and the requested insertion is visible."
-
-
-def _notepad_target(service, fake_transport) -> tuple[str, Observation]:
-    fake_transport.scenario.windows = ({
-        "window_id": 404,
-        "pid": 5404,
-        "app_name": "Notepad",
-        "title": "target-a.txt - Notepad",
-        "bounds": {"x": 10, "y": 10, "width": 800, "height": 600},
-        "is_on_screen": True,
-    },)
-    service.acquire(OWNER, validate_context=False)
-    target = service.list_windows(OWNER, app="Notepad", window_hint="target-a.txt")[0]["target_id"]
-    return target, service.capture(target, OWNER)
-
-
-def _selected_caret_surface(fake_transport) -> None:
-    fake_transport.scenario.semantic_elements = (
+def _target(
+    service: ComputerUseService,
+    fake_transport,
+    *elements: dict,
+) -> tuple[str, Observation]:
+    fake_transport.scenario.apps = (
+        {"name": "Document Editor.exe", "pid": 5404, "running": True, "active": True},
+    )
+    fake_transport.scenario.windows = (
         {
-            "role": "TextField",
-            "label": "Document editor",
-            "enabled": True,
-            "selected": True,
-            "frame": {"x": 20, "y": 30, "w": 500, "h": 300},
+            "window_id": 404,
+            "pid": 5404,
+            "app_name": "Document Editor.exe",
+            "title": "Document",
+            "bounds": {"x": 10, "y": 10, "width": 800, "height": 600},
+            "is_on_screen": True,
         },
     )
-    fake_transport.scenario.rotate_element_tokens = True
+    fake_transport.scenario.capture_pid = 5404
+    fake_transport.scenario.capture_window_id = 404
+    fake_transport.scenario.semantic_elements = tuple(elements)
+    observed = service.capture(owner=OWNER, app="Document Editor")
+    return observed.target.target_id, observed
 
 
-def test_type_token_fresh_rematches_and_uses_exact_driver_target(
+def test_current_token_is_dispatched_directly_without_hidden_capture(
     service,
     fake_transport,
 ) -> None:
-    original = "TARGET A"
-    fake_transport.scenario.document_value = original
-    fake_transport.document_value = original
-    fake_transport.scenario.delivery_profile = "background_refused"
-    _selected_caret_surface(fake_transport)
-    target, observation = _notepad_target(service, fake_transport)
+    fake_transport.scenario.rotate_element_tokens = True
+    target, observed = _target(
+        service,
+        fake_transport,
+        {"role": "TextField", "label": "Editor", "value": "original"},
+    )
+    calls_before = len(fake_transport.calls)
 
     result = service.act(
         "type",
         target,
         OWNER,
-        element_token=observation.elements[0].token,
-        text="\nVERIFIED A",
-        capture_after=True,
+        element_token=observed.elements[0].token,
+        text=" addition",
     )
 
-    type_calls = [args for name, args in fake_transport.calls if name == "type_text"]
-    assert len(type_calls) == 2
-    assert all("element_token" in args and "element_index" not in args for args in type_calls)
-    assert type_calls[0]["element_token"] != observation.elements[0].token
-    assert type_calls[1]["element_token"] != type_calls[0]["element_token"]
-    assert "delivery_mode" not in type_calls[0]
-    assert type_calls[1]["delivery_mode"] == "foreground"
-    assert fake_transport.document_value == original + "\nVERIFIED A"
-    assert isinstance(result, Observation)
-    assert all(name != "bring_to_front" for name, _args in fake_transport.calls)
+    assert isinstance(result, ActionReceipt)
+    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
+        "type_text"
+    ]
+    sent = fake_transport.calls[-1][1]
+    assert sent["element_token"] == observed.elements[0].token
+    assert fake_transport.value_for_label("Editor") == "original addition"
 
 
-def test_post_action_visual_question_runs_in_the_same_type_call(fake_client, fake_transport) -> None:
-    vision = _Vision()
+def test_explicit_post_action_vision_uses_one_later_capture(
+    fake_client: CuaClient,
+    fake_transport,
+) -> None:
+    class Vision:
+        def __init__(self) -> None:
+            self.questions: list[str] = []
+
+        def analyze(self, _image: bytes, question: str) -> str:
+            self.questions.append(question)
+            return "visible result"
+
+    vision = Vision()
     service = ComputerUseService(
         client_factory=lambda: fake_client,
         approval_callback=lambda _payload: True,
         vision_service=vision,
     )
-    fake_transport.scenario.document_value = "TARGET A"
-    fake_transport.document_value = "TARGET A"
-    _selected_caret_surface(fake_transport)
-    target, observation = _notepad_target(service, fake_transport)
+    target, observed = _target(
+        service,
+        fake_transport,
+        {"role": "TextField", "label": "Editor", "value": ""},
+    )
+    calls_before = len(fake_transport.calls)
 
     result = service.act(
         "type",
         target,
         OWNER,
-        element_token=observation.elements[0].token,
-        text="\nVERIFIED A",
+        element_token=observed.elements[0].token,
+        text="value",
         capture_after=True,
-        visual_question="Confirm the original visible content remains and the insertion is present.",
+        visual_question="What changed visually?",
     )
 
     assert isinstance(result, Observation)
-    assert len(vision.questions) == 1
-    assert "Original content remains" in result.vision_text
-    assert [name for name, _args in fake_transport.calls].count("get_window_state") == 3
+    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
+        "type_text",
+        "get_window_state",
+    ]
+    assert vision.questions == ["What changed visually?"]
 
 
-def test_unverifiable_text_delivery_is_never_replayed_without_explicit_driver_rejection(
+def test_unverifiable_delivery_is_not_replayed_and_creates_no_global_latch(
     service,
     fake_transport,
 ) -> None:
-    fake_transport.scenario.document_value = "TARGET A"
-    fake_transport.document_value = "TARGET A"
     fake_transport.scenario.delivery_profile = "web_targeted_unverifiable"
-    _selected_caret_surface(fake_transport)
-    target, observation = _notepad_target(service, fake_transport)
+    target, observed = _target(
+        service,
+        fake_transport,
+        {"role": "TextField", "label": "Editor", "value": ""},
+    )
+
+    result = service.act(
+        "type",
+        target,
+        OWNER,
+        element_token=observed.elements[0].token,
+        text="uncertain",
+    )
+    followup = service.act("key", target, OWNER, keys="enter")
+
+    assert result.action_dispatched is True
+    assert result.effect_verified is False
+    assert followup.action_dispatched is True
+    assert [name for name, _args in fake_transport.calls].count("type_text") == 1
+    assert not hasattr(service, "_pending_mutation")
+    assert not hasattr(service, "_completion_ledger")
+
+
+def test_background_refusal_allows_one_foreground_type_without_focus(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.background_unavailable_tools = frozenset({"type_text"})
+    target, observed = _target(
+        service,
+        fake_transport,
+        {"role": "ComboBox", "label": "Editable Combo", "value": ""},
+    )
+    calls_before = len(fake_transport.calls)
 
     service.act(
         "type",
         target,
         OWNER,
-        element_token=observation.elements[0].token,
-        text="\nVERIFIED A",
+        element_token=observed.elements[0].token,
+        text="query",
+        approval_mode="allow_all",
     )
 
-    assert [name for name, _args in fake_transport.calls].count("type_text") == 1
-    assert fake_transport.document_value == "TARGET A\nVERIFIED A"
-    assert service.computer_use_completion_blocked(OWNER) is True
+    calls = fake_transport.calls[calls_before:]
+    assert [name for name, _args in calls] == ["type_text", "type_text"]
+    assert calls[0][1]["element_token"] == observed.elements[0].token
+    assert calls[1][1]["element_token"] == observed.elements[0].token
+    assert calls[1][1]["delivery_mode"] == "foreground"
 
 
-def test_foreground_focus_refusal_changes_no_text_and_has_no_further_fallback(
+def test_foreground_focus_refusal_changes_no_text_and_has_no_third_rung(
     service,
     fake_transport,
 ) -> None:
-    fake_transport.scenario.document_value = "original"
-    fake_transport.document_value = "original"
     fake_transport.scenario.background_unavailable_tools = frozenset({"type_text"})
     fake_transport.scenario.delivery_profile = "focus_refused"
-    _selected_caret_surface(fake_transport)
-    target, observation = _notepad_target(service, fake_transport)
+    target, observed = _target(
+        service,
+        fake_transport,
+        {"role": "TextField", "label": "Editor", "value": "original"},
+    )
+    calls_before = len(fake_transport.calls)
 
     with pytest.raises(ComputerUseError) as refused:
         service.act(
             "type",
             target,
             OWNER,
-            element_token=observation.elements[0].token,
+            element_token=observed.elements[0].token,
             text=" must not appear",
             approval_mode="allow_all",
         )
 
     assert refused.value.code == "focus_refused"
-    assert fake_transport.document_value == "original"
-    assert [name for name, _args in fake_transport.calls].count("type_text") == 2
-    assert all(
-        name not in {"bring_to_front", "click", "press_key", "hotkey"}
-        for name, _args in fake_transport.calls
-    )
-    assert service.computer_use_completion_blocked(OWNER) is False
+    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
+        "type_text",
+        "type_text",
+    ]
+    assert fake_transport.value_for_label("Editor") == "original"
 
 
-def test_type_rejects_horizontal_tabs_before_approval_mutation_or_invalidation(
-    fake_client,
-    fake_transport,
-) -> None:
-    approvals: list[dict] = []
-    service = ComputerUseService(
-        client_factory=lambda: fake_client,
-        approval_callback=lambda payload: approvals.append(payload) or True,
-    )
-    target, observation = _notepad_target(service, fake_transport)
-    approvals.clear()
-    calls_before = len(fake_transport.calls)
-
-    with pytest.raises(ComputerUseError) as rejected:
-        service.act(
-            "type",
-            target,
-            OWNER,
-            element_token=observation.elements[2].token,
-            text="first\tsecond\nthird\tfourth",
-            expected_effect="Submit structured content",
-        )
-
-    assert rejected.value.code == "invalid_input"
-    assert "literal caret insertion" in str(rejected.value)
-    assert "clipboard" in str(rejected.value).casefold()
-    assert approvals == []
-    assert fake_transport.calls[calls_before:] == []
-    assert service.current_observation(target) is observation
-
-
-def test_type_preserves_legitimate_multiline_caret_insertion(
-    service,
-    fake_transport,
-) -> None:
-    fake_transport.scenario.document_value = "original"
-    fake_transport.document_value = "original"
-    _selected_caret_surface(fake_transport)
-    target, observation = _notepad_target(service, fake_transport)
-
-    service.act(
-        "type",
-        target,
-        OWNER,
-        element_token=observation.elements[0].token,
-        text="\nline two\nline three",
-    )
-
-    assert fake_transport.document_value == "original\nline two\nline three"
-    type_call = [args for name, args in fake_transport.calls if name == "type_text"][-1]
-    assert type_call["element_token"] != observation.elements[0].token
-
-
-def test_tokenless_type_preserves_current_caret_insertion_without_a_token(
+def test_tokenless_type_is_one_literal_current_caret_action(
     service,
     fake_transport,
 ) -> None:
     fake_transport.scenario.document_value = "current caret"
     fake_transport.document_value = "current caret"
-    target, _observation = _notepad_target(service, fake_transport)
-
-    service.act("type", target, OWNER, text=" insertion")
-
-    type_call = [args for name, args in fake_transport.calls if name == "type_text"][-1]
-    assert "element_token" not in type_call
-    assert "element_index" not in type_call
-    assert fake_transport.document_value == "current caret insertion"
-
-
-def test_type_token_accepts_unselected_editable_combo_and_cannot_touch_decoy(
-    service,
-    fake_transport,
-) -> None:
-    fake_transport.scenario.semantic_elements = (
-        {
-            "role": "TextField",
-            "label": "Decoy Field",
-            "value": "decoy stays",
-            "enabled": True,
-            "selected": False,
-            "frame": {"x": 10, "y": 10, "w": 400, "h": 100},
-        },
-        {
-            "role": "ComboBox",
-            "label": "Native Editor",
-            "value": "query",
-            "enabled": True,
-            "editable": True,
-            "selected": False,
-            "frame": {"x": 10, "y": 130, "w": 400, "h": 100},
-        },
+    target, _observed = _target(
+        service,
+        fake_transport,
+        {"role": "TextField", "label": "Editor"},
     )
-    fake_transport.scenario.rotate_element_tokens = True
-    target, observation = _notepad_target(service, fake_transport)
-    service.act(
-        "type",
-        target,
-        OWNER,
-        element_token=observation.elements[1].token,
-        text=" text",
-    )
-
-    calls = [args for name, args in fake_transport.calls if name == "type_text"]
-    assert len(calls) == 1
-    assert calls[0]["element_token"] != observation.elements[1].token
-    assert fake_transport.value_for_label("Native Editor") == "query text"
-    assert fake_transport.value_for_label("Decoy Field") == "decoy stays"
-    assert all(
-        name not in {"click", "bring_to_front", "press_key", "hotkey"}
-        for name, _args in fake_transport.calls
-    )
-
-
-def test_type_token_does_not_require_selection_on_fresh_editable_target(
-    service,
-    fake_transport,
-) -> None:
-    selected = (
-        {
-            "role": "Edit",
-            "label": "Editor",
-            "enabled": True,
-            "selected": True,
-            "frame": {"x": 10, "y": 10, "w": 400, "h": 200},
-        },
-    )
-    unselected = ({**selected[0], "selected": False},)
-    fake_transport.scenario.semantic_snapshots = (selected, unselected)
-    fake_transport.scenario.rotate_element_tokens = True
-    target, observation = _notepad_target(service, fake_transport)
     calls_before = len(fake_transport.calls)
 
+    service.act("type", target, OWNER, text="\tline two\nline three")
+
+    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
+        "type_text"
+    ]
+    assert fake_transport.document_value == "current caret\tline two\nline three"
+    assert "element_token" not in fake_transport.calls[-1][1]
+
+
+def test_combo_type_changes_only_the_supplied_token_not_a_decoy(
+    service,
+    fake_transport,
+) -> None:
+    target, observed = _target(
+        service,
+        fake_transport,
+        {"role": "TextField", "label": "Decoy Field", "value": "decoy"},
+        {"role": "ComboBox", "label": "Editable Combo", "value": "query"},
+    )
+
     service.act(
         "type",
         target,
         OWNER,
-        element_token=observation.elements[0].token,
-        text="dispatch exactly here",
+        element_token=observed.elements[1].token,
+        text=" result",
     )
 
-    calls = fake_transport.calls[calls_before:]
-    assert [name for name, _args in calls] == ["get_window_state", "type_text"]
-    assert calls[-1][1]["element_token"] != observation.elements[0].token
+    assert fake_transport.value_for_label("Editable Combo") == "query result"
+    assert fake_transport.value_for_label("Decoy Field") == "decoy"
 
 
 @pytest.mark.parametrize("role", ["Cell", "DataItem", "GridCell", "TableCell"])
-def test_type_token_rejects_selected_document_value_roles(
-    service,
-    fake_transport,
-    role: str,
-) -> None:
-    fake_transport.scenario.semantic_elements = (
-        {
-            "role": role,
-            "label": "Document item",
-            "enabled": True,
-            "selected": True,
-            "frame": {"x": 10, "y": 10, "w": 120, "h": 40},
-        },
+def test_document_value_roles_reach_cua(role, service, fake_transport) -> None:
+    target, observed = _target(
+        service,
+        fake_transport,
+        {"role": role, "label": "Named Cell", "value": ""},
     )
-    fake_transport.scenario.rotate_element_tokens = True
-    target, observation = _notepad_target(service, fake_transport)
     calls_before = len(fake_transport.calls)
 
-    with pytest.raises(ComputerUseError) as rejected:
-        service.act(
-            "type",
-            target,
-            OWNER,
-            element_token=observation.elements[0].token,
-            text="must use exact replacement for a complete value",
-        )
+    service.act(
+        "type",
+        target,
+        OWNER,
+        element_token=observed.elements[0].token,
+        text="value",
+    )
 
-    assert rejected.value.code == "invalid_input"
     assert [name for name, _args in fake_transport.calls[calls_before:]] == [
-        "get_window_state"
+        "type_text"
     ]
 
 
 @pytest.mark.parametrize(
-    "fresh_element",
+    "element",
     [
-        {"role": "Edit", "label": "Native Editor", "enabled": False},
-        {
-            "role": "Edit",
-            "label": "Native Editor",
-            "enabled": True,
-            "read_only": True,
-        },
-        {"role": "Document", "label": "Native Editor", "enabled": True},
-        {"role": "Group", "label": "Native Editor", "enabled": True},
-        {"role": "Button", "label": "Native Editor", "enabled": True},
-        {
-            "role": "ComboBox",
-            "label": "Native Editor",
-            "enabled": True,
-            "editable": False,
-        },
+        {"role": "TextField", "label": "Disabled", "enabled": False},
+        {"role": "TextField", "label": "Read only", "read_only": True},
+        {"role": "Pane", "label": "Structural"},
+        {"role": "Window", "label": "Structural"},
+        {"role": "StaticText", "label": "Structural"},
     ],
 )
-def test_type_token_rejects_disabled_read_only_container_and_noneditable_targets(
+def test_explicit_local_blocks_dispatch_zero_mutations(
+    element,
     service,
     fake_transport,
-    fresh_element: dict,
 ) -> None:
-    original = {
-        **fresh_element,
-        "frame": {"x": 10, "y": 10, "w": 400, "h": 100},
-    }
-    fresh = dict(original)
-    fake_transport.scenario.semantic_snapshots = ((original,), (fresh,))
-    fake_transport.scenario.rotate_element_tokens = True
-    target, observation = _notepad_target(service, fake_transport)
+    target, observed = _target(service, fake_transport, element)
     calls_before = len(fake_transport.calls)
 
     with pytest.raises(ComputerUseError) as rejected:
@@ -383,44 +289,9 @@ def test_type_token_rejects_disabled_read_only_container_and_noneditable_targets
             "type",
             target,
             OWNER,
-            element_token=observation.elements[0].token,
-            text="must not dispatch",
+            element_token=observed.elements[0].token,
+            text="blocked",
         )
 
     assert rejected.value.code == "invalid_input"
-    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
-        "get_window_state"
-    ]
-
-
-def test_type_token_rejects_ambiguous_fresh_exact_match_without_dispatch(
-    service,
-    fake_transport,
-) -> None:
-    editable = {
-        "role": "Edit",
-        "label": "Native Editor",
-        "enabled": True,
-        "frame": {"x": 10, "y": 10, "w": 400, "h": 100},
-    }
-    fake_transport.scenario.semantic_snapshots = (
-        (editable,),
-        (editable, dict(editable)),
-    )
-    fake_transport.scenario.rotate_element_tokens = True
-    target, observation = _notepad_target(service, fake_transport)
-    calls_before = len(fake_transport.calls)
-
-    with pytest.raises(ComputerUseError) as rejected:
-        service.act(
-            "type",
-            target,
-            OWNER,
-            element_token=observation.elements[0].token,
-            text="must not dispatch",
-        )
-
-    assert rejected.value.code == "ambiguous_target"
-    assert [name for name, _args in fake_transport.calls[calls_before:]] == [
-        "get_window_state"
-    ]
+    assert fake_transport.calls[calls_before:] == []

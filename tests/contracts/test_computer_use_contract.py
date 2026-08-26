@@ -24,15 +24,14 @@ def test_model_tool_is_one_flat_provider_neutral_schema() -> None:
     assert "comma-separated" in schema["properties"]["keys"]["description"]
     assert "7,*,8,=" in schema["properties"]["keys"]["description"]
     assert "compact" in schema["properties"]["keys"]["description"].lower()
-    assert "current caret" in schema["properties"]["text"]["description"]
+    assert "current-caret" in schema["properties"]["text"]["description"]
     assert "complete value" in schema["properties"]["text"]["description"]
-    assert "replace_text" in schema["properties"]["element_token"]["description"]
-    assert "fresh-rematches" in schema["properties"]["element_token"]["description"]
-    assert "focus and insert" in schema["properties"]["element_token"]["description"]
-    assert "Before the first coordinate-only visual action" in schema["properties"]["visual_question"]["description"]
-    assert "Token actions stay on the native fast path" in schema["properties"]["visual_question"]["description"]
-    assert "exactly once" in schema["properties"]["visual_question"]["description"]
-    assert "never a semantic Boolean" in schema["properties"]["visual_question"]["description"]
+    assert "dispatched directly to Cua" in schema["properties"]["element_token"]["description"]
+    assert "read-only" in schema["properties"]["element_token"]["description"]
+    assert "zero Vision calls" in schema["properties"]["visual_question"]["description"]
+    assert "at most once" in schema["properties"]["visual_question"]["description"]
+    assert "exact normalized accessible label" in schema["properties"]["semantic_label"]["description"]
+    assert "ambiguous exact matches are refused" in schema["properties"]["semantic_label"]["description"]
     description = ComputerUseTool().description
     assert len(description.split()) <= 120
     assert "native desktop app windows" in description

@@ -192,7 +192,7 @@ def test_new_lease_never_shows_previous_session_action(service) -> None:
     assert service.status_snapshot()["action_count"] == 0
 
 
-def test_new_generation_never_inherits_prior_unresolved_completion(
+def test_new_generation_has_no_replay_or_completion_state(
     service,
     fake_transport,
 ) -> None:
@@ -220,15 +220,12 @@ def test_new_generation_never_inherits_prior_unresolved_completion(
     service.stop()
     service.acquire(OWNER_B, validate_context=False)
 
-    assert service.computer_use_completion_blocked(OWNER_B) is False
-    assert service.status_snapshot()["computer_use_completion_blocked"] is False
-    assert service.computer_use_completion_blocked(
-        thread_id=OWNER_A.thread_id,
-        generation_id=OWNER_A.generation_id,
-    ) is True
+    assert not hasattr(service, "_pending_mutation")
+    assert not hasattr(service, "_completion_ledger")
+    assert "computer_use_completion_blocked" not in service.status_snapshot()
 
 
-def test_takeover_clears_private_pending_attempt_but_not_completion_evidence(
+def test_takeover_keeps_prior_unverified_receipt_truthful_without_state(
     service,
     fake_transport,
 ) -> None:
@@ -244,7 +241,7 @@ def test_takeover_clears_private_pending_attempt_but_not_completion_evidence(
     service.acquire(OWNER_A, validate_context=False)
     target_id = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
     observation = service.capture(target_id, OWNER_A)
-    service.act(
+    receipt = service.act(
         "replace_text",
         target_id,
         OWNER_A,
@@ -252,16 +249,15 @@ def test_takeover_clears_private_pending_attempt_but_not_completion_evidence(
         text="private unresolved value",
     )
 
-    assert service._pending_mutation is not None
-    before = service.completion_evidence_statuses(OWNER_A)
     service.take_over()
 
-    assert service._pending_mutation is None
-    assert service.completion_evidence_statuses(OWNER_A) == before
-    assert before[-1]["status"] == "unresolved"
+    assert receipt.action_dispatched is True
+    assert receipt.effect_verified is False
+    assert not hasattr(service, "_pending_mutation")
+    assert not hasattr(service, "_completion_ledger")
 
 
-def test_different_explicit_replacement_supersedes_unresolved_attempt(
+def test_different_explicit_replacement_is_allowed_after_unverified_delivery(
     service,
     fake_transport,
 ) -> None:
@@ -290,19 +286,17 @@ def test_different_explicit_replacement_supersedes_unresolved_attempt(
         "replace_text",
         target_id,
         OWNER_A,
-        element_token=first.elements[0].token,
+        element_token=observation.elements[0].token,
         text="different private value",
     )
 
-    statuses = service.completion_evidence_statuses(OWNER_A)
-    assert [entry["status"] for entry in statuses[-2:]] == [
-        "superseded",
-        "verified",
-    ]
-    assert second.outcome == "verified"
-    assert service.computer_use_completion_blocked(OWNER_A) is False
-    assert "first private value" not in repr(statuses)
-    assert "different private value" not in repr(statuses)
+    assert first.action_dispatched is True
+    assert first.effect_verified is False
+    assert second.action_dispatched is True
+    assert second.effect_verified is True
+    assert [name for name, _args in fake_transport.calls].count("set_value") == 2
+    assert "first private value" not in repr(service.status_snapshot())
+    assert "different private value" not in repr(service.status_snapshot())
 
 
 def test_app_approval_denial_is_terminal_and_clears_live_control(fake_client) -> None:

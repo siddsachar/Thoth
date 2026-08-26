@@ -4719,47 +4719,6 @@ def _route_waiting_parent_input(user_input: str, config: dict):
         raise
 
 
-_COMPUTER_USE_UNVERIFIED_FINAL = (
-    "I could not verify the requested target change, so no success can be "
-    "reported. Use fresh exact semantic evidence where available; do not replay "
-    "an unresolved insertion."
-)
-
-
-def _apply_computer_use_final_status_gate(
-    result: str | dict,
-    config: dict,
-    *,
-    service=None,
-    consume: bool = True,
-) -> str | dict:
-    """Apply and consume the generation's privacy-safe completion evidence."""
-
-    if not isinstance(result, str):
-        return result
-    try:
-        if service is None:
-            from row_bot.computer_use.service import get_computer_use_service
-
-            service = get_computer_use_service()
-        configurable = (config or {}).get("configurable") or {}
-        thread_id = str(configurable.get("thread_id") or "")
-        generation_id = str(configurable.get("generation_id") or "")
-        blocked = service.computer_use_completion_blocked(
-            thread_id=thread_id,
-            generation_id=generation_id,
-        )
-        if consume and thread_id and generation_id:
-            service.consume_completion_evidence(
-                thread_id=thread_id,
-                generation_id=generation_id,
-            )
-        return _COMPUTER_USE_UNVERIFIED_FINAL if blocked else result
-    except Exception:
-        logger.debug("Computer Use final-status gate check failed safely", exc_info=True)
-        return result
-
-
 def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
                  *, stop_event: threading.Event | None = None) -> str | dict:
     """Invoke the shared parent graph and apply the durable orchestration guard."""
@@ -4776,7 +4735,6 @@ def invoke_agent(user_input: str, enabled_tool_names: list[str], config: dict,
         config,
         stop_event=stop_event,
     )
-    result = _apply_computer_use_final_status_gate(result, config)
     _complete_unified_parent_pass(result, enabled_tool_names, config)
     return result
 
@@ -5533,22 +5491,6 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
                                    stop_event=stop_event,
                                    phase_timings=phase_timings):
             yield from _memory_recall_warning_events(config)
-            if event[0] == "token":
-                gated_token = _apply_computer_use_final_status_gate(
-                    str(event[1] or ""),
-                    config,
-                    consume=False,
-                )
-                if gated_token == _COMPUTER_USE_UNVERIFIED_FINAL:
-                    continue
-            if event[0] == "done":
-                event = (
-                    "done",
-                    _apply_computer_use_final_status_gate(
-                        str(event[1] or ""),
-                        config,
-                    ),
-                )
             yield event
             if event[0] == "done":
                 parent_pass = _complete_unified_parent_pass(
@@ -5908,13 +5850,6 @@ def _tool_message_successful(message: ToolMessage) -> bool:
     if status and status != "success":
         return False
     content = _content_to_str(getattr(message, "content", ""))
-    if str(getattr(message, "name", "") or "") == "computer_use":
-        try:
-            payload = json.loads(content)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            payload = {}
-        if isinstance(payload, dict) and payload.get("computer_use_completion_blocked") is True:
-            return False
     return not content.strip().lower().startswith("tool error:")
 
 

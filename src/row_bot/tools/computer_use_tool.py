@@ -30,17 +30,20 @@ class ComputerUseInput(BaseModel):
     app: str = Field(default="", description="App display name for exact discovery, app-scoped initial capture, or launch; never a path or URL")
     window_hint: str = Field(default="", description="Optional user-provided title fragment used to narrow same-app window discovery; unrelated titles stay private")
     target_id: str = Field(default="", description="Opaque exact target ID. For initial capture of one already-open named app, omit this and pass app instead")
-    element_token: str = Field(default="", description="Opaque token from the latest capture. Token-bound type fresh-rematches one enabled writable text/search control and asks Cua to focus and insert into that exact target. replace_text requires a token for one exact complete-value replacement")
+    element_token: str = Field(default="", description="Opaque token from the latest capture. Current tokens are dispatched directly to Cua after explicit disabled, read-only, secure, protected, and structural checks")
     x: int = Field(default=-1, description="Window-local screenshot X coordinate; semantic tokens are preferred")
     y: int = Field(default=-1, description="Window-local screenshot Y coordinate; semantic tokens are preferred")
     end_x: int = Field(default=-1, description="Window-local drag end X")
     end_y: int = Field(default=-1, description="Window-local drag end Y")
-    text: str = Field(default="", description="Non-sensitive mutation text, hidden from returned and persisted state. Token-bound type inserts into the fresh exact editable target; tokenless type preserves the current caret/selection in the focused control. Horizontal tabs are rejected. replace_text sets one exact supported complete value. Never use passwords, OTPs, or payment credentials")
+    text: str = Field(default="", description="Non-sensitive mutation text, hidden from returned and persisted state. Token-bound type asks Cua to insert into the current semantic target; tokenless type is one current-caret action. replace_text sets one exact complete value. Never use passwords, OTPs, or payment credentials")
     keys: str = Field(default="", description="One key or plus-separated chord; for key_sequence, use 1-16 comma-separated Calculator keys such as 7,*,8,= or a compact safe expression such as 7×8=")
     direction: str = Field(default="", description="Scroll direction")
     amount: int = Field(default=0, description="Bounded scroll amount or wait milliseconds")
-    capture_after: bool = Field(default=False, description="Capture after the action only when the next decision or final verification needs changed pixels or geometry")
-    visual_question: str = Field(default="", description="Optional question for the configured VisionService, applied exactly once to launch_app or capture, or exactly once after an action when capture_after is true. Token actions stay on the native fast path unless this explicit post-action check is requested. Vision is advisory, never a semantic Boolean, and never verifies a semantic mutation. Before the first coordinate-only visual action, use one Vision-grounded capture to identify the screenshot-local control/canvas region")
+    capture_after: bool = Field(default=False, description="Request at most one later capture only when the next decision needs new state or exact native value readback")
+    visual_question: str = Field(default="", description="Optional explicit Vision question. Routine semantic capture uses zero Vision calls; Vision runs at most once only when semantic state cannot answer the next decision or the user asked for visual inspection")
+    semantic_label: str = Field(default="", description="Optional exact normalized accessible label filter for capture; ambiguous exact matches are refused")
+    semantic_role: str = Field(default="", description="Optional exact normalized semantic role filter for capture")
+    semantic_value_prefix: str = Field(default="", description="Optional exact normalized accessible value-prefix filter for capture; values remain hidden from output")
     expected_effect: str = Field(default="", description="Display context only; never authorization")
     destination: str = Field(default="", description="Display context for a recipient/destination; never authorization")
     menu_path: str = Field(default="", description="For menu only: 1-16 exact case-sensitive native menu labels separated by >; no fuzzy matching or coordinate fallback")
@@ -107,8 +110,6 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "handoff_required": "This protected action requires user takeover.",
             "approval_denied": "Computer access was denied.",
             "invalid_input": "Computer action input was invalid.",
-            "no_progress": "Computer Use stopped because repeated actions made no progress.",
-            "pending_mutation": "The same exact text insertion remains unresolved.",
         }
         remediation = {
             "ambiguous_target": "Select one opaque target_id from the returned candidates, then capture it.",
@@ -121,8 +122,6 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             ),
             "transient_driver_failure": "Retry this action once; stop if it fails again.",
             "paused_for_takeover": "Resume or Stop the session locally.",
-            "no_progress": "Review the target or take over; blind retries are disabled.",
-            "pending_mutation": "Do not replay the insertion. Capture exact semantic evidence, choose a different explicit replacement, or stop.",
             "focus_refused": "Do not retry with clicks, focus, keys, coordinates, labels, clipboard, shell, or an application-specific route.",
             "hard_blocked": "Do not retry, enumerate aliases, or use another Computer action to bypass this protection.",
         }.get(explicit_code, "")
@@ -139,7 +138,7 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
                 else remediation
             ),
             retryable=bool(getattr(exc, "retryable", False)),
-            terminal=explicit_code in {"hard_blocked", "handoff_required", "no_progress"},
+            terminal=explicit_code in {"hard_blocked", "handoff_required"},
         )
         if explicit_code == "ambiguous_target":
             decoded = json.loads(payload)
@@ -166,6 +165,15 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
                     "Retry capture with exactly one canonical name from running_candidates. "
                     "Do not fuzzy-match, infer an alias, launch another app, or use a window title."
                 )
+            return json.dumps(decoded, ensure_ascii=False)
+        observation = getattr(exc, "observation", None)
+        if observation is not None:
+            decoded = json.loads(payload)
+            decoded["fresh_observation"] = observation.model_text()
+            decoded["capture_is_fresh"] = True
+            decoded["next_action"] = (
+                "Use a returned current token on the next turn. The refused mutation was not replayed."
+            )
             return json.dumps(decoded, ensure_ascii=False)
         return payload
     if isinstance(exc, LeaseBusyError):
@@ -248,9 +256,6 @@ def _observation_payload(
     payload: dict[str, Any] = {
         "fresh_observation": observation.model_text(),
         "capture_is_fresh": True,
-        "computer_use_completion_blocked": bool(
-            getattr(observation, "computer_use_completion_blocked", False)
-        ),
     }
     vision_evidence = str(getattr(observation, "vision_text", "") or "")
     if vision_evidence:
@@ -285,10 +290,9 @@ def _observation_payload(
         payload["next_action"] = str(next_action)
     elif outcome == "delivered_unverified":
         payload["next_action"] = (
-            "The mutation was delivered but remains unresolved. Never replay an insertion. "
-            "A native replacement may be resolved by one fresh exact semantic capture; web "
-            "echo, Catalyst-null evidence, and Vision cannot verify it. Unrelated safe "
-            "navigation may continue, but do not commit or claim success."
+            "The mutation was delivered but not verified. Do not repeat that exact uncertain "
+            "insertion. Enter, navigation, later fields, capture, and truthful final answers "
+            "remain available."
         )
     elif semantic_postcondition == "contradicted":
         payload["next_action"] = (
@@ -298,11 +302,7 @@ def _observation_payload(
     return _json_payload(display_summary, **payload)
 
 
-def _action_payload(
-    receipt: ActionReceipt,
-    *,
-    computer_use_completion_blocked: bool = False,
-) -> str:
+def _action_payload(receipt: ActionReceipt) -> str:
     outcome = (
         "verified"
         if receipt.effect_verified
@@ -339,14 +339,7 @@ def _action_payload(
             if receipt.visual_change == "unknown"
             else receipt.visual_change
         ),
-        verified_scope=(
-            "exact_target"
-            if receipt.cause == "target_disappeared"
-            else "exact_driver_transaction"
-            if receipt.effect_verified
-            else ""
-        ),
-        computer_use_completion_blocked=computer_use_completion_blocked,
+        verified_scope=receipt.verified_scope,
         delivery_mode=receipt.delivery_mode,
         route=receipt.route,
         cause=receipt.cause,
@@ -354,9 +347,8 @@ def _action_payload(
             "The exact action scope was verified. Proceed using newly observed tokens when "
             "the next decision depends on changed semantic state."
             if receipt.effect_verified
-            else "Dispatch and driver verdict do not prove a semantic postcondition. Capture "
-            "only when the next decision requires state. Never replay an unresolved "
-            "insertion; unrelated safe navigation may continue."
+            else "Delivered/unverified is useful delivery. Do not repeat the exact uncertain "
+            "insertion; capture only when the next decision needs state."
         ),
     )
 
@@ -377,6 +369,9 @@ def _call_signature(
     direction: str,
     amount: int,
     capture_after: bool,
+    semantic_label: str,
+    semantic_role: str,
+    semantic_value_prefix: str,
     menu_path: list[str],
 ) -> tuple[Any, ...]:
     """Build an in-memory replay key without retaining typed content."""
@@ -400,6 +395,12 @@ def _call_signature(
         str(direction),
         int(amount),
         bool(capture_after),
+        bool(semantic_label),
+        len(str(semantic_label or "")),
+        bool(semantic_role),
+        len(str(semantic_role or "")),
+        bool(semantic_value_prefix),
+        len(str(semantic_value_prefix or "")),
         tuple(str(label) for label in menu_path),
     )
 
@@ -465,6 +466,9 @@ class ComputerUseTool(BaseTool):
             amount: int = 0,
             capture_after: bool = False,
             visual_question: str = "",
+            semantic_label: str = "",
+            semantic_role: str = "",
+            semantic_value_prefix: str = "",
             expected_effect: str = "",
             destination: str = "",
             menu_path: str = "",
@@ -491,6 +495,9 @@ class ComputerUseTool(BaseTool):
                 direction=direction,
                 amount=amount,
                 capture_after=capture_after,
+                semantic_label=semantic_label,
+                semantic_role=semantic_role,
+                semantic_value_prefix=semantic_value_prefix,
                 menu_path=exact_menu_path,
             )
             log_success = True
@@ -631,6 +638,9 @@ class ComputerUseTool(BaseTool):
                             app=app,
                             window_hint=window_hint,
                             visual_question=visual_question,
+                            semantic_label=semantic_label,
+                            semantic_role=semantic_role,
+                            semantic_value_prefix=semantic_value_prefix,
                             approval_mode=approval_mode,
                         )
                     record_result(observed)
@@ -689,12 +699,7 @@ class ComputerUseTool(BaseTool):
                         approval_mode=approval_mode,
                     )
                     record_result(menu_receipt)
-                    return _action_payload(
-                        menu_receipt,
-                        computer_use_completion_blocked=(
-                            service.computer_use_completion_blocked()
-                        ),
-                    )
+                    return _action_payload(menu_receipt)
                 result = service.act(
                         normalized,
                         target_id,
@@ -715,12 +720,7 @@ class ComputerUseTool(BaseTool):
                     )
                 record_result(result)
                 if isinstance(result, ActionReceipt):
-                    return _action_payload(
-                        result,
-                        computer_use_completion_blocked=(
-                            service.computer_use_completion_blocked()
-                        ),
-                    )
+                    return _action_payload(result)
                 visual_change = str(getattr(result, "visual_change", "unknown") or "unknown")
                 effect_verified = bool(getattr(result, "effect_verified", False))
                 if effect_verified:

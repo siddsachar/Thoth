@@ -152,24 +152,23 @@ def test_exact_replacement_is_atomic_token_bound_and_honors_explicit_vision_once
 
     set_value_calls = [args for name, args in transport.calls if name == "set_value"]
     assert len(set_value_calls) == 1
-    assert set_value_calls[0]["element_token"] != token
+    assert set_value_calls[0]["element_token"] == token
     assert set_value_calls[0]["value"] == f"<redacted:{len(replacement)} chars>"
     assert replaced["action_dispatched"] is True
     assert replaced["effect_verified"] is True
     assert replaced["action_completed"] is True
     assert replaced["outcome"] == "verified"
     assert replaced["semantic_postcondition"] == "matched"
-    assert replaced["computer_use_completion_blocked"] is False
+    assert replaced["verified_scope"] == "exact_value"
+    assert "computer_use_completion_blocked" not in replaced
     assert len(vision.calls) == 1
     assert all(name != "press_key" for name, _args in transport.calls)
 
 
-def test_pending_uncertain_mutation_blocks_successful_agent_final_status(
+def test_unverified_mutation_does_not_override_agent_final_status(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from row_bot.agent import _apply_computer_use_final_status_gate
-
     scenario = FakeScenario(
         apps=({"name": "Document App", "running": True, "active": True},),
         windows=(
@@ -210,32 +209,16 @@ def test_pending_uncertain_mutation_blocks_successful_agent_final_status(
             }
         )
     )
-    gated = _apply_computer_use_final_status_gate(
-        "Done — the requested document edit is complete.",
-        {
-            "configurable": {
-                "thread_id": "performance-thread",
-                "generation_id": "performance-generation",
-            }
-        },
-        service=service,
-    )
-
-    assert uncertain["computer_use_completion_blocked"] is True
-    assert "complete" not in gated.casefold()
-    assert "could not verify" in gated.casefold()
-    assert service.computer_use_completion_blocked(
-        thread_id="performance-thread",
-        generation_id="performance-generation",
-    ) is False
+    assert uncertain["action_dispatched"] is True
+    assert uncertain["effect_verified"] is False
+    assert "computer_use_completion_blocked" not in uncertain
+    assert not hasattr(service, "computer_use_completion_blocked")
 
 
-def test_advisory_vision_and_stop_do_not_resolve_generation_completion(
+def test_advisory_vision_and_stop_do_not_create_generation_completion_state(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from row_bot.agent import _apply_computer_use_final_status_gate
-
     scenario = FakeScenario(
         apps=({"name": "Document Surface", "running": True, "active": True},),
         windows=(
@@ -283,27 +266,16 @@ def test_advisory_vision_and_stop_do_not_resolve_generation_completion(
         )
     )
     stopped = tool.invoke({"action": "stop"})
-    gated = _apply_computer_use_final_status_gate(
-        "Done — the exact document change is complete.",
-        {
-            "configurable": {
-                "thread_id": "performance-thread",
-                "generation_id": "performance-generation",
-            }
-        },
-        service=service,
-    )
-
     assert uncertain["action_dispatched"] is True
     assert uncertain["effect_verified"] is False
     assert len(vision.calls) == 1
     assert "stopped" in stopped.casefold()
     assert [name for name, _args in transport.calls].count("set_value") == 1
-    assert "complete" not in gated.casefold()
-    assert "could not verify" in gated.casefold()
+    assert "computer_use_completion_blocked" not in uncertain
+    assert not hasattr(service, "computer_use_completion_blocked")
 
 
-def test_tabular_type_payload_is_rejected_with_no_hidden_recovery_route(
+def test_tabular_type_payload_is_one_literal_caret_action(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -333,10 +305,9 @@ def test_tabular_type_payload_is_rejected_with_no_hidden_recovery_route(
     captured = json.loads(tool.invoke({"action": "capture", "app": "Document App"}))
     target_id = captured["fresh_observation"].split("Target ID: ", 1)[1].splitlines()[0]
     token = captured["fresh_observation"].split("token=", 1)[1].split(" ", 1)[0]
-    current = service.current_observation(target_id)
     calls_before = len(transport.calls)
 
-    rejected = json.loads(
+    delivered = json.loads(
         tool.invoke(
             {
                 "action": "type",
@@ -347,16 +318,15 @@ def test_tabular_type_payload_is_rejected_with_no_hidden_recovery_route(
         )
     )
 
-    assert rejected["error_code"] == "invalid_input"
-    assert "literal caret insertion" in rejected["remediation"]
-    assert "replace_text" in rejected["remediation"]
-    assert "shell or clipboard" in rejected["remediation"]
-    assert transport.calls[calls_before:] == []
-    assert service.current_observation(target_id) is current
+    mutation_calls = transport.calls[calls_before:]
+    assert delivered["action_dispatched"] is True
+    assert [name for name, _args in mutation_calls] == ["type_text"]
+    assert mutation_calls[0][1]["text"] == "<redacted:25 chars>"
+    assert service.current_observation(target_id) is not None
     assert vision.calls == []
 
 
-def test_unverified_action_payload_forbids_dependent_mutation_assumptions(
+def test_unverified_action_payload_allows_later_work_without_replay(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -396,8 +366,8 @@ def test_unverified_action_payload_forbids_dependent_mutation_assumptions(
 
     assert result["action_dispatched"] is True
     assert result["effect_verified"] is False
-    assert "do not prove a semantic postcondition" in result["next_action"]
-    assert "Never replay an unresolved insertion" in result["next_action"]
+    assert "useful delivery" in result["next_action"]
+    assert "Do not repeat the exact uncertain insertion" in result["next_action"]
     assert [name for name, _args in transport.calls].count("type_text") == 1
     assert vision.calls == []
 
@@ -486,7 +456,7 @@ def test_approval_interrupt_logs_pending_then_one_completed_action(
     assert completed["driver_effect"] == "confirmed"
     assert completed["effect_verified"] is True
     assert completed["action_outcome"] == "verified"
-    assert completed["verified_scope"] == "exact_driver_transaction"
+    assert completed["verified_scope"] == "delivery"
     diagnostics = "\n".join(pending + receipts)
     assert private_label not in diagnostics
     assert token not in diagnostics
@@ -826,10 +796,8 @@ def test_three_action_capability_flow_meets_computer_and_vision_budgets(
     assert names.count("press_key") == 1
     assert names.count("scroll") == 1
     for name, arguments in transport.calls:
-        if name == "type_text":
+        if name in {"type_text", "press_key", "scroll"}:
             assert "delivery_mode" not in arguments
-        elif name in {"press_key", "scroll"}:
-            assert arguments["delivery_mode"] == "foreground"
 
 
 def test_native_browser_search_play_pause_flow_meets_budgets_without_blind_retry(
@@ -891,7 +859,7 @@ def test_native_browser_search_play_pause_flow_meets_budgets_without_blind_retry
     assert names.count("type_text") == 1
     assert names.count("press_key") == 3
     assert names.count("get_window_state") == 2
-    assert transport.effective_keys == ["enter", "space", "space"]
+    assert transport.effective_keys == []
     assert "launch_app" not in names
 
 

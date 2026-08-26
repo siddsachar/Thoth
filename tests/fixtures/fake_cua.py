@@ -51,11 +51,15 @@ def _editable_role(role: object) -> bool:
         character for character in str(role or "").casefold() if character.isalnum()
     )
     return normalized in {
+        "cell",
         "combobox",
+        "dataitem",
         "edit",
         "entry",
+        "gridcell",
         "input",
         "searchfield",
+        "tablecell",
         "textarea",
         "textfield",
         "textinput",

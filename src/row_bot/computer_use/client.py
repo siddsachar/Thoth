@@ -151,6 +151,8 @@ _MUTATION_ERROR_CODES = frozenset(
         "unsupported_role",
         "value_not_supported",
         "focus_refused",
+        "foreground_required",
+        "snapshot_expired",
     }
 )
 
