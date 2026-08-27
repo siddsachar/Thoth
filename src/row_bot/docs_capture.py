@@ -440,6 +440,13 @@ def docs_capture_query_params(client: Any) -> dict[str, str]:
         return {}
 
 
+def _list_real_capture_threads() -> list[Any]:
+    """Load real thread rows only for an explicitly authorized capture."""
+    from row_bot.threads import _list_threads
+
+    return _list_threads(include_details=True)
+
+
 def configure_docs_capture_state(
     state: Any,
     query: dict[str, str],
@@ -519,9 +526,7 @@ def configure_docs_capture_state(
         thread_id = query.get("thread_id") or str(demo.get("thread_id") or DEMO_THREAD_ID)
         thread_name = str(demo.get("thread_name") or "Demo thread")
         if real_data and (not thread_id or thread_id == DEMO_THREAD_ID):
-            from row_bot.threads import _list_threads
-
-            rows = _list_threads(include_details=True)
+            rows = _list_real_capture_threads()
             row = next(
                 (
                     item

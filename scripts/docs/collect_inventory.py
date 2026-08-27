@@ -595,7 +595,6 @@ def collect_environment() -> list[dict[str, Any]]:
         "ROW_BOT_XAI_OAUTH_REDIRECT_PORT": "Override the local xAI OAuth callback port.",
         "ROW_BOT_XAI_OAUTH_SCOPES": "Override the requested xAI OAuth scopes.",
         "ROW_BOT_REALTIME_INSTRUCTIONS": "Override additional realtime voice session instructions.",
-        "ROW_BOT_BUDDY_DESKTOP_ENABLED": "Enable or disable the native Buddy desktop overlay.",
     }
     source_roots = [ROOT / "src" / "row_bot"]
     source_by_variable: dict[str, list[str]] = {name: [] for name in variables}

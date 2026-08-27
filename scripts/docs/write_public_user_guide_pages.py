@@ -389,13 +389,18 @@ SETTINGS = {
     },
     "buddy": {
         "title": "Settings: Buddy",
-        "desc": "Configure Row-Bot's companion behavior, visibility, look, motion, and generated looks.",
+        "desc": "Use Buddy in the sidebar or as a compact desktop overlay, message the selected thread, handle approvals, and configure its appearance.",
         "shot": "settings-buddy",
-        "caption": "The Buddy tab controls the sidebar companion, desktop overlay, personality, look, motion, and optional custom-look generation.",
-        "overview": "Buddy is Row-Bot's visual companion. It can live in the sidebar, float in the workspace, or open as a desktop overlay. Buddy reflects app state but does not change model behavior by itself.",
+        "caption": "The Buddy tab controls companion visibility, personality, look, motion, and optional custom-look generation.",
+        "overview": "Buddy starts in the sidebar and, in the native Windows and macOS apps, can be dragged out into a compact always-on-top desktop overlay. The overlay follows the selected thread rather than creating a separate assistant.",
         "controls": [
-            "Enable switches decide whether Buddy appears in the sidebar, workspace, or desktop overlay.",
-            "Open and close overlay buttons control the separate desktop overlay window.",
+            "Show Buddy controls overall companion visibility.",
+            "Drag Buddy itself away from the sidebar dock to tear it off; releasing over the original dock cancels the move.",
+            "The overlay sends to the selected Chat, Developer, or Designer thread and shares its saved draft, model, tools, approval mode, and active response.",
+            "Enter sends, Shift+Enter adds a line, and Stop stops the selected thread's active response.",
+            "Simple approvals show Approve and Deny in Buddy; complex approvals open the full thread for review.",
+            "Open full thread, Collapse or Expand, Dock Buddy, and Hide Buddy are available from the overlay menu.",
+            "Talk and Dictate remain in the full Row-Bot thread; the compact overlay has no separate microphone session.",
             "Companion personality changes the tone of Buddy status cues.",
             "Bubble style changes how visual status appears.",
             "Look cards choose a bundled or custom Buddy appearance.",
@@ -404,15 +409,18 @@ SETTINGS = {
             "Retry motion rebuilds motion for an existing look.",
         ],
         "workflow": [
-            "Start with the bundled look and sidebar mode.",
-            "Enable desktop overlay only if you want Buddy outside the main Row-Bot window.",
+            "Select a thread, then drag Buddy onto the desktop and verify that thread's name in the overlay header.",
+            "Send a short message and use Open full thread for complex approvals, attachments, tool traces, voice, or full history.",
+            "Use Dock Buddy to return it to the sidebar. A fresh launch also resets placement to the dock.",
             "Generate a custom look after providers and media models are ready.",
             "Use still only if motion generation is unavailable or distracting.",
         ],
-        "saved": "Buddy preferences and custom Buddy assets are local app data. Generating a custom look may call a configured media provider depending on your setup.",
+        "saved": "Buddy visibility, appearance, overlay position, custom assets, and per-thread drafts are local app data. Generating a custom look may call a configured media provider depending on your setup.",
         "troubleshoot": [
-            "If Buddy does not appear, check the enable switches and refresh the app.",
-            "If the overlay is stuck, use Close overlay, then Open overlay again.",
+            "If docked Buddy does not appear, enable Show Buddy. If a torn-off overlay was hidden, use Show Buddy from the system tray.",
+            "If a drag snaps back, start on Buddy itself and release away from the dock in the native Windows or macOS app.",
+            "Use Open full thread when an approval, attachment, voice control, or tool trace needs more room.",
+            "Restart Row-Bot to return desktop placement to the sidebar dock; a saved hidden preference must still be enabled.",
             "If custom generation fails, check provider readiness and try still-only mode.",
         ],
     },
@@ -431,6 +439,7 @@ SETTINGS = {
             "Device controls select microphone and output devices.",
             "Voice Models shows runtime defaults and provider voice models.",
             "Diagnostics checks local audio and provider readiness.",
+            "Talk and Dictate stay in the full chat composer, not the compact Buddy desktop overlay.",
         ],
         "workflow": [
             "Use Dictate first if you want to review text before sending.",
@@ -691,7 +700,7 @@ These pages describe Row-Bot 4.8.0, the release represented by this source tree.
 - [Channels](/docs/integrations/channels), [MCP](/docs/integrations/mcp), and [Plugins](/docs/integrations/plugins) for integrations.
 - [Extend Row-Bot](/docs/extending/) to choose safely between Skills, Custom Tools, plugins, MCP, channels, and accounts.
 - [Operations, Data, And Recovery](/docs/operations/) for backups, restore, updates, repair, uninstall, and diagnostic sharing.
-- [Voice and Buddy](/docs/voice-and-buddy/) for speech input, Talk, Dictate, read-aloud, and the visual companion.
+- [Voice and Buddy](/docs/voice-and-buddy/) for speech input, Talk, Dictate, read-aloud, and Buddy's native drag-to-undock desktop overlay.
 
 ## How To Read These Docs
 
@@ -857,12 +866,16 @@ The Row-Bot Interface is the main workspace you see after launch. It combines co
 - **Rename** changes the visible thread title without changing the messages.
 - **Delete** removes the thread after confirmation. Use it carefully if you still need the conversation history.
 - **Agent profiles** opens the profile selector and profile management area.
-- **Buddy** appears near the bottom when enabled.
+- **Buddy** appears near the bottom when enabled. In the native Windows and macOS apps, drag Buddy itself away from the sidebar to undock its compact thread overlay.
 - **Settings** opens the full configuration dialog.
 
 ## Show All Threads
 
 When you have more threads than the sidebar shows, use Show All from the conversations area. The dialog is for search and cleanup: find an older thread, reopen it, rename it, or delete it after confirming. Start a new thread when the task has a new goal; continue an existing thread when the earlier context still matters.
+
+## Buddy Desktop Overlay
+
+The undocked Buddy follows the thread selected in Row-Bot and shows its name, Chat/Developer/Designer context, current response, and approval state. You can send text, stop the active response, handle simple approvals, or open the full thread for complete details. The overlay menu also collapses, hides, or docks Buddy. Read [Settings: Buddy](/docs/settings/buddy) for the complete user workflow.
 
 ## Home Tabs
 
@@ -998,6 +1011,10 @@ Chat is the main place to ask Row-Bot for help. A chat thread can stay simple, o
 3. Attach documents or enable retrieval only for relevant context.
 4. Let Row-Bot use tools, but approve file writes, browser actions, shell commands, account actions, channel sends, MCP calls, and plugin tools deliberately.
 5. Export or continue the thread after the work is complete.
+
+## Continue From The Buddy Overlay
+
+In the native Windows and macOS apps, drag Buddy from the sidebar onto the desktop for a compact view of the selected thread. Its composer shares that thread's saved draft, model, tools, approval mode, and active response. Simple approvals can appear in the overlay; open the full thread for complex approvals, attachments, transcript history, tool traces, model controls, Talk, or Dictate. See [Settings: Buddy](/docs/settings/buddy).
 
 ## What Is Saved
 
@@ -1523,7 +1540,7 @@ Authenticated owner sessions receive this complete Settings experience in both d
 - **Utilities** manages built-in helper tools.
 - **Tracker** configures structured personal logs.
 - **Knowledge** manages memory, graph, embeddings, and wiki export.
-- **Buddy** controls the visual companion.
+- **Buddy** controls companion visibility and appearance, plus the native drag-to-undock desktop overlay and its compact selected-thread experience.
 - **Voice** configures Talk, Dictate, read-aloud, models, devices, and diagnostics.
 - **Channels** configures external messaging connectors.
 - **MCP** manages external MCP tool servers.
@@ -1748,7 +1765,7 @@ Skills shape Row-Bot's behavior; they do not automatically grant credentials or 
         """
 # Voice And Buddy
 
-Voice and Buddy make Row-Bot feel less like a text box and more like a desktop companion. Voice handles speech input and optional spoken output. Buddy is the visual companion that reflects app state and can live in the sidebar, workspace, or desktop overlay.
+Voice and Buddy make Row-Bot feel less like a text box and more like a desktop companion. Voice handles speech input and optional spoken output. In the native Windows and macOS apps, Buddy can be dragged from the sidebar into a compact always-on-top desktop overlay.
 
 <Screenshot id="settings-voice" alt="Row-Bot Voice settings." caption="Voice settings control Dictate, Talk, read-aloud, voice models, devices, and diagnostics." />
 
@@ -1768,16 +1785,26 @@ Use Dictate when accuracy and review matter. Use Talk when you want a faster han
 
 Select the microphone and output device in Settings -> Voice. Run diagnostics when audio is silent, delayed, or routed to the wrong device.
 
-<Screenshot id="settings-buddy" alt="Row-Bot Buddy settings." caption="Buddy settings control companion visibility, overlay, personality, look, motion, and optional custom-look generation." />
+<Screenshot id="settings-buddy" alt="Row-Bot Buddy settings." caption="Buddy settings control companion visibility, personality, look, motion, and optional custom-look generation." />
 
 ## Buddy Controls
 
-- **Enable switches** choose sidebar, workspace, or desktop overlay visibility.
-- **Open and close overlay** manage the separate desktop companion window.
+- **Show Buddy** controls companion visibility.
+- **Drag to tear off** moves Buddy itself from the sidebar into the native overlay; releasing over the dock cancels the drag.
+- The overlay shares the selected thread's saved draft, current response, model, tools, and approval mode.
+- Enter sends, Shift+Enter adds a line, and Stop stops the selected thread's active response.
+- Simple approvals can be settled in Buddy; complex approvals open the full thread for review.
+- Open full thread, Collapse or Expand, Dock Buddy, and Hide Buddy are in the overlay menu.
 - **Companion personality** changes the tone of Buddy cues.
 - **Bubble style** changes status presentation.
 - **Look cards** choose bundled or custom appearances.
 - **Generate full Buddy**, **Retry motion**, and **Use still only** manage custom looks.
+
+See [Settings: Buddy](/docs/settings/buddy) for the complete drag, messaging, approval, tray-recovery, and troubleshooting walkthrough.
+
+## Talk To Buddy
+
+The overlay accepts typed messages for the thread named in its header. Talk and Dictate remain in the full Row-Bot thread, where microphone state and provider disclosure are visible. Use Open full thread before starting voice; Buddy continues reflecting that selected conversation.
 
 ## Privacy And Safety
 
@@ -1788,7 +1815,8 @@ Voice input can become chat text. Realtime voice and provider-backed speech may 
 - If Dictate records nothing, check microphone selection and permissions.
 - If Talk sends too quickly, use Dictate instead.
 - If realtime voice is unavailable, check Providers and Voice Models.
-- If Buddy does not appear, check Buddy enable switches and overlay state.
+- If Buddy does not appear, enable Show Buddy or use the tray's Show Buddy action when it is torn off.
+- If Buddy will not undock, use the native Windows or macOS app and start the drag on Buddy itself. Browser/server mode keeps it docked.
 """,
         screenshot=True,
     )
@@ -2496,7 +2524,9 @@ The full route, authentication, Docker, proxy, and recovery guidance is in [Remo
 - Check microphone/output device selection and permissions.
 - Use Dictate before Talk if you need review.
 - Check provider readiness for realtime voice.
-- Toggle Buddy visibility or reopen the overlay if the companion is missing.
+- If docked Buddy is missing, enable Show Buddy. If a torn-off overlay was hidden, use the tray's Show Buddy action.
+- Drag Buddy itself out of the sidebar in the native Windows or macOS app; browser/server and compact mobile surfaces cannot create the native overlay.
+- Use Open full thread for Talk, Dictate, complex approvals, attachments, tool traces, and complete history.
 """,
     )
 

@@ -593,14 +593,13 @@ def test_authorized_real_mobile_detail_selects_a_real_chat_thread(
     monkeypatch,
 ) -> None:
     import row_bot.docs_capture as capture
-    import row_bot.threads as threads
 
     monkeypatch.setenv("ROW_BOT_DOCS_CAPTURE", "1")
     monkeypatch.setenv("ROW_BOT_DOCS_REAL_DATA", "1")
     monkeypatch.setattr(
-        threads,
-        "_list_threads",
-        lambda **_kwargs: [("real-chat", "Private name", "", "", "", "", "chat")],
+        capture,
+        "_list_real_capture_threads",
+        lambda: [("real-chat", "Private name", "", "", "", "", "chat")],
     )
     state = SimpleNamespace(
         active_designer_project=None,
@@ -625,6 +624,56 @@ def test_authorized_real_mobile_detail_selects_a_real_chat_thread(
     assert state.thread_id == "real-chat"
     assert state.mobile_chat_mode == "thread"
     assert state.messages == [{"role": "user", "content": "real-chat"}]
+
+
+def test_buddy_overlay_public_docs_cover_the_complete_user_workflow() -> None:
+    buddy = (ROOT / "docs-site" / "docs" / "settings" / "buddy.mdx").read_text(
+        encoding="utf-8"
+    ).casefold()
+    voice_and_buddy = (
+        ROOT / "docs-site" / "docs" / "voice-and-buddy" / "index.mdx"
+    ).read_text(encoding="utf-8").casefold()
+    chat = (ROOT / "docs-site" / "docs" / "chat" / "index.mdx").read_text(
+        encoding="utf-8"
+    ).casefold()
+    readme = (ROOT / "README.md").read_text(encoding="utf-8").casefold()
+    writer = (
+        ROOT / "scripts" / "docs" / "write_public_user_guide_pages.py"
+    ).read_text(encoding="utf-8").casefold()
+    combined = "\n".join((buddy, voice_and_buddy))
+
+    for phrase in (
+        "always-on-top",
+        "open full thread",
+        "dock buddy",
+        "hide buddy",
+        "enter sends",
+        "shift+enter",
+        "saved draft",
+        "simple approvals",
+        "complex approvals",
+        "stop",
+        "windows and macos",
+        "browser/server mode",
+        "talk and dictate",
+    ):
+        assert phrase in combined
+    assert "/docs/settings/buddy" in chat
+    assert "buddy desktop overlay" in readme
+    for phrase in (
+        "drag buddy itself",
+        "simple approvals",
+        "complex approvals",
+        "talk and dictate remain",
+        "/docs/settings/buddy",
+    ):
+        assert phrase in writer
+    for obsolete in (
+        "enable switches decide whether buddy appears",
+        "open and close overlay buttons",
+        "toggle buddy visibility or reopen the overlay",
+    ):
+        assert obsolete not in writer
 
 
 def test_docs_capture_never_reads_the_keyring(monkeypatch) -> None:
