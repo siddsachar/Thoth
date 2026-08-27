@@ -40,7 +40,7 @@ manifest, and then runs the tarball's bundled `install.sh`. For a pinned
 version, pass it as an argument:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.8.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.9.0
 ```
 
 The bootstrapper installs published GitHub Release assets. It is not a way to
@@ -53,23 +53,23 @@ tarball instead of a native app bundle:
 
 ```bash
 ./installer/build_linux_app.sh
-./installer/build_linux_app.sh 4.8.0
+./installer/build_linux_app.sh 4.9.0
 ```
 
 From a source checkout, this root-level wrapper is also supported for support
 snippets and maintainer hotfixes:
 
 ```bash
-bash build_linux_app.sh 4.8.0
+bash build_linux_app.sh 4.9.0
 ```
 
 To test an unreleased Linux fix locally, build the tarball from the checkout and
 install the tarball it produced:
 
 ```bash
-bash installer/build_linux_app.sh 4.8.0
-tar -xzf dist/Row-Bot-4.8.0-Linux-*.tar.gz
-cd Row-Bot-4.8.0-Linux-*
+bash installer/build_linux_app.sh 4.9.0
+tar -xzf dist/Row-Bot-4.9.0-Linux-*.tar.gz
+cd Row-Bot-4.9.0-Linux-*
 ./install.sh
 ~/.local/bin/row-bot
 ```
@@ -142,7 +142,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 | Python 3.13 embeddable runtime | Ollama installer is optional for local models |
 | App source code, authenticated access/server package, Remote Access UI, automatic Agent orchestration, Agent Profiles, Goal Mode, checkpointed Agent budgets and settings, child-agent runner, generation cancellation, provider-aware reasoning controls, exact context/compaction policy, native OpenCode routing, local Whisper and SenseVoice runtimes, durable document ingestion and sharded retrieval, Computer Use integration and pinned manifest, cache-only embedding fallback, responsive desktop/mobile owner UI, channel streaming, tools, providers, plugins, MCP client, migration wizard, UI, Designer, Developer Studio, bundled skills/tool guides, static assets, and sounds | Kokoro TTS model + voices auto-download on first TTS use; SenseVoice Small is an explicit approximately 940 MB ModelScope download |
 | Python packages from locked `requirements.txt` export and its matching Playwright Chromium when the platform build supports bundling | A missing source-install Browser runtime is installed only after the user's explicit Browser Automation install/repair action; Browser startup never downloads it |
-| Computer Use policy, private client, installer metadata, and platform checks | Pinned Cua Driver 0.19.3 is downloaded only after the version-2 disclosure and explicit user consent |
+| Computer Use policy, private client, installer metadata, and platform checks | Pinned Cua Driver 0.20.0 is downloaded only after the version-2 disclosure and explicit user consent |
 
 ## Prerequisites
 
@@ -165,7 +165,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 This will:
 1. Download Python 3.13 embeddable package (~15 MB)
 2. Download `get-pip.py` (~2.5 MB)
-3. Compile everything into `dist\Row-Bot-4.8.0-Windows-x64.exe`
+3. Compile everything into `dist\Row-Bot-4.9.0-Windows-x64.exe`
 
 ### Options
 
@@ -314,7 +314,7 @@ The app payload includes `pyproject.toml`, `uv.lock`, and generated `requirement
 
 ## End-User Experience
 
-1. Run `Row-Bot-4.8.0-Windows-x64.exe`
+1. Run `Row-Bot-4.9.0-Windows-x64.exe`
 2. Follow the wizard â€” the app payload is already bundled; optional model/runtime assets download only when a feature needs them
 3. Launch Row-Bot from Start Menu or Desktop shortcut
 4. The system tray icon appears; the app opens on the first available local port, normally `http://localhost:8080`

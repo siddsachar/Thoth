@@ -7,7 +7,7 @@
 #
 # Usage:
 #   ./installer/build_mac_app.sh                  # local unsigned build
-#   ./installer/build_mac_app.sh 3.20.0            # specify version
+#   ./installer/build_mac_app.sh X.Y.Z             # specify version
 #
 # For signed builds (CI), set environment variables:
 #   CODESIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
@@ -131,10 +131,10 @@ if [ "$BUNDLE_PLAYWRIGHT" = "1" ]; then
     info "Installing Playwright Chromium browser into app bundle..."
     export PLAYWRIGHT_BROWSERS_PATH="$PYTHON_PREFIX/playwright-browsers"
     "$PYTHON_PREFIX/bin/python3" -m playwright install chromium 2>&1 | tail -3 || \
-        warn "Playwright Chromium install failed â€” browser tool will auto-install on first use"
+        warn "Playwright Chromium install failed; Browser Automation requires an explicit Install or Repair action"
     ok "Playwright Chromium installed"
 else
-    info "Skipping bundled Playwright Chromium for signed/notarized build"
+    info "Skipping bundled Playwright Chromium for signed/notarized build; Browser Automation setup remains an explicit user action"
 fi
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

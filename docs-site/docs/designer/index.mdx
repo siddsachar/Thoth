@@ -41,6 +41,8 @@ Open Home -> Designer to start or reopen a project. The Home tab is the launcher
 
 Designer can use saved brand presets, extract brand hints from a URL, accept reference uploads, and reuse project assets. Generated images or videos may call configured media providers; local-only design edits stay in local project data.
 
+For xAI API image models, Row-Bot uses the provider's live image-generation catalog instead of guessing from the chat catalog. It exposes only the formats, aspect ratios, resolutions, and quality choices reported for that model. If xAI rejects an optional quality field, Row-Bot retries once without it; timeouts and other failures do not trigger an automatic second generation that could duplicate cost.
+
 ## Troubleshooting
 
 - If a project starts empty, provide a more specific goal and audience.

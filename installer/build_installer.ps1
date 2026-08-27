@@ -4,7 +4,9 @@
 # pip packages, then compiles a self-contained Inno Setup installer.
 #
 # The resulting .exe contains everything needed â€” no internet downloads at
-# install time.  Ollama and Playwright Chromium are handled at runtime.
+# install time. Ollama remains optional; the matching Playwright Chromium is
+# bundled when its build-time install succeeds and otherwise requires the
+# user's explicit Browser Automation Install or Repair action.
 #
 # TTS: Kokoro TTS is a pip package â€” no binary to bundle.  The model
 #      downloads automatically on first use (~170 MB).
@@ -294,7 +296,7 @@ $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $PythonDir "playwright-browsers"
     }
 }
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "WARNING: Playwright Chromium install failed. Browser tool will auto-install on first use." -ForegroundColor DarkYellow
+    Write-Host "WARNING: Playwright Chromium install failed. Browser Automation will remain unavailable until the user runs Install or Repair." -ForegroundColor DarkYellow
 } else {
     Write-Host "      Playwright Chromium installed" -ForegroundColor Green
 }

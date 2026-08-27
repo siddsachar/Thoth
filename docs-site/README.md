@@ -30,6 +30,22 @@ cd docs-site
 npm run build:ci
 ```
 
+### Build-Dependency Audit Note
+
+As of 2026-08-27, `npm audit --omit=dev` reports 17 high-severity dependency
+entries that all roll up to two denial-of-service advisories for
+`image-size@2.0.2` through Docusaurus's MDX loader:
+[GHSA-w3rx-r6r6-pgpr](https://github.com/advisories/GHSA-w3rx-r6r6-pgpr)
+and [GHSA-5p2g-fcmc-qvqq](https://github.com/advisories/GHSA-5p2g-fcmc-qvqq).
+The audit currently reports no installable fix. This dependency runs while
+building the static documentation from repository-owned images; it is not part
+of the Row-Bot application runtime or the published static JavaScript bundle.
+
+Do not process unreviewed ICNS, JXL, HEIF, or HEIC files in the documentation
+build. Re-run the audit before each release and remove this note as soon as a
+compatible patched Docusaurus dependency is available. Do not use a forced
+audit fix or an unreviewed fork merely to silence the report.
+
 ## Publishable GitHub Pages Output
 
 The checked-in `docs/` tree must be generated with the pinned Linux, CPU

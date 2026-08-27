@@ -47,9 +47,13 @@ Chat is the main place to ask Row-Bot for help. A chat thread can stay simple, o
 
 ## Continue From The Buddy Overlay
 
-In the native Windows and macOS apps, drag Buddy from the sidebar onto the desktop for a compact view of the selected thread. Check the thread name in the overlay header before sending. Its text composer shares that thread's saved draft, model, tools, approval mode, and active response; Enter sends, Shift+Enter adds a line, and Stop stops the current run.
+In the native Windows and macOS apps, drag Buddy from the sidebar onto the desktop for a compact view of the selected thread. Its composer shares that thread's saved draft, model, tools, approval mode, and active response. Simple approvals can appear in the overlay; open the full thread for complex approvals, attachments, transcript history, tool traces, model controls, Talk, or Dictate. See [Settings: Buddy](/docs/settings/buddy).
 
-Simple approvals can appear in the overlay. Open the full thread for complex approvals, attachments, transcript history, tool traces, model controls, Talk, or Dictate. See [Settings: Buddy](/docs/settings/buddy) for the complete overlay guide.
+## Manage Conversation History
+
+Open **Show all** from the conversation sidebar to filter Chat, Design, Code, or Workflow conversations. Choose **Select** for checkbox-based cleanup, then select individual conversations or use **Select all** for the current filter. The action bar shows the exact cross-filter selection count before you confirm deletion. **Delete all** applies only to the currently visible filter.
+
+Deleting a conversation stops its active work and removes its Row-Bot-managed messages, drafts, attachments, media, tool sessions, workflow state, and Agent state. A linked Designer project is detached from the deleted conversation. Developer worktrees with changes and sandboxes with unimported work are kept and reported so deletion does not discard source work. Export anything you need before confirming because conversation deletion cannot be undone.
 
 ## What Is Saved
 

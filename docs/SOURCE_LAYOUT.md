@@ -106,14 +106,15 @@ coverage. The manifest currently separates the package into:
 Windows packaging uses `installer/row_bot_setup.iss` to recursively include
 `src/row_bot`. macOS and Linux builders call `scripts/app_payload_manifest.py`
 for root files, runtime scripts, payload directories, and asset directories.
-Packaging tests in `tests/test_linux_support.py` and `tests/test_suite.py`
-assert those contracts.
+Packaging tests in `tests/test_linux_support.py`, `tests/test_dependency_metadata.py`,
+and focused `tests/subsystem/installer/` contracts assert those boundaries.
 
-Because `src/row_bot` is recursive, context accounting and compaction,
-progressive capability and skill discovery, durable skill activation,
-access/runtime policy, native Computer Use, provider transports, channel
-streaming, the Remote Access UI, and the mobile companion require no per-file
-installer entries. Deployment examples under `deploy/` are
+Because `src/row_bot` is recursive, the shared Browser runtime, native Computer
+Use, the Buddy desktop overlay, coordinated conversation cleanup, live provider
+media catalogs, context accounting and compaction, progressive capability and
+skill discovery, durable skill activation, access/runtime policy, provider
+transports, channel streaming, the Remote Access UI, and the mobile companion
+require no per-file installer entries. Deployment examples under `deploy/` are
 source-distribution/operator artifacts rather than runtime Python packages.
 `tests/test_linux_support.py` keeps required runtime packages in the
 cross-platform payload inventory, while

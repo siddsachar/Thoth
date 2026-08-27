@@ -24,8 +24,9 @@ Studio, Designer Studio, Smart Skills, Skills Hub, Custom Tools, Plugin System
 v2, progressive external-tool and skill discovery, context metering and rolling
 compaction, provider-aware reasoning controls, messaging channels,
 authenticated multi-device owner access with durable trusted addresses,
-opt-in native Computer Use, realtime voice, and provider-aware model routing.
-Durable app data stays local by default.
+a native Buddy desktop overlay, managed visible-browser automation, opt-in
+native Computer Use, centralized conversation cleanup, realtime voice, and
+provider-aware model routing. Durable app data stays local by default.
 
 For larger tasks, Row-Bot can keep a visible goal, run the thread through a
 focused Agent Profile, and orchestrate scoped child agents for research, review,
@@ -91,15 +92,15 @@ Download the latest installer from [GitHub Releases](https://github.com/siddsach
 | Area | Details |
 |------|---------|
 | Agent orchestration | LangGraph ReAct agent, Goal Mode, Agent Profiles, Profile Library, automatic parent-led child-agent orchestration, required and detached work, dependency ordering, multi-wave live joins, ordered steering and approvals, transient retry, folder-scoped parallel writers, orphan-only checkpoint repair, explicit parent restart recovery, compact Agent groups and cards, exactly-once completion, checkpoint-safe work budgets, repeated-action protection, configurable nesting/concurrency/active-time limits, profile/tool allowlists, promoted Agent-run workflows, generation-scoped cancellation, complete-input context metering, fixed-envelope preflight, recoverable capacity-aware rolling compaction, and per-thread, per-workflow, per-profile, and per-Developer model overrides. |
-| Models and providers | Provider-qualified model selection, exact per-thread/per-model reasoning effort, toggle, and budget controls, readiness routing, chat-only fallback for non-tool models, chat/agent/vision/image/video capability labels, native Ollama tool-capability detection with maintained-family fallback, model-scoped custom endpoint profiles and probes, detected/manual/custom context caps, provider-scoped credential-backed live catalog discovery with last-known-good preservation, xAI Grok OAuth, ChatGPT / Codex and Claude Subscription providers, native OpenCode gateway discovery and per-model transport routing, provider-scoped tool-schema compatibility, phased OpenAI-compatible timeouts with safe pre-stream retry, prompt-cache diagnostics, and background model cache. |
+| Models and providers | Provider-qualified model selection, exact per-thread/per-model reasoning effort, toggle, and budget controls, readiness routing, chat-only fallback for non-tool models, chat/agent/vision/image/video capability labels, native Ollama tool-capability detection with maintained-family fallback, model-scoped custom endpoint profiles and probes, detected/manual/custom context caps, provider-scoped credential-backed live catalog discovery with last-known-good preservation, xAI Grok OAuth and live image-generation quality/resolution metadata, ChatGPT / Codex and Claude Subscription providers, native OpenCode gateway discovery and per-model transport routing, provider-scoped tool-schema compatibility, phased OpenAI-compatible timeouts with safe pre-stream retry, prompt-cache diagnostics, and background model cache. |
 | Memory and knowledge | Personal knowledge graph, 10 entity types, 67 typed relations, bounded semantic/lexical/graph recall, a disclosed checked-by-default local embedding setup download, cache-only normal recall, explicit repair, fast lexical/graph fallback, durable bounded document batches, streamed upload hashing and deduplication, atomic sharded vectors, resumable extraction, queue controls and health repair, audit and review states, recall traces, graph visualization, Obsidian-compatible wiki export with source provenance, Dream Cycle refinement, duplicate merging, stale-confidence decay, relationship inference, self-knowledge, insights, and conversation search. |
-| Tools | 30+ core tool modules for web search, DuckDuckGo, Wikipedia, arXiv, YouTube transcripts, URL reading, documents, wiki vault, Gmail, Google Calendar, filesystem, shell, visible browser automation, opt-in native Computer Use, workflows, Goal Mode, child-agent delegation, tracker, channels, X, image generation/editing, video generation, MCP, Developer Studio, Designer Studio, Custom Tool Builder, status, calculator, Wolfram Alpha, weather, vision, memory, system info, and charts. Recommended Auto loading keeps core profile tools direct and searches enabled external MCP, plugin, Custom Tool, and channel schemas on demand; eager compatibility mode remains available. File tools read PDF, CSV, Excel, JSON, JSONL, TSV, and image files, with schema, stats, previews, and PDF export where supported. |
+| Tools | 30+ core tool modules for web search, DuckDuckGo, Wikipedia, arXiv, YouTube transcripts, URL reading, documents, wiki vault, Gmail, Google Calendar, filesystem, shell, managed visible-browser automation, opt-in native Computer Use, workflows, Goal Mode, child-agent delegation, tracker, channels, X, image generation/editing, video generation, MCP, Developer Studio, Designer Studio, Custom Tool Builder, status, calculator, Wolfram Alpha, weather, vision, memory, system info, and charts. Browser and Computer Use keep separate targets and runtimes but share bounded observation, receipt, error, activity, approval, and cancellation contracts. Recommended Auto loading keeps core profile tools direct and searches enabled external MCP, plugin, Custom Tool, and channel schemas on demand; eager compatibility mode remains available. File tools read PDF, CSV, Excel, JSON, JSONL, TSV, and image files, with schema, stats, previews, and PDF export where supported. |
 | Developer Studio | Local Git workspace linking and cloning, code threads, explicit existing-folder assignment for child Agents, folder-scoped writer locks, per-thread and child-agent worktrees, repo inspector, file tree, diffs, todos, tests, branch, commit, push and PR prep, approval modes, and optional Docker Sandbox with a shadow workspace and explicit import back into the real repo. Docker Sandbox intentionally fails closed inside the official Row-Bot server container instead of nesting or falling back silently. |
 | Designer Studio | Decks, documents, landing pages, app mockups, and storyboards with a sandboxed interactive runtime, templates, brand controls, critique and repair, AI image and video generation, chart insertion, Mermaid and Plotly rendering, shareable HTML, and export to PDF, HTML, PNG, and PPTX. |
 | Workflows | Scheduled runs, webhook triggers, task-completion triggers, step pipelines, conditions, approvals, subtasks, notification-only runs, concurrency groups, delivery defaults, profile-first workflow agents, promoted Agent-run workflows, per-workflow model/tool/skill/profile overrides, safety modes, run status, run history, upcoming runs, and a Workflow Console. |
 | Controlled self-evolution | Structured self-reflection, bounded change proposals, reviewable execution boundaries, persistence, Dream Cycle and memory integration, and Command Center/status visibility for improvement work that stays explicit and auditable. |
 | Channels and voice | Telegram, WhatsApp, Discord, Slack, SMS, and plugin-owned channels with platform-aware live streaming, typing and edit fallbacks, interactive approvals, durable child-agent and Goal Mode notices, media intake, voice transcription, document extraction, health checks, auto-generated send/photo/document tools, and optional tunnel support. SMS remains final-text-only. Realtime voice adds provider-backed voice sessions, action handling, speech/cue policy, and local faster-whisper or FunASR/SenseVoice STT plus Kokoro TTS options. |
-| Platform and app | Native desktop app plus authenticated single-owner desktop and compact browser access; one-time invitations, durable revocable sessions, exact trusted-address add/remove controls, assigned-interface route discovery, route and device management, Tailscale Serve, browser-local voice, and strict HTTP/WebSocket origin gates; authenticated headless `serve` mode; official hardened Docker/VPS deployment and multi-architecture GHCR images; a native Windows/macOS Buddy desktop overlay with drag-to-undock placement, selected-thread messaging, shared drafts, progress, Stop, approvals, focus hand-back, docking, collapse, hide, and tray recovery; opt-in Computer Use setup, live takeover, and permission recovery on Windows and macOS; installable PWA support; local browser-first Linux launch; Home status surfaces; recovery tools; verified auto-updates; and a searchable public user guide. |
+| Platform and app | Native desktop app plus authenticated single-owner desktop and compact browser access; one-time invitations, durable revocable sessions, exact trusted-address add/remove controls, assigned-interface route discovery, route and device management, Tailscale Serve, browser-local voice, and strict HTTP/WebSocket origin gates; authenticated headless `serve` mode; official hardened Docker/VPS deployment and multi-architecture GHCR images; a native Windows/macOS Buddy desktop overlay with drag-to-undock placement, selected-thread messaging, shared drafts, progress, Stop, approvals, focus hand-back, docking, collapse, hide, and tray recovery; an exact Playwright-matched managed Chromium runtime with explicit install/repair and bounded installed-browser fallback; opt-in Computer Use setup, live takeover, and permission recovery on Windows and macOS; a race-safe conversation cleanup service with retained Designer/Developer ownership rules; installable PWA support; local browser-first Linux launch; Home status surfaces; recovery tools; verified auto-updates; and a searchable public user guide. |
 | Extensibility | Smart Skills, pinned skills, slash commands, Skills Hub browsing/import/search, automatic per-task discovery of enabled manual and plugin skills, Plugin System v2 for native tools, MCP-backed tools, bundled skills, and channels, sandboxed Plugin Center and marketplace, bundled skills and tool guides, Agent Profiles, child-agent tools, Goal Mode tools, external MCP clients over stdio, Streamable HTTP, and SSE, Custom Tools from repos or folders, hardened Custom Tool Builder setup, Claude Code Delegation through an approval-gated CLI worker, migration from selected Hermes/OpenClaw data, setup center, identity settings, and stability diagnostics. |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full subsystem reference.
@@ -135,7 +136,7 @@ curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/i
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.8.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.9.0
 ```
 
 The installer downloads the release tarball, verifies its SHA256 from the GitHub release manifest, installs under `~/.local/share/row-bot`, creates `~/.local/bin/row-bot`, and stores user data in `~/.row-bot`. The default Linux build opens in your system browser. Native window and tray support are available when the required GTK, Qt, and AppIndicator libraries are installed.
@@ -151,7 +152,12 @@ row-bot
 
 If `~/.local/bin` is not on `PATH`, run `~/.local/bin/row-bot` or add it to your shell profile. On Linux, provider secrets use Secret Service or KWallet when available. WSL and headless systems can run without a keyring, but new secrets are session-only until secure storage is configured. For persistence in headless Linux, run Row-Bot inside a D-Bus session with a Secret Service backend such as `gnome-keyring-daemon`, or explicitly configure another secure Python keyring backend such as an encrypted file keyring.
 
-For browser automation, Chromium may need distro packages that the tarball cannot install. If Playwright reports missing dependencies, run the command it prints, or use `python -m playwright install --with-deps chromium` from a source checkout.
+Browser Automation installs its Playwright-matched managed Chromium only after
+you choose the explicit install or repair action in Settings. Linux may still
+need distribution packages that the tarball cannot install; if Playwright
+reports a missing operating-system dependency, install that dependency and run
+the Browser repair action again. Normal startup and readiness checks never
+download a browser.
 
 ### Docker / Headless Server
 
@@ -160,7 +166,7 @@ arm64. From the repository root, pin the release and start the hardened
 loopback-only Compose profile:
 
 ```bash
-export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.8.0
+export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.9.0
 docker compose -f deploy/docker/compose.yaml up --detach
 docker compose -f deploy/docker/compose.yaml ps
 ```
@@ -234,13 +240,21 @@ Settings. The host must remain running, every resulting device session can be
 revoked independently, and a saved trusted address can be removed when the
 route is no longer used.
 
-To let an interactive local task operate a native Windows or macOS app, open
-`Settings -> System -> Browser & Computer Use`. Review the Cua Driver telemetry
-notice, explicitly install the checksum-verified private runtime, grant the
-requested operating-system permissions, and complete the Calculator test.
-Computer Use is off by default and unavailable to channels, schedules,
-background workflows, child agents, and headless/server callers. Browser
-automation remains the preferred tool for websites.
+For website navigation, Browser Automation uses a visible task-owned page with
+opaque snapshot-bound controls. Open `Settings -> System -> Browser & Computer
+Use` to install or repair the exact Chromium revision matched to Row-Bot's
+Playwright package. A supported installed Chrome or Edge channel can be used
+without a probe launch; a real channel launch failure falls back at most once
+to an already-ready matching managed Chromium.
+
+To let an interactive local task operate a native Windows or macOS app, use the
+same Settings section. Review the Cua Driver 0.20.0 telemetry notice, explicitly
+install the checksum-verified private runtime, grant the requested
+operating-system permissions, and complete the Calculator test. Computer Use is
+off by default and unavailable to channels, schedules, background workflows,
+child agents, plugins, mobile clients, and headless/server callers. Browser
+Automation remains the preferred tool for websites, and the two engines never
+silently substitute for one another after a structured refusal.
 
 Common first prompts:
 
@@ -271,6 +285,43 @@ shows the estimated next input and automatic rolling compaction begins at 75
 percent of the effective window when capacity is known. Models that are useful
 for normal conversation but not reliable with tools can still run through
 chat-only mode.
+
+## Buddy Desktop Overlay
+
+Buddy starts in the Row-Bot sidebar. In the native Windows and macOS apps, drag
+Buddy itself away from the dock to create a compact always-on-top desktop
+overlay. The overlay stays inside the nearest monitor's usable work area,
+supports multi-monitor placement, and can be collapsed, hidden, docked again,
+or recovered from the tray. A new app launch returns it to the sidebar dock;
+browser/server mode, Linux browser-first launch, compact mobile presentation,
+and remote browsers keep Buddy inside Row-Bot.
+
+The overlay operates the thread named in its header rather than creating a
+second assistant. It shares that Chat, Developer, or Designer thread's saved
+draft, model, tools, approval mode, progress, and latest answer. Sending captures
+the selected thread and surface at that moment, Stop affects only that thread's
+active generation, and Buddy never adds an implicit screenshot or attachment.
+Simple well-described approvals can be accepted or denied in the overlay;
+complex or incomplete approvals open the full thread. Undocking Buddy grants no
+new tool or approval authority.
+
+## Conversation Library And Cleanup
+
+The conversation library uses one parent-only dataset for Chat, Designer, Code,
+and Workflow counts and filters; Agent child conversations remain owned by their
+parent and are not shown as duplicate user conversations. Filter-aware **Select
+all** and **Clear all** keep selections from other filters intact, while bulk
+deletion runs behind a persistent progress view instead of blocking the UI.
+
+Deletion is centralized and ownership-aware. Removing a conversation cancels
+its active generation and child Agents, blocks late writes, and clears its
+checkpoints, drafts, attachments, approvals, notifications, skills state, and
+other owned data. A Designer conversation detaches without deleting the design;
+deleting the design removes its assets, history, published copy, and linked
+conversations. Developer deletion never removes the real repository or selected
+folder: clean managed worktrees may be removed, while dirty worktrees and
+sandboxes with unimported changes are retained for recovery. Workflow audit
+records remain, with live thread and sensitive approval links scrubbed.
 
 ## Remote Access And Server Mode
 
@@ -440,9 +491,10 @@ a custom endpoint, or a direct provider remains distinct. Row-Bot also tracks
 whether a selected model is ready for full agent/tool use, supports vision,
 belongs on an image or video surface, should run chat-only, or needs a larger
 context window or different endpoint profile. Live catalogs such as Atlas Cloud,
-MiniMax, and Requesty refresh through the same provider path, xAI API-key
-catalogs merge the available xAI model endpoints, and media-generation rows are
-filtered out of chat, agent, and vision model surfaces. Automatic targeted and
+MiniMax, and Requesty refresh through the same provider path. xAI API-key and
+OAuth refreshes also query the live image-generation catalog, preserve published
+quality/resolution options, defaults, and valid combinations, and keep media
+rows out of chat, agent, and vision model surfaces. Automatic targeted and
 scheduled refreshes preserve each provider's last-known-good rows when a fetch
 is empty, fails, or stops part-way through pagination; Settings labels live,
 cached, and fallback catalog outcomes.
@@ -523,7 +575,11 @@ of Brain and agent choices.
 xAI Grok OAuth is also a first-class provider path. It keeps subscription/OAuth
 Grok runtime state separate from `XAI_API_KEY`, reports token health and runtime
 readiness in Settings, and scopes Grok Imagine image/video models to media
-surfaces instead of chat and agent pickers.
+surfaces instead of chat and agent pickers. Image generation and editing select
+quality and resolution only from complete combinations published by the exact
+model. If a requested tier is unavailable or metadata is incomplete, Row-Bot
+uses the provider default and reports that choice instead of inventing an
+unsupported request; an uncertain timed-out generation is never retried.
 
 Custom/Self-hosted endpoints keep server capacity and Row-Bot's planning cap
 separate. Auto uses model metadata or the endpoint's manually declared native
@@ -572,7 +628,7 @@ row while keeping the full result available inside the expansion.
 | Group | Included tools |
 |-------|----------------|
 | Search and knowledge | Tavily web search, DuckDuckGo, Wikipedia, arXiv, YouTube transcripts, URL reader, document search, wiki vault, memory graph, and conversation search. |
-| Productivity | Gmail, Google Calendar, filesystem, shell, visible Chromium browser automation, opt-in native Computer Use on Windows and macOS, workflows, goals, tracker, channel tools, and X. |
+| Productivity | Gmail, Google Calendar, filesystem, shell, managed visible Chromium browser automation, opt-in native Computer Use on Windows and macOS, workflows, goals, tracker, channel tools, and X. |
 | Media and design | Designer Studio, image generation/editing through OpenAI, Google, xAI API keys, and xAI Grok OAuth, video generation through Google Veo and xAI Grok Imagine Video, chart insertion, Mermaid, Plotly, and media persistence. |
 | Developer and extensibility | Developer Studio, Agent Profiles, child-agent delegation, Goal Mode tools, Custom Tool Builder, promoted Custom Tools, external MCP tools, plugin tools, Claude Code Delegation, and Row-Bot Status. |
 | Analysis | Calculator, Wolfram Alpha, weather, vision for camera/screen/workspace images, system info, and Plotly charts with PNG export. |
@@ -581,9 +637,11 @@ Safety controls are built into the tool layer:
 
 - Destructive operations require confirmation, including file delete/move, moderate-risk shell commands, Gmail send, calendar move/delete, memory delete, tracker delete, and task delete.
 - Computer Use is off by default, interactive-local-only, restricted to one
-  task-scoped target window, and protected by an allowlisted Cua surface,
-  generation-bound targets, point-of-risk confirmation, ephemeral screenshots,
-  typed-value redaction, and direct Stop/Take over/Resume controls.
+  task-scoped target window, and protected by an allowlisted Cua 0.20.0 surface,
+  current-generation targets, exact semantic filters, bounded action-specific
+  recovery, point-of-risk confirmation, ephemeral screenshots, typed-value
+  redaction, and direct Stop/Take over/Resume controls. Routine actions return
+  truthful delivery receipts without hidden captures or automatic replay.
 - Every logical agent turn has a checkpointed model-iteration budget. Exact
   repeated tool actions are blocked before they can loop indefinitely, and
   Settings can cap nested depth, per-parent and global child concurrency, and
@@ -595,13 +653,20 @@ Safety controls are built into the tool layer:
   registered folders may run concurrently; a shared folder stays serialized,
   and changing a shell CWD does not bypass the workspace lock.
 - Stop propagates through the active generation to stalled provider responses,
-  shell and Developer subprocesses, MCP and browser waits, voice turns, and
-  generation-linked child agents without cancelling unrelated runs.
+  pending approvals, shell and Developer subprocesses, MCP and Browser waits,
+  native Computer Use, Buddy, voice turns, and generation-linked child agents
+  without cancelling unrelated runs.
 - Filesystem access is sandboxed to the configured workspace folder, which defaults to `~/Documents/Row-Bot`.
 - Shell commands are classified as safe, moderate, or blocked. High-risk commands such as `shutdown`, `reboot`, and `mkfs` are blocked.
 - Background workflows can have per-task command prefix and email-recipient allowlists.
 - Agent Profiles and child-agent runs can narrow tools through profile/tool allowlists.
-- Browser tabs are isolated per thread and cleaned up when tasks or threads finish.
+- Browser tabs, popups, and element handles are isolated per task and thread.
+  Snapshot targets are opaque and short-lived; typed values stay out of Browser
+  history, and normal startup never downloads or repairs the managed runtime.
+- Conversation deletion is explicit, confirmation-gated, path-confined, and
+  race-safe. It preserves real repositories, selected Developer folders, dirty
+  recovery workspaces, retained Designer artifacts, and workflow audit rows
+  according to their ownership contracts.
 - Developer Studio has its own approval modes for edits, commands, Git operations, commits, pushes, and PR prep.
 - Docker Sandbox is opt-in and runs commands in a shadow workspace until you explicitly import changes.
 - Agent Profile saves, child-agent promotion, and Agent-run workflow promotion stay reviewable and approval-gated.
@@ -624,7 +689,10 @@ Safety controls are built into the tool layer:
   `mobile.db`, sessions use HttpOnly cookies, forwarded localhost headers do
   not bypass the gate, and devices or individual sessions can be revoked from
   Remote Access settings.
-- Prompt-injection defense scans tool outputs and user inputs for instruction override attempts, role impersonation, data exfiltration, encoding evasion, and social engineering patterns.
+- Prompt-injection scanning is advisory. It reports only bounded categories for
+  explicit role markers, instruction overrides, exfiltration requests, and
+  hidden-control anomalies; ordinary words or model prose are not treated as
+  authorization evidence or a hard automation failure.
 
 ## Architecture
 
@@ -637,10 +705,12 @@ authenticated server mode, progressive capability catalogs and bridges, one
 complete-input context preparation and rolling-compaction pipeline with explicit
 capacity sources and fixed-envelope preflight, exact per-thread/per-model
 reasoning plans, native OpenCode catalog-to-transport routing, separate browser
-and native Computer Use engines, shared channel streaming, Designer Studio,
-Developer Studio worktrees and folder-scoped child writers, provider runtime
-and bounded subprocess cancellation, interrupted-parent checkpoint repair,
-Plugin System v2/MCP boundaries, and safety controls.
+and native Computer Use engines with small shared automation contracts, the
+native Buddy overlay, centralized ownership-aware thread cleanup, shared channel
+streaming, Designer Studio, Developer Studio worktrees and folder-scoped child
+writers, provider runtime and bounded subprocess cancellation,
+interrupted-parent checkpoint repair, Plugin System v2/MCP boundaries, and
+safety controls.
 
 Explore the visual architecture gallery: [docs/architecture.html](docs/architecture.html)
 
@@ -681,9 +751,10 @@ Review the Docusaurus docs source and local preview instructions:
 | Local model runtime | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.12+ for source installs; 8 GB RAM for 8B models; about 5 GB disk for the app and one small model; internet for install and model download. | 16 to 32 GB RAM for 14B to 30B models; NVIDIA GPU with 8+ GB VRAM or Apple Silicon for much faster inference; 20+ GB disk for multiple or larger models. Ollama Auto targets 64K context and may require a fixed 32K setting on tighter-memory systems. |
 | Provider/custom models only | Windows 10/11 64-bit, macOS 12+, or glibc Linux x86_64; Python 3.12+ for source installs; 4 GB RAM; about 1 GB disk; internet for provider inference. | No GPU required. Use this path if you do not want local model downloads. |
 | Optional SenseVoice STT | Windows, Linux, or Apple Silicon macOS; the voice runtime; internet for the explicit approximately 940 MB ModelScope snapshot download plus space for the matching CPU PyTorch/Torchaudio stack. | Optional and off until installed from Voice settings. Normal transcription is local and cache-only afterwards. Intel macOS is unsupported; local Whisper remains available. |
+| Browser Automation | Windows, macOS, or Linux desktop/source environment; Playwright 1.62.x; internet for an explicit managed Chromium install or repair unless a supported installed Chrome or Edge channel is selected. | The managed runtime must match Row-Bot's exact Playwright Chromium revision. Startup is read-only and never downloads it; Linux may require additional distribution packages. |
 | Computer Use beta | Windows 10/11 x86-64 or ARM64, or macOS 12+ on Intel/Apple Silicon; interactive local UI; internet for the explicit Cua Driver install or repair; Accessibility and Screen Recording permission on macOS. | Optional and off by default. Browser automation remains preferred for websites; Linux and unattended/background use are not supported. |
 | Developer Sandbox | Docker Desktop or a compatible Docker/Podman runtime. | Optional. Developer Studio also works with local execution in the selected repo. |
-| Docker / headless server | Docker Engine with Compose v2 on an amd64 or arm64 Linux host; enough persistent storage for `/data`, the encryption-key volume, documents, models, and backups. | Pin `ghcr.io/siddsachar/row-bot:4.8.0`, keep the default loopback publication, and use Tailscale or an operator-managed HTTPS proxy for remote reachability. |
+| Docker / headless server | Docker Engine with Compose v2 on an amd64 or arm64 Linux host; enough persistent storage for `/data`, the encryption-key volume, documents, models, and backups. | Pin `ghcr.io/siddsachar/row-bot:4.9.0`, keep the default loopback publication, and use Tailscale or an operator-managed HTTPS proxy for remote reachability. |
 | Public docs site | Node.js 20+ and npm. | Optional. Used only for local Docusaurus docs preview and generated-docs validation. |
 
 Your default Brain model is set by the setup wizard. If you choose the local path, Row-Bot uses one of the models already exposed by your local runtime; 14B-class models are recommended for stronger agent/tool behavior, while smaller 8B-class models are better for 8 GB machines. Hosted and custom endpoint setups can skip local model downloads entirely.
@@ -791,7 +862,7 @@ sessions you no longer trust. In Docker, saved provider credentials are
 encrypted locally with the key from the separate secrets volume.
 
 Computer Use is also opt-in. Row-Bot downloads only the reviewed Cua Driver
-0.19.3 full archive after a separate Install action, verifies its SHA-256, and
+0.20.0 full archive after a separate Install action, verifies its SHA-256, and
 keeps the runtime private with upstream update checks disabled. The expanded
 version-2 disclosure requires fresh acceptance before the upgraded process can
 start. Reviewed upstream telemetry can include pseudonymous installation and
@@ -802,6 +873,14 @@ screenshots, accessibility trees, app/window names, URLs, paths, raw values,
 and raw errors. Target-window screenshots remain ephemeral, and typed values
 are excluded from durable history, logs, checkpoints, approvals, memory, and
 media.
+
+Buddy overlay placement, visibility, collapse state, appearance, and per-thread
+drafts are local app data. The overlay reads the selected conversation rather
+than copying it into a second store, and undocking does not change the thread's
+model, tools, approval policy, or provider boundary. Conversation cleanup uses
+local ownership records and deletion guards; retained dirty worktrees and
+unimported sandboxes should still be reviewed or removed manually when they are
+no longer needed.
 
 Provider and custom models are opt-in. When selected, the current conversation, model-visible tool context, and tool results are sent to that endpoint. Memories, documents, files, graph data, and other conversations stay local unless you explicitly include them in the current conversation or expose them through a tool result. Memory recall happens locally before any selected memory is inserted into the active turn.
 
@@ -850,6 +929,8 @@ telemetry pipeline.
 - [Docker and VPS operations](https://row-bot.ai/docs/operations/docker)
 - [Progressive tools and skills](https://row-bot.ai/docs/guides/progressive-tools-and-skills)
 - [Reasoning controls](https://row-bot.ai/docs/chat/reasoning-controls)
+- [Buddy desktop overlay](https://row-bot.ai/docs/settings/buddy)
+- [Browser and Computer Use](https://row-bot.ai/docs/computer-use)
 - [Release notes](RELEASE_NOTES.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Visual architecture gallery](docs/architecture.html)
