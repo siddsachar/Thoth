@@ -15,6 +15,7 @@ from row_bot.computer_use.service import (
     Observation,
     StaleObservationError,
 )
+from row_bot.mcp_client.results import RawCallResult
 from row_bot.tools.computer_use_tool import _observation_payload
 
 
@@ -156,12 +157,50 @@ def test_every_routine_mutation_maps_once_without_an_implicit_post_capture(servi
     assert isinstance(result, ActionReceipt)
     assert result.action_dispatched is True
     assert result.action_completed is False
-    assert result.driver_effect == "confirmed"
+    assert result.driver_effect == (
+        "unverifiable" if action == "drag" else "confirmed"
+    )
     assert result.visual_change == "unknown"
     assert result.effect_verified is False
     assert result.verified_scope == ""
     assert "private typed value" not in repr(result)
     assert service.ephemeral_screenshot()
+
+
+def test_nested_driver_delivery_mode_is_normalized_in_action_receipt(
+    service,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    target, observation = _target_and_capture(service)
+    original_call_raw = fake_transport.call_raw
+
+    def nested_delivery_call(name, arguments=None):
+        response = original_call_raw(name, arguments)
+        if name != "click" or response.is_error:
+            return response
+        structured = dict(response.structured_content)
+        structured.pop("delivery_mode", None)
+        structured["delivery"] = {"mode": "foreground"}
+        return RawCallResult(response.content, structured, response.is_error)
+
+    monkeypatch.setattr(fake_transport, "call_raw", nested_delivery_call)
+    calls_before = len(fake_transport.calls)
+
+    receipt = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+    )
+
+    assert isinstance(receipt, ActionReceipt)
+    assert receipt.delivery_mode == "foreground"
+    assert receipt.to_dict()["delivery"] == "foreground"
+    assert receipt.to_dict()["delivery_mode"] == "foreground"
+    calls = fake_transport.calls[calls_before:]
+    assert [name for name, _args in calls] == ["click"]
+    assert "delivery_mode" not in calls[0][1]
 
 
 @pytest.mark.parametrize(

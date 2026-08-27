@@ -192,6 +192,8 @@ def _standard_route(value: object) -> str:
 
 
 def _standard_delivery(value: object) -> str:
+    if isinstance(value, dict):
+        value = value.get("mode")
     delivery = str(value or "").strip().casefold().replace("-", "_")
     return delivery if delivery in _SAFE_DELIVERY else "unknown"
 
@@ -3198,6 +3200,7 @@ class ComputerUseService:
                     "from_y": int(y or 0),
                     "to_x": int(end_x or 0),
                     "to_y": int(end_y or 0),
+                    "delivery_mode": "foreground",
                 }
             elif action == "type":
                 args["text"] = str(text or "")

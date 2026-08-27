@@ -241,6 +241,7 @@ def test_coordinate_drag_uses_screenshot_coordinates_once_with_one_optional_capt
         "from_y": 10,
         "to_x": 40,
         "to_y": 40,
+        "delivery_mode": "foreground",
         "session": "row-bot-test-session",
     }]
     assert [name for name, _args in calls] == ["drag", "get_window_state"]
@@ -248,9 +249,10 @@ def test_coordinate_drag_uses_screenshot_coordinates_once_with_one_optional_capt
     assert result.action_effect == "delivered_unverified"
     assert result.visual_change == "unknown"
     assert result.effect_verified is False
+    assert result.delivery_mode == "foreground"
 
 
-def test_unchanged_background_drag_is_not_replayed_after_driver_acceptance(
+def test_unchanged_foreground_drag_is_not_replayed_after_driver_acceptance(
     service,
     fake_transport,
 ) -> None:
@@ -273,10 +275,11 @@ def test_unchanged_background_drag_is_not_replayed_after_driver_acceptance(
     calls = fake_transport.calls[calls_before:]
     drags = [args for name, args in calls if name == "drag"]
     assert len(drags) == 1
-    assert "delivery_mode" not in drags[0]
+    assert drags[0]["delivery_mode"] == "foreground"
+    assert [name for name, _args in calls] == ["drag", "get_window_state"]
     assert isinstance(result, Observation)
     assert result.visual_change == "unknown"
-    assert result.delivery_mode == "background"
+    assert result.delivery_mode == "foreground"
     assert service.status_snapshot()["last_visual_change"] == "unknown"
 
 
@@ -305,14 +308,15 @@ def test_repeated_accepted_no_effect_drags_remain_useful_delivery(
     assert [name for name, _args in fake_transport.calls].count("drag") == 3
 
 
-def test_non_text_background_refusal_is_not_replayed(
+def test_foreground_drag_refusal_is_structured_and_not_replayed(
     service,
     fake_transport,
 ) -> None:
     fake_transport.scenario.capture_dimensions = (64, 64)
     fake_transport.scenario.capture_images = (_png(), _png(changed_box=(8, 8, 42, 42)))
-    fake_transport.scenario.background_unavailable_tools = frozenset({"drag"})
-    target, _observation = _paint_target(service, fake_transport)
+    fake_transport.scenario.foreground_error_code = "focus_refused"
+    target, observation = _paint_target(service, fake_transport)
+    calls_before = len(fake_transport.calls)
 
     with pytest.raises(ComputerUseError) as exc_info:
         service.act(
@@ -321,10 +325,62 @@ def test_non_text_background_refusal_is_not_replayed(
             capture_after=True,
         )
 
-    drags = [args for name, args in fake_transport.calls if name == "drag"]
-    assert len(drags) == 1
-    assert "delivery_mode" not in drags[0]
-    assert exc_info.value.code == "background_unavailable"
+    calls = fake_transport.calls[calls_before:]
+    assert calls == [
+        (
+            "drag",
+            {
+                "pid": 5303,
+                "window_id": 303,
+                "from_x": 10,
+                "from_y": 10,
+                "to_x": 40,
+                "to_y": 40,
+                "delivery_mode": "foreground",
+                "session": "row-bot-test-session",
+            },
+        )
+    ]
+    assert exc_info.value.code == "focus_refused"
+    assert exc_info.value.retryable is False
+    assert service.current_observation(target) is observation
+    assert observation.target.target_id == target
+    assert (observation.target.pid, observation.target.window_id) == (5303, 303)
+
+
+def test_semantic_paint_toolbar_click_keeps_accessibility_delivery(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {"role": "Button", "label": "Rectangle", "enabled": True},
+    )
+    fake_transport.scenario.action_route = "accessibility"
+    target, observation = _paint_target(service, fake_transport)
+    calls_before = len(fake_transport.calls)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+    )
+
+    calls = fake_transport.calls[calls_before:]
+    assert calls == [
+        (
+            "click",
+            {
+                "pid": 5303,
+                "window_id": 303,
+                "element_token": observation.elements[0].token,
+                "session": "row-bot-test-session",
+            },
+        )
+    ]
+    assert result.route == "accessibility"
+    assert result.delivery_mode == "background"
+    assert all(name not in {"drag", "bring_to_front"} for name, _args in calls)
 
 
 def test_semantic_bounds_are_not_presented_as_screenshot_coordinates(service, fake_transport) -> None:
