@@ -2497,12 +2497,13 @@ def _fetch_xai_models(api_key: str) -> int:
         is_hidden_xai_model,
         merge_xai_curated_chat_extras,
         merged_xai_model_entries,
+        xai_generation_parameters_from_item,
         xai_model_id_from_item,
     )
 
     pages: list[list] = []
     errors: list[str] = []
-    for path in ("/models", "/language-models"):
+    for path in ("/models", "/language-models", "/image-generation-models"):
         try:
             resp = httpx.get(
                 f"{XAI_BASE_URL}{path}",
@@ -2541,6 +2542,9 @@ def _fetch_xai_models(api_key: str) -> int:
         if ctx <= 0:
             ctx = _catalog_or_heuristic("xai", mid)
         metadata = dict(m)
+        generation_parameters = xai_generation_parameters_from_item(metadata)
+        if generation_parameters:
+            metadata["generation_parameters"] = generation_parameters
         modalities = metadata.get("input_modalities") or metadata.get("inputModalities") or metadata.get("modalities")
         if isinstance(modalities, str):
             modalities = [modalities]

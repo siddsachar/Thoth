@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from dataclasses import replace
 
 import pytest
 
@@ -25,7 +26,18 @@ def test_fake_chat_model_contract_is_deterministic() -> None:
 def test_model_info_cache_round_trips_capability_snapshot() -> None:
     from row_bot.providers.catalog import model_info_from_legacy, model_info_to_cache_entry
 
-    info = fake_model_info(provider_id="openai", model_id="gpt-4o")
+    generation_parameters = {
+        "options": {"quality": ["low", "medium"], "resolution": ["1k", "2k"]},
+        "defaults": {"quality": "medium", "resolution": "1k"},
+        "valid_combinations": [
+            {"quality": "low", "resolution": "1k"},
+            {"quality": "medium", "resolution": "2k"},
+        ],
+    }
+    info = replace(
+        fake_model_info(provider_id="openai", model_id="gpt-4o"),
+        generation_parameters=generation_parameters,
+    )
     entry = model_info_to_cache_entry(info)
     restored = model_info_from_legacy("model:openai:gpt-4o", entry)
 
@@ -35,6 +47,8 @@ def test_model_info_cache_round_trips_capability_snapshot() -> None:
     assert restored.tool_calling is True
     assert restored.streaming is True
     assert "image" in restored.input_modalities
+    assert entry["capabilities_snapshot"]["generation_parameters"] == generation_parameters
+    assert restored.generation_parameters == generation_parameters
 
 
 def test_custom_fake_provider_runtime_uses_fake_transport(tmp_path, monkeypatch) -> None:

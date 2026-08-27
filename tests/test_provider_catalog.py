@@ -273,6 +273,43 @@ def test_cache_entry_includes_capability_snapshot():
     assert entry["transport"] == "openai_chat"
 
 
+def test_xai_pricing_matrix_becomes_canonical_generation_metadata():
+    from row_bot.providers.capabilities import normalize_snapshot
+    from row_bot.providers.catalog import model_info_from_metadata
+    from row_bot.providers.xai_catalog import xai_generation_parameters_from_item
+
+    generation_parameters = xai_generation_parameters_from_item({
+        "pricing": [
+            {"quality": "low", "resolution": "1k", "price_per_image": 4},
+            {"quality": "low", "resolution": "2k", "price_per_image": 6},
+            {"quality": "medium", "resolution": "1k", "price_per_image": 6},
+            {"quality": "medium", "resolution": "2k", "price_per_image": 8},
+        ],
+    })
+    info = model_info_from_metadata(
+        "xai",
+        "future-renderer",
+        {"generation_parameters": generation_parameters},
+        display_name="Future Renderer",
+    )
+    snapshot = info.capability_snapshot()
+    normalized = normalize_snapshot(snapshot)
+
+    assert generation_parameters == {
+        "options": {"quality": ["low", "medium"], "resolution": ["1k", "2k"]},
+        "defaults": {"quality": "medium", "resolution": "1k"},
+        "valid_combinations": [
+            {"quality": "low", "resolution": "1k"},
+            {"quality": "low", "resolution": "2k"},
+            {"quality": "medium", "resolution": "1k"},
+            {"quality": "medium", "resolution": "2k"},
+        ],
+    }
+    assert info.tasks == frozenset({"image_generation"})
+    assert snapshot["generation_parameters"] == generation_parameters
+    assert normalized["generation_parameters"] == generation_parameters
+
+
 def test_openrouter_supported_parameters_mark_tools_supported():
     classified = classify_model_capabilities(
         "openrouter",

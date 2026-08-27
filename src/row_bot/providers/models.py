@@ -118,6 +118,7 @@ class ModelInfo:
     risk_label: str = "api_key"
     source: str = "catalog"
     reasoning: Mapping[str, Any] | None = None
+    generation_parameters: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -144,6 +145,11 @@ class ModelInfo:
             "source_confidence": self.source_confidence,
             "last_verified_at": self.last_verified_at,
             "reasoning": dict(self.reasoning) if isinstance(self.reasoning, Mapping) else None,
+            "generation_parameters": (
+                dict(self.generation_parameters)
+                if isinstance(self.generation_parameters, Mapping)
+                else None
+            ),
         }
 
 

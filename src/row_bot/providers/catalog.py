@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from row_bot.providers.capabilities import endpoint_values
@@ -325,6 +326,11 @@ def model_info_from_legacy(model_id: str, info: dict[str, Any]) -> ModelInfo | N
         risk_label=str(info.get("risk_label") or (definition.risk_label if definition else "api_key")),
         source=str(info.get("source") or "legacy_cloud_cache"),
         reasoning=snapshot.get("reasoning") if isinstance(snapshot.get("reasoning"), dict) else None,
+        generation_parameters=(
+            dict(snapshot["generation_parameters"])
+            if isinstance(snapshot.get("generation_parameters"), Mapping)
+            else None
+        ),
     )
 
 
@@ -360,6 +366,11 @@ def model_info_from_metadata(
         risk_label=risk_label or (definition.risk_label if definition else "api_key"),
         source=source,
         reasoning=reasoning,
+        generation_parameters=(
+            dict(metadata["generation_parameters"])
+            if isinstance((metadata or {}).get("generation_parameters"), Mapping)
+            else None
+        ),
     )
 
 
@@ -570,7 +581,9 @@ def classify_model_capabilities(
         tool_calling = False
     elif any(part in lower for part in ("dall-e", "gpt-image", "imagen", "image-generation")) or (
         provider_id == "google" and bare.startswith("gemini") and "image" in lower
-    ) or (provider_id in {"xai", "xai_oauth"} and "grok-imagine" in lower and "image" in lower):
+    ) or (provider_id in {"xai", "xai_oauth"} and "grok-imagine" in lower and "image" in lower) or isinstance(
+        metadata.get("generation_parameters"), Mapping
+    ):
         tasks = {ModelTask.IMAGE_GENERATION.value}
         if provider_id == "google" and bare.startswith("gemini"):
             tasks.add(ModelTask.IMAGE_EDIT.value)

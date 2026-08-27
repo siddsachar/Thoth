@@ -276,6 +276,7 @@ def _snapshot_from_row_fields(row: Mapping[str, Any]) -> dict[str, Any]:
         "source_confidence",
         "last_verified_at",
         "reasoning",
+        "generation_parameters",
     ):
         if key in row:
             snapshot[key] = row[key]

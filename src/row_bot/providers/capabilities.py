@@ -48,6 +48,8 @@ def normalize_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     }
     if isinstance(snapshot.get("reasoning"), Mapping):
         normalized["reasoning"] = dict(snapshot["reasoning"])
+    if isinstance(snapshot.get("generation_parameters"), Mapping):
+        normalized["generation_parameters"] = dict(snapshot["generation_parameters"])
     return normalized
 
 

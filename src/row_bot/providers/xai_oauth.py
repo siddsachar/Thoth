@@ -20,6 +20,7 @@ from row_bot.providers.xai_catalog import (
     is_hidden_xai_model,
     merge_xai_curated_chat_extras,
     merged_xai_model_entries,
+    xai_generation_parameters_from_item,
 )
 
 XAI_OAUTH_PROVIDER_ID = "xai_oauth"
@@ -960,7 +961,7 @@ def fetch_xai_oauth_model_infos(
     try:
         pages: list[list[Any]] = []
         last_error = ""
-        for path in ("/models", "/language-models"):
+        for path in ("/models", "/language-models", "/image-generation-models"):
             try:
                 response = client.get(f"{root.rstrip('/')}{path}", headers=headers, timeout=15.0)
             except Exception as exc:
@@ -1783,13 +1784,17 @@ def _model_info_from_live_item(item: dict[str, Any], *, verified_at: str) -> Mod
     if not model_id or is_hidden_xai_model(item, model_id):
         return None
     display_name = str(item.get("display_name") or item.get("displayName") or item.get("label") or model_id)
-    if _is_xai_media_model_id(model_id):
+    generation_parameters = xai_generation_parameters_from_item(item)
+    if _is_xai_media_model_id(model_id) or generation_parameters:
         from row_bot.providers.catalog import model_info_from_metadata
 
+        metadata = dict(item)
+        if generation_parameters:
+            metadata["generation_parameters"] = generation_parameters
         info = model_info_from_metadata(
             XAI_OAUTH_PROVIDER_ID,
             model_id,
-            item,
+            metadata,
             display_name=display_name,
             context_window=0,
             risk_label="subscription",
@@ -1872,6 +1877,11 @@ def _model_cache_row(model_info: ModelInfo) -> dict[str, Any]:
         "source": model_info.source,
         "last_verified_at": model_info.last_verified_at,
         "reasoning": dict(model_info.reasoning) if model_info.reasoning else None,
+        "generation_parameters": (
+            dict(model_info.generation_parameters)
+            if model_info.generation_parameters
+            else None
+        ),
     }
 
 
@@ -1898,6 +1908,11 @@ def _model_info_from_cache_row(row: dict[str, Any]) -> ModelInfo | None:
         risk_label="subscription",
         source=str(row.get("source") or "xai_oauth_cached_catalog"),
         reasoning=dict(row["reasoning"]) if isinstance(row.get("reasoning"), dict) else None,
+        generation_parameters=(
+            dict(row["generation_parameters"])
+            if isinstance(row.get("generation_parameters"), dict)
+            else None
+        ),
     )
     return info
 
