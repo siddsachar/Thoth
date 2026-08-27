@@ -130,13 +130,52 @@ _MUTATION_ENUM_FIELDS = {
         {"background", "foreground", "not_applicable", "unknown"}
     ),
     "route": frozenset(
-        {"ax", "uia", "accessibility", "synthetic_events", "global_input", "unknown"}
+        {
+            "ax",
+            "uia",
+            "accessibility",
+            "synthetic_events",
+            "global_input",
+            "system_api",
+            "dom",
+            "trusted_input",
+            "pixels",
+            "px",
+            "pixel",
+            "unknown",
+        }
     ),
     "path": frozenset(
         {"ax", "uia", "accessibility", "key_events", "send_input", "unknown"}
     ),
     "status": frozenset({"satisfied", "unsatisfied", "unknown"}),
+    "cause": frozenset(
+        {
+            "direct",
+            "driver_verified",
+            "foreground_fallback",
+            "native_dispatch",
+            "semantic_target",
+            "target_disappeared",
+        }
+    ),
 }
+_MUTATION_TOOLS = frozenset(
+    {
+        "bring_to_front",
+        "click",
+        "double_click",
+        "right_click",
+        "type_text",
+        "set_value",
+        "press_key",
+        "hotkey",
+        "scroll",
+        "drag",
+        "invoke_menu",
+    }
+)
+_ESCALATION_RECOMMENDATIONS = frozenset({"foreground", "px", "page"})
 _MUTATION_ERROR_CODES = frozenset(
     {
         "background_unavailable",
@@ -153,20 +192,36 @@ _MUTATION_ERROR_CODES = frozenset(
         "focus_refused",
         "foreground_required",
         "snapshot_expired",
+        "session_ended",
     }
 )
 
 
 def _normalized_mutation_response(response: CuaResponse) -> CuaResponse:
-    """Drop driver prose at the private boundary for content-bearing mutations."""
+    """Project every mutation result to bounded non-content driver facts."""
 
     structured: dict[str, Any] = {}
     if isinstance(response.structured.get("verified"), bool):
         structured["verified"] = response.structured["verified"]
     for key, allowed in _MUTATION_ENUM_FIELDS.items():
-        value = str(response.structured.get(key) or "").strip().casefold().replace("-", "_")
+        raw_value = response.structured.get(key)
+        if key == "delivery" and isinstance(raw_value, dict):
+            raw_value = raw_value.get("mode")
+        value = str(raw_value or "").strip().casefold().replace("-", "_")
         if value in allowed:
             structured[key] = value
+    if isinstance(response.structured.get("degraded"), bool):
+        structured["degraded"] = response.structured["degraded"]
+    escalation = response.structured.get("escalation")
+    if isinstance(escalation, dict):
+        recommended = (
+            str(escalation.get("recommended") or "")
+            .strip()
+            .casefold()
+            .replace("-", "_")
+        )
+        if recommended in _ESCALATION_RECOMMENDATIONS:
+            structured["escalation"] = {"recommended": recommended}
     error_code = str(response.error_code or "").strip().casefold().replace("-", "_")
     error_code = error_code if error_code in _MUTATION_ERROR_CODES else (
         "driver_failed" if response.is_error else ""
@@ -490,7 +545,7 @@ class CuaClient:
             self.start()
         assert self._transport is not None
         response = parse_cua_result(self._transport.call_raw(tool_name, arguments))
-        if tool_name in {"type_text", "set_value"}:
+        if tool_name in _MUTATION_TOOLS:
             return _normalized_mutation_response(response)
         return response
 

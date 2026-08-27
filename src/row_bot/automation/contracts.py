@@ -20,6 +20,22 @@ _BACKEND_EFFECTS = frozenset(
     {"confirmed", "partial", "unverifiable", "suspected_noop", "refused"}
 )
 _VISUAL_CHANGES = frozenset({"changed", "unchanged", "unknown"})
+_REQUESTED_DELIVERIES = frozenset({"auto", "foreground"})
+_ESCALATION_RECOMMENDATIONS = frozenset({"foreground", "px", "page"})
+_RESULT_VERDICTS = frozenset(
+    {"done", "verify_fresh_state", "escalate", "take_over"}
+)
+_RESULT_NEXT_STEPS = frozenset(
+    {
+        "continue",
+        "capture_same_target",
+        "retry_foreground_once",
+        "pixel_click_once",
+        "recapture_before_reissue",
+        "unsupported_page_take_over",
+        "take_over",
+    }
+)
 _SAFE_ERROR_CODES = frozenset(
     {
         "approval_denied",
@@ -133,6 +149,11 @@ class ActionReceipt:
     verified_outcome: bool | None = None
     verified_scope: str = ""
     cause: str = ""
+    requested_delivery: str = "auto"
+    degraded: bool = False
+    escalation_recommendation: str = ""
+    verdict: str = ""
+    next_step: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "surface", AutomationSurface(self.surface))
@@ -149,6 +170,34 @@ class ActionReceipt:
             visual if visual in _VISUAL_CHANGES else "unknown",
         )
         object.__setattr__(self, "cause", str(self.cause or "")[:120])
+        requested_delivery = str(self.requested_delivery or "auto").casefold()
+        object.__setattr__(
+            self,
+            "requested_delivery",
+            requested_delivery
+            if requested_delivery in _REQUESTED_DELIVERIES
+            else "auto",
+        )
+        recommendation = str(self.escalation_recommendation or "").casefold()
+        object.__setattr__(
+            self,
+            "escalation_recommendation",
+            recommendation
+            if recommendation in _ESCALATION_RECOMMENDATIONS
+            else "",
+        )
+        verdict = str(self.verdict or "").casefold()
+        object.__setattr__(
+            self,
+            "verdict",
+            verdict if verdict in _RESULT_VERDICTS else "",
+        )
+        next_step = str(self.next_step or "").casefold()
+        object.__setattr__(
+            self,
+            "next_step",
+            next_step if next_step in _RESULT_NEXT_STEPS else "",
+        )
         scope = str(self.verified_scope or "").casefold()
         object.__setattr__(
             self,
@@ -202,6 +251,11 @@ class ActionReceipt:
             "visual_change": self.visual_change,
             "verified_outcome": self.verified_outcome,
             "cause": self.cause,
+            "requested_delivery": self.requested_delivery,
+            "degraded": bool(self.degraded),
+            "escalation_recommendation": self.escalation_recommendation,
+            "verdict": self.verdict,
+            "next_step": self.next_step,
         }
         if compatibility:
             payload.update(

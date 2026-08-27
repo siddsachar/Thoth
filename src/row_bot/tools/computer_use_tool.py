@@ -76,6 +76,7 @@ class ComputerUseInput(BaseModel):
     expected_effect: str = Field(default="", description="Display context only; never authorization")
     destination: str = Field(default="", description="Display context for a recipient/destination; never authorization")
     menu_path: str = Field(default="", description="For menu only: 1-16 exact case-sensitive native menu labels separated by >; no fuzzy matching or coordinate fallback")
+    delivery_mode: str = Field(default="auto", description="Action-scoped delivery: start with auto. Use foreground only for click, double_click, right_click, type, key, or scroll after fresh exact-target evidence and a prior structured foreground recommendation or refusal; it is the first and only dispatch route for that tool call")
 
 
 def _exact_menu_path(value: str) -> list[str]:
@@ -221,6 +222,24 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
                 or bool(getattr(exc, "terminal", False))
             ),
         )
+        classification = getattr(exc, "classification", None)
+        if classification is not None and callable(
+            getattr(classification, "to_dict", None)
+        ):
+            decoded = json.loads(payload)
+            classification_payload = classification.to_dict()
+            decoded.update(classification_payload)
+            decoded["display_summary"] = (
+                f"{decoded.get('display_summary') or 'Computer action failed safely.'} "
+                f"Requested {classification_payload['requested_delivery']}; delivered "
+                f"{classification_payload['delivery_mode']}; driver "
+                f"{classification_payload['driver_effect']}; outcome "
+                f"{'verified' if classification_payload['driver_verified'] else 'unverified'}; "
+                f"escalation {classification_payload['escalation_recommendation'] or 'none'}; "
+                f"verdict {classification_payload['verdict'].replace('_', ' ')}; next "
+                f"{classification_payload['next_step'].replace('_', ' ')}."
+            )[:240]
+            payload = json.dumps(decoded, ensure_ascii=False)
         failure_stage = str(getattr(exc, "failure_stage", "") or "")
         driver_error_class = str(getattr(exc, "safe_driver_error", "") or "")
         if (
@@ -389,12 +408,24 @@ def _observation_payload(
             "effect": action_effect,
             "effect_verified": effect_verified,
             "delivery_mode": str(getattr(observation, "delivery_mode", "") or ""),
+            "requested_delivery": str(
+                getattr(observation, "requested_delivery", "auto") or "auto"
+            ),
             "route": str(getattr(observation, "route", "") or ""),
             "cause": str(getattr(observation, "cause", "") or ""),
             "outcome": outcome or "unverified",
             "verified_scope": verified_scope,
             "dispatch_state": dispatch_state,
             "driver_verdict": driver_verdict,
+            "driver_verified": bool(
+                getattr(observation, "driver_verified", False)
+            ),
+            "degraded": bool(getattr(observation, "degraded", False)),
+            "escalation_recommendation": str(
+                getattr(observation, "escalation_recommendation", "") or ""
+            ),
+            "verdict": str(getattr(observation, "verdict", "") or ""),
+            "next_step": str(getattr(observation, "next_step", "") or ""),
             "semantic_postcondition": semantic_postcondition,
             "visual_observation": visual_observation,
             "action_outcome": outcome or "unverified",
@@ -442,6 +473,14 @@ def _observation_payload(
             "Fresh exact semantic evidence contradicted the requested value. The replay "
             "barrier is released; choose a different explicit safe action or report the no-op."
         )
+    verdict = str(getattr(observation, "verdict", "") or "")
+    if verdict:
+        display_summary = (
+            f"{display_summary} Driver {driver_verdict}; requested "
+            f"{str(getattr(observation, 'requested_delivery', 'auto') or 'auto')}, "
+            f"delivered {str(getattr(observation, 'delivery_mode', 'unknown') or 'unknown')}; "
+            f"verdict {verdict.replace('_', ' ')}."
+        )
     return _json_payload(display_summary, **payload)
 
 
@@ -462,6 +501,13 @@ def _action_payload(receipt: ActionReceipt) -> str:
         if exact_postcondition_verified
         else f"Dispatched {receipt.action.replace('_', ' ')} without a fresh native comparison; the intended outcome is not verified."
     )
+    if receipt.verdict:
+        summary = (
+            f"{summary} Driver {receipt.driver_effect}; requested "
+            f"{receipt.requested_delivery}, delivered "
+            f"{receipt.delivery_mode or 'unknown'}; verdict "
+            f"{receipt.verdict.replace('_', ' ')}."
+        )
     return _json_payload(
         summary,
         ok=True,
@@ -480,6 +526,14 @@ def _action_payload(receipt: ActionReceipt) -> str:
         action_outcome=("exact_target_absence_observed" if receipt.cause == "target_disappeared" else outcome),
         dispatch_state=("dispatched" if receipt.action_dispatched else "rejected"),
         driver_verdict=receipt.driver_effect,
+        driver_verified=bool(
+            receipt.driver_effect == "confirmed" or receipt.effect_verified
+        ),
+        requested_delivery=receipt.requested_delivery,
+        degraded=receipt.degraded,
+        escalation_recommendation=receipt.escalation_recommendation,
+        verdict=receipt.verdict,
+        next_step=receipt.next_step,
         semantic_postcondition="unavailable",
         visual_observation=(
             "unavailable"
@@ -529,6 +583,7 @@ def _call_signature(
     semantic_role: str,
     semantic_value_prefix: str,
     menu_path: list[str],
+    delivery_mode: str,
 ) -> tuple[Any, ...]:
     """Build an in-memory replay key without retaining typed content."""
 
@@ -558,6 +613,7 @@ def _call_signature(
         bool(semantic_value_prefix),
         len(str(semantic_value_prefix or "")),
         tuple(str(label) for label in menu_path),
+        str(delivery_mode or "auto").casefold(),
     )
 
 
@@ -628,6 +684,7 @@ class ComputerUseTool(BaseTool):
             expected_effect: str = "",
             destination: str = "",
             menu_path: str = "",
+            delivery_mode: str = "auto",
         ) -> str:
             """Use the local native Computer Use Beta session."""
 
@@ -655,19 +712,27 @@ class ComputerUseTool(BaseTool):
                 semantic_role=semantic_role,
                 semantic_value_prefix=semantic_value_prefix,
                 menu_path=exact_menu_path,
+                delivery_mode=delivery_mode,
             )
             log_success = True
             log_error_code = "ok"
             log_route = "unknown"
             log_delivery = "unknown"
+            log_requested_delivery = "auto"
             log_driver_effect = "unverifiable"
+            log_degraded = False
+            log_escalation_recommendation = ""
+            log_verdict = ""
+            log_next_step = ""
             log_change = "unknown"
             log_effect_verified = False
             log_outcome = "none"
             log_failure_stage = "none"
 
             def record_result(value: Any) -> None:
-                nonlocal log_route, log_delivery, log_driver_effect
+                nonlocal log_route, log_delivery, log_requested_delivery
+                nonlocal log_driver_effect, log_degraded
+                nonlocal log_escalation_recommendation, log_verdict, log_next_step
                 nonlocal log_change, log_effect_verified, log_outcome
                 log_route = str(getattr(value, "route", "") or "unknown")
                 log_delivery = str(
@@ -675,11 +740,20 @@ class ComputerUseTool(BaseTool):
                     or getattr(value, "delivery", "")
                     or "unknown"
                 )
+                log_requested_delivery = str(
+                    getattr(value, "requested_delivery", "auto") or "auto"
+                )
                 log_driver_effect = str(
                     getattr(value, "driver_effect", "")
                     or getattr(value, "backend_effect", "")
                     or "unverifiable"
                 )
+                log_degraded = bool(getattr(value, "degraded", False))
+                log_escalation_recommendation = str(
+                    getattr(value, "escalation_recommendation", "") or ""
+                )
+                log_verdict = str(getattr(value, "verdict", "") or "")
+                log_next_step = str(getattr(value, "next_step", "") or "")
                 native_change = str(getattr(value, "native_change", "unknown") or "unknown")
                 visual_change = str(getattr(value, "visual_change", "unknown") or "unknown")
                 log_change = native_change if native_change != "unknown" else visual_change
@@ -885,6 +959,7 @@ class ComputerUseTool(BaseTool):
                         approval_mode=approval_mode,
                         capture_after=capture_after,
                         visual_question=visual_question,
+                        delivery_mode=delivery_mode,
                     )
                 record_result(result)
                 if isinstance(result, ActionReceipt):
@@ -920,6 +995,9 @@ class ComputerUseTool(BaseTool):
                 log_success = False
                 log_error_code = str(getattr(exc, "code", "driver_failed") or "driver_failed")
                 log_failure_stage = str(getattr(exc, "failure_stage", "") or "none")
+                classification = getattr(exc, "classification", None)
+                if classification is not None:
+                    record_result(classification)
                 if service.paused_call_matches(signature):
                     from langgraph.types import interrupt
 
@@ -947,7 +1025,12 @@ class ComputerUseTool(BaseTool):
                         error_code=log_error_code,
                         route=log_route,
                         delivery_mode=log_delivery,
+                        requested_delivery=log_requested_delivery,
                         driver_effect=log_driver_effect,
+                        degraded=log_degraded,
+                        escalation_recommendation=log_escalation_recommendation,
+                        verdict=log_verdict,
+                        next_step=log_next_step,
                         native_or_visual_change=log_change,
                         effect_verified=log_effect_verified,
                         outcome=log_outcome,

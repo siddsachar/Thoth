@@ -109,6 +109,8 @@ class FakeScenario:
     accepted_background_noop_tools: frozenset[str] = field(default_factory=frozenset)
     action_route: str = ""
     action_cause: str = ""
+    action_degraded: bool = False
+    escalation_recommendation: str = ""
     element_type_effect: str = "confirmed"
     driver_declared_count: int | None = None
     driver_limited: bool | None = None
@@ -121,6 +123,8 @@ class FakeScenario:
     action_error_message: str = "fake action failure"
     delivery_profile: str = "native_targeted_insertion"
     scale_factor: float = 1.25
+    ended_session_tools: frozenset[str] = field(default_factory=frozenset)
+    persistent_ended_session_tools: frozenset[str] = field(default_factory=frozenset)
 
 
 class FakeCuaTransport:
@@ -145,6 +149,10 @@ class FakeCuaTransport:
         self.document_value = self.scenario.document_value
         self.window_snapshot_index = 0
         self.closed_targets: set[tuple[int, int]] = set()
+        self.ended_session_refusals: set[str] = set()
+        self.session_active = False
+        self.session_was_ended = False
+        self.session_start_count = 0
 
     def open(self) -> None:
         self.opened = True
@@ -177,8 +185,39 @@ class FakeCuaTransport:
             raise ConnectionError("fake transport disconnected")
         if name == "set_config":
             return self._result({"capture_scope": "window", "max_image_dimension": 1456})
-        if name in {"start_session", "end_session"}:
+        if name == "start_session":
+            if self.session_start_count:
+                self.generation += 1
+            self.session_start_count += 1
+            self.session_active = True
+            self.session_was_ended = False
             return self._result({"session": args.get("session"), "ok": True})
+        if name == "end_session":
+            self.session_active = False
+            return self._result({"session": args.get("session"), "ok": True})
+        if name in self.scenario.persistent_ended_session_tools:
+            self.session_active = False
+            self.session_was_ended = True
+            return self._top_level_error(
+                "fake session has ended",
+                "session_ended",
+            )
+        if (
+            name in self.scenario.ended_session_tools
+            and name not in self.ended_session_refusals
+        ):
+            self.ended_session_refusals.add(name)
+            self.session_active = False
+            self.session_was_ended = True
+            return self._top_level_error(
+                "fake session has ended",
+                "session_ended",
+            )
+        if not self.session_active and self.session_was_ended:
+            return self._top_level_error(
+                "fake session has ended",
+                "session_ended",
+            )
         if name == "health_report":
             overall = "failed" if self.scenario.permission_denied else "ok"
             return self._result({
@@ -671,14 +710,21 @@ class FakeCuaTransport:
                 if delivery_mode == "foreground"
                 else self.scenario.effect
             )
-            return self._result({
+            structured_result = {
                 "effect": effect,
                 "verified": effect == "confirmed",
                 "delivery_mode": delivery_mode,
-                "escalation": "foreground" if delivery_mode == "foreground" else "",
                 "route": self.scenario.action_route,
                 "cause": self.scenario.action_cause,
-            })
+            }
+            if self.scenario.action_degraded:
+                structured_result["degraded"] = True
+            if self.scenario.escalation_recommendation:
+                structured_result["escalation"] = {
+                    "recommended": self.scenario.escalation_recommendation,
+                    "reason": "fake driver prose must not cross the boundary",
+                }
+            return self._result(structured_result)
         return self._error(f"unknown fake tool: {name}", "unknown_tool")
 
     @staticmethod

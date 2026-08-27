@@ -38,6 +38,58 @@ def computer_live_control_view(snapshot: dict[str, Any], thread_id: str) -> Live
     state = activity.state
     app = str(snapshot.get("app") or "Computer Use")
     window = str(snapshot.get("window") or "")
+    last_action = activity.last_action
+    verdict = str(snapshot.get("last_verdict") or "").casefold()
+    if verdict in {"done", "verify_fresh_state", "escalate", "take_over"}:
+        requested = str(snapshot.get("last_requested_delivery") or "auto").casefold()
+        requested = requested if requested in {"auto", "foreground"} else "auto"
+        delivered = str(snapshot.get("last_delivery_mode") or "unknown").casefold()
+        delivered = (
+            delivered
+            if delivered in {"background", "foreground", "not_applicable", "unknown"}
+            else "unknown"
+        )
+        driver = str(snapshot.get("last_driver_effect") or "unverifiable").casefold()
+        driver = (
+            driver
+            if driver in {
+                "confirmed",
+                "partial",
+                "unverifiable",
+                "suspected_noop",
+                "refused",
+            }
+            else "unverifiable"
+        )
+        native = str(snapshot.get("last_native_change") or "unknown").casefold()
+        native = native if native in {"changed", "unchanged", "unknown"} else "unknown"
+        recommendation = str(
+            snapshot.get("last_escalation_recommendation") or "none"
+        ).casefold()
+        recommendation = (
+            recommendation
+            if recommendation in {"foreground", "px", "page"}
+            else "none"
+        )
+        next_step = str(snapshot.get("last_next_step") or "take_over").casefold()
+        if next_step not in {
+            "continue",
+            "capture_same_target",
+            "retry_foreground_once",
+            "pixel_click_once",
+            "recapture_before_reissue",
+            "unsupported_page_take_over",
+            "take_over",
+        }:
+            next_step = "take_over"
+        last_action = (
+            f"{activity.last_action or 'action'} · requested {requested} · "
+            f"delivered {delivered} · driver {driver.replace('_', ' ')} · "
+            f"native {native} · "
+            f"{'degraded · ' if bool(snapshot.get('last_degraded')) else ''}"
+            f"escalation {recommendation} · verdict {verdict.replace('_', ' ')} · "
+            f"next {next_step.replace('_', ' ')}"
+        )
     return LiveControlView(
         engine="computer",
         active=True,
@@ -45,7 +97,7 @@ def computer_live_control_view(snapshot: dict[str, Any], thread_id: str) -> Live
         state_label=activity.state_label,
         target=f"{app} · {window}" if window and window.casefold() != app.casefold() else app,
         scope="This app only",
-        last_action=activity.last_action,
+        last_action=last_action,
         can_take_over=state not in {"waiting_user", "resuming", "stopping", "failed"},
         can_resume=state == "waiting_user",
         can_preview=True,

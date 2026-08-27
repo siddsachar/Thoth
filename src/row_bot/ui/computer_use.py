@@ -281,8 +281,14 @@ def build_active_session_card(*, compact: bool = False) -> Any:
             if snapshot["last_action"]:
                 receipt_parts = [
                     "completed" if snapshot.get("last_action_completed") else "dispatch pending",
+                    f"requested {snapshot.get('last_requested_delivery') or 'auto'}",
+                    f"delivered {snapshot.get('last_delivery_mode') or 'unknown'}",
                     f"driver {snapshot.get('last_driver_effect') or 'unverifiable'}",
-                    f"visual {snapshot.get('last_visual_change') or 'unknown'}",
+                    f"native {snapshot.get('last_native_change') or 'unknown'}",
+                    *(["degraded"] if snapshot.get("last_degraded") else []),
+                    f"escalation {snapshot.get('last_escalation_recommendation') or 'none'}",
+                    f"verdict {snapshot.get('last_verdict') or 'none'}",
+                    f"next {snapshot.get('last_next_step') or 'none'}",
                     "outcome verified" if snapshot.get("last_effect_verified") else "outcome unverified",
                 ]
                 ui.label(f"{snapshot['last_action']} · {' · '.join(receipt_parts)}").classes("text-xs")

@@ -73,6 +73,10 @@ _SAFE_ROUTES = frozenset(
     }
 )
 _SAFE_DELIVERY = frozenset({"background", "foreground", "not_applicable", "unknown"})
+_SAFE_ESCALATION_RECOMMENDATIONS = frozenset({"foreground", "px", "page"})
+_ACTION_SCOPED_FOREGROUND_ACTIONS = frozenset(
+    {"click", "double_click", "right_click", "type", "key", "scroll"}
+)
 _MODEL_DOCUMENT_ROLES = frozenset(
     {
         "cell",
@@ -215,11 +219,167 @@ def _safe_driver_cause(code: object) -> str:
         return "temporary_backend_failure"
     if value in {"stale_element", "snapshot_expired"}:
         return "stale_observation"
+    if value == "session_ended":
+        return "stale_observation"
     if value in {"background_unavailable", "foreground_required"}:
         return "foreground_required"
     if value in {"unsupported", "unknown_tool", "not_supported"}:
         return "unsupported_capability"
     return "backend_refusal" if value else ""
+
+
+def _safe_escalation_recommendation(structured: dict[str, Any]) -> str:
+    escalation = structured.get("escalation")
+    if not isinstance(escalation, dict):
+        return ""
+    recommendation = (
+        str(escalation.get("recommended") or "")
+        .strip()
+        .casefold()
+        .replace("-", "_")
+    )
+    return (
+        recommendation
+        if recommendation in _SAFE_ESCALATION_RECOMMENDATIONS
+        else ""
+    )
+
+
+@dataclass(frozen=True)
+class DriverResultClassification:
+    """Bounded Row-Bot interpretation of one driver mutation result."""
+
+    driver_effect: str
+    dispatch_state: str
+    dispatched: bool
+    driver_verified: bool
+    requested_delivery: str
+    delivery_mode: str
+    route: str
+    degraded: bool
+    escalation_recommendation: str
+    verdict: str
+    next_step: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "driver_effect": self.driver_effect,
+            "dispatch_state": self.dispatch_state,
+            "action_dispatched": self.dispatched,
+            "driver_verified": self.driver_verified,
+            "requested_delivery": self.requested_delivery,
+            "delivery_mode": self.delivery_mode,
+            "route": self.route,
+            "degraded": self.degraded,
+            "escalation_recommendation": self.escalation_recommendation,
+            "verdict": self.verdict,
+            "next_step": self.next_step,
+        }
+
+
+def _classify_driver_result(
+    response: CuaResponse,
+    *,
+    requested_delivery: str = "auto",
+    actual_delivery: str = "unknown",
+    supported_foreground: bool = False,
+    foreground_attempted: bool = False,
+    exact_postcondition_verified: bool = False,
+    fresh_state_observed: bool = False,
+    fresh_state_unchanged: bool = False,
+    reversible: bool = False,
+) -> DriverResultClassification:
+    """Return one advisory next step without authorizing mutation replay."""
+
+    structured = response.structured if isinstance(response.structured, dict) else {}
+    effect = _standard_effect(
+        structured.get("effect"),
+        verified=bool(structured.get("verified")),
+    )
+    error_code = str(response.error_code or "").strip().casefold().replace("-", "_")
+    requested = str(requested_delivery or "auto").strip().casefold()
+    if requested not in {"auto", "foreground"}:
+        requested = "auto"
+    delivery = _standard_delivery(
+        structured.get("delivery_mode")
+        or structured.get("delivery")
+        or actual_delivery
+    )
+    route = _standard_route(structured.get("route") or structured.get("path"))
+    degraded = structured.get("degraded") is True
+    recommendation = _safe_escalation_recommendation(structured)
+    driver_verified = bool(structured.get("verified") is True)
+
+    known_pre_dispatch_refusal = error_code in {
+        "background_unavailable",
+        "foreground_required",
+        "focus_refused",
+        "stale_element",
+        "snapshot_expired",
+        "session_ended",
+    }
+    if response.is_error:
+        dispatch_state = "not_dispatched" if known_pre_dispatch_refusal else "unknown"
+    else:
+        dispatch_state = "not_dispatched" if effect == "refused" else "dispatched"
+    dispatched = dispatch_state == "dispatched"
+
+    if exact_postcondition_verified or driver_verified or effect == "confirmed":
+        verdict, next_step = "done", "continue"
+    elif recommendation == "page":
+        verdict, next_step = "take_over", "unsupported_page_take_over"
+    elif response.is_error and error_code == "session_ended":
+        verdict, next_step = "verify_fresh_state", "recapture_before_reissue"
+    elif response.is_error and error_code in {
+        "background_unavailable",
+        "foreground_required",
+    }:
+        if supported_foreground and not foreground_attempted and requested != "foreground":
+            verdict, next_step = "escalate", "retry_foreground_once"
+        else:
+            verdict, next_step = "take_over", "take_over"
+    elif response.is_error:
+        verdict = "take_over"
+        next_step = (
+            "recapture_before_reissue"
+            if error_code in {
+                "timeout",
+                "temporarily_unavailable",
+                "driver_unavailable",
+            }
+            or dispatch_state == "unknown"
+            else "take_over"
+        )
+    elif effect in {"partial", "unverifiable"}:
+        if fresh_state_observed:
+            verdict, next_step = "take_over", "take_over"
+        else:
+            verdict, next_step = "verify_fresh_state", "capture_same_target"
+    elif effect == "suspected_noop":
+        if not fresh_state_observed:
+            verdict, next_step = "verify_fresh_state", "capture_same_target"
+        elif fresh_state_unchanged and reversible and recommendation == "foreground":
+            verdict, next_step = "escalate", "retry_foreground_once"
+        elif fresh_state_unchanged and reversible and recommendation == "px":
+            verdict, next_step = "escalate", "pixel_click_once"
+        else:
+            verdict, next_step = "take_over", "take_over"
+    else:
+        verdict, next_step = "take_over", "take_over"
+
+    return DriverResultClassification(
+        driver_effect=effect,
+        dispatch_state=dispatch_state,
+        dispatched=dispatched,
+        driver_verified=driver_verified,
+        requested_delivery=requested,
+        delivery_mode=delivery,
+        route=route,
+        degraded=degraded,
+        escalation_recommendation=recommendation,
+        verdict=verdict,
+        next_step=next_step,
+    )
 
 
 def _safe_correlation_id(value: object) -> str:
@@ -418,6 +578,7 @@ class Observation:
     scale_factor: float | None
     elements: tuple[CuaElement, ...]
     screenshot: bytes | None = field(repr=False, default=None)
+    screenshot_generation: int = 0
     image_mime: str = ""
     truncated: bool = False
     suspicious: bool = False
@@ -431,12 +592,18 @@ class Observation:
     visual_change: str = "unknown"
     effect_verified: bool = False
     delivery_mode: str = ""
+    requested_delivery: str = "auto"
     route: str = ""
     cause: str = ""
     outcome: str = ""
     verified_scope: str = ""
     dispatch_state: str = "rejected"
     driver_verdict: str = "unverifiable"
+    driver_verified: bool = False
+    degraded: bool = False
+    escalation_recommendation: str = ""
+    verdict: str = ""
+    next_step: str = ""
     semantic_postcondition: str = "unavailable"
     visual_observation: str = "unavailable"
     native_change: str = "unknown"
@@ -578,6 +745,15 @@ class Observation:
             lines.append(f"Verified scope: {self.verified_scope or 'none'}")
             lines.append(f"Dispatch state: {self.dispatch_state}")
             lines.append(f"Driver verdict: {self.driver_verdict}")
+            lines.append(f"Requested delivery: {self.requested_delivery}")
+            lines.append(f"Actual delivery: {self.delivery_mode or 'unknown'}")
+            lines.append(f"Driver degraded: {'yes' if self.degraded else 'no'}")
+            lines.append(
+                "Escalation recommendation: "
+                f"{self.escalation_recommendation or 'none'}"
+            )
+            lines.append(f"Row-Bot verdict: {self.verdict or 'take_over'}")
+            lines.append(f"Bounded next step: {self.next_step or 'take_over'}")
             lines.append(f"Exact semantic postcondition: {self.semantic_postcondition}")
             lines.append(f"Visual observation: {self.visual_observation}")
         if self.suspicious:
@@ -601,6 +777,7 @@ class ComputerUseError(RuntimeError):
         observation: Observation | None = None,
         failure_stage: str = "",
         safe_driver_error: str = "",
+        classification: DriverResultClassification | None = None,
     ) -> None:
         super().__init__(message)
         self.code = str(code)
@@ -610,6 +787,7 @@ class ComputerUseError(RuntimeError):
         self.observation = observation
         self.failure_stage = str(failure_stage)
         self.safe_driver_error = str(safe_driver_error)
+        self.classification = classification
 
 
 class LeaseBusyError(ComputerUseError):
@@ -897,6 +1075,13 @@ class ComputerUseService:
         self._last_action = ""
         self._last_effect = ""
         self._last_driver_effect = ""
+        self._last_requested_delivery = "auto"
+        self._last_delivery_mode = "unknown"
+        self._last_degraded = False
+        self._last_escalation_recommendation = ""
+        self._last_verdict = ""
+        self._last_next_step = ""
+        self._last_native_change = "unknown"
         self._last_visual_change = "unknown"
         self._last_effect_verified = False
         self._last_action_completed = False
@@ -978,6 +1163,13 @@ class ComputerUseService:
                 "last_action": self._last_action,
                 "last_effect": self._last_effect,
                 "last_driver_effect": self._last_driver_effect,
+                "last_requested_delivery": self._last_requested_delivery,
+                "last_delivery_mode": self._last_delivery_mode,
+                "last_degraded": self._last_degraded,
+                "last_escalation_recommendation": self._last_escalation_recommendation,
+                "last_verdict": self._last_verdict,
+                "last_next_step": self._last_next_step,
+                "last_native_change": self._last_native_change,
                 "last_visual_change": self._last_visual_change,
                 "last_effect_verified": self._last_effect_verified,
                 "last_action_completed": self._last_action_completed,
@@ -1078,6 +1270,13 @@ class ComputerUseService:
                 self._last_action = ""
                 self._last_effect = ""
                 self._last_driver_effect = ""
+                self._last_requested_delivery = "auto"
+                self._last_delivery_mode = "unknown"
+                self._last_degraded = False
+                self._last_escalation_recommendation = ""
+                self._last_verdict = ""
+                self._last_next_step = ""
+                self._last_native_change = "unknown"
                 self._last_visual_change = "unknown"
                 self._last_effect_verified = False
                 self._last_action_completed = False
@@ -1144,40 +1343,98 @@ class ComputerUseService:
             raise concurrent.futures.CancelledError("Computer action stopped")
 
     def _driver_call(self, action: str, arguments: dict[str, Any]) -> CuaResponse:
-        self._check_cancelled()
         with self._lock:
-            client = self._client
-        if client is None:
-            raise ComputerUseError("Computer driver session is not active.")
-        started = time.perf_counter()
-        try:
-            response = client.call_action(action, arguments)
-        except ConnectionError as exc:
-            self._abort_driver_session()
-            raise ComputerUseError(
-                "Cua Driver disconnected; the session was stopped to prevent duplicate input.",
-                code="driver_unavailable",
-            ) from exc
-        except Exception as exc:
-            if action in {"type", "replace_text"}:
-                raise ComputerUseError(
-                    "Cua text action failed safely; the typed value is hidden."
-                ) from exc
-            raise ComputerUseError(
-                "Cua Driver rejected or failed the requested action.",
-                code="driver_failed",
-            ) from exc
-        finally:
-            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            recovery_owner = self._owner
+
+        def call_once() -> CuaResponse:
+            self._check_cancelled()
             with self._lock:
-                self._driver_call_count += 1
-                self._driver_elapsed_ms += elapsed_ms
-            if action in {"list_apps", "list_windows", "launch_app"}:
-                self._record_tool_phase("discovery", elapsed_ms)
-            elif action == "capture" and arguments.get("include_screenshot") is not False:
-                self._record_tool_phase("native_capture", elapsed_ms)
-        self._check_cancelled()
+                client = self._client
+            if client is None:
+                raise ComputerUseError("Computer driver session is not active.")
+            started = time.perf_counter()
+            try:
+                response = client.call_action(action, arguments)
+            except ConnectionError as exc:
+                self._abort_driver_session()
+                raise ComputerUseError(
+                    "Cua Driver disconnected; the session was stopped to prevent duplicate input.",
+                    code="driver_unavailable",
+                ) from exc
+            except Exception as exc:
+                if action in {"type", "replace_text"}:
+                    raise ComputerUseError(
+                        "Cua text action failed safely; the typed value is hidden."
+                    ) from exc
+                raise ComputerUseError(
+                    "Cua Driver rejected or failed the requested action.",
+                    code="driver_failed",
+                ) from exc
+            finally:
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                with self._lock:
+                    self._driver_call_count += 1
+                    self._driver_elapsed_ms += elapsed_ms
+                if action in {"list_apps", "list_windows", "launch_app"}:
+                    self._record_tool_phase("discovery", elapsed_ms)
+                elif (
+                    action == "capture"
+                    and arguments.get("include_screenshot") is not False
+                ):
+                    self._record_tool_phase("native_capture", elapsed_ms)
+            self._check_cancelled()
+            return response
+
+        response = call_once()
+        if (
+            action in {"list_apps", "list_windows", "capture"}
+            and response.is_error
+            and response.error_code == "session_ended"
+        ):
+            if recovery_owner is None:
+                return response
+            self._restart_client_for_read_only_recovery(recovery_owner)
+            response = call_once()
         return response
+
+    def _restart_client_for_read_only_recovery(self, owner: LeaseOwner) -> None:
+        """Restart once after a structured no-input ended-session refusal."""
+
+        self._check_cancelled()
+        self._require_existing_owner(owner)
+        with self._lock:
+            if self._owner is None or self._owner.key != owner.key:
+                raise LeaseBusyError(
+                    "This task no longer owns the Computer session."
+                )
+            previous = self._client
+            self._client = None
+            self._observation = None
+            self._observation_generation += 1
+        if previous is not None:
+            previous.close(graceful=False)
+        self._check_cancelled()
+        self._require_existing_owner(owner)
+        replacement = self._client_factory()
+        try:
+            replacement.start()
+            self._check_cancelled()
+            self._require_existing_owner(owner)
+            with self._lock:
+                if self._owner is None or self._owner.key != owner.key:
+                    raise LeaseBusyError(
+                        "This task no longer owns the Computer session."
+                    )
+                if self._client is not None:
+                    raise ComputerUseError(
+                        "Computer driver recovery collided with another session.",
+                        code="driver_unavailable",
+                    )
+                self._client = replacement
+        except BaseException:
+            replacement.close(graceful=False)
+            self._abort_driver_session()
+            raise
 
     def _reviewed_driver_call(self, tool_name: str, arguments: dict[str, Any]) -> CuaResponse:
         """Call one service-reviewed driver tool with normal lease accounting."""
@@ -2024,6 +2281,11 @@ class ComputerUseService:
         route: str = "unknown",
         delivery_mode: str = "unknown",
         driver_effect: str = "unverifiable",
+        requested_delivery: str = "auto",
+        degraded: bool = False,
+        escalation_recommendation: str = "",
+        verdict: str = "",
+        next_step: str = "",
         native_or_visual_change: str = "unknown",
         effect_verified: bool = False,
         outcome: str = "",
@@ -2083,6 +2345,33 @@ class ComputerUseService:
         safe_stage = str(failure_stage or "none").casefold()
         if safe_stage not in _SAFE_COMPUTER_FAILURE_STAGES | {"none"}:
             safe_stage = "none"
+        safe_requested_delivery = str(requested_delivery or "auto").casefold()
+        if safe_requested_delivery not in {"auto", "foreground"}:
+            safe_requested_delivery = "auto"
+        safe_recommendation = str(escalation_recommendation or "none").casefold()
+        if safe_recommendation not in _SAFE_ESCALATION_RECOMMENDATIONS | {"none"}:
+            safe_recommendation = "none"
+        safe_verdict = str(verdict or "none").casefold()
+        if safe_verdict not in {
+            "done",
+            "verify_fresh_state",
+            "escalate",
+            "take_over",
+            "none",
+        }:
+            safe_verdict = "none"
+        safe_next_step = str(next_step or "none").casefold()
+        if safe_next_step not in {
+            "continue",
+            "capture_same_target",
+            "retry_foreground_once",
+            "pixel_click_once",
+            "recapture_before_reissue",
+            "unsupported_page_take_over",
+            "take_over",
+            "none",
+        }:
+            safe_next_step = "none"
         safe_thread_id = _safe_correlation_id(tool_call_owner[0])
         safe_generation_id = _safe_correlation_id(tool_call_owner[1])
         if pending:
@@ -2114,7 +2403,9 @@ class ComputerUseService:
         logger.info(
             "computer_use.action_receipt thread_id=%s generation_id=%s action_family=%s "
             "success=%s error_code=%s failure_stage=%s "
-            "route=%s delivery_mode=%s driver_effect=%s change=%s effect_verified=%s outcome=%s "
+            "route=%s requested_delivery=%s delivery_mode=%s driver_effect=%s "
+            "degraded=%s escalation_recommendation=%s verdict=%s next_step=%s "
+            "change=%s effect_verified=%s outcome=%s "
             "driver_start_ms=%.3f discovery_ms=%.3f native_capture_ms=%.3f "
             "optional_vision_ms=%.3f total_ms=%.3f driver_calls=%d capture_calls=%d "
             "semantic_refresh_calls=%d vision_calls=%d",
@@ -2125,8 +2416,13 @@ class ComputerUseService:
             safe_code,
             safe_stage,
             _standard_route(route),
+            safe_requested_delivery,
             _standard_delivery(delivery_mode),
             _standard_effect(driver_effect, verified=bool(effect_verified)),
+            str(bool(degraded)).lower(),
+            safe_recommendation,
+            safe_verdict,
+            safe_next_step,
             change,
             str(bool(effect_verified)).lower(),
             safe_outcome,
@@ -2664,6 +2960,13 @@ class ComputerUseService:
                     if response.image_bytes is not None
                     else prior_for_target.screenshot if prior_for_target else None
                 ),
+                screenshot_generation=(
+                    self._observation_generation
+                    if response.image_bytes is not None
+                    else prior_for_target.screenshot_generation
+                    if prior_for_target
+                    else 0
+                ),
                 image_mime=(
                     response.image_mime
                     if response.image_bytes is not None
@@ -2851,7 +3154,7 @@ class ComputerUseService:
         coordinate_only: bool,
         keys: str,
         typed_text: str | None,
-    ) -> None:
+    ) -> bool:
         decision = classify_action(
             action,
             app_name=target.app_name,
@@ -2888,7 +3191,7 @@ class ComputerUseService:
                 code="hard_blocked",
             )
         if decision.outcome is not PolicyOutcome.CONSEQUENTIAL or mode_decision != "ask":
-            return
+            return bool(decision.reversible)
         with self._lock:
             self._state = SessionState.WAITING_APPROVAL
         self._notify()
@@ -2918,6 +3221,7 @@ class ComputerUseService:
             )
         self._check_cancelled()
         self._require_existing_owner(owner)
+        return bool(decision.reversible)
     def act_menu(
         self,
         target_id: str,
@@ -3035,6 +3339,14 @@ class ComputerUseService:
             if isinstance(delivery, dict):
                 delivery = delivery.get("mode")
             verified = effect == "confirmed"
+            classification = _classify_driver_result(
+                response,
+                requested_delivery="auto",
+                actual_delivery=_standard_delivery(delivery),
+                exact_postcondition_verified=verified,
+                fresh_state_observed=False,
+                reversible=bool(decision.reversible),
+            )
             receipt = ActionReceipt(
                 surface=AutomationSurface.COMPUTER,
                 target_id=target.target_id,
@@ -3049,10 +3361,22 @@ class ComputerUseService:
                 verified_outcome=verified,
                 verified_scope="exact_state" if verified else "",
                 cause=_safe_driver_cause(response.error_code),
+                requested_delivery=classification.requested_delivery,
+                degraded=classification.degraded,
+                escalation_recommendation=classification.escalation_recommendation,
+                verdict=classification.verdict,
+                next_step=classification.next_step,
             )
             self._action_count += 1
             self._last_effect = receipt.effect
             self._last_driver_effect = receipt.driver_effect
+            self._last_requested_delivery = receipt.requested_delivery
+            self._last_delivery_mode = receipt.delivery_mode
+            self._last_degraded = receipt.degraded
+            self._last_escalation_recommendation = receipt.escalation_recommendation
+            self._last_verdict = receipt.verdict
+            self._last_next_step = receipt.next_step
+            self._last_native_change = "unknown"
             self._last_visual_change = receipt.visual_change
             self._last_effect_verified = receipt.effect_verified
             self._last_action_completed = receipt.action_completed
@@ -3079,6 +3403,7 @@ class ComputerUseService:
         approval_mode: object = "approve",
         capture_after: bool = False,
         visual_question: str = "",
+        delivery_mode: str = "auto",
     ) -> Observation | ActionReceipt:
         """Validate one task-scoped action, dispatch Cua once, and report its verdict."""
 
@@ -3097,6 +3422,20 @@ class ComputerUseService:
         if action not in allowed:
             raise ComputerUseError(
                 "Unsupported Computer action.",
+                code="invalid_input",
+            )
+        requested_delivery = str(delivery_mode or "auto").strip().casefold()
+        if requested_delivery not in {"auto", "foreground"}:
+            raise ComputerUseError(
+                "delivery_mode must be auto or foreground.",
+                code="invalid_input",
+            )
+        if (
+            requested_delivery == "foreground"
+            and action not in _ACTION_SCOPED_FOREGROUND_ACTIONS
+        ):
+            raise ComputerUseError(
+                "Explicit foreground delivery is unavailable for this action family.",
                 code="invalid_input",
             )
         if action == "replace_text":
@@ -3155,6 +3494,13 @@ class ComputerUseService:
                     raise StaleObservationError(
                         "A current target-window capture is required for coordinates."
                     )
+                if (
+                    observation.screenshot is None
+                    or observation.screenshot_generation != observation.generation
+                ):
+                    raise StaleObservationError(
+                        "A fresh exact-target screenshot is required for coordinates."
+                    )
                 if not (
                     0 <= int(x) < observation.width
                     and 0 <= int(y) < observation.height
@@ -3176,7 +3522,7 @@ class ComputerUseService:
                         code="invalid_input",
                     )
 
-            self._authorize_action(
+            reversible = self._authorize_action(
                 action,
                 target,
                 element,
@@ -3231,6 +3577,8 @@ class ComputerUseService:
                         "amount": max(1, min(int(amount or 3), 20)),
                     }
                 )
+            if requested_delivery == "foreground":
+                args["delivery_mode"] = "foreground"
 
             self._state = SessionState.ACTING
             self._last_action = (
@@ -3248,11 +3596,39 @@ class ComputerUseService:
             result = dispatch(args)
             retried_in_foreground = False
             if (
-                action in {"type", "key", "scroll"}
+                action in _ACTION_SCOPED_FOREGROUND_ACTIONS
+                and requested_delivery == "auto"
                 and result.is_error
                 and result.error_code
                 in {"background_unavailable", "foreground_required"}
             ):
+                self._check_cancelled()
+                self._require_existing_owner(owner)
+                exact_target = self._target(target.target_id)
+                if exact_target != target:
+                    raise ComputerUseError(
+                        "The exact Computer target changed before foreground delivery.",
+                        code="target_mismatch",
+                    )
+                self._ensure_app_permission(
+                    exact_target,
+                    approval_mode=approval_mode,
+                )
+                reversible = self._authorize_action(
+                    action,
+                    exact_target,
+                    element,
+                    owner,
+                    approval_mode=approval_mode,
+                    expected_effect=expected_effect,
+                    destination=destination,
+                    coordinate_only=coordinate_only,
+                    keys=keys,
+                    typed_text=(
+                        text if action in {"type", "replace_text"} else None
+                    ),
+                )
+                self._check_cancelled()
                 self._require_existing_owner(owner)
                 fallback_args = dict(args)
                 fallback_args["delivery_mode"] = "foreground"
@@ -3261,15 +3637,54 @@ class ComputerUseService:
                 retried_in_foreground = True
 
             if result.is_error:
+                error_classification = _classify_driver_result(
+                    result,
+                    requested_delivery=requested_delivery,
+                    actual_delivery=(
+                        args.get("delivery_mode") or "background"
+                    ),
+                    supported_foreground=(
+                        action in _ACTION_SCOPED_FOREGROUND_ACTIONS
+                    ),
+                    foreground_attempted=(
+                        retried_in_foreground
+                        or requested_delivery == "foreground"
+                    ),
+                    reversible=reversible,
+                )
+                if result.error_code == "session_ended":
+                    self.invalidate_observation("driver session ended")
+                    self._state = SessionState.OBSERVING
+                    self._notify()
+                    raise ComputerUseError(
+                        "The driver session ended before this mutation could be dispatched; "
+                        "the action was not replayed and a fresh capture is required.",
+                        code="stale_observation",
+                        retryable=True,
+                        safe_driver_error="stale_observation",
+                        classification=error_classification,
+                    )
                 if (
-                    retried_in_foreground
+                    (
+                        retried_in_foreground
+                        or requested_delivery == "foreground"
+                    )
                     and result.error_code
-                    in {"background_unavailable", "foreground_required"}
+                    in {
+                        "background_unavailable",
+                        "foreground_required",
+                        "focus_refused",
+                    }
                 ):
                     raise ComputerUseError(
                         "Foreground delivery was unavailable; user takeover may be required.",
-                        code="background_unavailable",
+                        code=(
+                            "focus_refused"
+                            if result.error_code == "focus_refused"
+                            else "background_unavailable"
+                        ),
                         terminal=True,
+                        classification=error_classification,
                     )
                 if result.error_code in {"stale_element", "snapshot_expired"}:
                     raise self._fresh_stale_error(
@@ -3305,6 +3720,7 @@ class ComputerUseService:
                     else "The Computer driver refused the requested action safely.",
                     code=error_code,
                     retryable=error_code == "transient_driver_failure",
+                    classification=error_classification,
                 )
 
             self._check_cancelled()
@@ -3386,13 +3802,41 @@ class ComputerUseService:
             outcome = (
                 "verified"
                 if verified
+                else "suspected_noop"
+                if driver_effect == "suspected_noop"
                 else "delivered_unverified"
                 if dispatched
                 else "refused"
             )
+            classification = _classify_driver_result(
+                result,
+                requested_delivery=requested_delivery,
+                actual_delivery=delivery_mode,
+                supported_foreground=(
+                    action in _ACTION_SCOPED_FOREGROUND_ACTIONS
+                ),
+                foreground_attempted=(
+                    retried_in_foreground
+                    or requested_delivery == "foreground"
+                    or action == "drag"
+                ),
+                exact_postcondition_verified=verified,
+                fresh_state_observed=completed_observation is not None,
+                fresh_state_unchanged=native_change == "unchanged",
+                reversible=reversible,
+            )
             self._action_count += 1
             self._last_effect = outcome
             self._last_driver_effect = driver_effect
+            self._last_requested_delivery = classification.requested_delivery
+            self._last_delivery_mode = classification.delivery_mode
+            self._last_degraded = classification.degraded
+            self._last_escalation_recommendation = (
+                classification.escalation_recommendation
+            )
+            self._last_verdict = classification.verdict
+            self._last_next_step = classification.next_step
+            self._last_native_change = native_change
             self._last_visual_change = "unknown"
             self._last_effect_verified = verified
             self._last_action_completed = verified
@@ -3406,6 +3850,9 @@ class ComputerUseService:
                 completed_observation.driver_effect = driver_effect
                 completed_observation.effect_verified = verified
                 completed_observation.delivery_mode = delivery_mode
+                completed_observation.requested_delivery = (
+                    classification.requested_delivery
+                )
                 completed_observation.route = route
                 completed_observation.cause = _safe_driver_cause(
                     result.structured.get("cause") or result.error_code
@@ -3416,6 +3863,13 @@ class ComputerUseService:
                     "dispatched" if dispatched else "rejected"
                 )
                 completed_observation.driver_verdict = driver_effect
+                completed_observation.driver_verified = classification.driver_verified
+                completed_observation.degraded = classification.degraded
+                completed_observation.escalation_recommendation = (
+                    classification.escalation_recommendation
+                )
+                completed_observation.verdict = classification.verdict
+                completed_observation.next_step = classification.next_step
                 completed_observation.semantic_postcondition = (
                     "matched"
                     if verified_scope == "exact_value"
@@ -3444,6 +3898,11 @@ class ComputerUseService:
                 cause=_safe_driver_cause(
                     result.structured.get("cause") or result.error_code
                 ),
+                requested_delivery=classification.requested_delivery,
+                degraded=classification.degraded,
+                escalation_recommendation=classification.escalation_recommendation,
+                verdict=classification.verdict,
+                next_step=classification.next_step,
             )
         self._notify()
         return receipt
@@ -3978,6 +4437,13 @@ class ComputerUseService:
                 self._last_action = ""
                 self._last_effect = ""
                 self._last_driver_effect = ""
+                self._last_requested_delivery = "auto"
+                self._last_delivery_mode = "unknown"
+                self._last_degraded = False
+                self._last_escalation_recommendation = ""
+                self._last_verdict = ""
+                self._last_next_step = ""
+                self._last_native_change = "unknown"
                 self._last_visual_change = "unknown"
                 self._last_effect_verified = False
                 self._last_action_completed = False
