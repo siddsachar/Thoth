@@ -333,7 +333,6 @@ html.row-bot-buddy-overlay-html body {
     border: 1px solid rgba(77, 184, 171, 0.26);
     border-radius: 8px;
     box-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
-    backdrop-filter: blur(8px);
 }
 .row-bot-buddy-wrap[data-bubble-verbosity="quiet"][data-surface="desktop"] .row-bot-buddy-status:empty {
     display: none;
@@ -341,12 +340,20 @@ html.row-bot-buddy-overlay-html body {
 .row-bot-buddy-overlay-page {
     position: fixed;
     inset: 0;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  display: grid;
-  place-items: center;
-    background: transparent;
+    box-sizing: border-box;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    color: #e7edf5;
+    background: linear-gradient(145deg, #0b1119, #111b26);
+    border: 1px solid rgba(92, 167, 183, 0.34);
+    border-radius: 0;
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
 }
 html.row-bot-buddy-overlay-html,
 body.row-bot-buddy-overlay-body,
@@ -377,19 +384,8 @@ body.row-bot-buddy-overlay-body {
         background: rgba(9, 13, 18, 0.86);
         border-color: rgba(228, 194, 94, 0.34);
 }
-.row-bot-buddy-overlay-page {
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    place-items: initial;
-    gap: 6px;
-    color: #e7edf5;
-    background: linear-gradient(145deg, rgba(11, 17, 25, 0.97), rgba(17, 27, 38, 0.96));
-    border: 1px solid rgba(92, 167, 183, 0.34);
-    border-radius: 14px;
-    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
-}
 .row-bot-buddy-overlay-header {
+    flex: 0 0 auto;
     min-height: 44px;
     display: flex;
     align-items: center;
@@ -430,9 +426,15 @@ body.row-bot-buddy-overlay-body {
 }
 .row-bot-buddy-overlay-no-drag,
 .row-bot-buddy-overlay-no-drag * { cursor: default; }
+.row-bot-buddy-overlay-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+}
 .row-bot-buddy-overlay-response {
-    min-height: 48px;
-    max-height: 54px;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
     overflow-y: auto;
     padding: 7px 9px;
     border-radius: 9px;
@@ -445,6 +447,7 @@ body.row-bot-buddy-overlay-body {
     word-break: break-word;
 }
 .row-bot-buddy-overlay-approval {
+    flex: 0 0 auto;
     min-height: 34px;
     padding: 3px 5px;
     border-radius: 9px;
@@ -468,6 +471,7 @@ body.row-bot-buddy-overlay-body {
     font-size: 10px;
 }
 .row-bot-buddy-overlay-composer {
+    flex: 0 0 auto;
     min-height: 31px;
     border-radius: 10px;
     background: rgba(3, 7, 12, 0.68);
@@ -478,6 +482,28 @@ body.row-bot-buddy-overlay-body {
     overflow-y: auto !important;
     font-size: 11px !important;
     line-height: 1.25 !important;
+}
+.row-bot-buddy-overlay-actions {
+    flex: 0 0 auto;
+    min-height: 30px;
+    padding-top: 2px;
+    border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+.row-bot-buddy-overlay-action.q-btn {
+    color: #b8c8d9;
+    transition: color 120ms ease, background-color 120ms ease;
+}
+.row-bot-buddy-overlay-action.q-btn:hover {
+    color: #f0f5fa;
+    background: rgba(92, 167, 183, 0.14);
+}
+.row-bot-buddy-overlay-action.q-btn:active {
+    color: #ffffff;
+    background: rgba(92, 167, 183, 0.22);
+}
+.row-bot-buddy-overlay-action.q-btn:focus-visible {
+    outline: 2px solid #e4c25e;
+    outline-offset: 1px;
 }
 .row-bot-buddy-overlay-page.row-bot-buddy-overlay-collapsed .row-bot-buddy-overlay-body {
     display: none !important;
@@ -1091,7 +1117,6 @@ def build_buddy_overlay_page(state) -> None:
             root.classes(add="row-bot-buddy-overlay-collapsed")
         else:
             root.classes(remove="row-bot-buddy-overlay-collapsed")
-        collapse_item.set_text("Expand" if collapsed["value"] else "Collapse")
         await _native_call(
             f"api.set_buddy_collapsed ? api.set_buddy_collapsed({str(collapsed['value']).lower()}) : false"
         )
@@ -1140,19 +1165,6 @@ def build_buddy_overlay_page(state) -> None:
             with ui.column().classes("row-bot-buddy-overlay-meta"):
                 thread_label = ui.label("New chat").classes("row-bot-buddy-overlay-title")
                 context_label = ui.label("Chat").classes("row-bot-buddy-overlay-subtitle")
-            with ui.element("div").classes("row-bot-buddy-overlay-no-drag"):
-                menu_button = ui.button(icon="more_horiz").props(
-                    "flat round dense size=sm aria-label='Buddy actions'"
-                )
-                with ui.menu() as menu:
-                    ui.menu_item("Open full thread", on_click=_open_full_thread)
-                    collapse_item = ui.menu_item(
-                        "Expand" if collapsed["value"] else "Collapse",
-                        on_click=_toggle_collapse,
-                    )
-                    ui.menu_item("Dock Buddy", on_click=_dock)
-                    ui.menu_item("Hide Buddy", on_click=_hide)
-                menu_button.on("click", menu.open)
 
         with ui.column().classes("row-bot-buddy-overlay-body w-full gap-1"):
             response_label = ui.label("Ready").classes("row-bot-buddy-overlay-response w-full")
@@ -1180,6 +1192,23 @@ def build_buddy_overlay_page(state) -> None:
                 send_button = ui.button(icon="send").props("flat round dense size=sm aria-label='Send'")
                 stop_button = ui.button(icon="stop").props("flat round dense size=sm color=negative aria-label='Stop'")
                 stop_button.set_visibility(False)
+
+        with ui.row().classes(
+            "row-bot-buddy-overlay-actions row-bot-buddy-overlay-no-drag "
+            "w-full items-center justify-center no-wrap gap-1"
+        ):
+            ui.button(icon="open_in_new", on_click=_open_full_thread).props(
+                "flat round dense size=sm aria-label='Open full thread'"
+            ).classes("row-bot-buddy-overlay-action").tooltip("Open full thread")
+            ui.button(icon="unfold_more", on_click=_toggle_collapse).props(
+                "flat round dense size=sm aria-label='Collapse or expand Buddy'"
+            ).classes("row-bot-buddy-overlay-action").tooltip("Collapse or expand Buddy")
+            ui.button(icon="dock", on_click=_dock).props(
+                "flat round dense size=sm aria-label='Dock Buddy'"
+            ).classes("row-bot-buddy-overlay-action").tooltip("Dock Buddy")
+            ui.button(icon="visibility_off", on_click=_hide).props(
+                "flat round dense size=sm aria-label='Hide Buddy'"
+            ).classes("row-bot-buddy-overlay-action").tooltip("Hide Buddy")
 
         with ui.column().style("display:none") as hidden_chat:
             p.chat_container = hidden_chat
