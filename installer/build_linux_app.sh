@@ -100,9 +100,9 @@ if [ "$BUNDLE_PLAYWRIGHT" = "1" ]; then
     info "Installing Playwright Chromium into package..."
     export PLAYWRIGHT_BROWSERS_PATH="$PYTHON_PREFIX/playwright-browsers"
     "$PYTHON_PREFIX/bin/python3" -m playwright install chromium 2>&1 | tail -3 || \
-        warn "Playwright Chromium install failed; browser tool will install on first use"
+        warn "Playwright Chromium install failed; Browser Automation requires an explicit Install or Repair action"
 else
-    info "Skipping bundled Playwright Chromium; using user browser cache at runtime"
+    info "Skipping bundled Playwright Chromium; Browser Automation will use a supported browser channel or an explicitly installed managed runtime"
 fi
 
 info "[3/6] Copying source code..."

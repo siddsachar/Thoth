@@ -66,13 +66,27 @@ Row-Bot uses semantic versioning:
    loopback is still gated until an explicit owner invitation is redeemed; do
    not copy one-time invitation URLs into logs or artifacts. Confirm Computer
    Use remains off by default and does not download or invoke Cua before its
-   disclosure and an explicit Install or Repair action.
+   disclosure and an explicit Install or Repair action. Confirm Browser
+   readiness is read-only at startup, a missing or mismatched managed Chromium
+   stays unavailable until an explicit Browser Install or Repair action, and a
+   supported installed Chrome or Edge channel remains selectable. Exercise
+   filter-aware conversation selection and deletion with active work, a linked
+   Designer project, and a Developer worktree or sandbox containing unimported
+   changes; retained recovery paths must be reported. On native Windows or
+   macOS, tear Buddy off into its desktop overlay, send and stop a turn, review
+   a simple approval, reopen the full thread, and recover the overlay from the
+   tray.
 8. Run focused startup and packaging hardening tests:
 
    ```bash
    uv run python scripts/verify_runtime_dependencies.py all
    uv run python -m pytest tests/test_dependency_metadata.py tests/test_optional_dependency_imports.py tests/test_startup_hardening.py tests/test_app_port.py tests/test_linux_support.py
    ```
+
+   For documentation changes, also run `npm audit --omit=dev` in `docs-site/`
+   and review the current build-only advisory note in
+   [`docs-site/README.md`](../docs-site/README.md). Do not force a dependency
+   rewrite to hide an advisory with no compatible published fix.
 
 9. For dependency, payload, or installer changes, run GitHub Actions ->
    `Installer Verify` manually on the release-prep branch. Windows, Linux, and
@@ -123,7 +137,10 @@ Row-Bot uses semantic versioning:
    pinned-runtime verification, one target-window action, Stop, Take over, and
    permission recovery. Confirm screenshots and typed content do not appear in
    logs. On Linux, confirm Computer Use reports unsupported without attempting
-   a driver download.
+   a driver download. With a disposable xAI API account, refresh the live image
+   catalog and run one supported image generation; confirm an endpoint-rejected
+   optional quality value is retried once without that field while timeouts and
+   other failures do not submit a duplicate generation.
 9. Publish the GitHub Release.
 10. Confirm `.github/workflows/container.yml` builds and smokes native
     `linux/amd64` and `linux/arm64` images, publishes the versioned multi-arch
@@ -225,7 +242,9 @@ Minimum smoke checks:
   versioned GHCR image on both supported architectures
 - First-run setup with Providers and Custom/Self-hosted paths
 - Ollama local model when `ollama` is installed and in `PATH`
-- Browser tool after Playwright browser/dependency install
+- Browser tool with a supported installed browser channel or after the explicit
+  managed Playwright browser/dependency install; startup alone must not download
+  it
 - Computer Use remains unavailable without attempting a Cua download
 - Designer export and vault/open-folder actions
 - Update from the previous Linux tarball to the new tarball

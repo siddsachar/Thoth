@@ -18,18 +18,24 @@ The Row-Bot Interface is the main workspace you see after launch. It combines co
 - **Conversations** shows recent threads. The sidebar keeps the list short so the workspace stays usable; use **Show all** when you need older threads.
 - **Thread menu** on a conversation row opens actions such as rename and delete.
 - **Rename** changes the visible thread title without changing the messages.
-- **Delete** removes the thread after confirmation. Use it carefully if you still need the conversation history.
+- **Delete** stops work owned by the conversation and removes its Row-Bot-managed messages, sessions, media, drafts, tool history, workflow state, and related Agent state after confirmation. Developer worktrees or sandboxes with unimported changes are retained and reported instead of being discarded.
 - **Agent profiles** opens the profile selector and profile management area.
 - **Buddy** appears near the bottom when enabled. In the native Windows and macOS apps, drag Buddy itself away from the sidebar to undock its compact thread overlay.
 - **Settings** opens the full configuration dialog.
 
 ## Show All Threads
 
-When you have more threads than the sidebar shows, use Show All from the conversations area. The dialog is for search and cleanup: find an older thread, reopen it, rename it, or delete it after confirming. Start a new thread when the task has a new goal; continue an existing thread when the earlier context still matters.
+When you have more threads than the sidebar shows, use **Show all** from the conversations area. The dialog groups user-managed conversations into **All**, **Chat**, **Design**, **Code**, and **Workflow** filters. Agent child threads remain owned by their parent run and do not appear as independent cleanup targets.
+
+Use **Select** to enter selection mode. Check individual rows, or use **Select all** to select only the conversations in the current filter; switch filters to add other conversations without losing the existing selection. **Clear all** affects the current filter, while the action bar's **Clear** resets the whole selection. The destructive action reports the exact selected count and always asks for confirmation.
+
+**Delete all** also respects the current filter. Deletion stops active generation, Agent, workflow, shell, browser, and Computer Use work for each target before removing Row-Bot-managed state. The progress dialog keeps the cleanup off the interface event loop. If a Developer worktree contains changes or a sandbox has unimported work, Row-Bot keeps it and reports that recovery path instead of silently deleting it. This cleanup cannot be undone, so export anything you still need first.
+
+Start a new thread when the task has a new goal; continue an existing thread when the earlier context still matters.
 
 ## Buddy Desktop Overlay
 
-The undocked Buddy follows the thread selected in Row-Bot and shows its name, Chat/Developer/Designer context, current response, and approval state. You can send text, stop the active response, handle simple approvals, or open the full thread for complete details. The overlay menu also collapses, hides, or docks Buddy. Read [Settings: Buddy](/docs/settings/buddy) before using it as your compact desktop conversation surface.
+The undocked Buddy follows the thread selected in Row-Bot and shows its name, Chat/Developer/Designer context, current response, and approval state. You can send text, stop the active response, handle simple approvals, or open the full thread for complete details. The overlay menu also collapses, hides, or docks Buddy. Read [Settings: Buddy](/docs/settings/buddy) for the complete user workflow.
 
 ## Home Tabs
 

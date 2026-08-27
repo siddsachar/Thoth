@@ -124,6 +124,7 @@ SETTINGS = {
             "Local providers show runtimes such as Ollama. Refresh checks what the local service currently exposes.",
             "Subscription accounts show sign-in based providers such as ChatGPT / Codex or Claude Subscription. Use connect, reconnect, test, and refresh actions from the row.",
             "API providers show services that need an API key or compatible endpoint. Their credential buttons open the setup flow for that provider.",
+            "xAI API catalog refresh also discovers live image-generation models and their supported output formats, aspect ratios, resolutions, and quality choices. Row-Bot keeps that capability metadata separate from ordinary chat models.",
             "Custom endpoint providers let advanced users point Row-Bot at OpenAI-compatible servers such as LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, or SGLang.",
             "Custom endpoint Advanced settings can describe reasoning mode, a thinking budget, returned reasoning content, and whether preserved reasoning may be replayed to that endpoint.",
             "Runtime tests check whether a provider can handle the kind of requests Row-Bot needs. A failed test keeps the provider visible but may stop Row-Bot from offering it for agent work.",
@@ -137,6 +138,7 @@ SETTINGS = {
         "saved": "Provider connection state is global to the local Row-Bot app. Secrets are stored in the operating system key store when available; Row-Bot settings keep masked status and catalog metadata.",
         "troubleshoot": [
             "If a provider is connected but models do not appear, refresh Providers, then refresh Models.",
+            "If an xAI image model is missing or rejects a media option, refresh Providers so Row-Bot can use the live image-generation catalog. A quality choice that the endpoint rejects is retried once without that optional field; other generation failures are returned without an automatic duplicate request.",
             "If a runtime test fails, read the row message before changing credentials; the model may be chat-capable but not tool-capable.",
             "If local Ollama is missing, start Ollama and make sure at least one model is installed.",
         ],
@@ -262,7 +264,7 @@ SETTINGS = {
         "controls": [
             "Workspace and filesystem controls define where Row-Bot may read or write when tools need local files.",
             "Shell and command controls affect whether command-running tools are available and how approvals apply.",
-            "Browser controls affect page-reading and browser automation features.",
+            "Browser controls select a supported installed Chrome or Edge channel or Row-Bot's exact managed Playwright Chromium revision. Install and Repair are explicit actions; normal startup only checks readiness and never downloads a browser.",
             "Computer Use controls keep native application automation separate, off by default, and gated by platform readiness, telemetry disclosure, and a verified optional runtime.",
             "Remote Access creates one-time desktop or compact owner invitations, checks or configures an owned Tailscale Serve route, explicitly enables LAN listening, and revokes devices or sessions.",
             "Window mode chooses whether Row-Bot opens in its own app window, the system browser, or asks at launch.",
@@ -281,6 +283,7 @@ SETTINGS = {
         "privacy": "Remote reachability never grants access on its own. Every non-local browser needs a Row-Bot session. Treat unused invitation links as passwords, prefer Tailscale or HTTPS over remote LAN HTTP, and revoke lost or retired devices. Every authenticated browser is the same owner; compact and desktop layouts do not change authority. Review credential, account, channel, provider, or tool settings before enabling features that can contact outside services.",
         "troubleshoot": [
             "If Row-Bot cannot read a file, check whether it is inside the allowed workspace.",
+            "If Browser reports a missing or mismatched managed runtime, use Install browser runtime or Repair. Do not copy another Playwright cache into Row-Bot's managed location.",
             "If Computer Use is unavailable, open its setup card and follow the reported runtime or operating-system permission recovery step.",
             "If a remote URL shows a JSON access error, use the [Remote Access troubleshooting table](/docs/operations/remote-access#troubleshooting) instead of broadly trusting proxy headers or disabling the access gate.",
             "If a tunnel URL is unavailable, check the tunnel provider credentials and whether the tunnel is running.",
@@ -667,7 +670,7 @@ def main() -> int:
 
 Row-Bot is a local-first AI workbench for people who want provider-aware models, parent-led agents, durable documents, memory, tools, workflows, design, code help, integrations, and voice in one controllable system. Run it as a desktop application or a private authenticated server; this guide explains installation, Docker deployment, owner access, the main interface, settings, and every explicit external route.
 
-These pages describe Row-Bot 4.8.0, the release represented by this source tree.
+These pages describe Row-Bot 4.9.0, the release represented by this source tree.
 
 <Screenshot id="home-knowledge" alt="Row-Bot desktop workspace showing the Knowledge graph, conversations, tools, workflows, channels, Activity Center, and terminal." caption="The Knowledge workspace brings Row-Bot's local graph together with conversations, tools, workflows, channels, activity, approvals, and terminal output." />
 
@@ -864,14 +867,20 @@ The Row-Bot Interface is the main workspace you see after launch. It combines co
 - **Conversations** shows recent threads. The sidebar keeps the list short so the workspace stays usable; use **Show all** when you need older threads.
 - **Thread menu** on a conversation row opens actions such as rename and delete.
 - **Rename** changes the visible thread title without changing the messages.
-- **Delete** removes the thread after confirmation. Use it carefully if you still need the conversation history.
+- **Delete** stops work owned by the conversation and removes its Row-Bot-managed messages, sessions, media, drafts, tool history, workflow state, and related Agent state after confirmation. Developer worktrees or sandboxes with unimported changes are retained and reported instead of being discarded.
 - **Agent profiles** opens the profile selector and profile management area.
 - **Buddy** appears near the bottom when enabled. In the native Windows and macOS apps, drag Buddy itself away from the sidebar to undock its compact thread overlay.
 - **Settings** opens the full configuration dialog.
 
 ## Show All Threads
 
-When you have more threads than the sidebar shows, use Show All from the conversations area. The dialog is for search and cleanup: find an older thread, reopen it, rename it, or delete it after confirming. Start a new thread when the task has a new goal; continue an existing thread when the earlier context still matters.
+When you have more threads than the sidebar shows, use **Show all** from the conversations area. The dialog groups user-managed conversations into **All**, **Chat**, **Design**, **Code**, and **Workflow** filters. Agent child threads remain owned by their parent run and do not appear as independent cleanup targets.
+
+Use **Select** to enter selection mode. Check individual rows, or use **Select all** to select only the conversations in the current filter; switch filters to add other conversations without losing the existing selection. **Clear all** affects the current filter, while the action bar's **Clear** resets the whole selection. The destructive action reports the exact selected count and always asks for confirmation.
+
+**Delete all** also respects the current filter. Deletion stops active generation, Agent, workflow, shell, browser, and Computer Use work for each target before removing Row-Bot-managed state. The progress dialog keeps the cleanup off the interface event loop. If a Developer worktree contains changes or a sandbox has unimported work, Row-Bot keeps it and reports that recovery path instead of silently deleting it. This cleanup cannot be undone, so export anything you still need first.
+
+Start a new thread when the task has a new goal; continue an existing thread when the earlier context still matters.
 
 ## Buddy Desktop Overlay
 
@@ -1015,6 +1024,12 @@ Chat is the main place to ask Row-Bot for help. A chat thread can stay simple, o
 ## Continue From The Buddy Overlay
 
 In the native Windows and macOS apps, drag Buddy from the sidebar onto the desktop for a compact view of the selected thread. Its composer shares that thread's saved draft, model, tools, approval mode, and active response. Simple approvals can appear in the overlay; open the full thread for complex approvals, attachments, transcript history, tool traces, model controls, Talk, or Dictate. See [Settings: Buddy](/docs/settings/buddy).
+
+## Manage Conversation History
+
+Open **Show all** from the conversation sidebar to filter Chat, Design, Code, or Workflow conversations. Choose **Select** for checkbox-based cleanup, then select individual conversations or use **Select all** for the current filter. The action bar shows the exact cross-filter selection count before you confirm deletion. **Delete all** applies only to the currently visible filter.
+
+Deleting a conversation stops its active work and removes its Row-Bot-managed messages, drafts, attachments, media, tool sessions, workflow state, and Agent state. A linked Designer project is detached from the deleted conversation. Developer worktrees with changes and sandboxes with unimported work are kept and reported so deletion does not discard source work. Export anything you need before confirming because conversation deletion cannot be undone.
 
 ## What Is Saved
 
@@ -1346,6 +1361,8 @@ Open Home -> Designer to start or reopen a project. The Home tab is the launcher
 ## Brand And Assets
 
 Designer can use saved brand presets, extract brand hints from a URL, accept reference uploads, and reuse project assets. Generated images or videos may call configured media providers; local-only design edits stay in local project data.
+
+For xAI API image models, Row-Bot uses the provider's live image-generation catalog instead of guessing from the chat catalog. It exposes only the formats, aspect ratios, resolutions, and quality choices reported for that model. If xAI rejects an optional quality field, Row-Bot retries once without it; timeouts and other failures do not trigger an automatic second generation that could duplicate cost.
 
 ## Troubleshooting
 
@@ -1832,13 +1849,13 @@ Row-Bot is local-first: the app and its data live on your machine. Local-first d
 
 ## Local Data
 
-Conversations, memories, documents, workflows, logs, Designer projects, Developer workspaces, skills, plugins, Buddy assets, and settings are stored in the active local Row-Bot data directory.
+Conversations, memories, documents, workflows, logs, Designer projects, Developer workspaces, skills, plugins, Buddy assets, and settings are stored in the active local Row-Bot data directory. Buddy's native overlay reuses the selected conversation and does not create a second transcript store.
 
 ## External Calls
 
 External calls happen when you choose or enable something that needs them: hosted models, subscription providers, API providers, web search, browser automation, account tools, messaging channels, MCP servers, plugin tools, realtime voice, and media generation.
 
-Computer Use is a distinct opt-in boundary. Row-Bot downloads the pinned Cua Driver only after an explicit Install or Repair action, verifies the selected archive, and requires a telemetry disclosure before any executable invocation. The reviewed upstream telemetry includes installation and platform metadata but excludes typed content, screenshots, prompts, files, memories, tool arguments, secrets, and channel content. See [Computer Use](/docs/computer-use/) for the full boundary.
+Computer Use is a distinct opt-in boundary. Row-Bot downloads the pinned Cua Driver only after an explicit Install or Repair action, verifies the selected archive, and requires the current telemetry disclosure before any executable invocation. The reviewed 0.20.0 upstream telemetry includes pseudonymous identifiers and bounded product, platform, client, tool/outcome, duration/output, aggregate usage, permission, and lifecycle categories; its tagged event builders exclude prompts, tool arguments/results, typed text, screenshots, accessibility trees, app/window names, URLs, paths, raw values, and raw errors. See [Computer Use](/docs/computer-use/) for the full boundary.
 
 ## Credentials
 
@@ -1998,9 +2015,11 @@ Monitor's extraction and Dream Cycle journals help explain background changes. A
 
 Before a large repair or migration, close Row-Bot and back up the active data directory. Restore the whole related data set together rather than mixing database files from different moments. If the app offers a built-in repair action, read its scope and completion message before manually replacing files.
 
+Conversation deletion is coordinated across Row-Bot-managed messages, checkpoints, attachments, tool sessions, workflows, Agents, Designer links, and Developer session records. It first stops active work, prevents late checkpoints from recreating the conversation, and then repeats the cleanup after producers finish. Changed Developer worktrees and sandboxes with unimported work are retained and reported. Idle maintenance may remove abandoned temporary files and compact sufficiently fragmented Row-Bot SQLite databases, but it stays within verified managed roots and skips busy databases.
+
 ## Safety Boundary
 
-Deleting a thread does not necessarily mean every derived record disappears immediately, and deleting one graph entity can affect linked output. Review the exact record and its relationships first. Never run repair tests against a personal data directory.
+Deleting a conversation removes Row-Bot-managed conversation state but does not erase memories or external records that were deliberately created from it, nor files already exported outside managed storage. Deleting one graph entity can affect linked output. Review the exact record and its relationships first, and never run repair tests against a personal data directory.
 """,
     )
 
@@ -2020,7 +2039,7 @@ Computer Use is a beta feature. It is off by default, supports one interactive l
 1. Open **Settings -> System -> Browser & Computer Use**.
 2. Expand **Computer Use (Beta)** and read the capability and privacy summary.
 3. Choose **Install**. Row-Bot shows the required Cua Driver telemetry disclosure before it downloads or starts anything.
-4. Choose **Continue** only if you accept the disclosure. Row-Bot downloads the pinned Cua Driver 0.7.1 asset for your platform, verifies its SHA-256, and extracts it into Row-Bot's private data directory.
+4. Choose **Continue** only if you accept the disclosure. Row-Bot downloads the pinned Cua Driver 0.20.0 full archive for your platform, verifies its SHA-256, and extracts it into Row-Bot's private data directory. Upgrading from an older reviewed driver requires accepting the expanded version-2 telemetry notice again.
 5. On macOS, grant Accessibility and Screen Recording to the Row-Bot process when prompted, then choose **Recheck**. Restart the same process after changing permissions if the status asks you to.
 6. Turn on **Computer Use (Beta)** after the setup card reports ready.
 
@@ -2044,7 +2063,7 @@ Window replacement, permission loss, target changes, or driver failure invalidat
 
 Computer Use blocks terminals, password managers, Row-Bot itself, secure desktops, elevation prompts, security settings, and attempts to handle credentials, one-time codes, CAPTCHAs, biometrics, or operating-system permission dialogs. Consequential actions use approval policy at the point of risk, and external handoff flows stay with the user.
 
-The reviewed Cua telemetry sends a stable random Cua installation ID, Cua version, operating-system name and version, architecture, CI flag, event category, and timestamp to Cua's PostHog endpoint. It excludes usernames, file paths, command or tool arguments, typed content, and screenshots. Row-Bot adds no first-party telemetry and prevents its prompts, files, memories, secrets, screenshots, tool arguments, and channel content from reaching Cua telemetry.
+The reviewed Cua 0.20.0 telemetry sends pseudonymous installation/process-session identifiers and bounded product, platform, client, tool/outcome, duration/output, aggregate session/config/cursor/recording, permission, and lifecycle categories to Cua's EU PostHog endpoint. Its tagged event builders do not receive prompts, tool arguments/results, typed text, screenshots, accessibility trees, app/window names, URLs, paths, raw config/cursor values, or raw errors. Row-Bot adds no first-party telemetry and keeps its prompts, files, memories, secrets, screenshots, tool arguments, and channel content outside Cua telemetry.
 
 For the exact allowlist and reviewed dependency record, see [Computer Use Beta: architecture and security decision](https://github.com/siddsachar/row-bot/blob/main/docs/COMPUTER_USE_SECURITY.md).
 

@@ -14,7 +14,7 @@ Computer Use is a beta feature. It is off by default, supports one interactive l
 1. Open **Settings -> System -> Browser & Computer Use**.
 2. Expand **Computer Use (Beta)** and read the capability and privacy summary.
 3. Choose **Install**. Row-Bot shows the required Cua Driver telemetry disclosure before it downloads or starts anything.
-4. Choose **Continue** only if you accept the disclosure. Row-Bot downloads the pinned Cua Driver 0.19.3 full archive for your platform, verifies its SHA-256, and extracts it into Row-Bot's private data directory. Upgrading from the older reviewed driver requires accepting the expanded version-2 telemetry notice again.
+4. Choose **Continue** only if you accept the disclosure. Row-Bot downloads the pinned Cua Driver 0.20.0 full archive for your platform, verifies its SHA-256, and extracts it into Row-Bot's private data directory. Upgrading from an older reviewed driver requires accepting the expanded version-2 telemetry notice again.
 5. On macOS, grant Accessibility and Screen Recording to the Row-Bot process when prompted, then choose **Recheck**. Restart the same process after changing permissions if the status asks you to.
 6. Turn on **Computer Use (Beta)** after the setup card reports ready.
 
@@ -38,7 +38,7 @@ Window replacement, permission loss, target changes, or driver failure invalidat
 
 Computer Use blocks terminals, password managers, Row-Bot itself, secure desktops, elevation prompts, security settings, and attempts to handle credentials, one-time codes, CAPTCHAs, biometrics, or operating-system permission dialogs. Consequential actions use approval policy at the point of risk, and external handoff flows stay with the user.
 
-The reviewed Cua 0.19.3 telemetry sends pseudonymous installation/process-session identifiers and bounded product, platform, client, tool/outcome, duration/output, aggregate session/config/cursor/recording, permission, and lifecycle categories to Cua's EU PostHog endpoint. Its tagged event builders do not receive prompts, tool arguments/results, typed text, screenshots, accessibility trees, app/window names, URLs, paths, raw config/cursor values, or raw errors. Row-Bot adds no first-party telemetry and keeps its prompts, files, memories, secrets, screenshots, tool arguments, and channel content outside Cua telemetry.
+The reviewed Cua 0.20.0 telemetry sends pseudonymous installation/process-session identifiers and bounded product, platform, client, tool/outcome, duration/output, aggregate session/config/cursor/recording, permission, and lifecycle categories to Cua's EU PostHog endpoint. Its tagged event builders do not receive prompts, tool arguments/results, typed text, screenshots, accessibility trees, app/window names, URLs, paths, raw config/cursor values, or raw errors. Row-Bot adds no first-party telemetry and keeps its prompts, files, memories, secrets, screenshots, tool arguments, and channel content outside Cua telemetry.
 
 For the exact allowlist and reviewed dependency record, see [Computer Use Beta: architecture and security decision](https://github.com/siddsachar/row-bot/blob/main/docs/COMPUTER_USE_SECURITY.md).
 

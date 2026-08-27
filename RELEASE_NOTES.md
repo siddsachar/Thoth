@@ -2,6 +2,289 @@
 
 ---
 
+## v4.9.0 - Native Computer Use, Desktop Buddy & Safe Conversation Cleanup
+
+This release builds on v4.8.0 with a rebuilt Browser and native Computer Use
+boundary, a real Windows and macOS Buddy desktop overlay, centralized and
+race-safe conversation cleanup, and live xAI image-generation capability
+discovery. It makes visible automation faster and more truthful about what was
+delivered or verified, lets Buddy operate the selected Chat, Developer, or
+Designer thread without creating a second conversation, removes complete
+thread-owned state without risking repositories or retained project artifacts,
+and selects xAI image quality only from model-published combinations without
+weakening local-first, approval, credential, screenshot, or typed-value
+boundaries.
+
+### Managed Browser And Shared Automation Contracts
+
+- **Dedicated managed Browser service** - moves page ownership, observations,
+  policy, history, runtime readiness, action dispatch, and recovery into
+  `browser/`, leaving the Browser tool as a provider-neutral adapter rather
+  than the owner of one large mutable runtime.
+- **Opaque snapshot-bound targets** - retains exact ephemeral Playwright
+  handles behind task, context, page, navigation, and snapshot tokens; stale,
+  detached, drifted, cross-page, and cross-thread targets fail before an
+  action can be dispatched.
+- **Bounded semantic observations** - validates at most 1,000 interactive
+  handles and 1 MiB before projecting at most 160 controls and 32 KiB, hides
+  input values, records received and retained counts, and disposes handles when
+  their snapshot expires.
+- **Truthful thin receipts** - returns compact receipts for typing and
+  non-navigating clicks, one observation for navigation, scrolling, and tab
+  changes, and no automatic screenshot, Vision call, fixed sleep, or general
+  `networkidle` wait after routine actions.
+- **Approval-bound replay** - stages the exact Browser target at the point of
+  risk, re-proves only that target after approval, completes the approved
+  submit in the same tool invocation, and never lets an approval authorize a
+  different element.
+- **Exact managed Chromium runtime** - raises Python Playwright to the 1.62
+  line, records its matching Chromium revision in an atomic manifest, installs
+  only through an explicit Browser install or repair action, validates an
+  offline page, and retains the prior known-good runtime for rollback.
+- **No startup downloads** - Browser startup, MCP readiness, Designer export,
+  conversation PDF export, and normal app launch perform read-only readiness
+  checks and never install or repair Chromium implicitly.
+- **Bounded launch fallback** - discovers installed Chrome or Edge without
+  probe launches and, after one real selected-channel launch failure, falls
+  back once only to an already-ready version-matched managed Chromium.
+- **Thread-owned pages and recovery** - isolates tabs and popups by task,
+  invalidates every owned observation after context or browser loss, performs
+  one bounded restart without replaying an uncertain action, and cleans up
+  idle or terminal task pages without disturbing active work.
+- **Small shared automation vocabulary** - adds immutable observation,
+  receipt, error, activity, and no-progress contracts shared by Browser and
+  Computer Use while keeping their processes, leases, targets, histories, and
+  persistence separate.
+
+### Native Computer Use Reliability And Safety
+
+- **Reviewed Cua Driver 0.20.0** - pins the signed upstream tag and commit,
+  full Windows x86-64, Windows ARM64, and macOS universal archives, exact
+  executable candidates, and SHA-256 values; Windows uses `mcp` while macOS
+  preserves and launches the packaged app with `mcp --direct`.
+- **Version-2 telemetry disclosure** - requires the expanded acknowledgement
+  introduced after v4.8.0 before the upgraded driver can start. The reviewed
+  telemetry is limited to pseudonymous identifiers and bounded product,
+  platform, client, operation/outcome, duration/output, aggregate usage,
+  permission, and lifecycle categories; tagged event builders exclude prompts,
+  arguments/results, typed text, screenshots, accessibility trees, app/window
+  names, URLs, paths, raw configuration values, and raw errors.
+- **Function-first native actions** - keeps one flat provider-neutral schema
+  for launch, capture, click, double-click, right-click, literal caret `type`,
+  exact whole-value `replace_text`, key/hotkey, scroll, drag, menu invocation,
+  state verification, and bounded wait behavior.
+- **Direct semantic editing** - token-bound typing dispatches the issued
+  current token after explicit disabled, read-only, secure, protected, and
+  structural checks; combo boxes, grid/data cells, documents, and unknown
+  interactive roles can reach the reviewed driver without hidden selection,
+  clearing, clicking, or recapture steps.
+- **One bounded foreground rung** - starts with background-safe delivery where
+  supported and permits at most one same-action foreground attempt after an
+  explicit driver refusal, with no separate focus action, effect replay, or
+  silent switch to coordinates, Browser, shell, clipboard, or another engine.
+- **Selected and document-aware projection** - keeps the fixed 80-element and
+  12 KiB model envelope while preserving selected items and a bounded quota of
+  document, grid, and actionable controls that would otherwise be crowded out
+  by application chrome.
+- **Exact semantic filtering** - can expose one omitted control by normalized
+  label, role, and value prefix without coordinate guessing, refuses ambiguous
+  matches, and keeps the full validated element set ephemeral and unavailable
+  to stale model tokens.
+- **Current application identity** - normalizes packaged and native app
+  identities, prefers the unique active or visible matching window, preserves
+  genuine ambiguity, and keeps platform identifiers such as AUMIDs out of
+  model output, approvals, and logs.
+- **Action-specific receipts** - separates dispatch, native delivery, visual
+  change, and exact-value verification. An accepted but unverified action stays
+  useful and does not create a pending-mutation latch, completion ledger,
+  automatic replay, or final-answer override.
+- **Bounded verification** - default click, type, key, scroll, and replacement
+  actions make no hidden capture; optional replacement readback or visual
+  checking uses at most one fresh capture and never treats a changed screen or
+  free-form Vision prose as proof of the requested outcome.
+- **Safer stale and no-progress recovery** - allows one same-target refresh and
+  one same-action retry only when the structured receipt permits it, keeps
+  candidate lists current, handles scroll and drag foreground delivery, and
+  recommends Take over after the bounded route is exhausted.
+- **Privacy-safe advisory scanning** - narrows prompt-injection detection to
+  explicit role or hijacking signals, reports only bounded advisory categories,
+  and does not turn ordinary UI text into an authorization decision or a hard
+  action failure.
+- **Permission and lifecycle recovery** - attributes macOS Accessibility and
+  Screen Recording to the packaged Row-Bot host, preserves the Cua app bundle,
+  links to the correct panes, and cleans up the private client and exclusive
+  lease on Stop, thread deletion, disablement, uninstall, and app shutdown.
+- **Tool-owned workflow guidance** - adds the twenty-third bundled tool guide
+  for exact Browser-versus-Computer routing, current-generation targets,
+  same-family recovery, foreground escalation, non-replayable mutations, and
+  honest receipt interpretation.
+
+### Buddy Desktop Overlay
+
+- **Drag-to-undock companion** - replaces the old floating-window behavior
+  with a native Windows and macOS overlay that tears off from the sidebar,
+  stays on top, supports multi-monitor and negative-coordinate placement, and
+  can be repositioned by its header.
+- **One canonical placement model** - migrates legacy visibility and floating
+  settings into docked or desktop placement plus visible and collapsed state,
+  keeps old mirrors compatible, and returns Buddy to the dock on a new app
+  launch without reviving a saved hidden preference.
+- **Selected-thread messaging** - sends to the named Chat, Developer, or
+  Designer conversation with its existing model, tools, approval mode, and
+  surface context; sending with no selected thread creates one normal Chat
+  conversation.
+- **Draft and turn continuity** - shares each thread's saved draft with the
+  full composer, captures the selected thread and surface when Send is pressed,
+  never retargets an in-flight request after a UI selection change, and never
+  adds implicit screenshots or attachments.
+- **Live progress and scoped Stop** - projects current progress before tokens,
+  the latest plain-text answer afterward, and sanitized errors without starting
+  another turn; Stop cancels only the active generation for the selected
+  thread.
+- **Approval handoff** - resolves well-described simple approvals directly in
+  the overlay, routes complex or incomplete approvals to the full thread, and
+  synchronizes pending approval dialogs between Buddy and the main UI without
+  permitting a stale or cross-thread decision.
+- **Focus hand-back** - tracks only the last external foreground application,
+  excludes Row-Bot windows, restores a minimized window once when needed, and
+  makes one non-retrying activation attempt before the overlay sends.
+- **Recoverable native lifecycle** - hides the main window instead of quitting
+  while Buddy is torn off, exposes Open full thread, Collapse or Expand, Dock,
+  and Hide actions, and adds tray recovery for both the overlay and the main
+  window.
+- **Compact visual polish** - uses an opaque fixed rectangular layout, three
+  direct action buttons plus a menu, stable flex sizing, compact status bubbles,
+  softened approval motion, state crossfades, and quieter idle-video replay.
+- **Reliable terminal drag gesture** - prevents native snapshot interception,
+  stale dock geometry, and window-local drag coordinates from turning one
+  docked drag into duplicate, cancelled, or wrongly positioned gestures.
+
+### Conversation Cleanup And Bulk Selection
+
+- **Central deletion service** - replaces scattered thread deletion paths with
+  one idempotent service for Chat, Designer, Developer, workflow, channel, and
+  Agent-owned state, including metadata, checkpoints, writes, drafts, media,
+  summaries, activation state, approvals, notifications, and cached UI state.
+- **Race-safe producer cancellation** - marks a conversation as deleting,
+  stops generation and active child Agents, blocks late checkpoint, event,
+  media, draft, summary, and child-start writes, and keeps the guard until any
+  in-flight producer has finalized.
+- **Recursive Agent cleanup** - removes direct and nested child conversations,
+  approvals, events, edges, locks, and runs while preventing a child-creation
+  race from recreating state after its parent is gone.
+- **Preserved workflow audits** - removes queued and thread-owned pipeline
+  state while retaining workflow and run audit records with deleted thread,
+  approval, message, and channel links scrubbed.
+- **Designer ownership rules** - deleting a conversation detaches it while
+  retaining the design; deleting the design removes its assets, history,
+  published copy, cached session, and every linked conversation.
+- **Developer recovery rules** - never deletes the real repository or selected
+  folder, removes only safe clean managed worktrees, and retains dirty
+  worktrees or sandboxes with unimported changes as explicit recovery
+  workspaces.
+- **Path-safe cleanup and repair** - rejects managed-path escapes and root
+  deletion, removes only provable idle orphan artifacts and stale temporary
+  files, and performs thresholded SQLite compaction when meaningful space can
+  be reclaimed.
+- **Accurate conversation library** - hides Agent child conversations, removes
+  the obsolete Agents filter, assigns each user-managed conversation to one of
+  Chat, Designer, Code, or Workflow, and reconciles visible counts from the
+  same canonical dataset.
+- **Filter-aware Select all** - selects or clears every item in the active
+  filter without disturbing selections from another filter, keeps checkbox and
+  destructive-target state synchronized, and includes collapsed Code rows
+  while excluding hidden children.
+- **Responsive bulk deletion** - paints a persistent progress dialog before
+  offloading cleanup from the UI event loop, awaits asynchronous confirmation
+  callbacks, always removes progress on failure, and reports retained recovery
+  workspaces or partial failures.
+
+### xAI Image Capability Discovery
+
+- **Live image-model discovery** - queries xAI's `/image-generation-models`
+  catalog alongside its general and language catalogs for both API-key and xAI
+  OAuth providers, allowing newly advertised media models to enter the normal
+  provider catalog without a model-name-only guess.
+- **Generation-parameter metadata** - normalizes published quality and
+  resolution options, defaults, and valid combinations into the shared model
+  capability snapshot and preserves them through OAuth and catalog caches.
+- **Capability-aware request planning** - sends xAI quality and resolution only
+  when the selected model published a complete valid combination, chooses the
+  highest supported tier for a High request, and otherwise uses provider
+  defaults with a clear result note instead of inventing an unsupported pair.
+- **Safer long-running media calls** - separates connect, pool, write,
+  generation-read, and download-read timeouts, gives image generation up to ten
+  minutes, refreshes OAuth once after a 401, and never retries an uncertain
+  timed-out generation request.
+- **Provider-contract coverage** - extends model serialization, capability
+  resolution, media-model classification, API-key discovery, OAuth cache
+  restoration, generation, editing, timeout, and download tests for the new
+  metadata path.
+
+### Cross-Surface Reliability, Documentation And Validation
+
+- **Generation-wide Stop semantics** - wakes queued work, closes matching
+  approvals, stops generation-linked child Agents, cancels Browser, Computer,
+  shell, and Buddy activity for the selected generation, and prevents a stale
+  approval callback from resuming work after Stop.
+- **Approval synchronization** - lets the full UI display an approval raised
+  from Buddy, hands modal ownership between connected local UI clients, and
+  keeps unrelated thread or generation approvals isolated.
+- **Managed export rendering** - uses the exact reviewed Chromium runtime for
+  Unicode and Markdown-aware conversation PDFs plus Designer PDF, PNG, and PPTX
+  rendering, with deterministic load completion instead of an unbounded
+  network-idle wait.
+- **PowerShell result accuracy** - treats an emitted PowerShell error record as
+  failure even when a later statement succeeds, retains native nonzero exit
+  codes, preserves successful warnings and persistent working directories, and
+  releases shell locks after cancellation or detached launch.
+- **Stable tool-guide prompting** - discovers guides from the effective active
+  tool set, injects them into a stable prompt section for provider cache reuse,
+  and preserves the compact custom-endpoint policy that omits all skills and
+  guides at context windows of 32,768 tokens or less.
+- **Safer compact tool traces** - groups Browser and Computer activity without
+  exposing private JSON, renders structured failures truthfully, settles
+  automatic skill loads into bounded plain labels, and keeps transcript export
+  free of hidden activation metadata.
+- **Protected documentation capture** - suppresses model-settings writes during
+  authorized real-data screenshot capture, refreshes Buddy and Computer Use
+  public guides and screenshots, and republishes generated reference and
+  searchable site artifacts.
+- **Changed-lane completeness** - makes the test matrix include committed
+  branch changes, current working-tree edits, and untracked files so local and
+  CI changed-source selection cannot silently omit new release work.
+- **Deterministic architecture coverage** - adds shared automation contracts,
+  managed Browser subsystem tests, extensive Computer Use action, privacy,
+  targeting, focus, performance, and driver-verdict coverage, Buddy overlay
+  and drag fixtures, thread cleanup and bulk-selection coverage, export and
+  cancellation tests, and updated source-to-test ownership.
+
+### Breaking Changes And Caveats
+
+- No public CLI break or mandatory application-data migration is introduced by
+  v4.9.0. Legacy Buddy settings migrate in place, and existing conversations,
+  designs, repositories, workflows, and provider credentials remain local.
+- Existing Computer Use installations from v4.8.0 use Cua Driver 0.7.1 and the
+  version-1 disclosure. They must install or repair the reviewed 0.20.0 full
+  archive and accept the expanded version-2 disclosure before Computer Use can
+  start; no driver download occurs during ordinary startup or readiness checks.
+- Browser Automation now requires the Chromium revision matching the installed
+  Playwright 1.62.x package. A mismatched or missing managed runtime fails
+  closed and must be installed or repaired explicitly; an already installed
+  supported Chrome or Edge channel can still be selected.
+- Conversation and design deletion remain irreversible and approval-gated.
+  Dirty Developer worktrees, real repositories, selected source folders, and
+  sandboxes with unimported changes are retained rather than deleted; workflow
+  audit rows remain with sensitive live links removed.
+- The Buddy desktop overlay requires the native Windows or macOS app. Linux,
+  server/browser mode, compact mobile presentation, and remote browsers keep
+  Buddy docked inside Row-Bot.
+- Computer Use remains beta, local-interactive-only, off by default, and
+  unavailable to schedules, channels, background workflows, child Agents,
+  plugins, external MCP callers, mobile clients, and headless/server sessions.
+  Browser and Computer remain separate engines and never silently substitute
+  for one another after a structured refusal.
+
 ## v4.8.0 - Reasoning Controls, Context Safety & Native OpenCode Discovery
 
 This release builds on v4.7.1 with provider-aware reasoning controls, safer

@@ -21,6 +21,7 @@ Open **Settings**, then choose **Providers** from the left tab list.
 - Local providers show runtimes such as Ollama. Refresh checks what the local service currently exposes.
 - Subscription accounts show sign-in based providers such as ChatGPT / Codex or Claude Subscription. Use connect, reconnect, test, and refresh actions from the row.
 - API providers show services that need an API key or compatible endpoint. Their credential buttons open the setup flow for that provider.
+- xAI API catalog refresh also discovers live image-generation models and their supported output formats, aspect ratios, resolutions, and quality choices. Row-Bot keeps that capability metadata separate from ordinary chat models.
 - Custom endpoint providers let advanced users point Row-Bot at OpenAI-compatible servers such as LM Studio, vLLM, llama.cpp, LocalAI, LiteLLM, or SGLang.
 - Custom endpoint Advanced settings can describe reasoning mode, a thinking budget, returned reasoning content, and whether preserved reasoning may be replayed to that endpoint.
 - Runtime tests check whether a provider can handle the kind of requests Row-Bot needs. A failed test keeps the provider visible but may stop Row-Bot from offering it for agent work.
@@ -47,5 +48,6 @@ The [generated Settings Controls reference](/docs/reference/generated/settings-c
 ## Troubleshooting
 
 - If a provider is connected but models do not appear, refresh Providers, then refresh Models.
+- If an xAI image model is missing or rejects a media option, refresh Providers so Row-Bot can use the live image-generation catalog. A quality choice that the endpoint rejects is retried once without that optional field; other generation failures are returned without an automatic duplicate request.
 - If a runtime test fails, read the row message before changing credentials; the model may be chat-capable but not tool-capable.
 - If local Ollama is missing, start Ollama and make sure at least one model is installed.

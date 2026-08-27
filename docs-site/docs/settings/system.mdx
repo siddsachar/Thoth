@@ -21,7 +21,7 @@ Open **Settings**, then choose **System** from the left tab list.
 
 - Workspace and filesystem controls define where Row-Bot may read or write when tools need local files.
 - Shell and command controls affect whether command-running tools are available and how approvals apply.
-- Browser controls affect page-reading and browser automation features.
+- Browser controls select a supported installed Chrome or Edge channel or Row-Bot's exact managed Playwright Chromium revision. Install and Repair are explicit actions; normal startup only checks readiness and never downloads a browser.
 - Computer Use controls keep native application automation separate, off by default, and gated by platform readiness, telemetry disclosure, and a verified optional runtime.
 - Remote Access creates one-time desktop or compact owner invitations, checks or configures an owned Tailscale Serve route, explicitly enables LAN listening, and revokes devices or sessions.
 - Window mode chooses whether Row-Bot opens in its own app window, the system browser, or asks at launch.
@@ -52,6 +52,7 @@ The [generated Settings Controls reference](/docs/reference/generated/settings-c
 ## Troubleshooting
 
 - If Row-Bot cannot read a file, check whether it is inside the allowed workspace.
+- If Browser reports a missing or mismatched managed runtime, use Install browser runtime or Repair. Do not copy another Playwright cache into Row-Bot's managed location.
 - If Computer Use is unavailable, open its setup card and follow the reported runtime or operating-system permission recovery step.
 - If a remote URL shows a JSON access error, use the [Remote Access troubleshooting table](/docs/operations/remote-access#troubleshooting) instead of broadly trusting proxy headers or disabling the access gate.
 - If a tunnel URL is unavailable, check the tunnel provider credentials and whether the tunnel is running.

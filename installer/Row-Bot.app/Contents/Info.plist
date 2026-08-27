@@ -10,9 +10,9 @@
     <key>CFBundleIdentifier</key>
     <string>ai.row-bot.assistant</string>
     <key>CFBundleVersion</key>
-    <string>4.8.0</string>
+    <string>4.9.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.8.0</string>
+    <string>4.9.0</string>
     <key>CFBundleExecutable</key>
     <string>row-bot</string>
     <key>CFBundleIconFile</key>

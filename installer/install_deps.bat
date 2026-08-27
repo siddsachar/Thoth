@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================================
-:: Row-Bot v4.8.0 - Post-install dependency setup
+:: Row-Bot v4.9.0 - Post-install dependency setup
 :: Called by Inno Setup after file extraction.
 ::
 :: This script:
@@ -21,7 +21,7 @@ set "LOG=%INSTALL_DIR%\install_log.txt"
 set "PYTHONNOUSERSITE=1"
 
 echo ==========================================
-echo  Row-Bot v4.8.0 - Installing dependencies
+echo  Row-Bot v4.9.0 - Installing dependencies
 echo  This may take 5-25 minutes depending
 echo  on your system and internet connection.
 echo  Please do not close this window.
@@ -29,7 +29,7 @@ echo ==========================================
 echo.
 
 echo ========================================= >> "%LOG%" 2>&1
-echo  Row-Bot v4.8.0 - Install log              >> "%LOG%" 2>&1
+echo  Row-Bot v4.9.0 - Install log              >> "%LOG%" 2>&1
 echo  Install dir: %INSTALL_DIR%               >> "%LOG%" 2>&1
 echo  Date: %DATE% %TIME%                      >> "%LOG%" 2>&1
 echo ========================================= >> "%LOG%" 2>&1
@@ -174,7 +174,7 @@ echo Installing Playwright Chromium browser...
 "%PYTHON%" -m playwright install chromium >> "%LOG%" 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo WARNING: Playwright browser install failed. Browser tool may not work. >> "%LOG%" 2>&1
-    echo WARNING: Playwright browser install failed. Browser tool will auto-install on first use.
+    echo WARNING: Playwright browser install failed. Use Browser Automation Install or Repair before using the managed runtime.
 )
 
 echo.
