@@ -66,7 +66,6 @@ def test_takeover_token_is_exact_one_time_and_never_switches_target(
     assert resumed.target.pid == first.target.pid
     assert resumed.target.window_id == first.target.window_id
     assert [name for name, _args in fake_transport.calls[calls_before:]] == [
-        "set_config",
         "start_session",
         "list_windows",
         "get_window_state",
@@ -191,6 +190,139 @@ def test_new_lease_never_shows_previous_session_action(service) -> None:
     service.acquire(OWNER_B, validate_context=False)
     assert service.status_snapshot()["last_action"] == ""
     assert service.status_snapshot()["action_count"] == 0
+
+
+def test_new_generation_rejects_prior_target_and_token_as_lease_expired(
+    service,
+    fake_transport,
+) -> None:
+    service.acquire(OWNER_A, validate_context=False)
+    old_target = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
+    old_observation = service.capture(old_target, OWNER_A)
+    old_token = old_observation.elements[0].token
+    service.stop()
+    service.acquire(OWNER_B, validate_context=False)
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(ComputerUseError) as expired:
+        service.act(
+            "click",
+            old_target,
+            OWNER_B,
+            element_token=old_token,
+            approval_mode="allow_all",
+        )
+
+    assert expired.value.code == "target_gone"
+    assert "lease expired" in str(expired.value).casefold()
+    assert fake_transport.calls[calls_before:] == []
+
+
+def test_new_generation_has_no_replay_or_completion_state(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "Edit",
+            "label": "Document field",
+            "value": "old",
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.set_value_updates_document = False
+    fake_transport.scenario.delivery_profile = "catalyst_value_unavailable"
+    service.acquire(OWNER_A, validate_context=False)
+    target_id = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER_A)
+    service.act(
+        "replace_text",
+        target_id,
+        OWNER_A,
+        element_token=observation.elements[0].token,
+        text="private replacement",
+    )
+
+    service.stop()
+    service.acquire(OWNER_B, validate_context=False)
+
+    assert not hasattr(service, "_pending_mutation")
+    assert not hasattr(service, "_completion_ledger")
+    assert "computer_use_completion_blocked" not in service.status_snapshot()
+
+
+def test_takeover_keeps_prior_unverified_receipt_truthful_without_state(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "Edit",
+            "label": "Native Editor",
+            "value": None,
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.delivery_profile = "catalyst_value_unavailable"
+    service.acquire(OWNER_A, validate_context=False)
+    target_id = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER_A)
+    receipt = service.act(
+        "replace_text",
+        target_id,
+        OWNER_A,
+        element_token=observation.elements[0].token,
+        text="private unresolved value",
+    )
+
+    service.take_over()
+
+    assert receipt.action_dispatched is True
+    assert receipt.effect_verified is False
+    assert not hasattr(service, "_pending_mutation")
+    assert not hasattr(service, "_completion_ledger")
+
+
+def test_different_explicit_replacement_is_allowed_after_unverified_delivery(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "Edit",
+            "label": "Native Editor",
+            "value": None,
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.delivery_profile = "catalyst_value_unavailable"
+    service.acquire(OWNER_A, validate_context=False)
+    target_id = service.list_windows(OWNER_A, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER_A)
+    first = service.act(
+        "replace_text",
+        target_id,
+        OWNER_A,
+        element_token=observation.elements[0].token,
+        text="first private value",
+    )
+
+    fake_transport.scenario.delivery_profile = "native_targeted_insertion"
+    second = service.act(
+        "replace_text",
+        target_id,
+        OWNER_A,
+        element_token=observation.elements[0].token,
+        text="different private value",
+    )
+
+    assert first.action_dispatched is True
+    assert first.effect_verified is False
+    assert second.action_dispatched is True
+    assert second.effect_verified is True
+    assert [name for name, _args in fake_transport.calls].count("set_value") == 2
+    assert "first private value" not in repr(service.status_snapshot())
+    assert "different private value" not in repr(service.status_snapshot())
 
 
 def test_app_approval_denial_is_terminal_and_clears_live_control(fake_client) -> None:

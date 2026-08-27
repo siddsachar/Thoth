@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from nicegui import run, ui
 
+from row_bot.automation.contracts import ActivitySnapshot
 
 @dataclass(frozen=True)
 class LiveControlView:
@@ -29,35 +30,74 @@ class LiveControlView:
     generation_id: str = ""
 
 
-_STATE_LABELS = {
-    "acquiring": "Starting",
-    "observing": "Observing",
-    "acting": "Acting",
-    "verifying": "Verifying",
-    "waiting_approval": "Waiting for approval",
-    "waiting_user": "Waiting for you",
-    "resuming": "Resuming",
-    "stopping": "Stopping",
-    "needs_attention": "Needs attention",
-    "failed": "Needs attention",
-}
-
-
 def computer_live_control_view(snapshot: dict[str, Any], thread_id: str) -> LiveControlView:
-    active = bool(snapshot.get("active")) and str(snapshot.get("thread_id") or "") == str(thread_id or "")
+    activity = ActivitySnapshot.from_mapping(snapshot, surface="computer")
+    active = activity.active and activity.thread_id == str(thread_id or "")
     if not active:
-        return LiveControlView(revision=int(snapshot.get("revision") or 0))
-    state = str(snapshot.get("state") or "observing")
+        return LiveControlView(revision=activity.revision)
+    state = activity.state
     app = str(snapshot.get("app") or "Computer Use")
     window = str(snapshot.get("window") or "")
+    last_action = activity.last_action
+    verdict = str(snapshot.get("last_verdict") or "").casefold()
+    if verdict in {"done", "verify_fresh_state", "escalate", "take_over"}:
+        requested = str(snapshot.get("last_requested_delivery") or "auto").casefold()
+        requested = requested if requested in {"auto", "foreground"} else "auto"
+        delivered = str(snapshot.get("last_delivery_mode") or "unknown").casefold()
+        delivered = (
+            delivered
+            if delivered in {"background", "foreground", "not_applicable", "unknown"}
+            else "unknown"
+        )
+        driver = str(snapshot.get("last_driver_effect") or "unverifiable").casefold()
+        driver = (
+            driver
+            if driver in {
+                "confirmed",
+                "partial",
+                "unverifiable",
+                "suspected_noop",
+                "refused",
+            }
+            else "unverifiable"
+        )
+        native = str(snapshot.get("last_native_change") or "unknown").casefold()
+        native = native if native in {"changed", "unchanged", "unknown"} else "unknown"
+        recommendation = str(
+            snapshot.get("last_escalation_recommendation") or "none"
+        ).casefold()
+        recommendation = (
+            recommendation
+            if recommendation in {"foreground", "px", "page"}
+            else "none"
+        )
+        next_step = str(snapshot.get("last_next_step") or "take_over").casefold()
+        if next_step not in {
+            "continue",
+            "capture_same_target",
+            "retry_foreground_once",
+            "pixel_click_once",
+            "recapture_before_reissue",
+            "unsupported_page_take_over",
+            "take_over",
+        }:
+            next_step = "take_over"
+        last_action = (
+            f"{activity.last_action or 'action'} · requested {requested} · "
+            f"delivered {delivered} · driver {driver.replace('_', ' ')} · "
+            f"native {native} · "
+            f"{'degraded · ' if bool(snapshot.get('last_degraded')) else ''}"
+            f"escalation {recommendation} · verdict {verdict.replace('_', ' ')} · "
+            f"next {next_step.replace('_', ' ')}"
+        )
     return LiveControlView(
         engine="computer",
         active=True,
         state=state,
-        state_label=_STATE_LABELS.get(state, state.replace("_", " ").title()),
+        state_label=activity.state_label,
         target=f"{app} · {window}" if window and window.casefold() != app.casefold() else app,
         scope="This app only",
-        last_action=str(snapshot.get("last_action") or "")[:160],
+        last_action=last_action,
         can_take_over=state not in {"waiting_user", "resuming", "stopping", "failed"},
         can_resume=state == "waiting_user",
         can_preview=True,
@@ -65,30 +105,31 @@ def computer_live_control_view(snapshot: dict[str, Any], thread_id: str) -> Live
         preview_shielded=state in {"waiting_user", "waiting_approval"},
         frame_width=int(snapshot.get("frame_width") or 0),
         frame_height=int(snapshot.get("frame_height") or 0),
-        revision=int(snapshot.get("revision") or 0),
-        generation_id=str(snapshot.get("generation_id") or ""),
+        revision=activity.revision,
+        generation_id=activity.generation_id,
     )
 
 
 def browser_live_control_view(snapshot: dict[str, Any], thread_id: str) -> LiveControlView:
-    active = bool(snapshot.get("active")) and str(snapshot.get("thread_id") or "") == str(thread_id or "")
+    activity = ActivitySnapshot.from_mapping(snapshot, surface="browser")
+    active = activity.active and activity.thread_id == str(thread_id or "")
     if not active:
-        return LiveControlView(revision=int(snapshot.get("revision") or 0))
-    state = str(snapshot.get("state") or "observing")
+        return LiveControlView(revision=activity.revision)
+    state = activity.state
     return LiveControlView(
         engine="browser",
         active=True,
         state=state,
-        state_label=_STATE_LABELS.get(state, state.replace("_", " ").title()),
-        target=str(snapshot.get("target") or snapshot.get("site") or "Browser")[:160],
+        state_label=activity.state_label,
+        target=activity.target or "Browser",
         scope="This task tab only",
-        last_action=str(snapshot.get("last_action") or "")[:160],
+        last_action=activity.last_action,
         can_take_over=state not in {"waiting_user", "stopping", "needs_attention"},
         can_resume=False,
         can_preview=True,
         has_preview=bool(snapshot.get("has_thumbnail")) and state != "waiting_user",
-        preview_shielded=bool(snapshot.get("preview_shielded")) or state == "waiting_user",
-        revision=int(snapshot.get("revision") or 0),
+        preview_shielded=activity.preview_shielded or state == "waiting_user",
+        revision=activity.revision,
     )
 
 
@@ -109,7 +150,7 @@ def build_live_control_dock(
     state: Any,
     p: Any,
     *,
-    stop_generation: Callable[[str], Any],
+    stop_generation: Callable[..., Any],
 ) -> Any:
     """Mount the persistent chat control dock without action-path polling."""
 
@@ -260,7 +301,7 @@ def build_live_control_dock(
         scope_label.set_text(view.scope)
         takeover_button.set_visibility(view.can_take_over)
         resume_button.set_visibility(view.can_resume or (view.engine == "browser" and view.state == "waiting_user"))
-        resume_button.set_text("Resume" if view.engine == "computer" else "Done")
+        resume_button.set_text("Resume")
         preview_button.set_visibility(view.can_preview)
         if previous.engine != view.engine or previous.active != view.active:
             _clear_preview(reset_preference=True)
@@ -298,11 +339,17 @@ def build_live_control_dock(
 
     def _stop() -> None:
         view = current["view"]
+        reason = "live_control"
         if view.engine == "computer":
             computer_service.stop()
+            reason = "computer_task_stop"
         elif view.engine == "browser":
             browser_manager.end_activity(str(getattr(state, "thread_id", "") or ""))
-        stop_generation(str(getattr(state, "thread_id", "") or ""))
+            reason = "browser_task_stop"
+        stop_generation(
+            str(getattr(state, "thread_id", "") or ""),
+            reason=reason,
+        )
         _clear_preview(reset_preference=True)
         _refresh()
 
@@ -315,7 +362,7 @@ def build_live_control_dock(
             )
         elif view.engine == "browser":
             thread_id = str(getattr(state, "thread_id", "") or "")
-            stop_generation(thread_id)
+            stop_generation(thread_id, reason="browser_takeover")
             browser_manager.take_over(thread_id)
         _clear_preview()
         _refresh()

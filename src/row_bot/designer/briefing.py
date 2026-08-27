@@ -9,10 +9,16 @@ from __future__ import annotations
 from row_bot.designer.state import DESIGNER_MODES, DesignerProject, ProjectBrief
 
 
+def brief_has_build_content(brief: ProjectBrief | None) -> bool:
+    """Use the same persisted-brief rule for setup UI and project creation."""
+
+    return bool(brief and not brief.is_empty())
+
+
 def project_has_build_brief(project: DesignerProject) -> bool:
     """Return True when the project has any stored setup brief content."""
 
-    return bool(project.brief and not project.brief.is_empty())
+    return brief_has_build_content(project.brief)
 
 
 def build_initial_design_request(project: DesignerProject) -> str:

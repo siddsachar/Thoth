@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import io
+import math
 import os
 import platform
 import uuid
@@ -17,10 +18,11 @@ from row_bot.mcp_client.runtime import PrivateMcpSession
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_DIMENSION = 1456
-MAX_ELEMENTS = 250
-MAX_TREE_DEPTH = 12
+MAX_ELEMENTS = 2_000
+MAX_TREE_DEPTH = 25
 MAX_FIELD_CHARS = 512
-MAX_SEMANTIC_TEXT = 48 * 1024
+MAX_SEMANTIC_TEXT = 2 * 1024 * 1024
+MAX_GEOMETRY_ABS = 1_000_000.0
 ALLOWED_IMAGE_MIME = frozenset({"image/png", "image/jpeg"})
 
 MODEL_ACTION_TO_CUA = {
@@ -33,6 +35,7 @@ MODEL_ACTION_TO_CUA = {
     "double_click": "double_click",
     "right_click": "right_click",
     "type": "type_text",
+    "replace_text": "set_value",
     "key": "press_key",
     "scroll": "scroll",
     "drag": "drag",
@@ -59,9 +62,41 @@ class CuaElement:
     index: int
     role: str
     label: str
-    value: str
+    value: str = field(repr=False)
     bounds: tuple[float, float, float, float]
     depth: int
+    parent_index: int | None = None
+    visible: bool | None = None
+    enabled: bool | None = None
+    selected: bool | None = None
+    checked: bool | None = None
+    expanded: bool | None = None
+    pressed: bool | None = None
+    toggled: bool | None = None
+    editable: bool | None = None
+    read_only: bool | None = None
+    value_available: bool = True
+    in_web_content: bool = False
+
+
+@dataclass(frozen=True)
+class CuaLaunchProfile:
+    argv: tuple[str, ...]
+    permission_identity: str
+
+
+def cua_launch_profile() -> CuaLaunchProfile:
+    """Return the reviewed private MCP process profile for this host."""
+
+    if platform.system().casefold() == "darwin":
+        return CuaLaunchProfile(
+            argv=("mcp", "--direct"),
+            permission_identity="row_bot_host",
+        )
+    return CuaLaunchProfile(
+        argv=("mcp",),
+        permission_identity="interactive_windows_session",
+    )
 
 
 @dataclass(frozen=True)
@@ -73,9 +108,132 @@ class CuaResponse:
     image_width: int = 0
     image_height: int = 0
     elements: tuple[CuaElement, ...] = ()
+    snapshot_id: str = ""
+    backend_declared_count: int | None = None
+    backend_filtered_count: int | None = None
+    backend_received_count: int = 0
+    backend_limited: bool | None = None
+    backend_sparse: bool = False
+    locally_filtered_count: int = 0
+    local_limit_reasons: tuple[str, ...] = ()
     truncated: bool = False
     is_error: bool = False
     error_code: str = ""
+
+
+_MUTATION_ENUM_FIELDS = {
+    "effect": frozenset(
+        {"changed", "confirmed", "partial", "unverifiable", "suspected_noop", "refused"}
+    ),
+    "delivery": frozenset({"background", "foreground", "not_applicable", "unknown"}),
+    "delivery_mode": frozenset(
+        {"background", "foreground", "not_applicable", "unknown"}
+    ),
+    "route": frozenset(
+        {
+            "ax",
+            "uia",
+            "accessibility",
+            "synthetic_events",
+            "global_input",
+            "system_api",
+            "dom",
+            "trusted_input",
+            "pixels",
+            "px",
+            "pixel",
+            "unknown",
+        }
+    ),
+    "path": frozenset(
+        {"ax", "uia", "accessibility", "key_events", "send_input", "unknown"}
+    ),
+    "status": frozenset({"satisfied", "unsatisfied", "unknown"}),
+    "cause": frozenset(
+        {
+            "direct",
+            "driver_verified",
+            "foreground_fallback",
+            "native_dispatch",
+            "semantic_target",
+            "target_disappeared",
+        }
+    ),
+}
+_MUTATION_TOOLS = frozenset(
+    {
+        "bring_to_front",
+        "click",
+        "double_click",
+        "right_click",
+        "type_text",
+        "set_value",
+        "press_key",
+        "hotkey",
+        "scroll",
+        "drag",
+        "invoke_menu",
+    }
+)
+_ESCALATION_RECOMMENDATIONS = frozenset({"foreground", "px", "page"})
+_MUTATION_ERROR_CODES = frozenset(
+    {
+        "background_unavailable",
+        "driver_unavailable",
+        "not_supported",
+        "permission_denied",
+        "stale_element",
+        "temporarily_unavailable",
+        "timeout",
+        "unsupported",
+        "unsupported_capability",
+        "unsupported_role",
+        "value_not_supported",
+        "focus_refused",
+        "foreground_required",
+        "snapshot_expired",
+        "session_ended",
+    }
+)
+
+
+def _normalized_mutation_response(response: CuaResponse) -> CuaResponse:
+    """Project every mutation result to bounded non-content driver facts."""
+
+    structured: dict[str, Any] = {}
+    if isinstance(response.structured.get("verified"), bool):
+        structured["verified"] = response.structured["verified"]
+    for key, allowed in _MUTATION_ENUM_FIELDS.items():
+        raw_value = response.structured.get(key)
+        if key == "delivery" and isinstance(raw_value, dict):
+            raw_value = raw_value.get("mode")
+        value = str(raw_value or "").strip().casefold().replace("-", "_")
+        if value in allowed:
+            structured[key] = value
+    if isinstance(response.structured.get("degraded"), bool):
+        structured["degraded"] = response.structured["degraded"]
+    escalation = response.structured.get("escalation")
+    if isinstance(escalation, dict):
+        recommended = (
+            str(escalation.get("recommended") or "")
+            .strip()
+            .casefold()
+            .replace("-", "_")
+        )
+        if recommended in _ESCALATION_RECOMMENDATIONS:
+            structured["escalation"] = {"recommended": recommended}
+    error_code = str(response.error_code or "").strip().casefold().replace("-", "_")
+    error_code = error_code if error_code in _MUTATION_ERROR_CODES else (
+        "driver_failed" if response.is_error else ""
+    )
+    if error_code:
+        structured["error"] = {"code": error_code}
+    return CuaResponse(
+        text="",
+        structured=structured,
+        is_error=response.is_error,
+        error_code=error_code,
+    )
 
 
 def build_cua_environment(session_id: str, environ: dict[str, str] | None = None) -> dict[str, str]:
@@ -89,8 +247,9 @@ def build_cua_environment(session_id: str, environ: dict[str, str] | None = None
     result = {key: str(value) for key, value in source.items() if key in allowed and value is not None}
     result["CUA_DRIVER_RS_UPDATE_CHECK"] = "0"
     result["ROW_BOT_CUA_SESSION_ID"] = str(session_id)
-    if platform.system() == "Darwin":
-        result["CUA_DRIVER_EMBEDDED"] = "1"
+    result.pop("CUA_DRIVER_EMBEDDED", None)
+    result.pop("CUA_DRIVER_PARENT_LIVENESS_STDIN", None)
+    result.pop("CUA_DRIVER_HOST_BUNDLE_ID", None)
     result.pop("CUA_DRIVER_RS_TELEMETRY_ENABLED", None)
     result.pop("CUA_DRIVER_RS_TELEMETRY_DEBUG", None)
     return result
@@ -99,6 +258,41 @@ def build_cua_environment(session_id: str, environ: dict[str, str] | None = None
 def _trim(value: Any) -> str:
     text = str(value or "")
     return text[:MAX_FIELD_CHARS] + ("…" if len(text) > MAX_FIELD_CHARS else "")
+
+
+def _non_negative_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _bounded_geometry(frame: Any) -> tuple[float, float, float, float] | None:
+    source = frame if isinstance(frame, dict) else {}
+    try:
+        values = (
+            float(source.get("x") or 0),
+            float(source.get("y") or 0),
+            float(source.get("w") or source.get("width") or 0),
+            float(source.get("h") or source.get("height") or 0),
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None
+    x, y, width, height = values
+    if (
+        not all(math.isfinite(value) for value in values)
+        or abs(x) > MAX_GEOMETRY_ABS
+        or abs(y) > MAX_GEOMETRY_ABS
+        or width < 0
+        or height < 0
+        or width > MAX_GEOMETRY_ABS
+        or height > MAX_GEOMETRY_ABS
+    ):
+        return None
+    return values
 
 
 def _decode_image(data: str, mime: str) -> tuple[bytes, int, int]:
@@ -150,36 +344,98 @@ def parse_cua_result(result: Any) -> CuaResponse:
             texts.append(_trim(block.text))
     structured = raw.structured_content if isinstance(raw.structured_content, dict) else {}
     elements_raw = structured.get("elements") if isinstance(structured.get("elements"), list) else []
+    received_count = len(elements_raw)
+    declared_count = _non_negative_int(
+        structured.get("total_element_count", structured.get("element_count"))
+    )
+    filtered_count = _non_negative_int(
+        structured.get(
+            "returned_element_count",
+            structured.get("filtered_element_count", received_count),
+        )
+    )
     elements: list[CuaElement] = []
-    truncated = len(elements_raw) > MAX_ELEMENTS
-    semantic_chars = 0
+    local_reasons: set[str] = set()
+    if received_count > MAX_ELEMENTS:
+        local_reasons.add("element_limit")
+    semantic_bytes = 0
+    indexes: set[int] = set()
+    tokens: set[str] = set()
+    depths: dict[int, int] = {}
     for item in elements_raw:
-        if len(elements) >= MAX_ELEMENTS or not isinstance(item, dict):
-            truncated = True
+        if len(elements) >= MAX_ELEMENTS:
+            local_reasons.add("element_limit")
+            break
+        if not isinstance(item, dict):
+            local_reasons.add("invalid_element")
             continue
-        depth = int(item.get("depth") or 0)
-        if depth > MAX_TREE_DEPTH:
-            truncated = True
+        index = _non_negative_int(item.get("element_index"))
+        depth = _non_negative_int(item.get("depth"))
+        token = _trim(item.get("element_token"))
+        parent = _non_negative_int(item.get("parent_index"))
+        if index is None or not token or index in indexes or token in tokens:
+            local_reasons.add("invalid_identity")
             continue
-        frame = item.get("frame") if isinstance(item.get("frame"), dict) else {}
+        if depth is None or depth > MAX_TREE_DEPTH:
+            local_reasons.add("depth_limit")
+            continue
+        if parent is not None and (parent not in indexes or depths[parent] >= depth):
+            local_reasons.add("invalid_topology")
+            continue
+        bounds = _bounded_geometry(item.get("frame"))
+        if bounds is None:
+            local_reasons.add("invalid_geometry")
+            continue
         element = CuaElement(
-            token=_trim(item.get("element_token")),
-            index=int(item.get("element_index") or 0),
+            token=token,
+            index=index,
             role=_trim(item.get("role")),
             label=_trim(item.get("label")),
             value=_trim(item.get("value")),
-            bounds=(
-                float(frame.get("x") or 0), float(frame.get("y") or 0),
-                float(frame.get("w") or frame.get("width") or 0),
-                float(frame.get("h") or frame.get("height") or 0),
-            ),
+            bounds=bounds,
             depth=depth,
+            parent_index=parent,
+            visible=(bool(item["visible"]) if "visible" in item else None),
+            enabled=(bool(item["enabled"]) if "enabled" in item else None),
+            selected=(bool(item["selected"]) if "selected" in item else None),
+            checked=(bool(item["checked"]) if "checked" in item else None),
+            expanded=(bool(item["expanded"]) if "expanded" in item else None),
+            pressed=(bool(item["pressed"]) if "pressed" in item else None),
+            toggled=(bool(item["toggled"]) if "toggled" in item else None),
+            editable=(bool(item["editable"]) if "editable" in item else None),
+            read_only=(
+                bool(item.get("read_only", item.get("readonly")))
+                if "read_only" in item or "readonly" in item
+                else None
+            ),
+            value_available="value" in item and item.get("value") is not None,
+            in_web_content=bool(item.get("in_web_content")),
         )
-        semantic_chars += sum(len(value) for value in (element.token, element.role, element.label, element.value))
-        if semantic_chars > MAX_SEMANTIC_TEXT:
-            truncated = True
+        element_bytes = sum(
+            len(value.encode("utf-8"))
+            for value in (element.token, element.role, element.label, element.value)
+        )
+        if semantic_bytes + element_bytes > MAX_SEMANTIC_TEXT:
+            local_reasons.add("byte_limit")
             break
+        semantic_bytes += element_bytes
+        indexes.add(index)
+        tokens.add(token)
+        depths[index] = depth
         elements.append(element)
+    explicit_limited = structured.get("truncated")
+    if isinstance(explicit_limited, bool):
+        backend_limited: bool | None = explicit_limited
+    elif declared_count is not None and declared_count >= MAX_ELEMENTS:
+        backend_limited = True
+    elif structured.get("elements_complete") is True:
+        backend_limited = False
+    else:
+        backend_limited = None
+    backend_sparse = bool(
+        structured.get("degraded")
+        or (declared_count is not None and declared_count > 0 and received_count == 0)
+    )
     error = structured.get("error") if isinstance(structured.get("error"), dict) else {}
     error_code = str(
         error.get("code")
@@ -195,7 +451,15 @@ def parse_cua_result(result: Any) -> CuaResponse:
         image_width=image_width,
         image_height=image_height,
         elements=tuple(elements),
-        truncated=truncated,
+        snapshot_id=_trim(structured.get("snapshot_id")),
+        backend_declared_count=declared_count,
+        backend_filtered_count=filtered_count,
+        backend_received_count=received_count,
+        backend_limited=backend_limited,
+        backend_sparse=backend_sparse,
+        locally_filtered_count=max(0, received_count - len(elements)),
+        local_limit_reasons=tuple(sorted(local_reasons)),
+        truncated=backend_limited is True or bool(local_reasons),
         is_error=bool(raw.is_error),
         error_code=error_code,
     )
@@ -210,16 +474,30 @@ class CuaClient:
         *,
         session_id: str | None = None,
         transport_factory: Callable[[str, str, dict[str, str]], CuaTransport] | None = None,
+        contract_version: str = "0.20.0",
+        capabilities: frozenset[str] | None = None,
     ) -> None:
         self.executable = str(Path(executable))
         self.session_id = session_id or f"row-bot-{uuid.uuid4().hex}"
         self._transport_factory = transport_factory or self._default_transport
+        self.launch_profile = cua_launch_profile()
+        self.contract_version = str(contract_version)
+        self.capabilities = frozenset(capabilities or ())
         self._transport: CuaTransport | None = None
         self.connection_generation = 0
 
-    @staticmethod
-    def _default_transport(executable: str, _session_id: str, env: dict[str, str]) -> CuaTransport:
-        return PrivateMcpSession(command=executable, args=["mcp"], env=env, timeout=120.0)
+    def _default_transport(
+        self,
+        executable: str,
+        _session_id: str,
+        env: dict[str, str],
+    ) -> CuaTransport:
+        return PrivateMcpSession(
+            command=executable,
+            args=list(self.launch_profile.argv),
+            env=env,
+            timeout=120.0,
+        )
 
     def start(self) -> None:
         if self._transport is not None:
@@ -236,7 +514,6 @@ class CuaClient:
         self._transport = transport
         self.connection_generation += 1
         try:
-            self.call_internal("set_config", {"capture_scope": "window", "max_image_dimension": MAX_IMAGE_DIMENSION})
             self.call_internal("start_session", {"session": self.session_id})
         except BaseException:
             self.close()
@@ -255,16 +532,28 @@ class CuaClient:
         transport.close()
 
     def _call(self, tool_name: str, arguments: dict[str, Any]) -> CuaResponse:
-        if tool_name not in ALLOWED_CUA_TOOLS or tool_name in FORBIDDEN_TOOL_FAMILIES:
+        capability_tool = (
+            tool_name in {"verify_state", "invoke_menu"}
+            and tool_name in self.capabilities
+        )
+        if (
+            (tool_name not in ALLOWED_CUA_TOOLS and not capability_tool)
+            or tool_name in FORBIDDEN_TOOL_FAMILIES
+        ):
             raise PermissionError(f"Cua tool is not allowlisted: {tool_name}")
         if self._transport is None:
             self.start()
         assert self._transport is not None
-        return parse_cua_result(self._transport.call_raw(tool_name, arguments))
+        response = parse_cua_result(self._transport.call_raw(tool_name, arguments))
+        if tool_name in _MUTATION_TOOLS:
+            return _normalized_mutation_response(response)
+        return response
 
     def call_internal(self, tool_name: str, arguments: dict[str, Any] | None = None) -> CuaResponse:
         if tool_name not in INTERNAL_TOOLS:
             raise PermissionError(f"Cua internal tool is not allowlisted: {tool_name}")
+        if tool_name == "set_config":
+            raise PermissionError("Cua configuration mutation is not approved")
         return self._call(tool_name, dict(arguments or {}))
 
     def call_action(self, action: str, arguments: dict[str, Any] | None = None) -> CuaResponse:
@@ -278,8 +567,14 @@ class CuaClient:
     def call_reviewed_driver_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> CuaResponse:
         """Service-only access to a reviewed input tool not in the model schema."""
 
-        if tool_name not in set(MODEL_ACTION_TO_CUA.values()) | {"hotkey"}:
+        approved = set(MODEL_ACTION_TO_CUA.values()) | {"hotkey"}
+        if tool_name in {"verify_state", "invoke_menu"} and tool_name in self.capabilities:
+            approved.add(tool_name)
+        if tool_name not in approved:
             raise PermissionError(f"Cua driver tool is not approved for Computer actions: {tool_name}")
         safe = dict(arguments or {})
         safe.setdefault("session", self.session_id)
         return self._call(tool_name, safe)
+
+    def supports_capability(self, name: str) -> bool:
+        return str(name) in self.capabilities

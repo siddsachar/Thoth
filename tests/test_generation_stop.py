@@ -52,6 +52,14 @@ def teardown_function() -> None:
     _active_generations.clear()
 
 
+def test_browser_task_stop_copy_is_distinct_from_ordinary_generation_cancel() -> None:
+    assert streaming._stopped_marker("browser_task_stop") == "*[Browser task stopped]*"
+    assert streaming._stopped_marker("user") == "*[Stopped]*"
+    assert streaming._stopped_marker("browser_takeover") == (
+        "*[Browser automation paused for takeover]*"
+    )
+
+
 def test_suspended_orchestration_does_not_block_durable_transcript_refresh() -> None:
     gen = _generation("thread-orchestration-wait")
     gen.status = "streaming"
@@ -111,6 +119,36 @@ def test_request_generation_stop_detaches_wakes_queue_and_cancels_scope(monkeypa
     assert state.pending_interrupt_generation_id == ""
     assert state.pending_interrupt_tool_groups == {}
     assert state.pending_interrupt_runtime_surface == ""
+
+
+def test_overlay_stop_only_cancels_the_current_selected_thread(monkeypatch) -> None:
+    first = _generation("thread-first")
+    selected = _generation("thread-selected")
+    _active_generations.update({first.thread_id: first, selected.thread_id: selected})
+    monkeypatch.setattr(streaming, "_cleanup_live_control_sessions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(streaming, "_stop_generation_child_agent_runs", lambda _gen: None)
+    monkeypatch.setattr(streaming, "_stop_generation_voice_outputs", lambda *_args: None)
+    state = SimpleNamespace(
+        thread_id=selected.thread_id,
+        voice_coordinator=None,
+        tts_service=None,
+        pending_interrupt=None,
+        pending_interrupt_generation_id="",
+        pending_interrupt_tool_groups={},
+        pending_interrupt_runtime_surface="",
+    )
+
+    result = streaming.request_generation_stop(
+        selected.thread_id,
+        state=state,
+        p=None,
+        reason="buddy_overlay",
+    )
+
+    assert result.thread_id == selected.thread_id
+    assert selected.stop_event.is_set() is True
+    assert first.stop_event.is_set() is False
+    assert _active_generations == {first.thread_id: first}
 
 
 def test_generation_stop_emits_one_terminal_buddy_event_and_clears_tool_lane(
@@ -261,6 +299,77 @@ def test_stale_approval_callback_cannot_resume_after_stop(monkeypatch) -> None:
     assert cleanup_calls == [
         ("thread-stale-approval", "stale approval response after cancellation")
     ]
+
+
+def test_pending_interrupt_dialog_sync_handoffs_between_ui_clients() -> None:
+    first = {"description": "Use the browser", "tool": "browser"}
+    state = SimpleNamespace(
+        thread_id="thread-overlay",
+        pending_interrupt=first,
+        pending_interrupt_generation_id="thread-overlay:generation-1",
+    )
+    rendered: dict[str, object] = {}
+    shown: list[object] = []
+    closed: list[bool] = []
+
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: closed.append(True),
+        rendered=rendered,
+    ) is True
+    assert shown == [first]
+    assert closed == []
+
+    # Polling is idempotent while the same approval remains pending.
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: closed.append(True),
+        rendered=rendered,
+    ) is False
+    assert shown == [first]
+
+    # A second interrupt may reuse the generation id after resume.  Its new
+    # payload must still replace the previously rendered approval.
+    second = {"description": "Submit the reviewed form", "tool": "browser"}
+    state.pending_interrupt = second
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: closed.append(True),
+        rendered=rendered,
+    ) is True
+    assert shown == [first, second]
+
+    # Settling from Buddy clears the stale modal in the full UI client.
+    state.pending_interrupt = None
+    state.pending_interrupt_generation_id = ""
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: closed.append(True),
+        rendered=rendered,
+    ) is True
+    assert closed == [True]
+    assert rendered == {}
+
+
+def test_pending_interrupt_dialog_sync_rejects_other_thread_approval() -> None:
+    state = SimpleNamespace(
+        thread_id="thread-selected",
+        pending_interrupt={"description": "Old thread action"},
+        pending_interrupt_generation_id="thread-other:generation-1",
+    )
+    shown: list[object] = []
+
+    assert streaming._sync_pending_interrupt_dialog(
+        state,
+        show_interrupt=shown.append,
+        close_interrupt=lambda: None,
+        rendered={},
+    ) is False
+    assert shown == []
 
 
 def test_modal_stop_closes_approval_and_settles_before_service_cleanup(

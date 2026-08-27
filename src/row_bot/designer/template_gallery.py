@@ -9,6 +9,7 @@ from row_bot.brand import APP_BRAND_ACCENT, APP_BRAND_ACCENT_RGB
 from nicegui import run, ui
 
 from row_bot.designer.brand import extract_brand_from_url, get_all_presets
+from row_bot.designer.briefing import brief_has_build_content
 from row_bot.designer.setup_flow import (
     DESIGNER_MODE_PICKER_CHOICES,
     MODE_CHOICE_AUTO,
@@ -716,9 +717,9 @@ def show_new_project_dialog(
 
                         def _create(auto_build: bool = False) -> None:
                             brief = _build_brief()
-                            if auto_build and not brief.build_description:
+                            if auto_build and not brief_has_build_content(brief):
                                 ui.notify(
-                                    "Add a build description before creating the first draft.",
+                                    "Add brief details before creating the first draft.",
                                     type="warning",
                                 )
                                 return
@@ -776,7 +777,7 @@ def show_new_project_dialog(
 
         def _refresh_footer_buttons() -> None:
             has_name = bool((name_input.value or "").strip())
-            has_brief = bool((build_input.value or "").strip())
+            has_brief = brief_has_build_content(_build_brief())
             if has_name:
                 create_btn.enable()
             else:
@@ -791,6 +792,12 @@ def show_new_project_dialog(
 
         name_input.on("update:model-value", lambda _: _refresh_footer_buttons())
         build_input.on("update:model-value", lambda _: _refresh_footer_buttons())
+        audience_input.on("update:model-value", lambda _: _refresh_footer_buttons())
+        tone_input.on("update:model-value", lambda _: _refresh_footer_buttons())
+        length_input.on("update:model-value", lambda _: _refresh_footer_buttons())
+        refs_input.on("update:model-value", lambda _: _refresh_footer_buttons())
+        brand_url_input.on("update:model-value", lambda _: _refresh_footer_buttons())
+        preset_select.on("update:model-value", lambda _: _refresh_footer_buttons())
         _refresh_footer_buttons()
 
         def _render_category_buttons() -> None:

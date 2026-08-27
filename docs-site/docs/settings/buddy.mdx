@@ -1,45 +1,83 @@
 ---
 title: "Settings: Buddy"
-description: "Configure Row-Bot's companion behavior, visibility, look, motion, and generated looks."
+description: "Use Buddy in the sidebar or as a compact desktop overlay, message the selected thread, handle approvals, and configure its appearance."
 ---
 
 import Screenshot from '@site/src/components/Screenshot';
 
 # Settings: Buddy
 
-Buddy is Row-Bot's visual companion. It can live in the sidebar, float in the workspace, or open as a desktop overlay. Buddy reflects app state but does not change model behavior by itself.
+Buddy is Row-Bot's visual companion. It starts in the sidebar and, in the native Windows and macOS apps, can be dragged out into a compact always-on-top desktop overlay. The overlay is a smaller view of the thread selected in Row-Bot: it uses that thread's model, tools, approval mode, saved draft, and conversation rather than starting a separate assistant.
 
-<Screenshot id="settings-buddy" alt="Settings: Buddy in Row-Bot." caption="The Buddy tab controls the sidebar companion, desktop overlay, personality, look, motion, and optional custom-look generation." />
+<Screenshot id="settings-buddy" alt="Settings: Buddy in Row-Bot." caption="The Buddy tab controls companion visibility, personality, look, motion, and optional custom-look generation." />
 
 ## Where To Find It
 
 Open **Settings**, then choose **Buddy** from the left tab list.
 
-## Controls
+## Undock Buddy Onto The Desktop
 
-- Enable switches decide whether Buddy appears in the sidebar, workspace, or desktop overlay.
-- Open and close overlay buttons control the separate desktop overlay window.
-- Companion personality changes the tone of Buddy status cues.
-- Bubble style changes how visual status appears.
-- Look cards choose a bundled or custom Buddy appearance.
-- Concept and style notes describe a custom look when you use Generate full Buddy.
-- Use still only keeps current art without animated motion.
-- Retry motion rebuilds motion for an existing look.
+1. Turn on **Show Buddy** if the companion is hidden.
+2. Press and drag Buddy itself away from its sidebar dock. Releasing it back over the dock cancels the move; dragging it beyond the native Row-Bot window tears it off.
+3. Drop it near the part of the desktop where you want the overlay. Row-Bot keeps the fixed-size overlay inside the nearest monitor's usable work area, including multi-monitor layouts.
+4. Drag the overlay header whenever you want to reposition it.
+
+Drag-to-undock requires the native Windows or macOS application. Browser/server mode, Linux browser-first launch, and compact mobile presentation keep Buddy inside Row-Bot and do not create a native overlay window.
+
+## Message The Selected Thread
+
+The title at the top of the overlay identifies the thread that will receive your next message. The smaller line shows whether that thread is using Chat, Developer, or Designer context. If no thread is selected, the first message creates a normal Chat thread.
+
+- Type into **Message this thread...**. Enter sends; Shift+Enter adds a line.
+- The full composer and overlay share the saved draft for each thread. Switching threads loads that thread's draft without merging it into another conversation.
+- Sending captures the thread and Chat, Developer, or Designer context shown at that moment, so changing the main-window selection during a run does not silently retarget the request.
+- The overlay attempts once to return focus to the external app you were using before it sends, then shows current progress, the latest response, or an error.
+- Use **Stop** to stop the selected thread's active response. The overlay does not retry the turn by itself.
+- Attachments, transcript history, tool traces, model selection, and microphone controls remain in the full Row-Bot thread. Use **Open full thread** when you need them.
+
+The overlay is a text composer, not a second microphone session. Talk and Dictate remain in the full thread. A voice turn submitted there belongs to the same conversation and its progress can still appear in Buddy.
+
+## Review Approvals
+
+Buddy never creates a separate approval policy. It projects the selected thread's existing gate:
+
+- **Simple approvals** show **Approve** and **Deny** in the overlay. A compatible batch may show **Approve all**.
+- **Complex approvals** show **Review** or **Details** and open the full thread so you can inspect the complete request before deciding.
+- If the selected thread or pending generation no longer matches, Buddy opens the full thread instead of approving a stale request.
+
+## Overlay Menu And Lifecycle
+
+- **Open full thread** restores the main Row-Bot window at the selected conversation.
+- **Collapse** reduces Buddy to its compact header; **Expand** restores the composer and status area.
+- **Dock Buddy** closes the native overlay and returns Buddy to its sidebar dock.
+- **Hide Buddy** hides the overlay without docking it. Use the tray's **Show Buddy** action to bring it back.
+- While Buddy is torn off, closing the main Row-Bot window hides that window instead of quitting the app. Use **Open full thread**, **Open Row-Bot** in the tray, or the tray's quit action as appropriate.
+- Tear-off is session-scoped. A fresh Row-Bot launch resets placement to the sidebar dock; a saved hidden preference remains hidden until you show Buddy.
+
+## Appearance Controls
+
+- **Companion personality** changes the tone of Buddy status cues.
+- **Bubble style** changes how visual status appears.
+- **Look cards** choose a bundled or custom Buddy appearance.
+- **Concept** and **Style notes** describe a custom look for **Generate full Buddy**.
+- **Use still only** keeps the current art without animated motion.
+- **Retry motion** rebuilds motion for an existing look.
 
 ## Common Workflow
 
-1. Start with the bundled look and sidebar mode.
-2. Enable desktop overlay only if you want Buddy outside the main Row-Bot window.
-3. Generate a custom look after providers and media models are ready.
-4. Use still only if motion generation is unavailable or distracting.
+1. Select the thread you want and confirm its name in the main window.
+2. Drag Buddy out of the sidebar and confirm the same name appears in the overlay header.
+3. Type a short message, review any approval, and use **Open full thread** when you need the complete transcript or tool details.
+4. Use **Dock Buddy** when you want it back in the sidebar.
+5. Generate a custom look only after providers and media models are ready; use still-only mode if motion is unavailable or distracting.
 
 ## What Is Saved
 
-Buddy preferences and custom Buddy assets are local app data. Generating a custom look may call a configured media provider depending on your setup.
+Buddy visibility, appearance, overlay position, and thread drafts are local app data. The overlay does not copy conversations into a second store. Generating a custom look may call a configured media provider depending on your setup.
 
 ## Privacy And Safety
 
-Review credential, account, channel, provider, or tool settings before enabling features that can contact outside services. Local-only features stay on your machine until you ask Row-Bot to use a provider, account, channel, MCP server, plugin, or tool that sends data elsewhere.
+The overlay follows the same privacy and safety boundaries as the selected thread. A hosted model, tool, account, channel, MCP server, plugin, or media provider can still send data externally when that thread uses it. Undocking Buddy does not grant new permissions or bypass approvals.
 
 ## Control-Level Reference
 
@@ -47,6 +85,11 @@ The [generated Settings Controls reference](/docs/reference/generated/settings-c
 
 ## Troubleshooting
 
-- If Buddy does not appear, check the enable switches and refresh the app.
-- If the overlay is stuck, use Close overlay, then Open overlay again.
+- If Buddy does not appear in the sidebar, turn on **Show Buddy** and reload the current page if needed.
+- If a drag snaps back, start the gesture on Buddy itself and release away from the original dock. Drag-to-undock is unavailable outside the native Windows and macOS apps.
+- If a hidden overlay is still torn off, use **Show Buddy** from the system tray.
+- If Row-Bot's main window is hidden, use **Open Row-Bot** from the tray or **Open full thread** from Buddy.
+- If the overlay shows the wrong conversation, select the intended thread in Row-Bot and verify the overlay title before sending.
+- If an approval needs more context, choose **Review** or **Details** and decide in the full thread.
+- Restart Row-Bot to reset desktop placement to the sidebar dock. Then enable **Show Buddy** if a saved hidden preference keeps it out of view.
 - If custom generation fails, check provider readiness and try still-only mode.

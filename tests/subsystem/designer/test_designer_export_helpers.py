@@ -30,6 +30,37 @@ def test_page_ranges_support_mixes_whitespace_duplicates_and_invalid_values() ->
         export._parse_page_range("first", 3)
 
 
+def test_playwright_export_launch_uses_reviewed_managed_executable(monkeypatch) -> None:
+    from row_bot.browser import runtime
+
+    calls: list[dict] = []
+
+    class _Chromium:
+        @staticmethod
+        def launch(**kwargs):
+            calls.append(kwargs)
+            return object()
+
+    monkeypatch.setattr(
+        runtime,
+        "playwright_chromium_launch_options",
+        lambda: {
+            "headless": True,
+            "executable_path": "C:/synthetic/managed/chrome.exe",
+        },
+    )
+
+    browser = export._launch_playwright_browser(type("PW", (), {"chromium": _Chromium()})())
+
+    assert browser is not None
+    assert calls == [
+        {
+            "headless": True,
+            "executable_path": "C:/synthetic/managed/chrome.exe",
+        }
+    ]
+
+
 def test_destination_description_and_next_available_path(tmp_path) -> None:
     project = _project()
     project.name = "Bad / Name: Demo?"

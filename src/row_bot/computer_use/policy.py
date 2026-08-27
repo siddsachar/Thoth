@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -23,26 +24,79 @@ class PolicyDecision:
     reversible: bool = True
 
 
-_BLOCKED_APP = re.compile(
-    r"(?:row[- ]?bot|terminal|powershell|command prompt|cmd\.exe|console|shell|repl|"
-    r"password manager|1password|bitwarden|keepass|keychain access|credential manager|"
-    r"lock screen|login window|secure desktop|security settings)",
+_BLOCKED_APP = frozenset(
+    {
+        "terminal",
+        "windowsterminal",
+        "powershell",
+        "windowspowershell",
+        "pwsh",
+        "commandprompt",
+        "cmd",
+        "console",
+        "conhost",
+        "shell",
+        "repl",
+        "gnometerminal",
+        "konsole",
+        "xterm",
+        "iterm",
+        "iterm2",
+        "alacritty",
+        "kitty",
+        "wezterm",
+        "hyper",
+        "passwordmanager",
+        "1password",
+        "bitwarden",
+        "keepass",
+        "keepassxc",
+        "keychainaccess",
+        "credentialmanager",
+        "lockscreen",
+        "loginwindow",
+        "securedesktop",
+        "securitysettings",
+        "windowssecurity",
+    }
+)
+_PYTHON_HOST_APP = re.compile(r"(?:^|[\\/])pythonw?(?:\.exe)?$", re.IGNORECASE)
+_PROTECTED_SURFACE = re.compile(
+    r"^\s*(?:user account control|secure desktop|login window|lock screen|"
+    r"windows security|security\s*(?:&|and)\s*privacy|"
+    r"privacy\s*(?:&|and)\s*security|accessibility permission|"
+    r"screen recording permission|authentication required|elevation required)\s*$",
     re.IGNORECASE,
 )
 _HANDOFF = re.compile(
-    r"(?:password|passcode|recovery code|payment card|credit card|bank credential|"
-    r"one[- ]?time|otp|2fa|mfa|captcha|biometric|passkey|uac|user account control|"
-    r"accessibility permission|screen recording permission|tcc|legal acceptance)",
+    r"(?<!\w)(?:password|passcode|recovery\s+code|payment\s+card|credit\s+card|"
+    r"bank\s+credential|one[- ]?time(?:\s+(?:password|code))?|otp|2fa|mfa|"
+    r"captcha|biometric|passkey|uac|user\s+account\s+control|"
+    r"accessibility\s+permission|screen\s+recording\s+permission|tcc|"
+    r"legal\s+acceptance)(?!\w)",
     re.IGNORECASE,
 )
 _CONSEQUENTIAL = re.compile(
-    r"(?:send|post|submit|publish|confirm|purchase|pay|transfer|order|book|trade|"
-    r"delete|remove|empty trash|overwrite|upload|download|share|invite|grant|revoke|"
+    r"(?<!\w)(?:send|post|submit|publish|confirm|purchase|pay|transfer|order|book|trade|"
+    r"delete|remove|empty\s+trash|overwrite|upload|download|share|invite|grant|revoke|"
     r"permission|install|execute|run|account|security|privacy|network|medical|"
-    r"financial|export|transmit|save as|close without saving)",
+    r"financial|export|transmit|save|quit|exit|sign\s+out|log\s+out|"
+    r"close\s+without\s+saving)(?!\w)",
     re.IGNORECASE,
 )
 _SECURE_ROLE = re.compile(r"(?:password|secure|credential|otp|captcha)", re.IGNORECASE)
+_CONSEQUENTIAL_TARGET_ACTIONS = frozenset(
+    {
+        "click",
+        "double_click",
+        "right_click",
+        "type",
+        "replace_text",
+        "key",
+        "key_sequence",
+        "menu",
+    }
+)
 _DANGEROUS_KEYS = frozenset({
     "win", "windows", "meta", "super", "ctrl+alt+delete", "command+space",
     "cmd+space", "alt+f4", "cmd+q", "control+command+q",
@@ -50,7 +104,35 @@ _DANGEROUS_KEYS = frozenset({
 
 
 def is_consequential_label(value: object) -> bool:
-    return bool(_CONSEQUENTIAL.search(str(value or "")))
+    return bool(
+        _CONSEQUENTIAL.search(unicodedata.normalize("NFKC", str(value or "")))
+    )
+
+
+def _canonical_app_identity(value: object) -> str:
+    """Return one exact app/process/bundle identity for protected-class checks."""
+
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+    text = text.replace("\\", "/").rsplit("/", 1)[-1]
+    had_app_suffix = False
+    for suffix in (".exe", ".app"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+            had_app_suffix = True
+            break
+    if not had_app_suffix and "." in text and " " not in text:
+        text = text.rsplit(".", 1)[-1]
+    return "".join(character for character in text if character.isalnum())
+
+
+def _normalized_identity_text(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(character for character in text if character.isalnum())
+
+
+def _is_protected_surface(window_title: object) -> bool:
+    title = unicodedata.normalize("NFKC", str(window_title or ""))
+    return bool(_PROTECTED_SURFACE.fullmatch(title))
 
 
 def classify_action(
@@ -67,18 +149,25 @@ def classify_action(
     keys: str = "",
 ) -> PolicyDecision:
     action = str(action or "").strip().lower()
-    surface = " ".join((app_name, window_title)).strip()
     target = " ".join((role, label, expected_effect, destination)).strip()
-    if _BLOCKED_APP.search(surface):
+    app_identity = _canonical_app_identity(app_name)
+    row_bot_controller = bool(
+        app_identity in {"rowbot", "cuadriver"}
+        or (
+            _PYTHON_HOST_APP.search(str(app_name or "").strip())
+            and "rowbot" in _normalized_identity_text(window_title)
+        )
+    )
+    if row_bot_controller or app_identity in _BLOCKED_APP or _is_protected_surface(window_title):
         return PolicyDecision(PolicyOutcome.BLOCKED, "This app or protected surface is not available to Computer Use.", False)
-    if _HANDOFF.search(" ".join((surface, target))):
+    if _SECURE_ROLE.search(role) or _HANDOFF.search(
+        " ".join((label, expected_effect))
+    ):
         return PolicyDecision(PolicyOutcome.HANDOFF, "Sensitive credentials or a protected system surface require user takeover.", False)
-    if action == "type" and (_SECURE_ROLE.search(role) or _HANDOFF.search(label)):
-        return PolicyDecision(PolicyOutcome.HANDOFF, "Secure fields must be completed by the user.", False)
     normalized_keys = keys.strip().lower().replace(" ", "")
     if action == "key" and normalized_keys in {item.replace(" ", "") for item in _DANGEROUS_KEYS}:
         return PolicyDecision(PolicyOutcome.BLOCKED, "System or security key chords are blocked.", False)
-    if action == "key_sequence" and "calculator" not in surface.casefold():
+    if action == "key_sequence" and "calculator" not in app_identity:
         return PolicyDecision(
             PolicyOutcome.BLOCKED,
             "The bounded key sequence is available only for a semantic Calculator target.",
@@ -86,15 +175,9 @@ def classify_action(
         )
     if action in {"list_apps", "list_windows", "capture", "wait", "stop"}:
         return PolicyDecision(PolicyOutcome.OBSERVATION, "Read-only observation or local lifecycle action.")
-    if foreground:
-        return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "Foreground takeover always requires confirmation.")
-    if is_consequential_label(target):
+    if action in _CONSEQUENTIAL_TARGET_ACTIONS and is_consequential_label(target):
         return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "The target may create an external or hard-to-reverse effect.", False)
-    if coordinate_only and action in {"click", "double_click", "right_click", "key"}:
-        return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "An ambiguous coordinate action requires point-of-risk confirmation.")
-    if action == "key" and normalized_keys in {"enter", "return"}:
-        return PolicyDecision(PolicyOutcome.CONSEQUENTIAL, "Enter may submit the active form or dialog.", False)
-    if action in {"launch_app", "focus", "click", "double_click", "right_click", "type", "key", "key_sequence", "scroll", "drag"}:
+    if action in {"launch_app", "focus", "click", "double_click", "right_click", "type", "replace_text", "key", "key_sequence", "scroll", "drag", "menu"}:
         return PolicyDecision(PolicyOutcome.ROUTINE, "Routine action inside the approved task-scoped target.")
     return PolicyDecision(PolicyOutcome.BLOCKED, "Unknown Computer action fails closed.", False)
 

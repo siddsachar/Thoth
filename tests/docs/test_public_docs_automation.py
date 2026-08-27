@@ -1,9 +1,12 @@
 import json
+from contextlib import ExitStack
 from html.parser import HTMLParser
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 
 import yaml
+import pytest
 
 from scripts.docs.collect_inventory import ROOT, build_inventory
 from scripts.docs.generate_llms_txt import generate
@@ -222,16 +225,22 @@ def test_llms_txt_generation_covers_docs_routes(tmp_path: Path) -> None:
 def test_docs_capture_is_opt_in_and_seed_data_is_safe(tmp_path: Path, monkeypatch) -> None:
     from row_bot.docs_capture import (
         is_docs_capture,
+        is_docs_real_data_capture,
         load_docs_capture_demo_state,
         scan_demo_data_safety,
         write_docs_capture_demo_state,
     )
 
     monkeypatch.delenv("ROW_BOT_DOCS_CAPTURE", raising=False)
+    monkeypatch.delenv("ROW_BOT_DOCS_REAL_DATA", raising=False)
     assert not is_docs_capture()
+    assert not is_docs_real_data_capture()
 
     monkeypatch.setenv("ROW_BOT_DOCS_CAPTURE", "1")
     assert is_docs_capture()
+    assert not is_docs_real_data_capture()
+    monkeypatch.setenv("ROW_BOT_DOCS_REAL_DATA", "1")
+    assert is_docs_real_data_capture()
     write_docs_capture_demo_state(tmp_path, scenario="full")
     data = load_docs_capture_demo_state(tmp_path)
     payload = json.dumps(data, sort_keys=True)
@@ -424,6 +433,247 @@ def test_capture_rejects_the_real_user_data_directory(tmp_path: Path, monkeypatc
         assert "normal Row-Bot data directory" in str(exc)
     else:  # pragma: no cover - explicit safety failure
         raise AssertionError("capture accepted the real Row-Bot data directory")
+
+
+def test_capture_accepts_real_data_only_with_explicit_reviewed_opt_in(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.docs.capture_real_ui_screenshots as capture
+
+    real_dir = tmp_path / "real-profile"
+    other_dir = tmp_path / "other-profile"
+    real_dir.mkdir()
+    other_dir.mkdir()
+    monkeypatch.setattr(capture, "_real_user_data_dir", lambda: real_dir.resolve())
+
+    selected, temporary = capture._safe_capture_data_dir(
+        real_dir,
+        authorize_real_data=True,
+    )
+
+    assert selected == real_dir.resolve()
+    assert temporary is None
+    with pytest.raises(RuntimeError, match="exact normal Row-Bot data directory"):
+        capture._safe_capture_data_dir(other_dir, authorize_real_data=True)
+
+
+def test_authorized_real_capture_cannot_seed_or_switch_to_temporary_data(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.docs.capture_real_ui_screenshots as capture
+
+    real_dir = tmp_path / "real-profile"
+    real_dir.mkdir()
+    monkeypatch.setattr(capture, "_real_user_data_dir", lambda: real_dir.resolve())
+
+    with pytest.raises(RuntimeError, match="--no-seed-demo-data"):
+        capture.capture(
+            {},
+            scenario="full",
+            data_dir=real_dir,
+            seed_demo_data=True,
+            use_temp_data=False,
+            authorize_real_data=True,
+        )
+    with pytest.raises(RuntimeError, match="retained data"):
+        capture.capture(
+            {},
+            scenario="full",
+            data_dir=real_dir,
+            seed_demo_data=False,
+            use_temp_data=True,
+            authorize_real_data=True,
+        )
+
+
+def test_authorized_real_capture_does_not_offer_fake_provider_choices(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.docs.capture_real_ui_screenshots as capture
+
+    launched: dict[str, object] = {}
+
+    def fake_popen(*args, **kwargs):
+        launched["args"] = args
+        launched["kwargs"] = kwargs
+        return SimpleNamespace()
+
+    monkeypatch.setattr(capture, "LOG_ROOT", tmp_path / "logs")
+    monkeypatch.setattr(capture.subprocess, "Popen", fake_popen)
+    with ExitStack() as stack:
+        capture._launch_app(43123, tmp_path / "profile", stack, real_data=True)
+
+    env = launched["kwargs"]["env"]
+    assert env["ROW_BOT_DOCS_REAL_DATA"] == "1"
+    assert env["ROW_BOT_DOCS_FAKE_PROVIDERS"] == "0"
+
+
+def test_authorized_real_capture_keeps_model_defaults_read_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import row_bot.models as models
+    import row_bot.vision as vision
+
+    model_path = tmp_path / "model_settings.json"
+    vision_path = tmp_path / "vision_settings.json"
+    model_original = b'{"model":"model:codex:gpt-5.6-sol"}'
+    vision_original = b'{"model":"model:codex:gpt-5.6-sol"}'
+    model_path.write_bytes(model_original)
+    vision_path.write_bytes(vision_original)
+    monkeypatch.setattr(models, "_DATA_DIR", tmp_path)
+    monkeypatch.setattr(models, "_SETTINGS_PATH", model_path)
+    monkeypatch.setattr(vision, "_DATA_DIR", tmp_path)
+    monkeypatch.setattr(vision, "_SETTINGS_PATH", vision_path)
+    monkeypatch.setenv("ROW_BOT_DOCS_CAPTURE", "1")
+    monkeypatch.setenv("ROW_BOT_DOCS_REAL_DATA", "1")
+
+    models._save_settings({"model": "model:ollama:llama3.1:8b"})
+    vision._save_settings({"model": "model:ollama:llama3.1:8b"})
+
+    assert model_path.read_bytes() == model_original
+    assert vision_path.read_bytes() == vision_original
+
+
+def test_authorized_real_capture_uses_stable_anchors_not_demo_text() -> None:
+    import scripts.docs.capture_real_ui_screenshots as capture
+
+    selected = capture._real_data_shot({
+        "wait_for": '[data-docs-id="home-panel-workflows"]',
+        "expected_text": ["Morning Brief"],
+        "actions": [
+            {"click_selector": '[data-docs-id="profile-library-toggle"]'},
+            {"wait_for_text": "Research Guide"},
+            {"click_text": "filesystem.search"},
+        ],
+    })
+
+    assert selected["wait_for"] == '[data-docs-id="home-panel-workflows"]'
+    assert selected["expected_text"] == []
+    assert selected["actions"] == [
+        {"click_selector": '[data-docs-id="profile-library-toggle"]'},
+        {"click_selector": '[data-docs-id="tool-trace"]'},
+    ]
+
+
+def test_capture_publication_atomically_replaces_an_existing_asset(
+    tmp_path: Path,
+) -> None:
+    import scripts.docs.capture_real_ui_screenshots as capture
+
+    source = tmp_path / "rendered.png"
+    destination = tmp_path / "public" / "surface.png"
+    source.write_bytes(b"new image")
+    destination.parent.mkdir()
+    destination.write_bytes(b"old image")
+
+    capture._publish_capture(source, destination)
+
+    assert destination.read_bytes() == b"new image"
+    assert list(destination.parent.glob(".*.tmp")) == []
+
+
+def test_authorized_real_capture_is_review_only_not_a_public_asset() -> None:
+    source = (
+        ROOT
+        / "scripts"
+        / "docs"
+        / "capture_real_ui_screenshots.py"
+    ).read_text(encoding="utf-8")
+
+    assert "if not real_data:" in source
+    assert "_publish_capture(raw_output, output)" in source
+    assert "raw_output if real_data else output" in source
+
+
+def test_authorized_real_mobile_detail_selects_a_real_chat_thread(
+    monkeypatch,
+) -> None:
+    import row_bot.docs_capture as capture
+
+    monkeypatch.setenv("ROW_BOT_DOCS_CAPTURE", "1")
+    monkeypatch.setenv("ROW_BOT_DOCS_REAL_DATA", "1")
+    monkeypatch.setattr(
+        capture,
+        "_list_real_capture_threads",
+        lambda: [("real-chat", "Private name", "", "", "", "", "chat")],
+    )
+    state = SimpleNamespace(
+        active_designer_project=None,
+        active_developer_workspace_id=None,
+        mobile_view="",
+        mobile_chat_mode="threads",
+        thread_id=None,
+        thread_name=None,
+        thread_model_override="",
+        messages=[],
+    )
+
+    capture.configure_docs_capture_state(
+        state,
+        {
+            "mobile_view": "chat",
+            "thread_id": capture.DEMO_THREAD_ID,
+        },
+        load_messages=lambda thread_id: [{"role": "user", "content": thread_id}],
+    )
+
+    assert state.thread_id == "real-chat"
+    assert state.mobile_chat_mode == "thread"
+    assert state.messages == [{"role": "user", "content": "real-chat"}]
+
+
+def test_buddy_overlay_public_docs_cover_the_complete_user_workflow() -> None:
+    buddy = (ROOT / "docs-site" / "docs" / "settings" / "buddy.mdx").read_text(
+        encoding="utf-8"
+    ).casefold()
+    voice_and_buddy = (
+        ROOT / "docs-site" / "docs" / "voice-and-buddy" / "index.mdx"
+    ).read_text(encoding="utf-8").casefold()
+    chat = (ROOT / "docs-site" / "docs" / "chat" / "index.mdx").read_text(
+        encoding="utf-8"
+    ).casefold()
+    readme = (ROOT / "README.md").read_text(encoding="utf-8").casefold()
+    writer = (
+        ROOT / "scripts" / "docs" / "write_public_user_guide_pages.py"
+    ).read_text(encoding="utf-8").casefold()
+    combined = "\n".join((buddy, voice_and_buddy))
+
+    for phrase in (
+        "always-on-top",
+        "open full thread",
+        "dock buddy",
+        "hide buddy",
+        "enter sends",
+        "shift+enter",
+        "saved draft",
+        "simple approvals",
+        "complex approvals",
+        "stop",
+        "windows and macos",
+        "browser/server mode",
+        "talk and dictate",
+    ):
+        assert phrase in combined
+    assert "/docs/settings/buddy" in chat
+    assert "buddy desktop overlay" in readme
+    for phrase in (
+        "drag buddy itself",
+        "simple approvals",
+        "complex approvals",
+        "talk and dictate remain",
+        "/docs/settings/buddy",
+    ):
+        assert phrase in writer
+    for obsolete in (
+        "enable switches decide whether buddy appears",
+        "open and close overlay buttons",
+        "toggle buddy visibility or reopen the overlay",
+    ):
+        assert obsolete not in writer
 
 
 def test_docs_capture_never_reads_the_keyring(monkeypatch) -> None:

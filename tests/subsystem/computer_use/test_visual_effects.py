@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 
 import pytest
 from PIL import Image, ImageDraw
 
-from row_bot.computer_use.service import ComputerUseError, LeaseOwner, Observation
+from row_bot.computer_use.client import CuaElement
+from row_bot.computer_use.service import (
+    ComputerUseError,
+    LeaseOwner,
+    Observation,
+    _semantic_fingerprint,
+)
+from row_bot.tools.computer_use_tool import _observation_payload
 
 
 OWNER = LeaseOwner("visual-thread", "visual-generation", "visual-task")
@@ -35,7 +43,175 @@ def _paint_target(service, fake_transport) -> tuple[str, Observation]:
     return target, service.capture(target, OWNER)
 
 
-def test_coordinate_drag_uses_screenshot_coordinates_once_and_verifies_changed_region(
+def _element(
+    token: str,
+    index: int,
+    role: str,
+    label: str,
+    *,
+    parent_index: int | None = None,
+    selected: bool | None = None,
+    checked: bool | None = None,
+    expanded: bool | None = None,
+    pressed: bool | None = None,
+    enabled: bool | None = None,
+    bounds: tuple[float, float, float, float] = (0, 0, 10, 10),
+) -> CuaElement:
+    return CuaElement(
+        token=token,
+        index=index,
+        role=role,
+        label=label,
+        value="hidden value",
+        bounds=bounds,
+        depth=1 if parent_index is None else 2,
+        parent_index=parent_index,
+        selected=selected,
+        checked=checked,
+        expanded=expanded,
+        pressed=pressed,
+        enabled=enabled,
+    )
+
+
+def test_semantic_fingerprint_ignores_reference_rotation_geometry_and_order() -> None:
+    before = (
+        _element("old-root", 10, "Group", "Playback controls"),
+        _element(
+            "old-child",
+            11,
+            "Button",
+            "Play",
+            parent_index=10,
+            selected=False,
+            checked=False,
+            expanded=False,
+            pressed=False,
+            enabled=True,
+        ),
+    )
+    after = (
+        _element(
+            "new-child",
+            41,
+            "Button",
+            "Play",
+            parent_index=40,
+            selected=False,
+            checked=False,
+            expanded=False,
+            pressed=False,
+            enabled=True,
+            bounds=(101.25, 55.5, 11.0, 9.5),
+        ),
+        _element("new-root", 40, "Group", "Playback controls", bounds=(9, 9, 99, 99)),
+    )
+
+    assert _semantic_fingerprint(before) == _semantic_fingerprint(after)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"role": "CheckBox"},
+        {"label": "Pause"},
+        {"selected": True},
+        {"checked": True},
+        {"expanded": True},
+        {"pressed": True},
+        {"enabled": False},
+        {"parent_index": None},
+    ],
+)
+def test_semantic_fingerprint_detects_meaningful_control_or_tree_change(changed) -> None:
+    root = _element("root", 0, "Group", "Playback controls")
+    baseline_fields = {
+        "role": "Button",
+        "label": "Play",
+        "parent_index": 0,
+        "selected": False,
+        "checked": False,
+        "expanded": False,
+        "pressed": False,
+        "enabled": True,
+    }
+    updated_fields = {**baseline_fields, **changed}
+    before = (root, _element("before", 1, **baseline_fields))
+    after = (root, _element("after", 1, **updated_fields))
+
+    assert _semantic_fingerprint(before) != _semantic_fingerprint(after)
+
+
+def test_unchanged_post_click_semantics_are_observed_but_not_verified(
+    service,
+    fake_transport,
+) -> None:
+    semantic = (
+        {
+            "role": "Button",
+            "label": "Play",
+            "selected": False,
+            "checked": False,
+            "expanded": False,
+            "pressed": False,
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.semantic_snapshots = (semantic, semantic)
+    fake_transport.scenario.rotate_element_tokens = True
+    fake_transport.scenario.effect = "unverifiable"
+    target, observation = _paint_target(service, fake_transport)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        capture_after=True,
+    )
+
+    assert result.native_change == "unchanged"
+    assert result.effect_verified is False
+    assert result.verified_scope == ""
+    payload = json.loads(_observation_payload(result))
+    assert "one alternative exact route" in payload["next_action"].casefold()
+    assert "bounded wait" in payload["next_action"].casefold()
+
+
+def test_changed_post_click_semantics_do_not_verify_the_intended_outcome(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_snapshots = (
+        ({"role": "Button", "label": "Play", "selected": False},),
+        ({"role": "Button", "label": "Play", "selected": True},),
+    )
+    fake_transport.scenario.rotate_element_tokens = True
+    fake_transport.scenario.effect = "unverifiable"
+    target, observation = _paint_target(service, fake_transport)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+        expected_effect="Start playback",
+        approval_mode="allow_all",
+        capture_after=True,
+    )
+
+    assert result.native_change == "changed"
+    assert result.effect_verified is False
+    assert result.verified_scope == ""
+    assert result.semantic_postcondition == "unavailable"
+    payload = json.loads(_observation_payload(result))
+    assert payload["action_dispatched"] is True
+    assert payload["native_change"] == "changed"
+    assert payload["effect_verified"] is False
+    assert "intended outcome" not in payload["display_summary"].casefold()
+
+
+def test_coordinate_drag_uses_screenshot_coordinates_once_with_one_optional_capture(
     service,
     fake_transport,
 ) -> None:
@@ -53,6 +229,7 @@ def test_coordinate_drag_uses_screenshot_coordinates_once_and_verifies_changed_r
         y=10,
         end_x=40,
         end_y=40,
+        capture_after=True,
     )
 
     calls = fake_transport.calls[calls_before:]
@@ -64,15 +241,18 @@ def test_coordinate_drag_uses_screenshot_coordinates_once_and_verifies_changed_r
         "from_y": 10,
         "to_x": 40,
         "to_y": 40,
+        "delivery_mode": "foreground",
         "session": "row-bot-test-session",
     }]
     assert [name for name, _args in calls] == ["drag", "get_window_state"]
     assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
-    assert result.effect_verified is True
+    assert result.action_effect == "delivered_unverified"
+    assert result.visual_change == "unknown"
+    assert result.effect_verified is False
+    assert result.delivery_mode == "foreground"
 
 
-def test_unchanged_background_drag_retries_foreground_once_without_model_round(
+def test_unchanged_foreground_drag_is_not_replayed_after_driver_acceptance(
     service,
     fake_transport,
 ) -> None:
@@ -80,154 +260,127 @@ def test_unchanged_background_drag_retries_foreground_once_without_model_round(
     fake_transport.scenario.capture_images = (
         _png(),
         _png(),
-        _png(changed_box=(8, 8, 42, 42)),
     )
     fake_transport.scenario.effect = "unverifiable"
     fake_transport.scenario.foreground_effect = "unverifiable"
     target, _observation = _paint_target(service, fake_transport)
     calls_before = len(fake_transport.calls)
 
-    result = service.act("drag", target, OWNER, x=10, y=10, end_x=40, end_y=40)
+    result = service.act(
+        "drag", target, OWNER,
+        x=10, y=10, end_x=40, end_y=40,
+        capture_after=True,
+    )
 
     calls = fake_transport.calls[calls_before:]
     drags = [args for name, args in calls if name == "drag"]
-    assert len(drags) == 2
-    assert "delivery_mode" not in drags[0]
-    assert drags[1]["delivery_mode"] == "foreground"
+    assert len(drags) == 1
+    assert drags[0]["delivery_mode"] == "foreground"
+    assert [name for name, _args in calls] == ["drag", "get_window_state"]
     assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
+    assert result.visual_change == "unknown"
     assert result.delivery_mode == "foreground"
-    assert service.status_snapshot()["last_effect"] == "changed"
+    assert service.status_snapshot()["last_visual_change"] == "unknown"
 
 
-def test_cursor_only_change_at_drag_endpoint_is_not_mistaken_for_canvas_progress(
+def test_repeated_accepted_no_effect_drags_remain_useful_delivery(
     service,
     fake_transport,
 ) -> None:
     fake_transport.scenario.capture_dimensions = (64, 64)
-    fake_transport.scenario.capture_images = (
-        _png(),
-        _png(changed_box=(36, 36, 44, 44)),
-        _png(changed_box=(8, 8, 42, 42)),
-    )
-    fake_transport.scenario.effect = "unverifiable"
-    target, _observation = _paint_target(service, fake_transport)
-
-    result = service.act("drag", target, OWNER, x=10, y=10, end_x=40, end_y=40)
-
-    assert [name for name, _args in fake_transport.calls].count("drag") == 2
-    assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
-    assert result.delivery_mode == "foreground"
-
-
-def test_change_only_outside_intended_drag_region_does_not_count_as_progress(
-    service,
-    fake_transport,
-) -> None:
-    fake_transport.scenario.capture_dimensions = (64, 64)
-    fake_transport.scenario.capture_images = (
-        _png(),
-        _png(changed_box=(55, 55, 63, 63)),
-        _png(changed_box=(8, 8, 42, 42)),
-    )
-    fake_transport.scenario.effect = "unverifiable"
-    target, _observation = _paint_target(service, fake_transport)
-
-    result = service.act("drag", target, OWNER, x=10, y=10, end_x=30, end_y=30)
-
-    assert [name for name, _args in fake_transport.calls].count("drag") == 2
-    assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
-    assert result.delivery_mode == "foreground"
-
-
-def test_three_varied_accepted_no_effect_drags_stop_with_needs_attention(
-    service,
-    fake_transport,
-) -> None:
-    fake_transport.scenario.capture_dimensions = (64, 64)
-    fake_transport.scenario.capture_images = tuple(_png() for _ in range(7))
+    fake_transport.scenario.capture_images = tuple(_png() for _ in range(4))
     fake_transport.scenario.effect = "unverifiable"
     fake_transport.scenario.foreground_effect = "unverifiable"
     target, _observation = _paint_target(service, fake_transport)
 
     for index in range(3):
-        if index < 2:
-            result = service.act(
-                "drag", target, OWNER,
-                x=5 + index, y=5, end_x=35 + index, end_y=35,
-            )
-            assert isinstance(result, Observation)
-            assert result.action_effect == "unchanged"
-        else:
-            with pytest.raises(ComputerUseError, match="no visual effect") as exc_info:
-                service.act(
-                    "drag", target, OWNER,
-                    x=5 + index, y=5, end_x=35 + index, end_y=35,
-                )
-            assert exc_info.value.code == "no_progress"
+        result = service.act(
+            "drag", target, OWNER,
+            x=5 + index, y=5, end_x=35 + index, end_y=35,
+            capture_after=True,
+        )
+        assert isinstance(result, Observation)
+        assert result.action_effect == "delivered_unverified"
+        assert result.visual_change == "unknown"
 
-    assert service.status_snapshot()["state"] == "needs_attention"
-    assert service.status_snapshot()["consecutive_visual_no_effects"] == 3
-    assert [name for name, _args in fake_transport.calls].count("drag") == 6
+    assert service.status_snapshot()["state"] == "observing"
+    assert "consecutive_visual_no_effects" not in service.status_snapshot()
+    assert [name for name, _args in fake_transport.calls].count("drag") == 3
 
 
-def test_changed_toolbar_clicks_do_not_reset_no_effect_canvas_drag_budget(
-    service,
-    fake_transport,
-) -> None:
-    fake_transport.scenario.capture_dimensions = (64, 64)
-    fake_transport.scenario.capture_images = tuple(_png() for _ in range(7))
-    fake_transport.scenario.effect = "unverifiable"
-    fake_transport.scenario.foreground_effect = "unverifiable"
-    target, _observation = _paint_target(service, fake_transport)
-
-    for index in range(3):
-        if index:
-            # A changed setup/control click is real progress for the click
-            # family, but it must not erase repeated no-effect canvas drags.
-            fake_transport.scenario.effect = "confirmed"
-            service.act("click", target, OWNER, x=2 + index, y=2)
-            fake_transport.scenario.effect = "unverifiable"
-
-        if index < 2:
-            result = service.act(
-                "drag", target, OWNER,
-                x=5 + index, y=5, end_x=35 + index, end_y=35,
-            )
-            assert isinstance(result, Observation)
-            assert result.action_effect == "unchanged"
-        else:
-            with pytest.raises(ComputerUseError, match="no visual effect") as exc_info:
-                service.act(
-                    "drag", target, OWNER,
-                    x=5 + index, y=5, end_x=35 + index, end_y=35,
-                )
-            assert exc_info.value.code == "no_progress"
-
-    assert service.status_snapshot()["state"] == "needs_attention"
-    assert service.status_snapshot()["consecutive_visual_no_effects"] == 3
-    assert [name for name, _args in fake_transport.calls].count("drag") == 6
-
-
-def test_top_level_background_unavailable_uses_one_reviewed_foreground_fallback(
+def test_foreground_drag_refusal_is_structured_and_not_replayed(
     service,
     fake_transport,
 ) -> None:
     fake_transport.scenario.capture_dimensions = (64, 64)
     fake_transport.scenario.capture_images = (_png(), _png(changed_box=(8, 8, 42, 42)))
-    fake_transport.scenario.background_unavailable_tools = frozenset({"drag"})
-    target, _observation = _paint_target(service, fake_transport)
+    fake_transport.scenario.foreground_error_code = "focus_refused"
+    target, observation = _paint_target(service, fake_transport)
+    calls_before = len(fake_transport.calls)
 
-    result = service.act("drag", target, OWNER, x=10, y=10, end_x=40, end_y=40)
+    with pytest.raises(ComputerUseError) as exc_info:
+        service.act(
+            "drag", target, OWNER,
+            x=10, y=10, end_x=40, end_y=40,
+            capture_after=True,
+        )
 
-    drags = [args for name, args in fake_transport.calls if name == "drag"]
-    assert len(drags) == 2
-    assert "delivery_mode" not in drags[0]
-    assert drags[1]["delivery_mode"] == "foreground"
-    assert isinstance(result, Observation)
-    assert result.action_effect == "changed"
+    calls = fake_transport.calls[calls_before:]
+    assert calls == [
+        (
+            "drag",
+            {
+                "pid": 5303,
+                "window_id": 303,
+                "from_x": 10,
+                "from_y": 10,
+                "to_x": 40,
+                "to_y": 40,
+                "delivery_mode": "foreground",
+                "session": "row-bot-test-session",
+            },
+        )
+    ]
+    assert exc_info.value.code == "focus_refused"
+    assert exc_info.value.retryable is False
+    assert service.current_observation(target) is observation
+    assert observation.target.target_id == target
+    assert (observation.target.pid, observation.target.window_id) == (5303, 303)
+
+
+def test_semantic_paint_toolbar_click_keeps_accessibility_delivery(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.semantic_elements = (
+        {"role": "Button", "label": "Rectangle", "enabled": True},
+    )
+    fake_transport.scenario.action_route = "accessibility"
+    target, observation = _paint_target(service, fake_transport)
+    calls_before = len(fake_transport.calls)
+
+    result = service.act(
+        "click",
+        target,
+        OWNER,
+        element_token=observation.elements[0].token,
+    )
+
+    calls = fake_transport.calls[calls_before:]
+    assert calls == [
+        (
+            "click",
+            {
+                "pid": 5303,
+                "window_id": 303,
+                "element_token": observation.elements[0].token,
+                "session": "row-bot-test-session",
+            },
+        )
+    ]
+    assert result.route == "accessibility"
+    assert result.delivery_mode == "background"
+    assert all(name not in {"drag", "bring_to_front"} for name, _args in calls)
 
 
 def test_semantic_bounds_are_not_presented_as_screenshot_coordinates(service, fake_transport) -> None:

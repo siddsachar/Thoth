@@ -244,17 +244,30 @@ class ShellSession:
                     # PowerShell: run command, then write cwd marker to
                     # stderr so it doesn't interfere with pipeline-buffered
                     # stdout (pipeline output can appear after Write-Host).
-                    # Capture $? immediately after the user command (before
-                    # any other statement resets it), then emit cwd marker,
-                    # then exit 1 if the command failed.  This ensures
-                    # cmdlet errors (which don't set $LASTEXITCODE) still
-                    # surface as a non-zero process exit code.
+                    # PowerShell starts fresh for every call, so clear its
+                    # process-local error list and native status before the
+                    # submitted command. Preserve a native exit code and fail
+                    # if the command added any PowerShell error record, even
+                    # when a later statement happened to succeed.
                     wrapped = (
-                        f"{command}\n"
-                        f"$_ok = $?\n"
-                        f"[Console]::Error.WriteLine("
-                        f"'___ROW_BOT_CWD___' + (Get-Location).Path)\n"
-                        f"if (-not $_ok) {{ exit 1 }}"
+                        "$global:Error.Clear()\n"
+                        "$global:LASTEXITCODE = 0\n"
+                        "$__row_bot_terminated = $false\n"
+                        "try {\n"
+                        f"& {{\n{command}\n}}\n"
+                        "$__row_bot_ok = $?\n"
+                        "} catch {\n"
+                        "$__row_bot_ok = $false\n"
+                        "$__row_bot_terminated = $true\n"
+                        "[Console]::Error.WriteLine([string]$_)\n"
+                        "}\n"
+                        "$__row_bot_native_exit = $LASTEXITCODE\n"
+                        "$__row_bot_error_count = $Error.Count\n"
+                        "[Console]::Error.WriteLine("
+                        "'___ROW_BOT_CWD___' + (Get-Location).Path)\n"
+                        "if ($__row_bot_native_exit -ne 0) { exit $__row_bot_native_exit }\n"
+                        "if ($__row_bot_terminated -or -not $__row_bot_ok -or "
+                        "$__row_bot_error_count -gt 0) { exit 1 }"
                     )
                     proc = run_cancellable_subprocess(
                         ["powershell", "-NoProfile", "-NoLogo", "-Command", wrapped],

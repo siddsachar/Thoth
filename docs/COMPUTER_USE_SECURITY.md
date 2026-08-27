@@ -20,15 +20,15 @@ layer, personal-browser attachment, desktop replay, or a VM backend.
 ## Reviewed upstream dependency
 
 - Project: Cua Driver Rust, MIT license
-- Version/tag: `0.7.1` / `cua-driver-rs-v0.7.1`
-- Release commit: `7caf72b`
-- Release: <https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.7.1>
-- Windows x86_64 archive: `cua-driver-rs-0.7.1-windows-x86_64.zip`
-  (`00dfa76c5008db20c55ed0cc951388b0f25d1221f6995e5f131dcd6bc4fc5aab`)
-- Windows ARM64 archive: `cua-driver-rs-0.7.1-windows-arm64.zip`
-  (`43601a32a1ce9eec5fbbe98803718ad2ca3a3450c499b354b05fedc3a1cc5526`)
-- macOS universal app archive: `cua-driver-rs-0.7.1-darwin-universal.tar.gz`
-  (`3bd574f162bf293089ca9d28653c8ac2b869f1577a15b92ff95203c6279a08a1`)
+- Version/tag: `0.20.0` / `cua-driver-rs-v0.20.0`
+- Signed tag commit: `bb8c86049cad1bf0853c6d25c03c14875d0d047f`
+- Release: <https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.20.0>
+- Windows x86_64 full archive: `cua-driver-rs-0.20.0-windows-x86_64.zip`
+  (`bd27528e0d81bf78c03cdd77be28a3ea31899a370eaf06938ad21edac73290bd`)
+- Windows ARM64 full archive: `cua-driver-rs-0.20.0-windows-arm64.zip`
+  (`a01686a90725d9c902d558c053a0dd95bd181faff0418d9acb495da63f04a6a1`)
+- macOS universal full app archive: `cua-driver-rs-0.20.0-darwin-universal.tar.gz`
+  (`d5e61fecebd9a620e50c2b8b608c8e7e8141f74c6faebc2ae9ef5d0d96cce7b8`)
 
 Row-Bot downloads only the exact selected asset after a separate explicit
 Install action, verifies SHA-256 before safe extraction, and keeps the runtime
@@ -36,15 +36,38 @@ private. It never runs the upstream installer or updater. Cua update checks are
 disabled with `CUA_DRIVER_RS_UPDATE_CHECK=0`; Cua telemetry is deliberately
 left at its disclosed upstream default.
 
+Ordinary Row-Bot sessions and diagnostics use the same private launch profile:
+Windows starts the executable with exactly `mcp`, while macOS starts it with
+exactly `mcp --direct`. Row-Bot sets neither `CUA_DRIVER_EMBEDDED` nor
+`CUA_DRIVER_PARENT_LIVENESS_STDIN`. On macOS the packaged Row-Bot host owns the
+Accessibility and Screen Recording permission relationship; Row-Bot does not
+install a daemon, LaunchAgent, global socket, `/Applications` helper copy, or
+embedded SDK host.
+
 ## Telemetry acceptance
 
 Before any Cua executable invocation, Row-Bot shows a mandatory Continue or
-Cancel disclosure. Reviewed source sends a stable random Cua installation ID,
-Cua version, OS name/version, architecture, CI flag, event category, and
-timestamp to `https://eu.i.posthog.com/capture/`. It explicitly excludes
-usernames, file paths, command arguments, tool arguments, and typed content.
-Row-Bot additionally prevents screenshots and its own prompt, memory, secret,
-tool-argument, and channel data from reaching Cua telemetry.
+Cancel disclosure. Notice version 2 invalidates the older 0.7.1 acknowledgement,
+so an upgrade requires explicit consent again.
+
+The reviewed 0.20.0 tagged source sends content-free product events to
+`https://eu.i.posthog.com/capture/`. They can include pseudonymous random
+installation and process-session identifiers; product/platform/architecture/
+transport versions; bounded client, provider, model, and agent categories;
+tool and operation categories; success, bounded refusal/error class, duration
+and output-size buckets; output type; aggregate session counts and bounded
+window/desktop modality, capture-scope/browser/cursor/recording/config usage
+flags; permission-gate state; and install/update lifecycle events. The 0.20.0
+delta adds only those aggregate modality flags; it does not add a new
+content-bearing telemetry category, so the unreleased notice remains version 2.
+
+The event builders do not receive prompts, tool arguments or results, typed
+text, screenshots, accessibility trees, application/window names, URLs,
+filenames/paths, raw cursor/config values, or raw errors. Row-Bot does not
+disable or rebrand this upstream telemetry. It keeps Cua update checks off and
+does not expose Cua recording, browser, desktop-wide, updater, autostart,
+clipboard, or arbitrary execution tools, so those features cannot be invoked
+through this integration.
 
 ## Driver allowlist
 
@@ -55,13 +78,14 @@ The private client permits only:
 | `list_apps`, `list_windows` | private discovery | observation |
 | `get_window_state` | target-window tree and screenshot | observation |
 | `launch_app` | allowlisted display-name launch | routine or consequential |
-| `bring_to_front` | explicit foreground escalation | always confirm |
+| `bring_to_front` | explicit visible focus of the selected app/window | routine unless the expected effect is consequential |
 | `click`, `double_click`, `right_click` | token-first selection | routine or consequential |
-| `type_text`, `press_key`, `hotkey` | non-secret text/input | routine, consequential, or handoff |
+| `type_text`, `set_value`, `press_key`, `hotkey` | non-secret text/input; token-bound `type_text` is Cua's exact focus-and-insert transaction, tokenless `type_text` preserves the current caret/selection, and `set_value` performs exact textual replacement | routine, consequential, or handoff |
 | `scroll`, `drag` | bounded target-window input | routine |
-| `set_config` | hidden session-only window/image limits | internal only |
 | `health_report`, `check_permissions` | readiness after disclosure | internal only |
-| `start_session`, `end_session` | private lifecycle | internal only |
+| `start_session`, `end_session` | private window-scoped lifecycle | internal only |
+| `verify_state` | one bounded service-derived exact postcondition | internal only |
+| `invoke_menu` | exact 1-16-label native menu path | capability-gated and policy-gated |
 
 All recording, desktop capture, browser-page/CDP, arbitrary config, update,
 installer, autostart, telemetry mutation, skill, FFmpeg, kill-process, and
@@ -76,20 +100,89 @@ maintenance surfaces are forbidden and never model-visible.
   retains a paused lease; Resume requires a fresh observation.
 - Target IDs and element tokens are opaque and generation-bound. Target drift,
   reconnects, approval waits, and takeover invalidate them.
+- Compact native observations retain the existing 80-element and 12 KiB model
+  limits while promoting visible selected elements and reserving a small,
+  deterministic document/grid share. They expose only labels plus useful
+  `selected=true` or `enabled=false` state; values, geometry, and parent trees
+  remain model-hidden.
+- Token-bound `type` passes the latest current token directly to Cua after
+  Row-Bot rejects only explicit disabled, read-only, secure, protected, and
+  clearly structural targets. Combo controls, cells, data items, and unknown
+  interactive roles may reach Cua. Row-Bot does not pre-capture, geometry-
+  rematch, click, focus, or select. Tokenless `type` is one Cua action at the
+  current caret or selection and preserves literal input.
+- Only an explicit pre-dispatch `background_unavailable` refusal permits one
+  foreground `type_text` call. Cua owns focus establishment; Row-Bot never calls
+  `bring_to_front` as hidden preparation and never replays a dispatched
+  unverifiable insertion.
+- `replace_text` sends one current token to Cua `set_value` with no mandatory
+  baseline, geometry rematch, or post-capture. A caller may request at most one
+  later capture. One unique exact native value readback can upgrade an
+  unverifiable result to `verified_scope=exact_value`; web accessibility echo
+  with an unverifiable driver verdict and an unavailable native value remain
+  delivered/unverified. Exact value proves only the control value, never commit,
+  evaluation, navigation, saved state, or overall task completion.
 - Credentials, OTP, CAPTCHA, biometric, UAC/TCC, terminals, password managers,
   Row-Bot itself, secure desktops, and elevation are handed off or blocked.
-- Every mutation is followed by a new target-window observation.
+- Routine capture obtains target-window pixels and semantics once but makes no
+  Vision call. Tree-only stale refreshes request no screenshot. Routine type,
+  click, and key actions make one mutation call and no hidden capture; cheap
+  action receipts do not imply a fresh observation.
 - Screenshot bytes are ephemeral. Typed values are excluded from logs,
   histories, checkpoints, approval payloads, memory, and durable media.
 - Consequential actions require point-of-risk confirmation even in Auto mode.
+  Enter/Return, fresh coordinates, and foregrounding are routine when their
+  semantic target and expected effect are non-consequential; send, submit,
+  purchase, delete, permission, and other external effects still require
+  approval.
+- App-scoped acquisition uses generic normalized identity words and prefers the
+  unique active or visible matching window. It may return at most eight running
+  candidates or opaque same-app targets when real ambiguity remains. It never
+  exposes unrelated titles, uses application-specific aliases, or silently
+  launches a candidate.
 - UI text and accessibility content are untrusted tool output and cannot grant
   new scope, recipients, secrets, or authority.
+- Prompt-injection pattern matches in native labels and values are advisory
+  evidence, not mutation authorization. Row-Bot scans app-authored fields
+  independently without treating accessibility roles as instructions, then
+  applies the same exact-target, protected-surface, credential, consequential-
+  action, and thread approval policy whether or not an advisory is present.
+  Model-visible diagnostics contain only deduplicated bounded categories such
+  as `explicit_role_marker`, `instruction_override`, `exfiltration_request`,
+  or `hidden_control_anomaly`, never the matching value, identity, title,
+  token, coordinate, or position.
+- Approval interruption emits a privacy-safe pending diagnostic rather than a
+  successful completed-action receipt. Resume can dispatch at most once and
+  emits one final completed, failed, denied, or cancelled receipt without typed
+  text, labels, titles, tokens, coordinates, screenshots, or approval secrets.
+- Compact receipts keep transport acceptance, dispatch, driver verification,
+  verified scope, delivery mode, route, error code, and target independent.
+  `ok=true`, dispatched, and unverified is useful delivery. It does not freeze
+  Enter, navigation, later fields, capture, or the model's truthful final
+  answer. Row-Bot stores no pending mutation, replay state, completion ledger,
+  or Computer-specific failure budget.
+- A stale driver refusal returns the original bounded error plus at most one
+  fresh semantic observation. The refused mutation is not replayed and does not
+  consume session-wide progress state. Stop, cancellation, and takeover never
+  rewrite prior receipts as success.
+- Token-based semantic replacement stays on the native fast path unless
+  `capture_after=true` and one explicit visual question requests exactly one
+  advisory Vision check. Vision is not automatically repeated or parsed as
+  authorization or a Boolean postcondition.
+- Terminal `hard_blocked` results are reserved for concrete protected targets
+  or capabilities and Block approval mode; they remain terminal and must not be
+  bypassed by aliases or alternate Computer actions.
 
-## Upstream contract deviation
+Generic Computer Use is not a substitute for a purpose-built structured or
+application API for large bulk transformations. Row-Bot exposes no
+model-visible clipboard action and does not use hidden shell clipboard commands
+to simulate one.
 
-No supported Cua 0.7.1 environment variable for a private config/home path is
-documented. Row-Bot therefore does not invent one. It relies on the documented
-MCP behavior where `set_config` applies an in-memory, session-scoped override,
-forcing `capture_scope=window` and `max_image_dimension=1456` immediately after
-connection. This is the deviation explicitly permitted by Phase 0 of the
-canonical plan.
+## Upstream contract binding
+
+Row-Bot uses the tagged 0.20.0 lifecycle session while every capture remains
+bound to the exact PID/window target. It never calls desktop capture or
+escalates to desktop scope. The runtime
+installer uses only the exact full archives above, performs traversal-safe
+staged extraction, and retains a prior known-good managed runtime until the new
+candidate passes diagnostics.

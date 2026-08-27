@@ -82,10 +82,10 @@ designer = [
   "pandas>=2.2,<3.0",
   "plotly>=6.0,<7.0",
   "kaleido>=1.0,<2.0",
-  "playwright>=1.50,<2.0",
+  "playwright>=1.62,<2.0",
 ]
 browser = [
-  "playwright>=1.50,<2.0",
+  "playwright>=1.62,<2.0",
 ]
 channels = [
   "python-telegram-bot>=22.0,<23.0",
@@ -136,7 +136,7 @@ all = [
   "pandas>=2.2,<3.0",
   "plotly>=6.0,<7.0",
   "kaleido>=1.0,<2.0",
-  "playwright>=1.50,<2.0",
+  "playwright>=1.62,<2.0",
   "python-telegram-bot>=22.0,<23.0",
   "slack-bolt>=1.28,<2.0",
   "twilio>=9.0,<10.0",

@@ -122,7 +122,7 @@ def test_macos_bundle_repair_is_a_direct_primary_action() -> None:
     )
     assert view.primary_action == "Repair Computer Use"
     assert view.needs_install is True
-    assert "macOS helper" in view.detail
+    assert "macOS runtime inside Row-Bot" in view.detail
 
 
 def test_macos_permission_recovery_is_specific_and_hides_driver_internals() -> None:

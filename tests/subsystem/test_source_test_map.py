@@ -130,6 +130,19 @@ def test_launcher_change_selects_startup_regressions() -> None:
     assert not selection.unmatched_files
 
 
+def test_buddy_overlay_change_selects_state_ui_and_stop_regressions() -> None:
+    selection = select_tests_for_changes(
+        ["src/row_bot/buddy/overlay.py", "src/row_bot/ui/buddy.py"]
+    )
+
+    assert "buddy_lifecycle" in selection.matched_rules
+    assert "tests/test_buddy_core.py" in selection.test_paths
+    assert "tests/test_buddy_ui.py" in selection.test_paths
+    assert "tests/test_buddy_overlay.py" in selection.test_paths
+    assert "tests/test_generation_stop.py" in selection.test_paths
+    assert not selection.unmatched_files
+
+
 def test_app_port_change_selects_startup_and_mobile_regressions() -> None:
     selection = select_tests_for_changes(["src/row_bot/app_port.py"])
 
@@ -171,6 +184,35 @@ def test_live_control_change_selects_computer_browser_and_chat_regressions() -> 
     assert "tests/integration/computer_use" in selection.test_paths
     assert "tests/subsystem/browser" in selection.test_paths
     assert "tests/test_chat_tool_trace_ui.py" in selection.test_paths
+    assert not selection.unmatched_files
+
+
+def test_computer_tool_guide_selects_runtime_and_prompt_ownership() -> None:
+    selection = select_tests_for_changes(
+        ["tool_guides/computer_use_guide/SKILL.md"]
+    )
+
+    assert "computer_use" in selection.matched_rules
+    assert "tests/subsystem/computer_use" in selection.test_paths
+    assert "tests/integration/computer_use" in selection.test_paths
+    assert "tests/test_skills_activation.py" in selection.test_paths
+    assert (
+        "tests/integration/computer_use/test_browser_computer_routing_guidance.py"
+        in selection.test_paths
+    )
+    assert (
+        "tests/subsystem/providers/test_prompt_cache_payloads.py"
+        in selection.test_paths
+    )
+    assert not selection.unmatched_files
+
+
+def test_computer_architecture_document_selects_computer_use_ownership() -> None:
+    selection = select_tests_for_changes(["docs/ARCHITECTURE.md"])
+
+    assert "computer_use" in selection.matched_rules
+    assert "tests/subsystem/computer_use" in selection.test_paths
+    assert "tests/integration/computer_use" in selection.test_paths
     assert not selection.unmatched_files
 
 

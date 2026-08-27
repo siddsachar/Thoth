@@ -1046,11 +1046,11 @@ def build_chat(
     build_live_control_dock(
         state,
         p,
-        stop_generation=lambda thread_id: request_generation_stop(
+        stop_generation=lambda thread_id, reason="live_control": request_generation_stop(
             thread_id,
             state=state,
             p=p,
-            reason="live_control",
+            reason=reason,
         ),
     )
 
@@ -1862,6 +1862,12 @@ def build_chat(
                 else:
                     text = str(payload or p.chat_input.value or "")
                     cursor = len(text)
+                try:
+                    from row_bot.threads import save_thread_draft
+
+                    save_thread_draft(str(state.thread_id or ""), text, source="normal_chat")
+                except Exception:
+                    logger.debug("Could not persist normal chat draft", exc_info=True)
                 _queue_skill_chip_refresh(text)
                 try:
                     _slash_palette_on_text(text, int(cursor) if cursor is not None else len(text))

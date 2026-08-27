@@ -443,6 +443,11 @@ def _load_settings() -> dict:
 
 def _save_settings(settings: dict):
     """Merge and persist model settings without dropping unrelated keys."""
+    from row_bot.docs_capture import is_docs_real_data_capture
+
+    if is_docs_real_data_capture():
+        logger.warning("Suppressed model-settings write during authorized real-data docs capture")
+        return
     existing: dict = {}
     try:
         if _SETTINGS_PATH.exists():

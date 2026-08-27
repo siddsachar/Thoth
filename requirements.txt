@@ -173,7 +173,7 @@ pandas==2.3.3
 phonemizer-fork==3.3.2
 pillow==12.3.0
 platformdirs==4.10.0
-playwright==1.60.0
+playwright==1.62.0
 plotly==6.8.0
 plyer==2.1.0
 pooch==1.9.0 ; platform_machine != 'x86_64' or sys_platform != 'darwin'

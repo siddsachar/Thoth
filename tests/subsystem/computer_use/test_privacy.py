@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
-from row_bot.computer_use.service import ComputerUseError, LeaseOwner, Target
+from row_bot.computer_use.service import (
+    ComputerUseError,
+    ComputerUseService,
+    LeaseOwner,
+    Target,
+)
 from pathlib import Path
 import os
 
@@ -32,11 +39,172 @@ def test_typed_value_is_absent_from_service_state_model_output_and_fake_history(
     secret = "never-persist-this-secret"
     service.acquire(OWNER, validate_context=False)
     target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
-    observation = service.capture(target_id, OWNER)
-    result = service.act("type", target_id, OWNER, element_token=observation.elements[2].token, text=secret)
+    service.capture(target_id, OWNER)
+    result = service.act("type", target_id, OWNER, text=secret)
     assert secret not in repr(result)
     assert secret not in str(service.status_snapshot())
     assert secret not in repr(fake_transport.calls)
+
+
+def test_replaced_value_is_absent_from_model_status_receipt_logs_and_fake_history(
+    service,
+    fake_transport,
+    caplog,
+) -> None:
+    import logging
+
+    secret = "never-expose-this-replacement"
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "GridCell",
+            "label": "Selected item",
+            "value": "prior private value",
+            "enabled": True,
+            "selected": True,
+        },
+    )
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER)
+    signature = (
+        "replace_text",
+        target_id,
+        True,
+        len(secret),
+    )
+
+    with caplog.at_level(logging.INFO, logger="row_bot.computer_use.service"):
+        service.begin_tool_call(signature)
+        result = service.act(
+            "replace_text",
+            target_id,
+            OWNER,
+            element_token=observation.elements[0].token,
+            text=secret,
+        )
+        service.end_tool_call(
+            signature,
+            action_family="replace_text",
+            driver_effect=result.driver_effect,
+            effect_verified=result.effect_verified,
+        )
+
+    rendered = "\n".join(record.message for record in caplog.records)
+    assert secret not in repr(result)
+    assert secret not in observation.model_text()
+    assert secret not in str(service.status_snapshot())
+    assert secret not in repr(fake_transport.calls)
+    assert secret not in rendered
+    assert "prior private value" not in observation.model_text()
+    assert "replace_text (value hidden)" in str(service.status_snapshot())
+
+
+def test_driver_interpolated_replacement_is_absent_from_public_error_and_history(
+    service,
+    fake_transport,
+) -> None:
+    secret = "private-driver-interpolated-value"
+    fake_transport.scenario.semantic_elements = (
+        {"role": "Edit", "label": "Document field", "enabled": True},
+    )
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER)
+    fake_transport.scenario.action_error_code = "unsupported"
+    fake_transport.scenario.action_error_message = f"set_value rejected {secret!r}"
+
+    with pytest.raises(ComputerUseError) as failed:
+        service.act(
+            "replace_text",
+            target_id,
+            OWNER,
+            element_token=observation.elements[0].token,
+            text=secret,
+        )
+
+    assert secret not in str(failed.value)
+    assert secret not in repr(fake_transport.calls)
+    assert secret not in str(service.status_snapshot())
+
+
+def test_post_stop_has_no_replay_or_completion_state_and_keeps_receipt_truthful(
+    service,
+    fake_transport,
+) -> None:
+    secret = "generation-private-complete-value"
+    fake_transport.scenario.semantic_elements = (
+        {
+            "role": "Edit",
+            "label": "Document field",
+            "value": "old private value",
+            "enabled": True,
+        },
+    )
+    fake_transport.scenario.set_value_updates_document = False
+    fake_transport.scenario.delivery_profile = "catalyst_value_unavailable"
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    observation = service.capture(target_id, OWNER)
+
+    uncertain = service.act(
+        "replace_text",
+        target_id,
+        OWNER,
+        element_token=observation.elements[0].token,
+        text=secret,
+    )
+    service.stop()
+
+    assert uncertain.effect_verified is False
+    assert not hasattr(service, "_pending_mutation")
+    assert not hasattr(service, "_completion_ledger")
+    assert secret not in repr(service.status_snapshot())
+    assert "old private value" not in repr(service.status_snapshot())
+
+
+def test_packaged_aumid_stays_out_of_model_outputs_approval_and_logs(
+    fake_client,
+    fake_transport,
+    caplog,
+) -> None:
+    aumid = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "launch_path": f"shell:AppsFolder\\{aumid}",
+            "kind": "uwp",
+            "running": False,
+            "active": False,
+        },
+    )
+    approvals: list[dict] = []
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda payload: approvals.append(payload) or True,
+    )
+    service.acquire(OWNER, validate_context=False)
+    inventory = service.list_apps(OWNER)
+    signature = ("launch_app", True, len("Windows Calculator"))
+
+    with caplog.at_level(logging.INFO, logger="row_bot.computer_use.service"):
+        service.begin_tool_call(signature)
+        windows = service.launch_app("Windows Calculator", OWNER)
+        service.end_tool_call(signature, action_family="launch_app")
+
+    rendered = repr(
+        {
+            "inventory": inventory,
+            "windows": windows,
+            "approvals": approvals,
+            "status": service.status_snapshot(),
+            "logs": [record.message for record in caplog.records],
+        }
+    )
+    assert aumid not in rendered
+    assert f"shell:AppsFolder\\{aumid}" not in rendered
+    assert approvals[0]["app"] == "Windows Calculator"
+    assert approvals[0]["label"] == "Allow Computer · Windows Calculator"
 
 
 def test_window_discovery_requires_scope_before_calling_the_driver(service, fake_transport) -> None:

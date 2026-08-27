@@ -716,8 +716,8 @@ path.
 - **Full browser automation** — the agent can navigate websites, click elements, fill forms, scroll pages, and manage tabs in a real, visible Chromium window
 - **Shared visible browser** — runs with `headless=False` so you can see what the agent is doing and intervene when needed
 - **Persistent profile** — cookies, logins, and local storage survive across restarts in `~/.row-bot/browser_profile/`
-- **Accessibility-tree snapshots** — after every action the tool captures the page's accessibility tree with numbered references so the model can click and type by number
-- **Smart snapshot filtering** — deduplicates links, drops hidden elements, and caps interactive elements to keep context under control
+- **Snapshot-safe observations** — the public Playwright collector retains exact ephemeral element handles and returns opaque task/page/context/navigation/snapshot tokens; it never writes reusable reference attributes into the page, and stale, detached, or drifted targets fail before dispatch
+- **Bounded semantic projection** — validates at most 1,000 interactive handles / 1 MiB with 512-character fields, then projects at most 160 controls / 32 KiB while recording received, retained, filtered, and projected counts; input values remain hidden
 - **Snapshot compression** — older browser snapshots are compressed to short stubs while the latest state remains detailed
 - **7 browser operations** — navigate, click, type, scroll, snapshot, back, and tab management
 - **Per-thread tab isolation** — each chat thread or background workflow gets its own browser tab; tabs are cleaned up on thread deletion or workflow completion
@@ -725,8 +725,10 @@ path.
 - **Consequence policy** — browser mutations share approval/consequence classification with other action tools, while observations and reversible navigation remain distinct
 - **Redacted durable history** — typed values and sensitive action payloads are omitted from browser history and tool-trace persistence; the active accessibility snapshot remains model context rather than an audit copy of secrets
 - **Live takeover state** — browser tasks use the shared live-control view model for Stop, user takeover, and resume/done state without merging the browser DOM engine with native Computer Use
-- **Automatic browser detection** — prefers installed Chrome, then Edge on Windows, then Playwright's bundled Chromium
-- **Crash recovery** — if the browser closes externally, the next action relaunches it cleanly
+- **Version-owned runtime** — Python Playwright `1.62.x` records its exact Chromium revision in an atomic managed-runtime manifest; an explicit install uses the current Python interpreter, validates an offline data page, preserves the previous candidate for rollback, and never downloads during Browser startup
+- **Bounded launch fallback** — read-only channel discovery selects installed Chrome/Edge without probe launches; a real selected-channel failure falls back once to an already-ready, version-matched managed Chromium
+- **Conditional observations** — navigation, scrolling, and tab changes return one observation; type without submit and non-navigating clicks return a compact shared receipt, with no automatic screenshot, Vision call, fixed sleep, or general `networkidle` wait
+- **Deterministic recovery** — a context/browser failure invalidates every task page and observation before one bounded restart; actions are not recursively replayed when their effect is unknown
 - **Generation cancellation** — browser operations check the active cancellation scope before and during blocking work so Stop can abandon the current action without affecting tabs owned by other threads
 
 ---
@@ -739,21 +741,23 @@ turn the reviewed Cua Driver into a general MCP server. The accepted dependency
 and telemetry decision is documented in
 [`COMPUTER_USE_SECURITY.md`](COMPUTER_USE_SECURITY.md).
 
-- **Provider-neutral tool boundary** — `tools/computer_use_tool.py` exposes launch, target-window observation, click, double-click, right-click, type, key/hotkey, scroll, and drag operations independently of the selected chat/agent provider
-- **Private Cua client** — `computer_use/client.py` starts the reviewed Cua Driver over a private stdio MCP transport, allows only the required tool names, normalizes results, disables upstream update checks, and never registers the process in the external MCP catalog
-- **Pinned runtime manifest** — `computer_use/cua_runtime_manifest.json` records Cua Driver Rust 0.7.1, upstream tag/commit, platform asset URLs, executable candidates, telemetry contract, and SHA-256 values for Windows x86-64, Windows ARM64, and macOS universal
+- **Provider-neutral tool boundary** — `tools/computer_use_tool.py` exposes launch, target-window observation, click, double-click, right-click, literal caret `type`, exact token-bound whole-value `replace_text`, key/hotkey, scroll, and drag operations independently of the selected chat/agent provider
+- **Private Cua client** — `computer_use/client.py` starts the reviewed Cua Driver over private stdio MCP using exact platform profiles (`mcp` on Windows, `mcp --direct` on macOS), allows only reviewed tool names, removes embedded/liveness environment state, disables upstream update checks, and never registers the process in the external MCP catalog; diagnostics use the same client profile
+- **Pinned runtime manifest** — `computer_use/cua_runtime_manifest.json` records Cua Driver Rust 0.20.0, its signed upstream tag/commit, full-archive URLs, executable candidates, telemetry contract, and SHA-256 values for Windows x86-64, Windows ARM64, and macOS universal
 - **Explicit verified install** — `computer_use/readiness.py` downloads only after a user Install/Repair action, verifies the selected asset before safe extraction, writes a private runtime manifest under `runtimes/cua-driver/`, and never invokes Cua's installer or updater
 - **Mandatory disclosure gate** — every executable resolution/start path requires the current Cua telemetry notice version in `computer_use_settings.json`; Cancel removes acknowledgement and disables the native tool
-- **Third-party telemetry boundary** — the reviewed Cua telemetry includes a pseudonymous Cua installation id, Cua/OS/architecture metadata, event category, CI flag, and timestamp sent to Cua/PostHog. Row-Bot adds no first-party telemetry and keeps prompts, memories, secrets, screenshots, file paths, tool arguments, typed content, and channel data outside that telemetry
+- **Third-party telemetry boundary** — the reviewed Cua 0.20.0 telemetry uses pseudonymous installation/process-session identifiers and bounded product, platform, client, tool/outcome, duration/output, aggregate session/modality/config/cursor/recording, permission, and lifecycle categories sent to Cua's EU PostHog endpoint. Its tagged event builders do not receive prompts, tool arguments/results, typed text, screenshots, accessibility trees, app/window names, URLs, paths, raw configuration/cursor values, or raw errors. Row-Bot adds no first-party telemetry; the unreleased notice remains version 2 because the 0.20.0 delta adds no content-bearing category
 - **Exclusive task lease** — `computer_use/service.py` gives one interactive local task ownership of discovery, target capture, Vision fallback, and input; schedules, channels, background workflows, child agents, headless/server callers, and plugin/general MCP callers cannot acquire it
 - **Target-window capture** — the session forces window-only capture and a bounded image dimension; desktop-wide capture, recording, browser/CDP, autostart, process-kill, update, maintenance, telemetry mutation, and arbitrary config surfaces remain blocked
-- **Generation-bound references** — application/window targets and accessibility elements are opaque, observation-generation-bound tokens invalidated by mutation, reconnect, target drift, approval waits, Stop, and takeover
-- **Mutation-observation loop** — every input action requires current scope, policy, target, and element validation and is followed by a fresh target-window observation before the agent can act again
+- **Generation-bound references** — application/window targets and accessibility elements are opaque, observation-generation-bound tokens invalidated by reconnect, target drift, Stop, and takeover; generic normalized app identity prefers the unique active/visible matching window and preserves opaque ambiguity when needed
+- **Selected/document-aware projection** — the 80-element and 12 KiB model limits remain fixed while visible selected elements and a small generic document/grid quota survive chrome-heavy captures; an optional exact normalized label/role/value-prefix filter exposes one omitted control from a large tree without coordinate guessing, and ambiguous exact matches are refused
+- **Function-first semantic editing** — token-bound `type` dispatches the current token directly to Cua after only explicit disabled, read-only, secure, protected, and structural checks; combo controls, data items/cells, and unknown interactive roles may reach the driver. Tokenless `type` is one literal current-caret action. One pre-dispatch background refusal permits at most one foreground type call without hidden focus, click, capture, or replay
+- **Thin action receipts** — routine type/click/key and default `replace_text` make one Cua mutation call and zero hidden captures. Delivered/unverified remains useful and does not block Enter, navigation, another field, capture, or a truthful final answer. Optional replacement readback uses at most one capture and `verified_scope=exact_value` proves only the control value, never evaluation, commit, navigation, or task completion. No pending mutation, completion ledger, final-answer override, prepared-foreground state, or Computer-specific no-progress budget remains
 - **Point-of-risk policy** — `computer_use/policy.py` classifies routine, consequential, always-confirm, handoff, and blocked actions. Credentials, OTPs, CAPTCHAs, biometrics, UAC/TCC, terminals, password managers, Row-Bot itself, secure desktops, and elevation cannot be automated
 - **Ephemeral privacy** — screenshot bytes are not written to media or checkpoints; typed values are excluded from logs, histories, tool traces, approval payloads, memory, and durable state
-- **Vision fallback** — accessibility information remains primary. When it is insufficient, only the current target-window screenshot can be sent to the configured Vision provider, whose local/cloud disclosure is shown before setup
+- **Vision fallback** — accessibility information remains primary. When it is insufficient, only the current target-window screenshot can be sent to the configured Vision provider, whose local/cloud disclosure is shown before setup; Vision is bounded to coordinate decisions or one final user-visible check and its free-form prose is not authorization or a Boolean postcondition
 - **Live control UI** — `ui/live_control.py` and `ui/computer_use.py` show sanitized app/state/thumbnail data plus direct Stop, Take over, and Resume actions. Take over cancels queued mutation, pauses the lease, and requires a fresh observation before resume
-- **Readiness and recovery** — Settings normalizes disabled, disclosure, unsupported, not-installed, hash/version mismatch, permission, degraded, ready, and failed states; macOS recovery links directly to Accessibility and Screen Recording panes and supports recheck after TCC changes
+- **Readiness and recovery** — Settings normalizes disabled, disclosure, unsupported, not-installed, hash/version mismatch, permission, degraded, ready, and failed states; macOS recovery attributes Accessibility and Screen Recording to the packaged Row-Bot host, links directly to both panes, and supports recheck after quitting and reopening Row-Bot
 - **Lifecycle cleanup** — generation Stop, thread cleanup, tool disablement, uninstall, and application shutdown stop the private client, invalidate targets, cancel queued work, and release the lease
 
 ---
@@ -1161,9 +1165,10 @@ Tool guides are lightweight `SKILL.md` packages that attach contextual instructi
 
 - **Skill-like format** — each guide is a directory with a `SKILL.md` file and YAML frontmatter, just like a manual skill
 - **`tools:` activation field** — guides declare the tools they apply to; when any linked tool is in the active tool belt, the guide is injected automatically
-- **Prompt injection** — `prompts.py` discovers active guides and appends them to the system prompt at runtime
+- **Prompt injection** — `skills.py` discovers guides and selects them from the effective active tool names; `agent.py` assembles their instructions into the stable `skills.tool_guides` prompt section. The existing compact custom OpenAI-compatible endpoint policy omits all skill injection at context sizes of 32,768 tokens or less
 - **Invisible to the manual skill toggles** — tool guides are auto-managed and do not clutter the user-facing skill list
-- **22 bundled guides** — Agents, Browser, Calendar, Chart, Custom Tool Builder, Designer, Developer, Email, Filesystem, Goal, Math, MCP, Shell, Telegram, Row-Bot Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X
+- **23 bundled guides** — Agents, Browser, Calendar, Chart, Computer Use, Custom Tool Builder, Designer, Developer, Email, Filesystem, Goal, Math, MCP, Shell, Telegram, Row-Bot Status, Tracker, Updater, Video, Vision, Weather, Wiki, and X
+- **Instruction ownership** — the root prompt keeps universal behavior and compact cross-tool routing; active guides own tool workflows; schemas define argument meaning; services enforce target, policy, privacy, dispatch, and verification contracts
 - **Consistency benefits** — guide content can evolve independently of the main prompt, reducing drift and duplicated instructions
 
 ---
@@ -1788,7 +1793,7 @@ Row-Bot includes a stability layer for the kinds of failures that are hard to ca
 
 Skills are reusable instruction packs that shape how the agent thinks and responds. Each skill is a `SKILL.md` file with YAML frontmatter (display name, icon, description, required tools, tags) and freeform instructions injected into the system prompt when enabled.
 
-Row-Bot ships with **17 manual bundled skills** and **22 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available.
+Row-Bot ships with **17 manual bundled skills** and **23 tool guides**. Manual skills are toggled from Settings; tool guides auto-activate when their linked tools are available, except under the compact custom-endpoint skill-injection policy described above.
 
 | Skill | Description |
 |-------|-------------|
@@ -1914,7 +1919,7 @@ Runtime code is packaged under `src/row_bot`. The paths below are package-relati
 | **`capability_search.py`** + **`skill_discovery.py`** + **`skills_activation.py`** + **`slash_commands.py`** | Deterministic local capability ranking, unified enabled manual/plugin skill snapshots, safe progressive search/load bridges and reference confinement, persistent capped per-task automatic activation, pinned/manual defaults, explicit skill commands, draft suggestions, disabled-skill handling, and slash-command parsing |
 | **`skills_hub/`** | Skills Hub source adapters, import detection, installers, provenance, scanner, search index, source registry, and UI models |
 | **`bundled_skills/`** | 17 built-in manual skills as `SKILL.md` packages |
-| **`tool_guides/`** | 22 built-in tool-specific auto-activation guides |
+| **`tool_guides/`** | 23 built-in tool-specific auto-activation guides |
 | **`tasks.py`** | Workflow engine, SQLite persistence, schema validation/repair, APScheduler scheduling, profile-first workflow migration, pipeline execution, run history, safety mode, delivery routing, and shared storage connection used by Agent Profiles/Runs/Goals/Developer worktrees |
 | **`notifications.py`** | Unified desktop, sound, and toast notification system |
 | **`channels/`** | Channel ABC, registry, shared streaming/finalization engine, orchestration-aware delivery, durable thread notifications, checkpoint persistence, media helpers, auth/secret-file helpers, approval routing, command handling, tool generation, plugin-channel bridge integration, and bundled channel adapters |

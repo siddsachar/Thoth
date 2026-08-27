@@ -248,7 +248,7 @@ def test_unknown_context_preflight_precedes_optimistic_transcript_mutation() -> 
     streaming_src = _read("src/row_bot/ui/streaming.py")
 
     preflight = streaming_src.index("if not await _context_capacity_ready_for_send(selected_model)")
-    optimistic_append = streaming_src.index("state.messages.append(user_msg)", preflight)
+    optimistic_append = streaming_src.index("turn_messages.append(user_msg)", preflight)
 
     assert preflight < optimistic_append
 

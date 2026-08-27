@@ -99,7 +99,7 @@ Download the latest installer from [GitHub Releases](https://github.com/siddsach
 | Workflows | Scheduled runs, webhook triggers, task-completion triggers, step pipelines, conditions, approvals, subtasks, notification-only runs, concurrency groups, delivery defaults, profile-first workflow agents, promoted Agent-run workflows, per-workflow model/tool/skill/profile overrides, safety modes, run status, run history, upcoming runs, and a Workflow Console. |
 | Controlled self-evolution | Structured self-reflection, bounded change proposals, reviewable execution boundaries, persistence, Dream Cycle and memory integration, and Command Center/status visibility for improvement work that stays explicit and auditable. |
 | Channels and voice | Telegram, WhatsApp, Discord, Slack, SMS, and plugin-owned channels with platform-aware live streaming, typing and edit fallbacks, interactive approvals, durable child-agent and Goal Mode notices, media intake, voice transcription, document extraction, health checks, auto-generated send/photo/document tools, and optional tunnel support. SMS remains final-text-only. Realtime voice adds provider-backed voice sessions, action handling, speech/cue policy, and local faster-whisper or FunASR/SenseVoice STT plus Kokoro TTS options. |
-| Platform and app | Native desktop app plus authenticated single-owner desktop and compact browser access; one-time invitations, durable revocable sessions, exact trusted-address add/remove controls, assigned-interface route discovery, route and device management, Tailscale Serve, browser-local voice, and strict HTTP/WebSocket origin gates; authenticated headless `serve` mode; official hardened Docker/VPS deployment and multi-architecture GHCR images; opt-in Computer Use setup, live takeover, and permission recovery on Windows and macOS; installable PWA support; tray integration on Windows and macOS; local browser-first Linux launch; Home status surfaces; recovery tools; verified auto-updates; and a searchable public user guide. |
+| Platform and app | Native desktop app plus authenticated single-owner desktop and compact browser access; one-time invitations, durable revocable sessions, exact trusted-address add/remove controls, assigned-interface route discovery, route and device management, Tailscale Serve, browser-local voice, and strict HTTP/WebSocket origin gates; authenticated headless `serve` mode; official hardened Docker/VPS deployment and multi-architecture GHCR images; a native Windows/macOS Buddy desktop overlay with drag-to-undock placement, selected-thread messaging, shared drafts, progress, Stop, approvals, focus hand-back, docking, collapse, hide, and tray recovery; opt-in Computer Use setup, live takeover, and permission recovery on Windows and macOS; installable PWA support; local browser-first Linux launch; Home status surfaces; recovery tools; verified auto-updates; and a searchable public user guide. |
 | Extensibility | Smart Skills, pinned skills, slash commands, Skills Hub browsing/import/search, automatic per-task discovery of enabled manual and plugin skills, Plugin System v2 for native tools, MCP-backed tools, bundled skills, and channels, sandboxed Plugin Center and marketplace, bundled skills and tool guides, Agent Profiles, child-agent tools, Goal Mode tools, external MCP clients over stdio, Streamable HTTP, and SSE, Custom Tools from repos or folders, hardened Custom Tool Builder setup, Claude Code Delegation through an approval-gated CLI worker, migration from selected Hermes/OpenClaw data, setup center, identity settings, and stability diagnostics. |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full subsystem reference.
@@ -790,14 +790,18 @@ owner, so keep invitation links and public origins private and revoke devices or
 sessions you no longer trust. In Docker, saved provider credentials are
 encrypted locally with the key from the separate secrets volume.
 
-Computer Use is also opt-in. Row-Bot downloads the reviewed Cua Driver 0.7.1
-asset only after a separate Install action, verifies its SHA-256, and keeps the
-runtime private with upstream update checks disabled. Cua Driver has separately
-disclosed third-party telemetry; Row-Bot requires acceptance before any Cua
-process starts and does not send prompts, memories, secrets, screenshots, tool
-arguments, typed content, or channel data to that telemetry. Target-window
-screenshots are ephemeral, and typed values are excluded from durable history,
-logs, checkpoints, approvals, memory, and media.
+Computer Use is also opt-in. Row-Bot downloads only the reviewed Cua Driver
+0.19.3 full archive after a separate Install action, verifies its SHA-256, and
+keeps the runtime private with upstream update checks disabled. The expanded
+version-2 disclosure requires fresh acceptance before the upgraded process can
+start. Reviewed upstream telemetry can include pseudonymous installation and
+process-session identifiers plus bounded product/platform/client/tool/outcome,
+duration/output, aggregate usage, permission, and lifecycle categories. Its
+tagged event builders exclude prompts, tool arguments/results, typed content,
+screenshots, accessibility trees, app/window names, URLs, paths, raw values,
+and raw errors. Target-window screenshots remain ephemeral, and typed values
+are excluded from durable history, logs, checkpoints, approvals, memory, and
+media.
 
 Provider and custom models are opt-in. When selected, the current conversation, model-visible tool context, and tool results are sent to that endpoint. Memories, documents, files, graph data, and other conversations stay local unless you explicitly include them in the current conversation or expose them through a tool result. Memory recall happens locally before any selected memory is inserted into the active turn.
 

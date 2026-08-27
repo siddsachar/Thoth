@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 from row_bot.agent_budget import new_execution_budget
 
 
@@ -624,10 +626,28 @@ def test_tool_guide_prompt_injection_stays_tool_bound(tmp_path):
 
     no_guides = skills.get_skills_prompt([], active_tool_names=[])
     assert "BROWSER AUTOMATION" not in no_guides
+    assert "COMPUTER USE WORKFLOW" not in no_guides
 
     browser_guide = skills.get_skills_prompt([], active_tool_names=["browser"])
     assert "BROWSER AUTOMATION" in browser_guide
+    assert "COMPUTER USE WORKFLOW" not in browser_guide
     assert "## Skills" not in browser_guide
+
+    computer_guide = skills.get_skills_prompt(
+        [],
+        active_tool_names=["computer_use"],
+    )
+    assert "COMPUTER USE WORKFLOW" in computer_guide
+    assert "BROWSER AUTOMATION" not in computer_guide
+    assert "## Skills" not in computer_guide
+
+    both_guides = skills.get_skills_prompt(
+        [],
+        active_tool_names=["browser", "computer_use"],
+    )
+    assert both_guides.count("BROWSER AUTOMATION") == 1
+    assert both_guides.count("COMPUTER USE WORKFLOW") == 1
+    assert "## Skills" not in both_guides
 
     manual_with_guide = skills.get_skills_prompt(
         ["deep_research"],
@@ -646,7 +666,33 @@ def test_bundled_manual_skills_default_enabled_without_tool_guides(tmp_path):
     assert skills.is_enabled("deep_research") is True
     tool_guides = {skill.name for skill in skills.get_all_skills() if skills.is_tool_guide(skill)}
     assert "browser_guide" in tool_guides
+    assert "computer_use_guide" in tool_guides
     assert skills.is_enabled("browser_guide") is False
+    assert skills.is_enabled("computer_use_guide") is False
+    assert "computer_use_guide" not in {
+        skill.name for skill in skills.get_manual_skills()
+    }
+    assert "computer_use_guide" not in skills.get_pinned_skill_names()
+
+
+def test_computer_guide_is_not_manual_selectable_pinnable_or_suggested(tmp_path):
+    skills, activation = _reload_skill_modules(tmp_path)
+    skills.load_skills()
+
+    response = activation.apply_skill_command(
+        "computer-guide-thread",
+        "/skill computer_use_guide",
+    )
+    suggestions = activation.suggest_skills(
+        "computer-guide-thread",
+        "Control a native desktop app with computer use",
+        enabled_tool_names=["computer_use"],
+    )
+
+    assert response and "not found" in response.casefold()
+    assert "computer_use_guide" not in {item.name for item in suggestions}
+    with pytest.raises(ValueError, match="cannot be pinned"):
+        skills.set_pinned("computer_use_guide", True)
 
 
 def test_bundled_manual_default_migration_is_one_time(tmp_path):

@@ -151,7 +151,13 @@ def _seed(data_dir: Path, scenario: str) -> None:
     )
 
 
-def _launch_app(port: int, data_dir: Path, stack: ExitStack) -> tuple[subprocess.Popen, str]:
+def _launch_app(
+    port: int,
+    data_dir: Path,
+    stack: ExitStack,
+    *,
+    real_data: bool = False,
+) -> tuple[subprocess.Popen, str]:
     LOG_ROOT.mkdir(parents=True, exist_ok=True)
     stdout_path = LOG_ROOT / "docs_capture_stdout.log"
     stderr_path = LOG_ROOT / "docs_capture_stderr.log"
@@ -170,7 +176,11 @@ def _launch_app(port: int, data_dir: Path, stack: ExitStack) -> tuple[subprocess
         "ROW_BOT_DOCS_DISABLE_NETWORK": "1",
         "ROW_BOT_DOCS_DISABLE_AUTOSTART": "1",
         "ROW_BOT_DOCS_REDUCE_MOTION": "1",
-        "ROW_BOT_DOCS_FAKE_PROVIDERS": "1",
+        # Fake choices are safe only with the isolated demo profile. Exposing
+        # them while an explicitly authorized real profile is mounted can
+        # make UI select hydration look like a user model change.
+        "ROW_BOT_DOCS_FAKE_PROVIDERS": "0" if real_data else "1",
+        "ROW_BOT_DOCS_REAL_DATA": "1" if real_data else "0",
         LAUNCH_SECRET_ENV: launcher_secret,
     }
     proc = subprocess.Popen(
@@ -211,6 +221,20 @@ def _validate_image(path: Path, shot: dict[str, Any]) -> list[str]:
         if pattern.lower() in combined.lower():
             errors.append(f"metadata contains blocked pattern {pattern}")
     return errors
+
+
+def _publish_capture(source: Path, destination: Path) -> None:
+    """Publish one rendered capture without rewriting an in-use asset in place."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staged = destination.with_name(
+        f".{destination.name}.{secrets.token_hex(6)}.tmp"
+    )
+    try:
+        shutil.copyfile(source, staged)
+        os.replace(staged, destination)
+    finally:
+        staged.unlink(missing_ok=True)
 
 
 def _write_dom_snapshot(page, shot_id: str, shot: dict[str, Any], selector: str) -> None:
@@ -315,7 +339,14 @@ def _run_action(page, action: dict[str, Any], base_url: str) -> None:
         raise ValueError(f"Unsupported screenshot action: {action}")
 
 
-def _capture_one(browser, port: int, shot_id: str, shot: dict[str, Any]) -> dict[str, Any]:
+def _capture_one(
+    browser,
+    port: int,
+    shot_id: str,
+    shot: dict[str, Any],
+    *,
+    real_data: bool = False,
+) -> dict[str, Any]:
     viewport = VIEWPORTS.get(str(shot.get("viewport") or "desktop"), VIEWPORTS["desktop"])
     page = browser.new_page(viewport=viewport)
     base_url = f"http://127.0.0.1:{port}"
@@ -359,8 +390,11 @@ def _capture_one(browser, port: int, shot_id: str, shot: dict[str, Any]) -> dict
             full_page=False,
             mask=masks,
         )
-        shutil.copyfile(raw_output, output)
-        errors.extend(_validate_image(output, {"id": shot_id, **shot}))
+        validation_output = raw_output
+        if not real_data:
+            _publish_capture(raw_output, output)
+            validation_output = output
+        errors.extend(_validate_image(validation_output, {"id": shot_id, **shot}))
     except Exception as exc:
         # Preserve enough evidence to diagnose a failed public capture without
         # having to rerun it interactively. These files stay under docs-build.
@@ -384,7 +418,9 @@ def _capture_one(browser, port: int, shot_id: str, shot: dict[str, Any]) -> dict
         "source": shot.get("source", ""),
         "public_asset": shot.get("public_asset", False),
         "route": route,
-        "output": str(output.relative_to(ROOT)).replace("\\", "/"),
+        "output": str(
+            (raw_output if real_data else output).relative_to(ROOT)
+        ).replace("\\", "/"),
         "raw_output": str(raw_output.relative_to(ROOT)).replace("\\", "/"),
         "errors": errors,
     }
@@ -538,7 +574,28 @@ def _filter_ids(manifest: dict[str, Any], screenshot_ids: set[str] | None) -> di
     return {shot_id: shot for shot_id, shot in manifest.items() if shot_id in screenshot_ids}
 
 
-def _safe_capture_data_dir(data_dir: Path | None) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
+def _real_data_shot(shot: dict[str, Any]) -> dict[str, Any]:
+    """Remove deterministic-demo assertions while retaining stable surface anchors."""
+
+    selected = dict(shot)
+    actions: list[dict[str, Any]] = []
+    for action in shot.get("actions") or []:
+        if not isinstance(action, dict) or "wait_for_text" in action:
+            continue
+        if str(action.get("click_text") or "") == "filesystem.search":
+            actions.append({"click_selector": '[data-docs-id="tool-trace"]'})
+        else:
+            actions.append(dict(action))
+    selected["actions"] = actions
+    selected["expected_text"] = []
+    return selected
+
+
+def _safe_capture_data_dir(
+    data_dir: Path | None,
+    *,
+    authorize_real_data: bool = False,
+) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
     if data_dir is None:
         temp_root = ROOT / "docs-build" / "capture-data"
         temp_root.mkdir(parents=True, exist_ok=True)
@@ -550,9 +607,16 @@ def _safe_capture_data_dir(data_dir: Path | None) -> tuple[Path, tempfile.Tempor
         return Path(temp_dir.name).resolve(), temp_dir
     resolved = data_dir.expanduser().resolve()
     if resolved == _real_user_data_dir():
+        if not authorize_real_data:
+            raise RuntimeError(
+                "Refusing to use the normal Row-Bot data directory for documentation capture without "
+                "the explicit --authorize-real-data-capture opt-in. Omit --data-dir for an isolated "
+                "temporary directory or choose a dedicated demo directory."
+            )
+        return resolved, None
+    if authorize_real_data:
         raise RuntimeError(
-            "Refusing to use the normal Row-Bot data directory for documentation capture. "
-            "Omit --data-dir for an isolated temporary directory or choose a dedicated demo directory."
+            "--authorize-real-data-capture is accepted only for the exact normal Row-Bot data directory."
         )
     return resolved, None
 
@@ -567,6 +631,7 @@ def capture(
     use_temp_data: bool = True,
     source_filter: str = "all",
     screenshot_ids: set[str] | None = None,
+    authorize_real_data: bool = False,
 ) -> dict[str, Any]:
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     RAW_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -574,7 +639,14 @@ def capture(
     manifest = _filter_manifest(manifest, source_filter)
     manifest = _filter_scenario(manifest, scenario)
     manifest = _filter_ids(manifest, screenshot_ids)
-    data_dir, temp_dir = _safe_capture_data_dir(None if use_temp_data else data_dir)
+    if authorize_real_data and (use_temp_data or seed_demo_data):
+        raise RuntimeError(
+            "Authorized real-data capture requires retained data and --no-seed-demo-data."
+        )
+    data_dir, temp_dir = _safe_capture_data_dir(
+        None if use_temp_data else data_dir,
+        authorize_real_data=authorize_real_data,
+    )
     data_dir.mkdir(parents=True, exist_ok=True)
     port = _free_port()
     if _port_open(port):
@@ -586,7 +658,12 @@ def capture(
         if seed_demo_data:
             _seed(data_dir, scenario)
         with ExitStack() as stack:
-            proc, launcher_secret = _launch_app(port, data_dir, stack)
+            proc, launcher_secret = _launch_app(
+                port,
+                data_dir,
+                stack,
+                real_data=authorize_real_data,
+            )
             _wait_ping(port, proc, timeout, launcher_secret=launcher_secret)
             try:
                 from playwright.sync_api import sync_playwright
@@ -608,7 +685,16 @@ def capture(
                         if shot.get("status") == "deferred":
                             records.append(_blocked_record(shot_id, shot, str(shot.get("reason") or "deferred")))
                             continue
-                        records.append(_capture_one(browser, port, shot_id, shot))
+                        runtime_shot = _real_data_shot(shot) if authorize_real_data else shot
+                        records.append(
+                            _capture_one(
+                                browser,
+                                port,
+                                shot_id,
+                                runtime_shot,
+                                real_data=authorize_real_data,
+                            )
+                        )
                 finally:
                     browser.close()
     finally:
@@ -648,6 +734,14 @@ def main() -> int:
         default="all",
         help="Capture only screenshots with this metadata source, or 'all'",
     )
+    parser.add_argument(
+        "--authorize-real-data-capture",
+        action="store_true",
+        help=(
+            "Explicitly authorize capture against the exact normal Row-Bot data directory; "
+            "requires --data-dir, --keep-demo-data, and --no-seed-demo-data"
+        ),
+    )
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--timeout", type=float, default=90.0)
     args = parser.parse_args()
@@ -664,6 +758,7 @@ def main() -> int:
             use_temp_data=not bool(args.keep_demo_data),
             source_filter=str(args.source_filter or "all"),
             screenshot_ids=set(args.ids or []) or None,
+            authorize_real_data=bool(args.authorize_real_data_capture),
         )
     return 1 if summary.get("failed") else 0
 

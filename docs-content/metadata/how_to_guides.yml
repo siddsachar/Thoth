@@ -66,6 +66,12 @@ guides:
     sources:
     - src/row_bot/channels/
     - src/row_bot/voice/
+  use-buddy-overlay:
+    title: Use The Buddy Desktop Overlay
+    route: /docs/settings/buddy
+    sources:
+    - src/row_bot/launcher.py
+    - src/row_bot/buddy/
     - src/row_bot/ui/buddy.py
   review-privacy-safety:
     title: Review Privacy And Safety

@@ -241,9 +241,9 @@ screenshots:
     route: /?settings_tab=Buddy
     capture_selector: '[data-docs-id="settings-dialog"]'
     wait_for: '[data-docs-id="settings-dialog"]'
-    expected_text: [Buddy, Desktop overlay]
+    expected_text: [Buddy, Show Buddy]
     output: settings-buddy.png
-    alt: Buddy settings for companion behaviour, appearance, overlay mode, and motion.
+    alt: Buddy settings for companion visibility, behaviour, appearance, and motion.
     docs_pages: [/docs/settings/buddy]
   settings-voice:
     <<: *desktop

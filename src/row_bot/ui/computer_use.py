@@ -210,7 +210,7 @@ def computer_use_settings_view(
         return ComputerUseSettingsView(
             "Finish setting up Computer Use",
             (
-                "Repair the managed macOS helper before checking access again."
+                "Repair the managed macOS runtime inside Row-Bot before checking access again."
                 if needs_repair
                 else "Run a quick Calculator test to finish setup."
                 if needs_test
@@ -279,7 +279,19 @@ def build_active_session_card(*, compact: bool = False) -> Any:
             if snapshot["window"]:
                 ui.label(str(snapshot["window"])[:120]).classes("text-xs text-grey-5")
             if snapshot["last_action"]:
-                ui.label(f"{snapshot['last_action']} · {snapshot['last_effect'] or 'pending verification'}").classes("text-xs")
+                receipt_parts = [
+                    "completed" if snapshot.get("last_action_completed") else "dispatch pending",
+                    f"requested {snapshot.get('last_requested_delivery') or 'auto'}",
+                    f"delivered {snapshot.get('last_delivery_mode') or 'unknown'}",
+                    f"driver {snapshot.get('last_driver_effect') or 'unverifiable'}",
+                    f"native {snapshot.get('last_native_change') or 'unknown'}",
+                    *(["degraded"] if snapshot.get("last_degraded") else []),
+                    f"escalation {snapshot.get('last_escalation_recommendation') or 'none'}",
+                    f"verdict {snapshot.get('last_verdict') or 'none'}",
+                    f"next {snapshot.get('last_next_step') or 'none'}",
+                    "outcome verified" if snapshot.get("last_effect_verified") else "outcome unverified",
+                ]
+                ui.label(f"{snapshot['last_action']} · {' · '.join(receipt_parts)}").classes("text-xs")
             image = service.ephemeral_screenshot()
             if image and not compact:
                 source = "data:image/png;base64," + base64.b64encode(image).decode("ascii")
@@ -297,7 +309,7 @@ def build_active_session_card(*, compact: bool = False) -> Any:
                 elif snapshot["active"]:
                     ui.button("Take over", icon="pan_tool", on_click=service.take_over).props("outline dense no-caps")
                 if snapshot["action_count"]:
-                    ui.label(f"{snapshot['action_count']} verified action(s)").classes("text-xs text-grey-6")
+                    ui.label(f"{snapshot['action_count']} dispatched action(s)").classes("text-xs text-grey-6")
 
     _refresh()
     ui.timer(0.5, _refresh)
@@ -336,7 +348,7 @@ def build_computer_use_settings_card(tool_registry: Any) -> None:
     with disclosure, ui.card().classes("q-pa-lg").style("width: 680px; max-width: 94vw;"):
         ui.label("Cua Driver telemetry warning").classes("text-h6")
         ui.label(DISCLOSURE_TEXT).classes("text-sm")
-        ui.link("Learn more", "https://github.com/trycua/cua/blob/cua-driver-rs-v0.7.1/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs", new_tab=True)
+        ui.link("Learn more", "https://github.com/trycua/cua/blob/cua-driver-rs-v0.20.0/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs", new_tab=True)
         with ui.row().classes("w-full justify-end gap-2"):
             def _cancel() -> None:
                 cancel_disclosure()

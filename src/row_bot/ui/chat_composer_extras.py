@@ -755,6 +755,16 @@ class ComposerExtrasController:
         else:
             text = str(payload or getattr(self.input, "value", "") or "")
             cursor = len(text)
+        try:
+            from row_bot.threads import save_thread_draft
+
+            save_thread_draft(
+                str(getattr(self.state, "thread_id", "") or ""),
+                text,
+                source=self.config.surface,
+            )
+        except Exception:
+            logger.debug("Could not persist shared composer draft", exc_info=True)
         self.queue_skill_chip_refresh(text)
         try:
             self.slash_palette_on_text(text, int(cursor) if cursor is not None else len(text))

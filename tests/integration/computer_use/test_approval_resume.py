@@ -85,6 +85,15 @@ def test_consequential_approval_payload_is_redacted_and_resume_recaptures(tmp_pa
     from row_bot.computer_use.readiness import acknowledge_disclosure
     acknowledge_disclosure()
     transport = FakeCuaTransport()
+    transport.scenario.semantic_elements = (
+        {
+            "role": "Edit",
+            "label": "Message editor",
+            "enabled": True,
+            "selected": True,
+        },
+    )
+    transport.scenario.rotate_element_tokens = True
     client = CuaClient("fake.exe", transport_factory=lambda *_args: transport)
     approvals = []
     service = ComputerUseService(client_factory=lambda: client, approval_callback=lambda payload: approvals.append(payload) or True)
@@ -93,12 +102,12 @@ def test_consequential_approval_payload_is_redacted_and_resume_recaptures(tmp_pa
     target = service.list_windows(owner, app="Calculator")[0]["target_id"]
     observation = service.capture(target, owner)
     secret = "private message body"
-    service.act("type", target, owner, element_token=observation.elements[1].token, text=secret, expected_effect="Submit message")
+    service.act("type", target, owner, element_token=observation.elements[0].token, text=secret, expected_effect="Submit message")
 
     assert secret not in str(approvals)
     type_index = next(i for i, (name, _args) in enumerate(transport.calls) if name == "type_text")
     assert transport.calls[type_index - 1][0] == "get_window_state"
-    assert transport.calls[type_index + 1][0] == "get_window_state"
+    assert type_index == len(transport.calls) - 1
 
 
 def test_consequential_denial_is_terminal_and_releases_the_lease(tmp_path, monkeypatch) -> None:

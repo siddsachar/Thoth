@@ -54,8 +54,8 @@ tabs:
     screenshot_id: settings-knowledge
     source: src/row_bot/ui/settings.py
   Buddy:
-    description: Configure companion behavior, look, overlay mode, custom looks, and
-      motion.
+    description: Configure companion visibility, drag-to-undock overlay messaging,
+      approvals, look, custom looks, and motion.
     docs_route: /docs/settings/buddy
     screenshot_id: settings-buddy
     source: src/row_bot/ui/buddy.py

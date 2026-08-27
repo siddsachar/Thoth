@@ -999,17 +999,20 @@ def _build_conversation_html(thread_name: str, messages: list[dict],
 
     # CSS for professional PDF styling
     css = """
-    @page { size: A4; margin: 20mm 18mm 20mm 18mm; }
+    @page { size: A4; margin: 14mm 16mm 14mm 16mm; }
+    html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body {
         font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        font-size: 11pt; line-height: 1.5; color: #222; margin: 0; padding: 0;
+        font-size: 10pt; line-height: 1.42; color: #222; margin: 0; padding: 0;
+        orphans: 2; widows: 2;
     }
     .pdf-header {
         border-bottom: 2px solid #bbb; padding-bottom: 8px; margin-bottom: 16px;
     }
     .pdf-header h1 { font-size: 18pt; margin: 0 0 4px 0; color: #222; }
     .pdf-header .stamp { font-size: 9pt; color: #888; }
-    .msg { margin-bottom: 14px; page-break-inside: auto; break-inside: auto; }
+    .msg { margin-bottom: 10px; page-break-inside: auto; break-inside: auto; }
+    .msg:last-child { margin-bottom: 0; }
     .msg-role {
         font-weight: 700; font-size: 11pt; margin-bottom: 2px;
     }
@@ -1195,24 +1198,33 @@ def _render_pdf_playwright(thread_name: str, messages: list[dict],
     html = _build_conversation_html(thread_name, messages, thread_id)
 
     def _render_in_worker() -> bytes:
+        from row_bot.browser.runtime import playwright_chromium_launch_options
+
         pw = sync_playwright().start()
         try:
-            browser = pw.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.set_content(html, wait_until="networkidle")
-            pdf_bytes = page.pdf(
-                format="A4",
-                margin={
-                    "top": "20mm",
-                    "right": "18mm",
-                    "bottom": "20mm",
-                    "left": "18mm",
-                },
-                print_background=True,
-            )
-            page.close()
-            browser.close()
-            return pdf_bytes
+            browser = pw.chromium.launch(**playwright_chromium_launch_options())
+            try:
+                page = browser.new_page(
+                    viewport={"width": 794, "height": 1123},
+                )
+                try:
+                    page.set_content(html, wait_until="load")
+                    page.emulate_media(media="print")
+                    return page.pdf(
+                        format="A4",
+                        margin={
+                            "top": "14mm",
+                            "right": "16mm",
+                            "bottom": "14mm",
+                            "left": "16mm",
+                        },
+                        print_background=True,
+                        prefer_css_page_size=True,
+                    )
+                finally:
+                    page.close()
+            finally:
+                browser.close()
         finally:
             pw.stop()
 
