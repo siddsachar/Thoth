@@ -485,8 +485,8 @@ body.row-bot-buddy-overlay-body {
 }
 .row-bot-buddy-overlay-actions {
     flex: 0 0 auto;
-    min-height: 30px;
-    padding-top: 2px;
+    min-height: 26px;
+    padding-top: 1px;
     border-top: 1px solid rgba(148, 163, 184, 0.14);
 }
 .row-bot-buddy-overlay-action.q-btn {
@@ -504,13 +504,6 @@ body.row-bot-buddy-overlay-body {
 .row-bot-buddy-overlay-action.q-btn:focus-visible {
     outline: 2px solid #e4c25e;
     outline-offset: 1px;
-}
-.row-bot-buddy-overlay-page.row-bot-buddy-overlay-collapsed .row-bot-buddy-overlay-body {
-    display: none !important;
-}
-.row-bot-buddy-overlay-page.row-bot-buddy-overlay-collapsed .row-bot-buddy-overlay-header {
-    flex: 1;
-    justify-content: center;
 }
 </style>
 """
@@ -1109,18 +1102,6 @@ def build_buddy_overlay_page(state) -> None:
     async def _hide() -> None:
         await _native_call("api.hide_buddy_window ? api.hide_buddy_window(true) : false")
 
-    collapsed = {"value": get_buddy_placement_state().collapsed}
-
-    async def _toggle_collapse() -> None:
-        collapsed["value"] = not collapsed["value"]
-        if collapsed["value"]:
-            root.classes(add="row-bot-buddy-overlay-collapsed")
-        else:
-            root.classes(remove="row-bot-buddy-overlay-collapsed")
-        await _native_call(
-            f"api.set_buddy_collapsed ? api.set_buddy_collapsed({str(collapsed['value']).lower()}) : false"
-        )
-
     ui.run_javascript(
         """
         (() => {
@@ -1155,10 +1136,7 @@ def build_buddy_overlay_page(state) -> None:
         timeout=1,
     )
     emit_buddy_event(BuddyEventType.APP_READY, source="buddy.overlay", payload={"label": "Overlay ready"})
-    root_classes = "row-bot-buddy-overlay-page"
-    if collapsed["value"]:
-        root_classes += " row-bot-buddy-overlay-collapsed"
-    with ui.element("div").classes(root_classes) as root:
+    with ui.element("div").classes("row-bot-buddy-overlay-page"):
         with ui.element("div").classes("row-bot-buddy-overlay-header pywebview-drag-region"):
             with ui.element("div").classes("row-bot-buddy-overlay-avatar"):
                 build_buddy_surface("desktop")
@@ -1198,16 +1176,13 @@ def build_buddy_overlay_page(state) -> None:
             "w-full items-center justify-center no-wrap gap-1"
         ):
             ui.button(icon="open_in_new", on_click=_open_full_thread).props(
-                "flat round dense size=sm aria-label='Open full thread'"
+                "flat round dense size=xs aria-label='Open full thread'"
             ).classes("row-bot-buddy-overlay-action").tooltip("Open full thread")
-            ui.button(icon="unfold_more", on_click=_toggle_collapse).props(
-                "flat round dense size=sm aria-label='Collapse or expand Buddy'"
-            ).classes("row-bot-buddy-overlay-action").tooltip("Collapse or expand Buddy")
             ui.button(icon="dock", on_click=_dock).props(
-                "flat round dense size=sm aria-label='Dock Buddy'"
+                "flat round dense size=xs aria-label='Dock Buddy'"
             ).classes("row-bot-buddy-overlay-action").tooltip("Dock Buddy")
             ui.button(icon="visibility_off", on_click=_hide).props(
-                "flat round dense size=sm aria-label='Hide Buddy'"
+                "flat round dense size=xs aria-label='Hide Buddy'"
             ).classes("row-bot-buddy-overlay-action").tooltip("Hide Buddy")
 
         with ui.column().style("display:none") as hidden_chat:
