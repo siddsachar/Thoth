@@ -65,7 +65,7 @@ Public documentation index for Row-Bot.
 - [Settings: Knowledge](/docs/settings/knowledge)
   Route: /docs/settings/knowledge. Configure memory, graph review, embeddings, document knowledge, and wiki export.
 - [Settings: Buddy](/docs/settings/buddy)
-  Route: /docs/settings/buddy. Configure Row-Bot's companion behavior, visibility, look, motion, and generated looks.
+  Route: /docs/settings/buddy. Use Buddy in the sidebar or as a compact desktop overlay, message the selected thread, handle approvals, and configure its appearance.
 - [Settings: Voice](/docs/settings/voice)
   Route: /docs/settings/voice. Configure dictation, realtime talk, read-aloud, voice models, devices, and diagnostics.
 - [Settings: System](/docs/settings/system)
