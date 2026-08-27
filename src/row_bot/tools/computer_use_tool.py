@@ -21,8 +21,15 @@ from row_bot.tools import registry
 from row_bot.tools.base import BaseTool
 
 
-_SAFE_LAUNCH_FAILURE_STAGES = frozenset(
-    {"inventory", "launch_dispatch", "rediscovery", "capture_verify"}
+_SAFE_COMPUTER_FAILURE_STAGES = frozenset(
+    {
+        "inventory",
+        "window_discovery",
+        "native_capture",
+        "launch_dispatch",
+        "rediscovery",
+        "capture_verify",
+    }
 )
 _SAFE_DRIVER_ERROR_CLASSES = frozenset(
     {
@@ -130,9 +137,13 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
         )
         summaries = {
             "lease_busy": "Computer Use is already controlled by another task.",
+            "app_not_found": "No exact current native app matched the requested identity.",
+            "app_not_running": "The exact requested native app is not running.",
             "stale_observation": "The Computer observation became stale before the action completed.",
             "target_mismatch": "The selected Computer target changed identity.",
             "target_gone": "The selected Computer target is gone or its lease expired.",
+            "window_not_found": "The exact running app has no admissible matching native window.",
+            "native_capture_failed": "The exact native target was admitted, but native capture failed safely.",
             "ambiguous_target": (
                 "Multiple current controls matched the exact label/role/value filter."
                 if semantic_ambiguity
@@ -163,10 +174,14 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
                 if semantic_ambiguity
                 else "Select one opaque target_id from the returned candidates, then capture it."
             ),
+            "app_not_found": "Use one exact canonical name from bounded running_candidates only if it is the intended app; otherwise stop and report it unavailable. Do not repeat the identical acquisition, fuzzy-match, infer an alias, or launch another app.",
+            "app_not_running": "Use one approval-gated launch_app call with the exact reviewed app name only if opening it was requested. Do not repeat the identical capture.",
             "semantic_no_match": "Revise the exact filter or use a current token from this current unfiltered capture; do not rediscover the app or window.",
             "parallel_calls_not_supported": "Issue one Computer Use call at a time on a later turn.",
             "stale_observation": "Capture the exact same target once before retrying.",
             "target_gone": "Begin from current generation list_apps/list_windows discovery or an app-scoped capture; the prior target may be gone or lease-expired.",
+            "window_not_found": "Do not repeat the identical acquisition. Use a new user-provided exact window hint only after state changes, or report that no admissible window exists.",
+            "native_capture_failed": "Do not repeat the identical capture or infer elevation or protection. Run Computer Use diagnostics or ask the user to Take over.",
             "driver_unavailable": "Run Computer Use diagnostics, then start a new session.",
             "background_unavailable": (
                 "Use Take over if foreground delivery was also unavailable; do not invent a focus, "
@@ -201,11 +216,11 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
         failure_stage = str(getattr(exc, "failure_stage", "") or "")
         driver_error_class = str(getattr(exc, "safe_driver_error", "") or "")
         if (
-            failure_stage in _SAFE_LAUNCH_FAILURE_STAGES
+            failure_stage in _SAFE_COMPUTER_FAILURE_STAGES
             or driver_error_class in _SAFE_DRIVER_ERROR_CLASSES
         ):
             decoded = json.loads(payload)
-            if failure_stage in _SAFE_LAUNCH_FAILURE_STAGES:
+            if failure_stage in _SAFE_COMPUTER_FAILURE_STAGES:
                 decoded["failure_stage"] = failure_stage
             if driver_error_class in _SAFE_DRIVER_ERROR_CLASSES:
                 decoded["driver_error_class"] = driver_error_class
@@ -224,7 +239,12 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             decoded["candidates"] = list(getattr(exc, "candidates", ()) or ())
             decoded["next_action"] = remediation
             return json.dumps(decoded, ensure_ascii=False)
-        if explicit_code == "target_gone" and getattr(exc, "candidates", ()):
+        if explicit_code in {
+            "target_gone",
+            "app_not_found",
+            "app_not_running",
+            "window_not_found",
+        } and getattr(exc, "candidates", ()):
             decoded = json.loads(payload)
             running_candidates = []
             for candidate in tuple(getattr(exc, "candidates", ()) or ())[:8]:
@@ -241,8 +261,10 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             if running_candidates:
                 decoded["running_candidates"] = running_candidates
                 decoded["next_action"] = (
-                    "In the current generation, retry capture with exactly one canonical name from running_candidates. "
-                    "Do not fuzzy-match, infer an alias, launch another app, or use a window title."
+                    "Use one exact canonical name from running_candidates only if it is the intended app. "
+                    "Do not repeat the identical acquisition, fuzzy-match, infer an alias, launch another app, or use a window title."
+                    if explicit_code == "app_not_found"
+                    else remediation
                 )
             return json.dumps(decoded, ensure_ascii=False)
         observation = getattr(exc, "observation", None)

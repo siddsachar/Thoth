@@ -1186,3 +1186,78 @@ def test_structured_native_browser_error_stays_in_computer_without_fallback(
     assert names.count("bring_to_front") == 1
     assert "launch_app" not in names
     assert all(not name.startswith("browser_") for name in names)
+
+
+def test_direct_ui_acquisition_failures_are_distinct_and_do_not_loop(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    scenario = FakeScenario(
+        apps=(
+            {"name": "Dormant App", "running": False, "active": False},
+            {"name": "Other App", "pid": 48001, "running": True, "active": True},
+        ),
+        window_snapshots=((),),
+    )
+    service, transport, vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+
+    app_absent = json.loads(tool.invoke({"action": "capture", "app": "Dormant App"}))
+    assert app_absent["error_code"] == "app_not_running"
+    assert app_absent["failure_stage"] == "inventory"
+
+    scenario.apps = (
+        {"name": "Task Manager", "pid": 48002, "running": True, "active": True},
+    )
+    transport.window_snapshot_index = 0
+    no_window = json.loads(tool.invoke({"action": "capture", "app": "Task Manager"}))
+    assert no_window["error_code"] == "window_not_found"
+    assert no_window["failure_stage"] == "window_discovery"
+
+    task_manager_window = {
+        "window_id": 802,
+        "pid": 48002,
+        "app_name": "Task Manager",
+        "title": "Task Manager",
+        "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+        "is_on_screen": True,
+    }
+    scenario.window_snapshots = ((task_manager_window,),)
+    scenario.capture_pid = 48002
+    scenario.capture_window_id = 802
+    scenario.capture_error_code = "native_backend_refusal"
+    transport.window_snapshot_index = 0
+    native_refusal = json.loads(
+        tool.invoke({"action": "capture", "app": "Task Manager"})
+    )
+    assert native_refusal["error_code"] == "native_capture_failed"
+    assert native_refusal["failure_stage"] == "native_capture"
+    assert native_refusal["retryable"] is False
+    native_text = json.dumps(native_refusal).casefold()
+    assert all(
+        marker not in native_text
+        for marker in ("lease expir", "elevated", "protected app", "retry this action")
+    )
+    assert "do not repeat" in native_text
+
+    scenario.capture_error_code = ""
+    transport.window_snapshot_index = 0
+    listed = json.loads(
+        tool.invoke({"action": "list_windows", "app": "Task Manager"})
+    )
+    issued_target = listed["windows"][0]["target_id"]
+    service._targets.pop(issued_target)
+    gone = json.loads(
+        tool.invoke({"action": "capture", "target_id": issued_target})
+    )
+    assert gone["error_code"] == "target_gone"
+    assert "lease expired" in gone["display_summary"].casefold()
+
+    names = [name for name, _args in transport.calls]
+    assert names.count("get_window_state") == 1
+    assert "launch_app" not in names
+    assert all(not name.startswith("browser_") for name in names)
+    assert vision.calls == []

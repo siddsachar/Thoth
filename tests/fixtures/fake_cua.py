@@ -83,6 +83,7 @@ class FakeScenario:
     window_snapshots: tuple[tuple[dict[str, Any], ...], ...] = ()
     apps: tuple[dict[str, Any], ...] = ()
     list_apps_error_code: str = ""
+    list_windows_error_code: str = ""
     launch_error_code: str = ""
     launch_error_message: str = "fake launch failure"
     launch_pid: int = 4242
@@ -91,6 +92,8 @@ class FakeScenario:
     action_error_code: str = ""
     capture_pid: int = 0
     capture_window_id: int = 0
+    capture_error_code: str = ""
+    capture_error_message: str = "fake native capture refusal"
     capture_images: tuple[str, ...] = ()
     capture_dimensions: tuple[int, int] = (1, 1)
     include_scale_factor: bool = True
@@ -245,6 +248,11 @@ class FakeCuaTransport:
             ]
             return self._result({"apps": apps})
         if name == "list_windows":
+            if self.scenario.list_windows_error_code:
+                return self._error(
+                    "fake window inventory warning",
+                    self.scenario.list_windows_error_code,
+                )
             if self.scenario.window_snapshots:
                 index = min(
                     self.window_snapshot_index,
@@ -270,7 +278,8 @@ class FakeCuaTransport:
                     self.scenario.launch_error_message,
                     self.scenario.launch_error_code,
                 )
-            app_name = str(args.get("name") or "Calculator")
+            aumid = str(args.get("aumid") or "")
+            app_name = str(args.get("name") or aumid or "Calculator")
             window = {
                 "window_id": self.scenario.launch_window_id,
                 "title": "Calculator",
@@ -288,11 +297,22 @@ class FakeCuaTransport:
                 (
                     row
                     for row in inventory
-                    if str(row.get("name") or "").casefold() == app_name.casefold()
+                    if (
+                        str(row.get("name") or "").casefold() == app_name.casefold()
+                        or bool(
+                            aumid
+                            and (
+                                str(row.get("launch_path") or "")
+                                .removeprefix("shell:AppsFolder\\")
+                                .casefold()
+                                == aumid.casefold()
+                            )
+                        )
+                    )
                 ),
                 {},
             )
-            package_identity = self.scenario.launch_bundle_id or str(
+            package_identity = self.scenario.launch_bundle_id or aumid or str(
                 matched_app.get("bundle_id") or ""
             )
             if package_identity and "!" not in package_identity:
@@ -304,6 +324,11 @@ class FakeCuaTransport:
                 "windows": [window],
             })
         if name == "get_window_state":
+            if self.scenario.capture_error_code:
+                return self._error(
+                    self.scenario.capture_error_message,
+                    self.scenario.capture_error_code,
+                )
             target = (int(args.get("pid") or 0), int(args.get("window_id") or 0))
             if target in self.closed_targets:
                 return self._error("target window no longer exists", "target_not_found")

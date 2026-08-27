@@ -129,6 +129,8 @@ _SAFE_COMPUTER_ACTION_FAMILIES = frozenset(
 _SAFE_COMPUTER_RESULT_CODES = frozenset(
     {
         "ambiguous_target",
+        "app_not_found",
+        "app_not_running",
         "approval_denied",
         "background_unavailable",
         "cancelled",
@@ -138,6 +140,7 @@ _SAFE_COMPUTER_RESULT_CODES = frozenset(
         "handoff_required",
         "invalid_input",
         "lease_busy",
+        "native_capture_failed",
         "not_ready",
         "ok",
         "paused_for_takeover",
@@ -151,10 +154,18 @@ _SAFE_COMPUTER_RESULT_CODES = frozenset(
         "focus_refused",
         "transient_driver_failure",
         "unsupported_capability",
+        "window_not_found",
     }
 )
-_SAFE_LAUNCH_FAILURE_STAGES = frozenset(
-    {"inventory", "launch_dispatch", "rediscovery", "capture_verify"}
+_SAFE_COMPUTER_FAILURE_STAGES = frozenset(
+    {
+        "inventory",
+        "window_discovery",
+        "native_capture",
+        "launch_dispatch",
+        "rediscovery",
+        "capture_verify",
+    }
 )
 
 
@@ -220,7 +231,7 @@ def _launch_failure(
     error_code: object = "driver_failed",
     message: str = "Native app launch failed safely.",
 ) -> ComputerUseError:
-    safe_stage = str(stage) if str(stage) in _SAFE_LAUNCH_FAILURE_STAGES else "inventory"
+    safe_stage = str(stage) if str(stage) in _SAFE_COMPUTER_FAILURE_STAGES else "inventory"
     raw_code = str(error_code or "driver_failed").strip().casefold().replace("-", "_")
     public_code = (
         "driver_unavailable"
@@ -607,6 +618,10 @@ class StaleObservationError(ComputerUseError):
 
 
 _PYTHON_HOST_APPS = frozenset({"python", "pythonw"})
+_PYTHON_HOST_INVENTORY_NAME = re.compile(
+    r"pythonw?(?:\.exe)?(?:\s+\d+(?:\.\d+)*(?:\s+\(\d+-bit\))?)?",
+    re.IGNORECASE,
+)
 _GENERIC_APP_WORDS = frozenset(
     {
         "app",
@@ -657,6 +672,34 @@ def _windows_package_family(value: object) -> str:
     ):
         return ""
     return family
+
+
+def _validated_windows_aumid(
+    value: object,
+    expected_package_family: object,
+) -> str:
+    """Return one exact reviewed AUMID, never a path or launch command."""
+
+    candidate = str(value or "").strip()
+    prefix = "shell:AppsFolder\\"
+    if candidate.casefold().startswith(prefix.casefold()):
+        candidate = candidate[len(prefix) :]
+    elif candidate.casefold().startswith("shell:appsfolder"):
+        return ""
+    if (
+        not candidate
+        or len(candidate) > 400
+        or candidate.count("!") != 1
+        or any(character in candidate for character in ("/", "\\", ":", "\x00"))
+    ):
+        return ""
+    family, application_id = candidate.split("!", 1)
+    expected = _windows_package_family(expected_package_family)
+    if not expected or _windows_package_family(family) != expected:
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", application_id):
+        return ""
+    return candidate
 
 
 def _window_row_matches_app(requested: object, row: dict[str, Any]) -> bool:
@@ -740,6 +783,13 @@ def _is_protected_controller_target(app_name: str, window_title: str = "") -> bo
     if app == "rowbot":
         return True
     return app in _PYTHON_HOST_APPS and "rowbot" in title
+
+
+def _is_python_host_inventory_name(value: object) -> bool:
+    """Recognize only generic Python interpreter inventory display names."""
+
+    candidate = unicodedata.normalize("NFKC", str(value or "")).strip()
+    return bool(_PYTHON_HOST_INVENTORY_NAME.fullmatch(candidate))
 
 
 def _trusted_controller_pids() -> frozenset[int]:
@@ -829,6 +879,7 @@ class ComputerUseService:
         self._approved_apps: set[str] = set()
         self._app_display_names: dict[str, str] = {}
         self._app_package_families: dict[str, str] = {}
+        self._app_launch_aumids: dict[str, str] = {}
         self._app_pids: dict[str, frozenset[int]] = {}
         self._paused_at = 0.0
         self._lease_id = ""
@@ -1010,6 +1061,7 @@ class ComputerUseService:
                 self._approved_apps.clear()
                 self._app_display_names.clear()
                 self._app_package_families.clear()
+                self._app_launch_aumids.clear()
                 self._app_pids.clear()
                 self._paused_at = 0.0
                 self._lease_id = secrets.token_urlsafe(24)
@@ -1248,6 +1300,7 @@ class ComputerUseService:
             self._approved_apps.clear()
             self._app_display_names.clear()
             self._app_package_families.clear()
+            self._app_launch_aumids.clear()
             self._app_pids.clear()
             self._observation = None
             self._preview_observation = None
@@ -1302,15 +1355,105 @@ class ComputerUseService:
         self._require_owner(owner)
         with self._mutation_lock:
             response = self._driver_call("list_apps", {})
-        if response.is_error:
-            raise ComputerUseError(response.text or response.error_code)
-        controller_pids = _trusted_controller_pids()
-        apps = self._safe_app_rows(response, excluded_pids=controller_pids)
+            if response.is_error:
+                raise ComputerUseError(
+                    "Native app inventory failed safely.",
+                    code=(
+                        "driver_unavailable"
+                        if response.error_code in {"permission_denied", "driver_unavailable"}
+                        else "transient_driver_failure"
+                        if response.error_code in {"timeout", "temporarily_unavailable"}
+                        else "stale_observation"
+                        if response.error_code in {"stale_element", "snapshot_expired"}
+                        else "unsupported_capability"
+                        if response.error_code
+                        in {"not_supported", "unsupported", "unsupported_capability"}
+                        else "driver_failed"
+                    ),
+                    retryable=response.error_code
+                    in {
+                        "timeout",
+                        "temporarily_unavailable",
+                        "stale_element",
+                        "snapshot_expired",
+                    },
+                    failure_stage="inventory",
+                    safe_driver_error=(
+                        _safe_driver_cause(response.error_code) or "backend_refusal"
+                    ),
+                )
+            raw_apps = response.structured.get("apps")
+            if not isinstance(raw_apps, list):
+                raw_apps = []
+            controller_pids = set(_trusted_controller_pids())
+            ambiguous_python_pids: set[int] = set()
+            for row in raw_apps:
+                if not isinstance(row, dict) or not _is_python_host_inventory_name(
+                    row.get("name")
+                ):
+                    continue
+                try:
+                    pid = int(row.get("pid") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    pid = 0
+                if pid > 0 and pid not in controller_pids:
+                    ambiguous_python_pids.add(pid)
+            if ambiguous_python_pids:
+                window_response = self._driver_call("list_windows", {})
+                window_rows = window_response.structured.get("windows")
+                if window_response.is_error or not isinstance(window_rows, list):
+                    raise ComputerUseError(
+                        "Native app inventory could not disambiguate a controller host safely.",
+                        code=(
+                            "driver_unavailable"
+                            if window_response.error_code
+                            in {"permission_denied", "driver_unavailable"}
+                            else "transient_driver_failure"
+                            if window_response.error_code
+                            in {"timeout", "temporarily_unavailable"}
+                            else "stale_observation"
+                            if window_response.error_code
+                            in {"stale_element", "snapshot_expired"}
+                            else "unsupported_capability"
+                            if window_response.error_code
+                            in {"not_supported", "unsupported", "unsupported_capability"}
+                            else "driver_failed"
+                        ),
+                        retryable=window_response.error_code
+                        in {
+                            "timeout",
+                            "temporarily_unavailable",
+                            "stale_element",
+                            "snapshot_expired",
+                        },
+                        failure_stage="inventory",
+                        safe_driver_error=(
+                            _safe_driver_cause(window_response.error_code)
+                            or "backend_refusal"
+                        ),
+                    )
+                for row in window_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    try:
+                        pid = int(row.get("pid") or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if pid not in ambiguous_python_pids:
+                        continue
+                    app_name = str(row.get("app_name") or row.get("name") or "")
+                    title = str(row.get("title") or "")
+                    if _is_protected_controller_target(app_name, title):
+                        controller_pids.add(pid)
+        excluded_controller_pids = frozenset(controller_pids)
+        apps = self._safe_app_rows(
+            response,
+            excluded_pids=excluded_controller_pids,
+        )
         package_families: dict[str, str] = {}
+        launch_aumids: dict[str, str] = {}
+        conflicting_aumid_keys: set[str] = set()
         app_pids: dict[str, set[int]] = {}
-        raw_apps = response.structured.get("apps")
-        if not isinstance(raw_apps, list):
-            raw_apps = []
         safe_keys = {_permission_key(row["name"]) for row in apps}
         for row in raw_apps:
             if not isinstance(row, dict):
@@ -1319,17 +1462,27 @@ class ComputerUseService:
             key = _permission_key(name)
             if not key or key not in safe_keys:
                 continue
-            family = _windows_package_family(
-                row.get("bundle_id") or row.get("launch_path")
-            )
-            if family:
-                package_families[key] = family
             try:
                 pid = int(row.get("pid") or 0)
             except (TypeError, ValueError, OverflowError):
                 pid = 0
-            if pid > 0 and pid in controller_pids:
+            if pid > 0 and pid in excluded_controller_pids:
                 continue
+            reviewed_family = _windows_package_family(row.get("bundle_id"))
+            family = reviewed_family or _windows_package_family(row.get("launch_path"))
+            if family:
+                package_families[key] = family
+            launch_aumid = _validated_windows_aumid(
+                row.get("launch_path"),
+                reviewed_family,
+            )
+            if launch_aumid:
+                existing_aumid = launch_aumids.get(key)
+                if existing_aumid and existing_aumid != launch_aumid:
+                    launch_aumids.pop(key, None)
+                    conflicting_aumid_keys.add(key)
+                elif key not in conflicting_aumid_keys:
+                    launch_aumids[key] = launch_aumid
             if pid > 0:
                 app_pids.setdefault(key, set()).add(pid)
         with self._lock:
@@ -1340,6 +1493,7 @@ class ComputerUseService:
                 for row in apps
             }
             self._app_package_families = package_families
+            self._app_launch_aumids = launch_aumids
             self._app_pids = {
                 key: frozenset(pids) for key, pids in app_pids.items()
             }
@@ -1370,8 +1524,30 @@ class ComputerUseService:
             response = self._driver_call("list_windows", {})
         if response.is_error:
             raise ComputerUseError(
-                response.text or response.error_code or "Cua window discovery failed",
-                code=response.error_code or "driver_failed",
+                "Native window discovery failed safely.",
+                code=(
+                    "driver_unavailable"
+                    if response.error_code in {"permission_denied", "driver_unavailable"}
+                    else "transient_driver_failure"
+                    if response.error_code in {"timeout", "temporarily_unavailable"}
+                    else "stale_observation"
+                    if response.error_code in {"stale_element", "snapshot_expired"}
+                    else "unsupported_capability"
+                    if response.error_code
+                    in {"not_supported", "unsupported", "unsupported_capability"}
+                    else "driver_failed"
+                ),
+                retryable=response.error_code
+                in {
+                    "timeout",
+                    "temporarily_unavailable",
+                    "stale_element",
+                    "snapshot_expired",
+                },
+                failure_stage="window_discovery",
+                safe_driver_error=(
+                    _safe_driver_cause(response.error_code) or "backend_refusal"
+                ),
             )
         rows = response.structured.get("windows") if isinstance(response.structured.get("windows"), list) else []
         with self._lock:
@@ -1900,7 +2076,7 @@ class ComputerUseService:
         }:
             safe_outcome = "none"
         safe_stage = str(failure_stage or "none").casefold()
-        if safe_stage not in _SAFE_LAUNCH_FAILURE_STAGES | {"none"}:
+        if safe_stage not in _SAFE_COMPUTER_FAILURE_STAGES | {"none"}:
             safe_stage = "none"
         safe_thread_id = _safe_correlation_id(tool_call_owner[0])
         safe_generation_id = _safe_correlation_id(tool_call_owner[1])
@@ -2188,7 +2364,7 @@ class ComputerUseService:
                 target_id = current.target_id
             else:
                 apps = self.list_apps(owner)
-                running_candidates = tuple(
+                running_apps = tuple(
                     {
                         "name": str(row.get("name") or "")[:128],
                         "running": True,
@@ -2196,16 +2372,22 @@ class ComputerUseService:
                     }
                     for row in apps
                     if bool(row.get("running"))
-                )[:MODEL_RUNNING_APP_CANDIDATES]
+                )
+                running_candidates = running_apps[:MODEL_RUNNING_APP_CANDIDATES]
                 canonical_app = _resolve_app_identity(
                     app_name,
-                    [row["name"] for row in running_candidates],
+                    [row["name"] for row in running_apps],
                 )
                 if canonical_app is None:
+                    known_app = _resolve_app_identity(
+                        app_name,
+                        [str(row.get("name") or "") for row in apps],
+                    )
                     raise ComputerUseError(
                         "No exact running native app matched the requested app identity.",
-                        code="target_gone",
+                        code="app_not_running" if known_app else "app_not_found",
                         candidates=running_candidates,
+                        failure_stage="inventory",
                     )
                 app_name = canonical_app
                 candidates = self.list_windows(
@@ -2216,8 +2398,9 @@ class ComputerUseService:
                 if not candidates:
                     raise ComputerUseError(
                         "No exact native window matched the requested app scope.",
-                        code="target_gone",
+                        code="window_not_found",
                         candidates=running_candidates,
+                        failure_stage="window_discovery",
                     )
                 if len(candidates) > 1:
                     active = [row for row in candidates if bool(row.get("active"))]
@@ -2242,6 +2425,7 @@ class ComputerUseService:
                 target,
                 response,
                 require_screenshot=True,
+                initial_acquisition=initial_app_scope,
             )
             self._apply_semantic_filter(
                 observation,
@@ -2376,26 +2560,48 @@ class ComputerUseService:
         *,
         require_screenshot: bool = True,
         previous: Observation | None = None,
+        initial_acquisition: bool = False,
     ) -> Observation:
         if response.is_error:
-            if response.error_code == "stale_element":
+            if response.error_code in {"stale_element", "snapshot_expired"}:
                 raise StaleObservationError("Cua observation is stale; capture again.")
             code = (
                 "driver_unavailable"
                 if response.error_code in {"permission_denied", "driver_unavailable"}
+                else "window_not_found"
+                if initial_acquisition
+                and response.error_code in {"target_not_found", "window_not_found"}
                 else "target_gone"
                 if response.error_code in {"target_not_found", "window_not_found"}
                 else "transient_driver_failure"
                 if response.error_code in {"timeout", "temporarily_unavailable"}
-                else "driver_failed"
+                else "unsupported_capability"
+                if response.error_code
+                in {"not_supported", "unsupported", "unsupported_capability"}
+                else "native_capture_failed"
             )
             raise ComputerUseError(
-                "The exact Computer target could not be observed safely.",
+                (
+                    "The exact native window disappeared during initial acquisition."
+                    if code == "window_not_found"
+                    else "The previously issued exact Computer target could not be observed safely because it is gone."
+                    if code == "target_gone"
+                    else "The exact Computer target could not be captured safely."
+                ),
                 code=code,
                 retryable=code == "transient_driver_failure",
+                failure_stage="native_capture",
+                safe_driver_error=(
+                    _safe_driver_cause(response.error_code) or "backend_refusal"
+                ),
             )
         if require_screenshot and response.image_bytes is None:
-            raise ComputerUseError("Cua capture did not include a validated target-window image.")
+            raise ComputerUseError(
+                "Native capture did not include a validated target-window image.",
+                code="native_capture_failed",
+                failure_stage="native_capture",
+                safe_driver_error="backend_refusal",
+            )
         structured = response.structured
         pid = int(structured.get("pid") or target.pid)
         window_id = int(structured.get("window_id") or target.window_id)
@@ -3547,15 +3753,16 @@ class ComputerUseService:
         if not resolved_name:
             raise ComputerUseError(
                 "Could not resolve the exact native app identity from the reviewed inventory.",
-                code="target_gone",
+                code="app_not_found",
                 failure_stage="inventory",
-                safe_driver_error="backend_refusal",
             )
         with self._lock:
+            resolved_key = _permission_key(resolved_name)
             expected_package_family = self._app_package_families.get(
-                _permission_key(name),
-                self._app_package_families.get(_permission_key(resolved_name), ""),
+                resolved_key,
+                "",
             )
+            launch_aumid = self._app_launch_aumids.get(resolved_key, "")
         if _is_protected_controller_target(resolved_name, name):
             raise ComputerUseError(
                 "Row-Bot and its Computer control surfaces cannot be targeted.",
@@ -3568,11 +3775,11 @@ class ComputerUseService:
                 code="hard_blocked",
             )
         with self._lock:
-            self._app_hint = name
+            self._app_hint = resolved_name
         self._ensure_named_app_permission(
             resolved_name,
             approval_mode=approval_mode,
-            display_name=name,
+            display_name=resolved_name,
         )
         try:
             with self._mutation_lock:
@@ -3580,7 +3787,12 @@ class ComputerUseService:
                 self._last_action = "launch app"
                 self._notify()
                 try:
-                    response = self._driver_call("launch_app", {"name": resolved_name})
+                    launch_arguments = (
+                        {"aumid": launch_aumid}
+                        if launch_aumid
+                        else {"name": resolved_name}
+                    )
+                    response = self._driver_call("launch_app", launch_arguments)
                 finally:
                     self._state = SessionState.OBSERVING
                     self._notify()
@@ -3600,7 +3812,7 @@ class ComputerUseService:
         # package-family proof; classic apps require an exact reviewed launch
         # identity and stay on that launch pid while transient windows churn.
         windows = self._verified_launch_windows(
-            name,
+            resolved_name,
             resolved_name,
             response,
             expected_package_family,
@@ -3739,6 +3951,7 @@ class ComputerUseService:
                 self._approved_apps.clear()
                 self._app_display_names.clear()
                 self._app_package_families.clear()
+                self._app_launch_aumids.clear()
                 self._app_pids.clear()
                 self._observation = None
                 self._preview_observation = None

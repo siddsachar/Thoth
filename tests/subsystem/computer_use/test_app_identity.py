@@ -122,6 +122,89 @@ def test_app_inventory_omits_only_exact_current_session_controller_pids(
     ]
 
 
+def test_python_host_controller_pid_is_removed_by_exact_window_evidence(
+    service,
+    fake_transport,
+) -> None:
+    controller_pid = 31400
+    benign_pid = 31401
+    python_name = "Python 3.14 (64-bit)"
+    fake_transport.scenario.apps = (
+        {"name": python_name, "pid": controller_pid, "running": True, "active": True},
+        {"name": python_name, "pid": benign_pid, "running": True, "active": False},
+        {"name": "Notepad", "pid": 41000, "running": True, "active": False},
+    )
+    fake_transport.scenario.windows = (
+        _window(140, "python.exe", "Row-Bot", pid=controller_pid),
+        _window(141, python_name, "Synthetic notebook", pid=benign_pid),
+        _window(142, "Notepad", "Untitled", pid=41000),
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    apps = service.list_apps(OWNER)
+
+    assert apps == [
+        {"name": python_name, "running": True, "active": False},
+        {"name": "Notepad", "running": True, "active": False},
+    ]
+    assert service._app_pids == {
+        "python31464bit": frozenset({benign_pid}),
+        "notepad": frozenset({41000}),
+    }
+    assert "Row-Bot" not in repr(apps)
+    assert "Synthetic notebook" not in repr(apps)
+    assert [name for name, _args in fake_transport.calls].count("list_windows") == 1
+
+
+def test_separate_benign_python_host_pid_remains_exactly_targetable(
+    service,
+    fake_transport,
+) -> None:
+    controller_pid = 31500
+    benign_pid = 31501
+    python_name = "Python 3.14 (64-bit)"
+    fake_transport.scenario.apps = (
+        {"name": python_name, "pid": controller_pid, "running": True, "active": True},
+        {"name": python_name, "pid": benign_pid, "running": True, "active": False},
+    )
+    fake_transport.scenario.windows = (
+        _window(150, "python.exe", "Row-Bot", pid=controller_pid),
+        _window(151, python_name, "Synthetic notebook", pid=benign_pid),
+    )
+    service.acquire(OWNER, validate_context=False)
+    service.list_apps(OWNER)
+
+    windows = service.list_windows(OWNER, app=python_name)
+
+    assert len(windows) == 1
+    target = service._target(windows[0]["target_id"])
+    assert (target.pid, target.window_id) == (benign_pid, 151)
+
+
+def test_python_host_inventory_fails_closed_when_exact_disambiguation_fails(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = (
+        {
+            "name": "Python 3.14 (64-bit)",
+            "pid": 31600,
+            "running": True,
+            "active": True,
+        },
+    )
+    fake_transport.scenario.list_windows_error_code = "window_inventory_failed"
+    service.acquire(OWNER, validate_context=False)
+
+    with pytest.raises(ComputerUseError) as failed:
+        service.list_apps(OWNER)
+
+    assert failed.value.code == "driver_failed"
+    assert failed.value.failure_stage == "inventory"
+    assert "Python" not in str(failed.value)
+    assert [name for name, _args in fake_transport.calls].count("list_windows") == 1
+
+
 def test_stale_launcher_state_never_hides_an_unrelated_python_process(
     service,
     fake_transport,
@@ -297,7 +380,8 @@ def test_app_scoped_capture_zero_matches_returns_bounded_running_exact_candidate
     with pytest.raises(ComputerUseError) as missing:
         service.capture(owner=OWNER, app="Grid Editing App")
 
-    assert missing.value.code == "target_gone"
+    assert missing.value.code == "app_not_found"
+    assert missing.value.failure_stage == "inventory"
     assert len(missing.value.candidates) == 8
     assert missing.value.candidates[3] == {
         "name": "candidate-0.exe",
@@ -311,6 +395,55 @@ def test_app_scoped_capture_zero_matches_returns_bounded_running_exact_candidate
     assert [name for name, _args in fake_transport.calls].count("list_apps") == 1
     assert "launch_app" not in [name for name, _args in fake_transport.calls]
     assert "get_window_state" not in [name for name, _args in fake_transport.calls]
+
+
+def test_app_scoped_capture_resolves_exact_running_app_after_model_candidate_bound(
+    service,
+    fake_transport,
+) -> None:
+    target_pid = 47009
+    fake_transport.scenario.apps = tuple(
+        {
+            "name": f"Synthetic App {index}",
+            "pid": 47000 + index,
+            "running": True,
+            "active": index == 0,
+        }
+        for index in range(9)
+    ) + (
+        {"name": "Notepad.exe", "pid": target_pid, "running": True, "active": False},
+    )
+    fake_transport.scenario.windows = (
+        _window(709, "Notepad.exe", "Synthetic note", pid=target_pid),
+    )
+    fake_transport.scenario.capture_pid = target_pid
+    fake_transport.scenario.capture_window_id = 709
+
+    observed = service.capture(owner=OWNER, app="Notepad.exe")
+
+    assert (observed.target.pid, observed.target.window_id) == (target_pid, 709)
+    names = [name for name, _args in fake_transport.calls]
+    assert names.count("list_apps") == 1
+    assert names.count("list_windows") == 1
+    assert names.count("get_window_state") == 1
+
+
+def test_exact_nonrunning_app_has_distinct_initial_acquisition_failure(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = (
+        {"name": "Dormant App", "pid": 0, "running": False, "active": False},
+        {"name": "Other App", "pid": 47011, "running": True, "active": True},
+    )
+
+    with pytest.raises(ComputerUseError) as missing:
+        service.capture(owner=OWNER, app="Dormant App")
+
+    assert missing.value.code == "app_not_running"
+    assert missing.value.failure_stage == "inventory"
+    assert missing.value.retryable is False
+    assert "list_windows" not in [name for name, _args in fake_transport.calls]
 
 
 def test_app_scoped_capture_multiple_matches_returns_opaque_ambiguity_without_pixels(
@@ -350,7 +483,44 @@ def test_app_scoped_capture_rejects_exact_name_window_owned_by_another_pid(
     with pytest.raises(ComputerUseError) as mismatch:
         service.capture(owner=OWNER, app="Native Editor.app")
 
-    assert mismatch.value.code == "target_gone"
+    assert mismatch.value.code == "window_not_found"
+    assert mismatch.value.failure_stage == "window_discovery"
+    assert "get_window_state" not in [name for name, _args in fake_transport.calls]
+
+
+def test_native_capture_refusal_after_exact_admission_is_distinct_and_nonretryable(
+    service,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = (
+        {"name": "Native Editor", "pid": 47012, "running": True, "active": True},
+    )
+    fake_transport.scenario.windows = (
+        _window(712, "Native Editor", "Synthetic document", pid=47012),
+    )
+    fake_transport.scenario.capture_error_code = "native_backend_refusal"
+
+    with pytest.raises(ComputerUseError) as refused:
+        service.capture(owner=OWNER, app="Native Editor")
+
+    assert refused.value.code == "native_capture_failed"
+    assert refused.value.failure_stage == "native_capture"
+    assert refused.value.retryable is False
+    assert [name for name, _args in fake_transport.calls].count("get_window_state") == 1
+
+
+def test_previously_issued_opaque_target_loss_remains_target_gone(
+    service,
+    fake_transport,
+) -> None:
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    service._targets.pop(target_id)
+
+    with pytest.raises(ComputerUseError) as gone:
+        service.capture(target_id, OWNER)
+
+    assert gone.value.code == "target_gone"
     assert "get_window_state" not in [name for name, _args in fake_transport.calls]
 
 
@@ -447,6 +617,7 @@ def test_packaged_launch_uses_exact_inventory_name_under_local_ui_grant(
         {
             "name": "Windows Calculator",
             "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "launch_path": "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
             "kind": "uwp",
             "running": False,
         },
@@ -461,10 +632,73 @@ def test_packaged_launch_uses_exact_inventory_name_under_local_ui_grant(
     windows = service.launch_app("Windows Calculator", OWNER)
 
     launch_args = next(args for name, args in fake_transport.calls if name == "launch_app")
-    assert launch_args["name"] == "Windows Calculator"
+    assert launch_args["aumid"] == "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
+    assert "name" not in launch_args
     assert windows[0]["app"] == "Windows Calculator"
     assert [name for name, _args in fake_transport.calls].count("list_windows") == 3
     assert approvals == []
+
+
+def test_packaged_launch_accepts_one_exact_direct_inventory_aumid(
+    fake_client,
+    fake_transport,
+) -> None:
+    aumid = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!Application"
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "launch_path": aumid,
+            "kind": "uwp",
+            "running": False,
+        },
+    )
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    service.launch_app("Windows Calculator", OWNER)
+
+    launch_args = next(args for name, args in fake_transport.calls if name == "launch_app")
+    assert launch_args["aumid"] == aumid
+    assert "name" not in launch_args
+
+
+@pytest.mark.parametrize(
+    "launch_path",
+    [
+        "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+        "shell:AppsFolder\\Contoso.Calculator_abcd1234!App",
+        "C:\\Synthetic\\Calculator.exe",
+    ],
+)
+def test_malformed_or_family_mismatched_launch_identity_is_never_used_as_aumid(
+    fake_client,
+    fake_transport,
+    launch_path: str,
+) -> None:
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "launch_path": launch_path,
+            "kind": "uwp",
+            "running": False,
+        },
+    )
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda _payload: True,
+    )
+    service.acquire(OWNER, validate_context=False)
+
+    service.launch_app("Windows Calculator", OWNER)
+
+    launch_args = next(args for name, args in fake_transport.calls if name == "launch_app")
+    assert launch_args["name"] == "Windows Calculator"
+    assert "aumid" not in launch_args
 
 
 def test_recorded_calculator_shape_proves_only_exact_package_launch_identity() -> None:
@@ -799,6 +1033,7 @@ def test_launch_uses_exact_edge_identity_for_approval_and_driver(
     assert windows[0]["app"] == "msedge.exe"
     launch_args = next(args for name, args in fake_transport.calls if name == "launch_app")
     assert launch_args["name"] == "msedge.exe"
+    assert [name for name, _args in fake_transport.calls].count("launch_app") == 1
     assert len(approvals) == 1
     assert approvals[0]["app"] == "msedge.exe"
     assert "msedge.exe" in approvals[0]["label"]

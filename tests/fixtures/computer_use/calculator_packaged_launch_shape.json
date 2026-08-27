@@ -2,6 +2,7 @@
   "inventory": {
     "name": "Windows Calculator",
     "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+    "launch_path": "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
     "kind": "uwp",
     "running": false
   },

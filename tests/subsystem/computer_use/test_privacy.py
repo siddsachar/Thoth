@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
-from row_bot.computer_use.service import ComputerUseError, LeaseOwner, Target
+from row_bot.computer_use.service import (
+    ComputerUseError,
+    ComputerUseService,
+    LeaseOwner,
+    Target,
+)
 from pathlib import Path
 import os
 
@@ -153,6 +160,51 @@ def test_post_stop_has_no_replay_or_completion_state_and_keeps_receipt_truthful(
     assert not hasattr(service, "_completion_ledger")
     assert secret not in repr(service.status_snapshot())
     assert "old private value" not in repr(service.status_snapshot())
+
+
+def test_packaged_aumid_stays_out_of_model_outputs_approval_and_logs(
+    fake_client,
+    fake_transport,
+    caplog,
+) -> None:
+    aumid = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "launch_path": f"shell:AppsFolder\\{aumid}",
+            "kind": "uwp",
+            "running": False,
+            "active": False,
+        },
+    )
+    approvals: list[dict] = []
+    service = ComputerUseService(
+        client_factory=lambda: fake_client,
+        approval_callback=lambda payload: approvals.append(payload) or True,
+    )
+    service.acquire(OWNER, validate_context=False)
+    inventory = service.list_apps(OWNER)
+    signature = ("launch_app", True, len("Windows Calculator"))
+
+    with caplog.at_level(logging.INFO, logger="row_bot.computer_use.service"):
+        service.begin_tool_call(signature)
+        windows = service.launch_app("Windows Calculator", OWNER)
+        service.end_tool_call(signature, action_family="launch_app")
+
+    rendered = repr(
+        {
+            "inventory": inventory,
+            "windows": windows,
+            "approvals": approvals,
+            "status": service.status_snapshot(),
+            "logs": [record.message for record in caplog.records],
+        }
+    )
+    assert aumid not in rendered
+    assert f"shell:AppsFolder\\{aumid}" not in rendered
+    assert approvals[0]["app"] == "Windows Calculator"
+    assert approvals[0]["label"] == "Allow Computer · Windows Calculator"
 
 
 def test_window_discovery_requires_scope_before_calling_the_driver(service, fake_transport) -> None:

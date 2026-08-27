@@ -88,17 +88,64 @@ def test_exact_app_recovery_payload_exposes_only_bounded_running_canonical_names
             "capture",
             ComputerUseError(
                 "No exact native window matched the requested app scope.",
-                code="target_gone",
+                code="app_not_found",
+                failure_stage="inventory",
                 candidates=candidates,
             ),
         )
     )
 
-    assert payload["error_code"] == "target_gone"
+    assert payload["error_code"] == "app_not_found"
+    assert payload["failure_stage"] == "inventory"
     assert payload["running_candidates"] == list(candidates)
-    assert "exactly one canonical name" in payload["next_action"]
+    assert "one exact canonical name" in payload["next_action"]
     assert "fuzzy" in payload["next_action"]
+    assert "repeat the identical acquisition" in payload["next_action"]
     assert all(set(row) == {"name", "running", "active"} for row in payload["running_candidates"])
+
+
+def test_acquisition_and_native_capture_failures_have_distinct_nonlooping_payloads() -> None:
+    cases = {
+        "app_not_running": "inventory",
+        "window_not_found": "window_discovery",
+        "native_capture_failed": "native_capture",
+    }
+
+    for code, stage in cases.items():
+        payload = json.loads(
+            _computer_error_payload(
+                "capture",
+                ComputerUseError(
+                    "Sanitized deterministic refusal.",
+                    code=code,
+                    failure_stage=stage,
+                ),
+            )
+        )
+
+        assert payload["error_code"] == code
+        assert payload["failure_stage"] == stage
+        assert payload["retryable"] is False
+        rendered = json.dumps(payload).casefold()
+        assert "lease expir" not in rendered
+        assert "retry this action" not in rendered
+        assert "repeat the identical" in rendered or "do not repeat" in rendered
+
+
+def test_only_previously_issued_target_loss_mentions_lease_expiry() -> None:
+    payload = json.loads(
+        _computer_error_payload(
+            "capture",
+            ComputerUseError(
+                "Unknown target: gone or its lease expired.",
+                code="target_gone",
+            ),
+        )
+    )
+
+    assert payload["error_code"] == "target_gone"
+    assert "lease expired" in payload["display_summary"].casefold()
+    assert "current generation" in payload["remediation"].casefold()
 
 
 def test_semantic_miss_payload_never_recommends_app_rediscovery_or_another_engine() -> None:
@@ -201,6 +248,14 @@ def test_generation_lifetime_and_action_specific_recovery_are_explicit() -> None
     assert "action dispatched" in guide
     assert "native state" in guide
     assert "exact postcondition" in guide
+    assert "one computer use call at a time" in guide
+    assert "one app-scoped capture" in guide
+    assert "exact current `list_apps` name" in guide
+    assert "parallel app/window discovery" in guide
+    assert "previously returned opaque target" in guide
+    assert "non-retryable native capture" in guide
+    assert "app_not_running" in guide
+    assert "window_not_found" in guide
 
 
 def test_expired_target_remediation_requires_current_generation_rediscovery() -> None:
