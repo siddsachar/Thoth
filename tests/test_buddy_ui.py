@@ -539,6 +539,62 @@ def test_buddy_status_bubbles_and_hot_apply_are_wired():
     assert ".nicegui-content" in buddy_ui_src
 
 
+def test_buddy_overlay_uses_three_small_direct_actions_without_extra_controls():
+    buddy_ui_src = _read("src/row_bot/ui/buddy.py")
+    overlay_section = buddy_ui_src.split("def build_buddy_overlay_page", 1)[1].split(
+        "def build_buddy_settings_tab",
+        1,
+    )[0]
+
+    assert 'icon="more_horiz"' not in overlay_section
+    assert "ui.menu()" not in overlay_section
+    assert "ui.menu_item(" not in overlay_section
+    assert "row-bot-buddy-overlay-actions" in overlay_section
+    assert 'ui.button(icon="open_in_new", on_click=_open_full_thread)' in overlay_section
+    assert 'ui.button(icon="dock", on_click=_dock)' in overlay_section
+    assert 'ui.button(icon="visibility_off", on_click=_hide)' in overlay_section
+    for accessible_name in (
+        "Open full thread",
+        "Dock Buddy",
+        "Hide Buddy",
+    ):
+        assert f"aria-label='{accessible_name}'" in overlay_section
+        assert f'.tooltip("{accessible_name}")' in overlay_section
+    assert overlay_section.index("row-bot-buddy-overlay-body") < overlay_section.index(
+        "row-bot-buddy-overlay-actions"
+    )
+    action_section = overlay_section.split("row-bot-buddy-overlay-actions", 1)[1].split(
+        'with ui.column().style("display:none")',
+        1,
+    )[0]
+    assert action_section.count("size=xs") == 3
+    assert "size=sm" not in action_section
+    assert "_toggle_collapse" not in overlay_section
+    assert 'icon="unfold_more"' not in overlay_section
+    assert "Collapse or expand Buddy" not in overlay_section
+    assert "row-bot-buddy-overlay-collapsed" not in buddy_ui_src
+
+
+def test_buddy_overlay_uses_opaque_rectangular_flex_layout():
+    buddy_ui_src = _read("src/row_bot/ui/buddy.py")
+    overlay_page_rule = buddy_ui_src.split(".row-bot-buddy-overlay-page {", 1)[1].split("}", 1)[0]
+    overlay_body_rule = buddy_ui_src.split("\n.row-bot-buddy-overlay-body {", 1)[1].split("}", 1)[0]
+    response_rule = buddy_ui_src.split(".row-bot-buddy-overlay-response {", 1)[1].split("}", 1)[0]
+    approval_rule = buddy_ui_src.split(".row-bot-buddy-overlay-approval {", 1)[1].split("}", 1)[0]
+
+    assert "box-sizing: border-box" in overlay_page_rule
+    assert "background: linear-gradient(145deg, #0b1119, #111b26)" in overlay_page_rule
+    assert "border-radius: 0" in overlay_page_rule
+    assert "rgba(" not in overlay_page_rule.split("background:", 1)[1].split(";", 1)[0]
+    assert "flex: 1 1 auto" in overlay_body_rule
+    assert "min-height: 0" in overlay_body_rule
+    assert "flex: 1 1 auto" in response_rule
+    assert "max-height: none" in response_rule
+    assert "flex: 0 0 auto" in approval_rule
+    assert "approval_box.set_visibility(False)" in buddy_ui_src
+    assert "backdrop-filter" not in buddy_ui_src
+
+
 def test_buddy_idle_video_uses_quiet_replay_cadence():
     runtime_src = _read("static/buddy/runtime/buddy.js")
 
