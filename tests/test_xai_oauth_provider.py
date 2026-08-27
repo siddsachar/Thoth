@@ -686,6 +686,16 @@ def test_xai_api_key_discovery_merges_model_endpoints_and_curated_composer(monke
             return _XAIResponse({"models": [
                 {"id": "grok-4.3", "input_modalities": ["text", "image"]},
             ]})
+        if url.endswith("/image-generation-models"):
+            return _XAIResponse({"models": [{
+                "id": "future-renderer",
+                "display_name": "Future Renderer",
+                "pricing": [
+                    {"quality": "low", "resolution": "1k", "price_per_image": 4},
+                    {"quality": "medium", "resolution": "1k", "price_per_image": 6},
+                    {"quality": "medium", "resolution": "2k", "price_per_image": 8},
+                ],
+            }]})
         raise AssertionError(url)
 
     monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(get=_get))
@@ -704,9 +714,10 @@ def test_xai_api_key_discovery_merges_model_endpoints_and_curated_composer(monke
     assert calls == [
         "https://api.x.ai/v1/models",
         "https://api.x.ai/v1/language-models",
+        "https://api.x.ai/v1/image-generation-models",
     ]
-    assert count == 4
-    assert {"grok-4.3", "grok-imagine-image-quality", "grok-imagine-video", XAI_COMPOSER_MODEL_ID} <= set(cached)
+    assert count == 5
+    assert {"grok-4.3", "grok-imagine-image-quality", "grok-imagine-video", "future-renderer", XAI_COMPOSER_MODEL_ID} <= set(cached)
     assert cached["grok-4.3"]["vision"] is True
     assert cached[XAI_COMPOSER_MODEL_ID]["provider"] == "xai"
     assert cached[XAI_COMPOSER_MODEL_ID]["transport"] == "openai_chat"
@@ -714,6 +725,49 @@ def test_xai_api_key_discovery_merges_model_endpoints_and_curated_composer(monke
     assert cached["grok-imagine-image-quality"]["capabilities_snapshot"]["tasks"] == ["image_generation"]
     assert cached["grok-imagine-image-quality"]["capabilities_snapshot"]["output_modalities"] == ["image"]
     assert cached["grok-imagine-video"]["capabilities_snapshot"]["tasks"] == ["video_generation"]
+    assert cached["future-renderer"]["capabilities_snapshot"]["generation_parameters"]["valid_combinations"][-1] == {
+        "quality": "medium",
+        "resolution": "2k",
+    }
+
+
+def test_xai_oauth_image_metadata_merges_for_unknown_model_and_survives_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(provider_config, "CONFIG_PATH", tmp_path / "providers.json")
+    _set_backend_for_tests(_MemoryKeyring())
+    client = _HttpClient([
+        _Response(200, {"data": [{"id": "future-renderer", "display_name": "Basic Row"}]}),
+        _Response(200, {"models": []}),
+        _Response(200, {"models": [{
+            "id": "future-renderer",
+            "display_name": "Future Renderer",
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["image"],
+            "pricing": [
+                {"quality": "low", "resolution": "1k", "price_per_image": 4},
+                {"quality": "low", "resolution": "2k", "price_per_image": 6},
+                {"quality": "medium", "resolution": "1k", "price_per_image": 6},
+                {"quality": "medium", "resolution": "2k", "price_per_image": 8},
+            ],
+        }]}),
+    ])
+    try:
+        save_xai_oauth_tokens(XAIOAuthTokenSet(access_token=_valid_token(), refresh_token="refresh-secret"))
+        live = list_xai_oauth_model_infos(force_refresh=True, http_client=client)
+        cached = list_xai_oauth_model_infos()
+    finally:
+        _set_backend_for_tests(None)
+
+    assert [call[1] for call in client.calls] == [
+        "https://api.x.ai/v1/models",
+        "https://api.x.ai/v1/language-models",
+        "https://api.x.ai/v1/image-generation-models",
+    ]
+    live_info = next(info for info in live if info.model_id == "future-renderer")
+    cached_info = next(info for info in cached if info.model_id == "future-renderer")
+    assert live_info.display_name == "Future Renderer"
+    assert live_info.tasks == frozenset({ModelTask.IMAGE_GENERATION.value})
+    assert live_info.generation_parameters["defaults"] == {"quality": "medium", "resolution": "1k"}
+    assert cached_info.generation_parameters == live_info.generation_parameters
 
 
 def test_xai_oauth_model_discovery_accepts_new_model_ids_without_static_allowlist(tmp_path, monkeypatch):

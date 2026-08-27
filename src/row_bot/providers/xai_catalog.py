@@ -13,6 +13,44 @@ def xai_model_id_from_item(item: dict[str, Any]) -> str:
     return str(item.get("id") or item.get("model") or item.get("name") or "").strip()
 
 
+def xai_generation_parameters_from_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    pricing = item.get("pricing")
+    if not isinstance(pricing, list) or not pricing:
+        return None
+
+    qualities: list[str] = []
+    resolutions: list[str] = []
+    combinations: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in pricing:
+        if not isinstance(row, dict):
+            continue
+        quality = str(row.get("quality") or "").strip().lower()
+        resolution = str(row.get("resolution") or "").strip().lower()
+        pair = (quality, resolution)
+        if not quality or not resolution or pair in seen:
+            continue
+        seen.add(pair)
+        combinations.append({"quality": quality, "resolution": resolution})
+        if quality not in qualities:
+            qualities.append(quality)
+        if resolution not in resolutions:
+            resolutions.append(resolution)
+    if not combinations:
+        return None
+    return {
+        "options": {
+            "quality": qualities,
+            "resolution": resolutions,
+        },
+        "defaults": {
+            "quality": "medium",
+            "resolution": "1k",
+        },
+        "valid_combinations": combinations,
+    }
+
+
 def merged_xai_model_entries(pages: Iterable[Iterable[Any]]) -> list[dict[str, Any]]:
     by_model_id: dict[str, dict[str, Any]] = {}
     ordered_ids: list[str] = []

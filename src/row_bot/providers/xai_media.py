@@ -8,6 +8,11 @@ from urllib.parse import urlparse
 
 XAI_API_BASE_URL = "https://api.x.ai/v1"
 XAI_MEDIA_PROVIDER_IDS = frozenset({"xai", "xai_oauth"})
+XAI_MEDIA_CONNECT_TIMEOUT = 10.0
+XAI_MEDIA_POOL_TIMEOUT = 10.0
+XAI_MEDIA_WRITE_TIMEOUT = 120.0
+XAI_IMAGE_GENERATION_READ_TIMEOUT = 600.0
+XAI_MEDIA_DOWNLOAD_READ_TIMEOUT = 120.0
 
 
 class XAIMediaError(RuntimeError):
@@ -107,7 +112,7 @@ def xai_media_json_request(
     path: str,
     *,
     json: dict[str, Any] | None = None,
-    timeout: float = 120.0,
+    timeout: float = XAI_MEDIA_DOWNLOAD_READ_TIMEOUT,
     http_client: Any | None = None,
 ) -> dict[str, Any]:
     response = _xai_media_raw_request(
@@ -140,7 +145,7 @@ def xai_media_get(
     provider_id: str,
     path_or_url: str,
     *,
-    timeout: float = 120.0,
+    timeout: float = XAI_MEDIA_DOWNLOAD_READ_TIMEOUT,
     follow_redirects: bool = False,
     http_client: Any | None = None,
 ) -> Any:
@@ -162,11 +167,13 @@ def _xai_media_raw_request(
     path_or_url: str,
     *,
     json: dict[str, Any] | None = None,
-    timeout: float = 120.0,
+    timeout: float = XAI_MEDIA_DOWNLOAD_READ_TIMEOUT,
     follow_redirects: bool = False,
     http_client: Any | None = None,
     authenticated: bool = True,
 ) -> Any:
+    import httpx
+
     provider = _canonical_provider_id(provider_id)
     if provider not in XAI_MEDIA_PROVIDER_IDS:
         raise XAIMediaError(
@@ -180,26 +187,34 @@ def _xai_media_raw_request(
     owns_client = http_client is None
     client = http_client or _new_http_client(timeout)
     try:
-        response = _send_request(
-            client,
-            method,
-            url,
-            headers=dict(ctx.headers) if ctx else {},
-            json=json,
-            timeout=timeout,
-            follow_redirects=follow_redirects,
-        )
-        if authenticated and ctx and ctx.oauth and _status_code(response) == 401:
-            ctx = _refresh_oauth_context_once(ctx)
+        try:
             response = _send_request(
                 client,
                 method,
                 url,
-                headers=dict(ctx.headers),
+                headers=dict(ctx.headers) if ctx else {},
                 json=json,
-                timeout=timeout,
+                timeout=_httpx_timeout(timeout),
                 follow_redirects=follow_redirects,
             )
+            if authenticated and ctx and ctx.oauth and _status_code(response) == 401:
+                ctx = _refresh_oauth_context_once(ctx)
+                response = _send_request(
+                    client,
+                    method,
+                    url,
+                    headers=dict(ctx.headers),
+                    json=json,
+                    timeout=_httpx_timeout(timeout),
+                    follow_redirects=follow_redirects,
+                )
+        except httpx.TimeoutException as exc:
+            raise XAIMediaError(
+                f"{xai_media_label(provider)} media request timed out; no provider result was received, "
+                "so completion is unknown. The request was not retried.",
+                provider_id=provider,
+                kind="timeout",
+            ) from exc
         _raise_for_media_status(provider, response)
         return response
     finally:
@@ -269,7 +284,7 @@ def _send_request(
     *,
     headers: dict[str, str],
     json: dict[str, Any] | None,
-    timeout: float,
+    timeout: Any,
     follow_redirects: bool,
 ) -> Any:
     kwargs: dict[str, Any] = {
@@ -290,7 +305,18 @@ def _send_request(
 def _new_http_client(timeout: float) -> Any:
     import httpx
 
-    return httpx.Client(timeout=timeout)
+    return httpx.Client(timeout=_httpx_timeout(timeout))
+
+
+def _httpx_timeout(read_timeout: float) -> Any:
+    import httpx
+
+    return httpx.Timeout(
+        connect=XAI_MEDIA_CONNECT_TIMEOUT,
+        read=float(read_timeout),
+        write=XAI_MEDIA_WRITE_TIMEOUT,
+        pool=XAI_MEDIA_POOL_TIMEOUT,
+    )
 
 
 def _request_url(base_url: str, path_or_url: str) -> str:

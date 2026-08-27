@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -103,14 +105,6 @@ _QUALITY_TO_RESOLUTION: dict[str, str | None] = {
     "medium": "1K",
     "high": "2K",
     "auto": None,   # let model default
-}
-
-# xAI quality → resolution mapping (only "1k" and "2k" supported)
-_XAI_QUALITY_TO_RESOLUTION: dict[str, str | None] = {
-    "low": "1k",
-    "medium": "1k",
-    "high": "2k",
-    "auto": None,
 }
 
 # Imagen 4 aspect ratios (subset supported by the API)
@@ -290,6 +284,108 @@ def _detect_mime(data: bytes) -> str:
     return "image/png"
 
 
+@dataclass(frozen=True)
+class _XAIImageRequestPlan:
+    quality: str | None = None
+    resolution: str | None = None
+    note: str = ""
+
+
+_XAI_QUALITY_RANK = {"low": 0, "medium": 1, "high": 2}
+_XAI_RESOLUTION_RANK = {"1k": 0, "2k": 1}
+
+
+def _plan_xai_image_request(
+    provider_id: str,
+    model: str,
+    requested_quality: str,
+) -> _XAIImageRequestPlan:
+    from row_bot.providers.capability_resolution import resolve_capability_snapshot
+
+    requested = str(requested_quality or "auto").strip().lower()
+    snapshot = resolve_capability_snapshot(
+        provider_id,
+        model,
+        include_static_fallback=False,
+    )
+    generation_parameters = snapshot.get("generation_parameters")
+    selected: tuple[str, str] | None = None
+    if requested != "auto" and isinstance(generation_parameters, Mapping):
+        options = generation_parameters.get("options")
+        defaults = generation_parameters.get("defaults")
+        raw_combinations = generation_parameters.get("valid_combinations")
+        if isinstance(options, Mapping) and isinstance(defaults, Mapping) and isinstance(raw_combinations, list):
+            qualities = _xai_parameter_options(options.get("quality"))
+            resolutions = _xai_parameter_options(options.get("resolution"))
+            combinations: list[tuple[str, str]] = []
+            for combination in raw_combinations:
+                if not isinstance(combination, Mapping):
+                    continue
+                quality = str(combination.get("quality") or "").strip().lower()
+                resolution = str(combination.get("resolution") or "").strip().lower()
+                pair = (quality, resolution)
+                if quality in qualities and resolution in resolutions and pair not in combinations:
+                    combinations.append(pair)
+            default_pair = (
+                str(defaults.get("quality") or "").strip().lower(),
+                str(defaults.get("resolution") or "").strip().lower(),
+            )
+            if default_pair in combinations:
+                if requested == "high":
+                    ranked = [
+                        pair for pair in combinations
+                        if pair[0] in _XAI_QUALITY_RANK and pair[1] in _XAI_RESOLUTION_RANK
+                    ]
+                    if ranked:
+                        selected = max(
+                            ranked,
+                            key=lambda pair: (_XAI_QUALITY_RANK[pair[0]], _XAI_RESOLUTION_RANK[pair[1]]),
+                        )
+                else:
+                    matching = [
+                        pair for pair in combinations
+                        if pair[0] == requested and pair[1] in _XAI_RESOLUTION_RANK
+                    ]
+                    if matching:
+                        selected = next(
+                            (pair for pair in matching if pair[1] == default_pair[1]),
+                            min(matching, key=lambda pair: _XAI_RESOLUTION_RANK[pair[1]]),
+                        )
+
+    if selected:
+        note = ""
+        if selected[0] != requested:
+            note = (
+                f"Requested quality {requested}; used xAI's highest supported tier "
+                f"{selected[0]}/{selected[1]}."
+            )
+        plan = _XAIImageRequestPlan(quality=selected[0], resolution=selected[1], note=note)
+        effective = f"{selected[0]}/{selected[1]}"
+    else:
+        note = ""
+        if requested != "auto":
+            note = (
+                f"Requested quality {requested}; used xAI provider defaults because the selected model "
+                "did not publish a complete matching tier."
+            )
+        plan = _XAIImageRequestPlan(note=note)
+        effective = "provider defaults"
+    logger.info(
+        "xAI image parameters: provider=%s model=%s requested_quality=%s effective=%s",
+        provider_id,
+        model,
+        requested,
+        effective,
+    )
+    return plan
+
+
+def _xai_parameter_options(value: Any) -> set[str]:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return set()
+    return {str(item).strip().lower() for item in value if str(item).strip()}
+
+
 def _resolve_image_source(image_source: str) -> bytes:
     """Resolve an image_source string to raw bytes.
 
@@ -417,7 +513,12 @@ def _generate_image(
     # xAI does NOT support 'size' or 'style'. Uses 'aspect_ratio' & 'resolution'.
     # These are xAI-specific params so must go via extra_body.
     if provider_id in {"xai", "xai_oauth"}:
-        from row_bot.providers.xai_media import xai_media_get, xai_media_json_request
+        from row_bot.providers.xai_media import (
+            XAI_IMAGE_GENERATION_READ_TIMEOUT,
+            XAI_MEDIA_DOWNLOAD_READ_TIMEOUT,
+            xai_media_get,
+            xai_media_json_request,
+        )
 
         aspect = _OPENAI_SIZE_TO_ASPECT.get(size, "1:1") if size != "auto" else "auto"
         body: dict = {
@@ -428,11 +529,11 @@ def _generate_image(
         }
         if aspect != "auto":
             body["aspect_ratio"] = aspect
-        res = _XAI_QUALITY_TO_RESOLUTION.get(quality)
-        if res:
-            body["resolution"] = res
-        if quality != "auto":
-            body["quality"] = quality
+        plan = _plan_xai_image_request(provider_id, model, quality)
+        if plan.quality:
+            body["quality"] = plan.quality
+        if plan.resolution:
+            body["resolution"] = plan.resolution
 
         try:
             data = xai_media_json_request(
@@ -440,7 +541,7 @@ def _generate_image(
                 "POST",
                 "/images/generations",
                 json=body,
-                timeout=120,
+                timeout=XAI_IMAGE_GENERATION_READ_TIMEOUT,
             )
         except Exception as e:
             logger.error("Image generation failed: %s", e, exc_info=True)
@@ -454,7 +555,12 @@ def _generate_image(
             b64_str = str(image_data["b64_json"])
         elif image_data.get("url"):
             try:
-                resp = xai_media_get(provider_id, str(image_data["url"]), timeout=120, follow_redirects=True)
+                resp = xai_media_get(
+                    provider_id,
+                    str(image_data["url"]),
+                    timeout=XAI_MEDIA_DOWNLOAD_READ_TIMEOUT,
+                    follow_redirects=True,
+                )
                 b64_str = base64.b64encode(resp.content).decode("ascii")
             except Exception as e:
                 logger.error("Image download failed: %s", e, exc_info=True)
@@ -472,6 +578,8 @@ def _generate_image(
         )
         if saved:
             result += f"\nSaved to: {saved}"
+        if plan.note:
+            result += f"\n{plan.note}"
         return result
 
     # ── OpenAI provider ──────────────────────────────────────────────────
@@ -589,7 +697,12 @@ def _edit_image(
 
     # ── xAI provider — uses JSON body with image URL, not multipart ─────
     if provider_id in {"xai", "xai_oauth"}:
-        from row_bot.providers.xai_media import xai_media_get, xai_media_json_request
+        from row_bot.providers.xai_media import (
+            XAI_IMAGE_GENERATION_READ_TIMEOUT,
+            XAI_MEDIA_DOWNLOAD_READ_TIMEOUT,
+            xai_media_get,
+            xai_media_json_request,
+        )
 
         b64_src = base64.b64encode(image_bytes).decode("ascii")
         mime = _detect_mime(image_bytes)
@@ -605,11 +718,11 @@ def _edit_image(
         aspect = _OPENAI_SIZE_TO_ASPECT.get(size, None) if size != "auto" else None
         if aspect:
             body["aspect_ratio"] = aspect
-        if quality != "auto":
-            body["quality"] = quality
-        res = _XAI_QUALITY_TO_RESOLUTION.get(quality)
-        if res:
-            body["resolution"] = res
+        plan = _plan_xai_image_request(provider_id, model, quality)
+        if plan.quality:
+            body["quality"] = plan.quality
+        if plan.resolution:
+            body["resolution"] = plan.resolution
 
         try:
             data = xai_media_json_request(
@@ -617,7 +730,7 @@ def _edit_image(
                 "POST",
                 "/images/edits",
                 json=body,
-                timeout=120,
+                timeout=XAI_IMAGE_GENERATION_READ_TIMEOUT,
             )
         except Exception as e:
             logger.error("Image edit failed: %s", e, exc_info=True)
@@ -630,7 +743,12 @@ def _edit_image(
         b64_str = item.get("b64_json") or ""
         if not b64_str and item.get("url"):
             try:
-                resp = xai_media_get(provider_id, str(item["url"]), timeout=120, follow_redirects=True)
+                resp = xai_media_get(
+                    provider_id,
+                    str(item["url"]),
+                    timeout=XAI_MEDIA_DOWNLOAD_READ_TIMEOUT,
+                    follow_redirects=True,
+                )
                 b64_str = base64.b64encode(resp.content).decode("ascii")
             except Exception as e:
                 logger.error("Image edit download failed: %s", e, exc_info=True)
@@ -647,6 +765,8 @@ def _edit_image(
         )
         if saved:
             result += f"\nSaved to: {saved}"
+        if plan.note:
+            result += f"\n{plan.note}"
         return result
 
     # ── OpenAI provider ──────────────────────────────────────────────────
