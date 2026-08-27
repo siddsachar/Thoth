@@ -43,6 +43,12 @@ _SAFE_DRIVER_ERROR_CLASSES = frozenset(
     }
 )
 
+_STALE_RECOVERY = (
+    "Capture the exact same target once, then retry the same exact action once. "
+    "If stale repeats, stop and report the limitation or ask the user to Take over. "
+    "Do not switch action family or delivery engine."
+)
+
 
 class ComputerUseInput(BaseModel):
     """Flat schema kept compatible with Row-Bot's provider adapters."""
@@ -170,7 +176,9 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
         }
         remediation = {
             "ambiguous_target": (
-                "Use one of the returned current tokens or revise the exact filter against this current capture."
+                "Use one of the returned current tokens on the next action without another "
+                "capture; each is current only for the present observation/lease. Otherwise "
+                "revise the exact filter against this same current capture."
                 if semantic_ambiguity
                 else "Select one opaque target_id from the returned candidates, then capture it."
             ),
@@ -178,7 +186,7 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
             "app_not_running": "Use one approval-gated launch_app call with the exact reviewed app name only if opening it was requested. Do not repeat the identical capture.",
             "semantic_no_match": "Revise the exact filter or use a current token from this current unfiltered capture; do not rediscover the app or window.",
             "parallel_calls_not_supported": "Issue one Computer Use call at a time on a later turn.",
-            "stale_observation": "Capture the exact same target once before retrying.",
+            "stale_observation": _STALE_RECOVERY,
             "target_gone": "Begin from current generation list_apps/list_windows discovery or an app-scoped capture; the prior target may be gone or lease-expired.",
             "window_not_found": "Do not repeat the identical acquisition. Use a new user-provided exact window hint only after state changes, or report that no admissible window exists.",
             "native_capture_failed": "Do not repeat the identical capture or infer elevation or protection. Run Computer Use diagnostics or ask the user to Take over.",
@@ -287,7 +295,7 @@ def _computer_error_payload(action: str, exc: ComputerUseError) -> str:
         return _error_payload(
             "stale_observation",
             "The Computer observation became stale before the action completed.",
-            remediation="Capture the same target again before retrying.",
+            remediation=_STALE_RECOVERY,
             retryable=True,
         )
     if "paused for user takeover" in lowered or "paused computer session" in lowered:

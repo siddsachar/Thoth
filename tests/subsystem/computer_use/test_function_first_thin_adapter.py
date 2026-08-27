@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 
 import pytest
 
 from row_bot.computer_use.client import CuaClient
 from row_bot.computer_use.policy import PolicyOutcome, classify_action
 from row_bot.computer_use.service import (
+    MODEL_MAX_ELEMENTS,
     ActionReceipt,
     ComputerUseError,
     ComputerUseService,
+    LeaseBusyError,
     LeaseOwner,
     Observation,
 )
@@ -75,6 +78,75 @@ def _mutation_calls(transport: FakeCuaTransport) -> list[tuple[str, dict[str, ob
             "type_text",
         }
     ]
+
+
+def _large_exact_ambiguity() -> tuple[
+    tuple[dict[str, object], ...],
+    tuple[str, ...],
+]:
+    private_values = tuple(
+        f"synthetic-private-value-{index:03d}"
+        for index in range(MODEL_MAX_ELEMENTS + 10)
+    )
+    projected = tuple(
+        {
+            "role": "Button",
+            "label": f"Projected action {index:03d}",
+            "value": private_values[index],
+            "visible": True,
+            "enabled": True,
+        }
+        for index in range(MODEL_MAX_ELEMENTS)
+    )
+    exact_matches = tuple(
+        {
+            "role": "Button",
+            "label": "Duplicate transport action",
+            "value": private_values[MODEL_MAX_ELEMENTS + index],
+            "visible": True,
+            "selected": False,
+            "checked": False,
+            "expanded": False,
+            "pressed": False,
+            "enabled": True,
+        }
+        for index in range(9)
+    )
+    unrelated = (
+        {
+            "role": "Text",
+            "label": "Unrelated status",
+            "value": private_values[-1],
+            "visible": True,
+        },
+    )
+    return projected + exact_matches + unrelated, private_values
+
+
+def _capture_large_exact_ambiguity(
+    service: ComputerUseService,
+    transport: FakeCuaTransport,
+) -> tuple[ComputerUseError, tuple[str, ...]]:
+    elements, private_values = _large_exact_ambiguity()
+    transport.scenario.apps = (
+        {"name": "Control Studio.exe", "pid": 7001, "running": True, "active": True},
+    )
+    transport.scenario.windows = (_window(1, app="Control Studio.exe"),)
+    transport.scenario.capture_pid = 7001
+    transport.scenario.capture_window_id = 1
+    transport.scenario.semantic_elements = elements
+    transport.scenario.rotate_element_tokens = True
+
+    try:
+        service.capture(
+            owner=OWNER,
+            app="Control Studio",
+            semantic_label="Duplicate transport action",
+            semantic_role="Button",
+        )
+    except ComputerUseError as exc:
+        return exc, private_values
+    raise AssertionError("Expected a bounded exact semantic ambiguity")
 
 
 def test_friendly_name_resolves_single_active_matching_window_in_one_capture_call(
@@ -658,6 +730,162 @@ def test_large_tree_semantic_filter_refuses_multiple_exact_matches(
     ]
 
 
+@pytest.mark.parametrize("candidate_index", range(8))
+def test_each_returned_large_tree_ambiguity_candidate_is_current_and_actionable(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+    caplog: pytest.LogCaptureFixture,
+    candidate_index: int,
+) -> None:
+    ambiguous, private_values = _capture_large_exact_ambiguity(
+        service,
+        fake_transport,
+    )
+
+    assert ambiguous.code == "ambiguous_target"
+    fresh = ambiguous.observation
+    assert fresh is not None
+    assert service.current_observation(fresh.target.target_id) is fresh
+    controls = tuple(ambiguous.candidates)
+    assert len(controls) == 8
+    assert all(
+        set(control)
+        == {
+            "token",
+            "label",
+            "role",
+            "selected",
+            "checked",
+            "expanded",
+            "pressed",
+            "enabled",
+        }
+        for control in controls
+    )
+    assert all(control["label"] == "Duplicate transport action" for control in controls)
+    assert all(control["role"] == "Button" for control in controls)
+    assert all("value" not in control for control in controls)
+    projected, omitted = fresh.model_elements()
+    assert len(projected) == MODEL_MAX_ELEMENTS
+    assert omitted == len(fresh.elements) - MODEL_MAX_ELEMENTS
+    payload = _computer_error_payload("capture", ambiguous)
+    privacy_surface = "\n".join(
+        (
+            fresh.model_text(),
+            payload,
+            "\n".join(record.getMessage() for record in caplog.records),
+        )
+    )
+    assert sum(value in privacy_surface for value in private_values) == 0
+
+    token = str(controls[candidate_index]["token"])
+    calls_before = len(fake_transport.calls)
+    receipt = service.act(
+        "click",
+        fresh.target.target_id,
+        OWNER,
+        element_token=token,
+    )
+
+    assert receipt.action_dispatched is True
+    assert fake_transport.calls[calls_before:] == [
+        (
+            "click",
+            {
+                "pid": 7001,
+                "window_id": 1,
+                "element_token": token,
+                "session": "row-bot-test-session",
+            },
+        )
+    ]
+
+
+def test_unreturned_ninth_large_tree_ambiguity_candidate_remains_local_only(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+) -> None:
+    ambiguous, _private_values = _capture_large_exact_ambiguity(
+        service,
+        fake_transport,
+    )
+    fresh = ambiguous.observation
+    assert fresh is not None
+    returned_tokens = {
+        str(candidate["token"])
+        for candidate in ambiguous.candidates
+    }
+    ninth_token = fresh.elements[MODEL_MAX_ELEMENTS + 8].token
+    assert ninth_token not in returned_tokens
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(ComputerUseError) as stale:
+        service.act(
+            "click",
+            fresh.target.target_id,
+            OWNER,
+            element_token=ninth_token,
+        )
+
+    assert stale.value.code == "stale_observation"
+    assert fake_transport.calls[calls_before:] == []
+
+
+def test_new_capture_invalidates_a_previously_returned_ambiguity_candidate(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+) -> None:
+    ambiguous, _private_values = _capture_large_exact_ambiguity(
+        service,
+        fake_transport,
+    )
+    prior = ambiguous.observation
+    assert prior is not None
+    prior_token = str(ambiguous.candidates[0]["token"])
+
+    current = service.capture(prior.target.target_id, OWNER)
+    assert current is not prior
+    assert current.generation == prior.generation + 1
+    assert prior_token not in {element.token for element in current.elements}
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(ComputerUseError) as stale:
+        service.act(
+            "click",
+            current.target.target_id,
+            OWNER,
+            element_token=prior_token,
+        )
+
+    assert stale.value.code == "stale_observation"
+    assert fake_transport.calls[calls_before:] == []
+
+
+def test_returned_ambiguity_candidate_requires_the_same_active_lease(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+) -> None:
+    ambiguous, _private_values = _capture_large_exact_ambiguity(
+        service,
+        fake_transport,
+    )
+    fresh = ambiguous.observation
+    assert fresh is not None
+    token = str(ambiguous.candidates[0]["token"])
+    other_owner = LeaseOwner("other-thread", "other-generation", "other-task")
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(LeaseBusyError):
+        service.act(
+            "click",
+            fresh.target.target_id,
+            other_owner,
+            element_token=token,
+        )
+
+    assert fake_transport.calls[calls_before:] == []
+
+
 def test_semantic_filter_no_match_keeps_fresh_unfiltered_capture_current(
     service: ComputerUseService,
     fake_transport: FakeCuaTransport,
@@ -777,6 +1005,53 @@ def test_background_key_refusal_permits_exactly_one_same_action_foreground_retry
     assert all(name not in {"bring_to_front", "click", "get_window_state"} for name, _args in calls)
 
 
+def test_background_scroll_refusal_permits_one_identical_foreground_delivery(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+) -> None:
+    fake_transport.scenario.background_unavailable_tools = frozenset({"scroll"})
+    target_id, _observed = _capture_generic(
+        service,
+        fake_transport,
+        ({"role": "Button", "label": "Current action"},),
+    )
+    calls_before = len(fake_transport.calls)
+
+    receipt = service.act(
+        "scroll",
+        target_id,
+        OWNER,
+        direction="up",
+        amount=200,
+        approval_mode="allow_all",
+    )
+
+    assert receipt.action_dispatched is True
+    assert fake_transport.calls[calls_before:] == [
+        (
+            "scroll",
+            {
+                "pid": 7001,
+                "window_id": 1,
+                "direction": "up",
+                "amount": 20,
+                "session": "row-bot-test-session",
+            },
+        ),
+        (
+            "scroll",
+            {
+                "pid": 7001,
+                "window_id": 1,
+                "direction": "up",
+                "amount": 20,
+                "delivery_mode": "foreground",
+                "session": "row-bot-test-session",
+            },
+        ),
+    ]
+
+
 def test_calculator_key_sequence_uses_one_foreground_retry_without_preparation(
     service: ComputerUseService,
     fake_transport: FakeCuaTransport,
@@ -829,6 +1104,49 @@ def test_second_foreground_key_refusal_is_terminal_and_requires_takeover(
     assert refused.value.code == "background_unavailable"
     assert refused.value.terminal is True
     payload = __import__("json").loads(_computer_error_payload("key", refused.value))
+    assert payload["terminal"] is True
+    assert "take over" in payload["remediation"].casefold()
+
+
+def test_second_foreground_scroll_refusal_is_terminal_and_requires_takeover(
+    service: ComputerUseService,
+    fake_transport: FakeCuaTransport,
+) -> None:
+    fake_transport.scenario.background_unavailable_tools = frozenset({"scroll"})
+    fake_transport.scenario.foreground_error_code = "foreground_required"
+    target_id, _observed = _capture_generic(
+        service,
+        fake_transport,
+        ({"role": "Button", "label": "Current action"},),
+    )
+    calls_before = len(fake_transport.calls)
+
+    with pytest.raises(ComputerUseError) as refused:
+        service.act(
+            "scroll",
+            target_id,
+            OWNER,
+            direction="down",
+            amount=3,
+            approval_mode="allow_all",
+        )
+
+    calls = fake_transport.calls[calls_before:]
+    assert [name for name, _args in calls] == ["scroll", "scroll"]
+    assert calls[0][1] == {
+        "pid": 7001,
+        "window_id": 1,
+        "direction": "down",
+        "amount": 3,
+        "session": "row-bot-test-session",
+    }
+    assert calls[1][1] == {
+        **calls[0][1],
+        "delivery_mode": "foreground",
+    }
+    assert refused.value.code == "background_unavailable"
+    assert refused.value.terminal is True
+    payload = json.loads(_computer_error_payload("scroll", refused.value))
     assert payload["terminal"] is True
     assert "take over" in payload["remediation"].casefold()
 

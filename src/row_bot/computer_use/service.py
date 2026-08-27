@@ -443,6 +443,7 @@ class Observation:
     vision_deferred: bool = False
     status: ObservationStatus | None = None
     semantic_filter: tuple[CuaElement, ...] | None = field(repr=False, default=None)
+    exposed_candidate_tokens: tuple[str, ...] = field(repr=False, default=())
     created_at: float = field(default_factory=time.monotonic)
 
     def model_elements(self) -> tuple[tuple[CuaElement, ...], int]:
@@ -523,7 +524,9 @@ class Observation:
 
     def model_token_set(self) -> frozenset[str]:
         projected, _omitted = self.model_elements()
-        return frozenset(element.token for element in projected)
+        return frozenset(element.token for element in projected).union(
+            self.exposed_candidate_tokens
+        )
 
     def model_text(self) -> str:
         scale_label = (
@@ -2475,6 +2478,10 @@ class ComputerUseService:
             )
         )
         if len(matches) != 1:
+            exposed_matches = matches[:8] if len(matches) > 1 else ()
+            observation.exposed_candidate_tokens = tuple(
+                str(element.token) for element in exposed_matches
+            )
             controls = tuple(
                 {
                     "token": str(element.token),
@@ -2506,7 +2513,7 @@ class ComputerUseService:
                         else {}
                     ),
                 }
-                for element in matches[:8]
+                for element in exposed_matches
             )
             raise ComputerUseError(
                 "Semantic capture filter matched multiple controls."
@@ -3241,7 +3248,7 @@ class ComputerUseService:
             result = dispatch(args)
             retried_in_foreground = False
             if (
-                action in {"type", "key"}
+                action in {"type", "key", "scroll"}
                 and result.is_error
                 and result.error_code
                 in {"background_unavailable", "foreground_required"}

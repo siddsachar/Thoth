@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import concurrent.futures
 import threading
 
-from row_bot.computer_use.service import LeaseOwner
+import pytest
+
+from row_bot.computer_use.service import LeaseBusyError, LeaseOwner
 
 
 OWNER = LeaseOwner("cancel-thread", "cancel-generation", "cancel-task")
@@ -96,3 +99,87 @@ def test_stop_during_one_text_foreground_attempt_prevents_capture_or_further_inp
     assert "delivery_mode" not in type_calls[0]
     assert type_calls[1]["delivery_mode"] == "foreground"
     assert [name for name, _args in fake_transport.calls].count("get_window_state") == captures_before
+
+
+def test_cancellation_after_background_scroll_refusal_prevents_foreground_delivery(
+    service,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    service.capture(target_id, OWNER)
+    fake_transport.scenario.background_unavailable_tools = frozenset({"scroll"})
+    calls_before = len(fake_transport.calls)
+    require_owner = service._require_existing_owner
+
+    def cancel_before_foreground(owner=None):
+        service._cancel.set()
+        return require_owner(owner)
+
+    monkeypatch.setattr(service, "_require_existing_owner", cancel_before_foreground)
+
+    with pytest.raises(concurrent.futures.CancelledError):
+        service.act(
+            "scroll",
+            target_id,
+            OWNER,
+            direction="down",
+            amount=2,
+        )
+
+    assert fake_transport.calls[calls_before:] == [
+        (
+            "scroll",
+            {
+                "pid": 4242,
+                "window_id": 101,
+                "direction": "down",
+                "amount": 2,
+                "session": "row-bot-test-session",
+            },
+        )
+    ]
+
+
+def test_owner_loss_after_background_scroll_refusal_prevents_foreground_delivery(
+    service,
+    fake_transport,
+    monkeypatch,
+) -> None:
+    service.acquire(OWNER, validate_context=False)
+    target_id = service.list_windows(OWNER, app="Calculator")[0]["target_id"]
+    service.capture(target_id, OWNER)
+    fake_transport.scenario.background_unavailable_tools = frozenset({"scroll"})
+    calls_before = len(fake_transport.calls)
+    require_owner = service._require_existing_owner
+    replacement = LeaseOwner("replacement-thread", "replacement-generation", "replacement-task")
+
+    def replace_owner_before_foreground(owner=None):
+        with service._lock:
+            service._owner = replacement
+        return require_owner(owner)
+
+    monkeypatch.setattr(service, "_require_existing_owner", replace_owner_before_foreground)
+
+    with pytest.raises(LeaseBusyError):
+        service.act(
+            "scroll",
+            target_id,
+            OWNER,
+            direction="up",
+            amount=4,
+        )
+
+    assert fake_transport.calls[calls_before:] == [
+        (
+            "scroll",
+            {
+                "pid": 4242,
+                "window_id": 101,
+                "direction": "up",
+                "amount": 4,
+                "session": "row-bot-test-session",
+            },
+        )
+    ]

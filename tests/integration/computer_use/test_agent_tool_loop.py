@@ -12,7 +12,12 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 
 from row_bot.computer_use.client import CuaClient
-from row_bot.computer_use.service import ComputerUseError, ComputerUseService, LeaseOwner
+from row_bot.computer_use.service import (
+    MODEL_MAX_ELEMENTS,
+    ComputerUseError,
+    ComputerUseService,
+    LeaseOwner,
+)
 from row_bot.tools import computer_use_tool
 from row_bot.tools.computer_use_tool import ComputerUseTool
 from tests.fixtures.fake_cua import (
@@ -754,6 +759,149 @@ def test_existing_edge_window_tool_loop_preserves_scope_approval_and_target(
     assert names.count("get_window_state") == 1
     assert names.count("scroll") == 1
     assert "launch_app" not in names
+
+
+def test_ambiguity_payload_says_returned_tokens_need_no_recapture(
+    tmp_path,
+    monkeypatch,
+    caplog,
+) -> None:
+    private_values = tuple(
+        f"synthetic-hidden-value-{index:03d}"
+        for index in range(MODEL_MAX_ELEMENTS + 9)
+    )
+    scenario = FakeScenario(
+        apps=({"name": "Control Studio", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 618,
+                "pid": 2618,
+                "app_name": "Control Studio",
+                "title": "Synthetic controls",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2618,
+        capture_window_id=618,
+        semantic_elements=tuple(
+            {
+                "role": "Button",
+                "label": f"Projected action {index:03d}",
+                "value": private_values[index],
+                "enabled": True,
+            }
+            for index in range(MODEL_MAX_ELEMENTS)
+        )
+        + tuple(
+            {
+                "role": "Button",
+                "label": "Duplicate current action",
+                "value": private_values[MODEL_MAX_ELEMENTS + index],
+                "enabled": True,
+            }
+            for index in range(9)
+        ),
+    )
+    _service, transport, _vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+
+    with caplog.at_level(logging.INFO, logger="row_bot.computer_use.service"):
+        ambiguous = json.loads(
+            tool.invoke(
+                {
+                    "action": "capture",
+                    "app": "Control Studio",
+                    "semantic_label": "Duplicate current action",
+                    "semantic_role": "Button",
+                }
+            )
+        )
+
+    assert ambiguous["error_code"] == "ambiguous_target"
+    assert ambiguous["capture_is_fresh"] is True
+    assert len(ambiguous["controls"]) == 8
+    assert all(set(control) == {"token", "label", "role", "enabled"} for control in ambiguous["controls"])
+    assert "without another capture" in ambiguous["remediation"].casefold()
+    assert "next action" in ambiguous["remediation"].casefold()
+    assert [name for name, _args in transport.calls].count("get_window_state") == 1
+    privacy_surface = json.dumps(ambiguous) + "\n" + "\n".join(
+        record.getMessage() for record in caplog.records
+    )
+    assert sum(value in privacy_surface for value in private_values) == 0
+
+
+def test_stale_recovery_keeps_one_retry_on_the_same_target_and_action(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    scenario = FakeScenario(
+        apps=({"name": "Control Studio", "running": True, "active": True},),
+        windows=(
+            {
+                "window_id": 619,
+                "pid": 2619,
+                "app_name": "Control Studio",
+                "title": "Synthetic controls",
+                "bounds": {"x": 0, "y": 0, "width": 900, "height": 700},
+                "is_on_screen": True,
+            },
+        ),
+        capture_pid=2619,
+        capture_window_id=619,
+        semantic_elements=(
+            {"role": "Button", "label": "Exact current action", "enabled": True},
+        ),
+        rotate_element_tokens=True,
+    )
+    _service, transport, _vision, tool = _native_browser_tool(
+        tmp_path,
+        monkeypatch,
+        scenario,
+    )
+    first = json.loads(tool.invoke({"action": "capture", "app": "Control Studio"}))
+    target_id = first["fresh_observation"].split("Target ID: ", 1)[1].splitlines()[0]
+    stale_token = first["fresh_observation"].split("token=", 1)[1].split(" ", 1)[0]
+    tool.invoke({"action": "capture", "target_id": target_id})
+    calls_before = len(transport.calls)
+
+    stale = json.loads(
+        tool.invoke(
+            {
+                "action": "click",
+                "target_id": target_id,
+                "element_token": stale_token,
+            }
+        )
+    )
+
+    assert stale["error_code"] == "stale_observation"
+    remediation = stale["remediation"].casefold()
+    assert "exact same target" in remediation
+    assert "same exact action" in remediation
+    assert "once" in remediation
+    assert "if stale repeats" in remediation
+    assert "stop" in remediation
+    assert "take over" in remediation
+    assert "switch action family" in remediation
+    assert "delivery engine" in remediation
+    assert all(
+        marker not in remediation
+        for marker in (
+            "focus",
+            "coordinate",
+            "global input",
+            "shell",
+            "clipboard",
+            "application api",
+            "managed browser",
+            "cdp",
+        )
+    )
+    assert transport.calls[calls_before:] == []
 
 
 def test_calculator_fast_path_needs_only_three_model_tool_calls(tmp_path, monkeypatch) -> None:

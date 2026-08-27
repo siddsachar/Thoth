@@ -345,6 +345,55 @@ def test_known_background_key_and_scroll_try_background_without_preemptive_focus
     ]
 
 
+def test_refused_background_scroll_adds_only_one_bounded_foreground_driver_call(
+    service,
+    fake_transport,
+) -> None:
+    target_id, _observation = _browser_target(service, fake_transport)
+    fake_transport.scenario.background_unavailable_tools = frozenset({"scroll"})
+    before = service.performance_snapshot()
+    calls_before = len(fake_transport.calls)
+
+    service.act(
+        "scroll",
+        target_id,
+        OWNER,
+        direction="down",
+        amount=200,
+        approval_mode="allow_all",
+    )
+
+    after = service.performance_snapshot()
+    calls = fake_transport.calls[calls_before:]
+    assert calls == [
+        (
+            "scroll",
+            {
+                "pid": 2501,
+                "window_id": 501,
+                "direction": "down",
+                "amount": 20,
+                "session": "row-bot-test-session",
+            },
+        ),
+        (
+            "scroll",
+            {
+                "pid": 2501,
+                "window_id": 501,
+                "direction": "down",
+                "amount": 20,
+                "delivery_mode": "foreground",
+                "session": "row-bot-test-session",
+            },
+        ),
+    ]
+    assert after["driver_calls"] - before["driver_calls"] == 2
+    assert after["pixel_captures"] == before["pixel_captures"]
+    assert after["semantic_refreshes"] == before["semantic_refreshes"]
+    assert after["vision_calls"] == before["vision_calls"]
+
+
 def test_tokens_omitted_from_the_model_projection_cannot_be_used(service, fake_transport) -> None:
     fake_transport.scenario.semantic_elements = tuple(
         {"role": "Button", "label": f"Action {index:03d}"}

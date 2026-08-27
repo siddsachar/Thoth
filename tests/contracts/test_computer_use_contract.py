@@ -258,6 +258,58 @@ def test_generation_lifetime_and_action_specific_recovery_are_explicit() -> None
     assert "window_not_found" in guide
 
 
+def test_candidate_and_stale_guide_recovery_remains_exact_bounded_and_same_family() -> None:
+    guide = (
+        Path(__file__).parents[2] / "tool_guides" / "computer_use_guide" / "SKILL.md"
+    ).read_text(encoding="utf-8").casefold()
+
+    assert "returned current token" in guide
+    assert "without another capture" in guide
+    assert "present observation/lease" in guide
+    assert "capture the exact same target once" in guide
+    assert "retry the same exact action once" in guide
+    assert "if stale repeats" in guide
+    assert "stop" in guide
+    assert "take over" in guide
+    assert "do not switch action family or delivery engine" in guide
+    assert "scroll" in guide
+    assert "pre-dispatch `background_unavailable` or `foreground_required`" in guide
+
+
+def test_stale_error_payload_bounds_recovery_to_one_same_action_retry() -> None:
+    payload = json.loads(
+        _computer_error_payload(
+            "click",
+            ComputerUseError(
+                "Element token was not present in the current observation.",
+                code="stale_observation",
+            ),
+        )
+    )
+
+    remediation = payload["remediation"].casefold()
+    assert "exact same target" in remediation
+    assert "same exact action" in remediation
+    assert "once" in remediation
+    assert "if stale repeats" in remediation
+    assert "stop" in remediation
+    assert "take over" in remediation
+    assert "do not switch action family or delivery engine" in remediation
+    assert all(
+        marker not in remediation
+        for marker in (
+            "focus",
+            "coordinate",
+            "global input",
+            "shell",
+            "clipboard",
+            "application api",
+            "managed browser",
+            "cdp",
+        )
+    )
+
+
 def test_expired_target_remediation_requires_current_generation_rediscovery() -> None:
     payload = json.loads(
         _computer_error_payload(
