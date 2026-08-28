@@ -21,7 +21,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="site.css?v=4.9.0-r1">
+    <link rel="stylesheet" href="site.css?v=4.9.1-r1">
 </head>
 <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -98,6 +98,7 @@
                         <article class="capability"><h3>Automatic parent-led orchestration</h3><p>Delegate required or background work with dependencies, duplicate-objective checks, multiple work waves, live joins, and visible capacity limits. The parent remains responsible for follow-up and the final response.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Approval aware</span></div></article>
                         <article class="capability"><h3>Checkpointed execution budgets</h3><p>Bound long-running Agent work with durable model-and-tool round counters, repeat-stall protection, exactly-once finalization, and configurable nesting, concurrency, and active-time limits. Extra child runs wait in a fair queue instead of bypassing capacity.</p><div class="tags"><span class="tag">Bounded execution</span><span class="tag">Durable</span></div></article>
                         <article class="capability"><h3>Durable joins and recovery</h3><p>An ordered inbox returns approvals, completions, retries, steering, and stop events to the parent. Checkpoints, leases, and finalization claims recover interrupted work without duplicate synthesis, delivery, or final answers.</p><div class="tags"><span class="tag">Parent linked</span><span class="tag">Exactly once</span></div></article>
+                        <article class="capability"><h3>Buddy desktop overlay</h3><p>Keep the selected Chat, Developer, or Designer thread in a compact always-available surface on Windows and macOS. Buddy shares the thread&rsquo;s draft, model, tools, approvals, and run state instead of creating a second conversation.</p><div class="tags"><span class="tag">Desktop</span><span class="tag">Shared context</span></div></article>
                     </div>
                 </section>
 
@@ -124,10 +125,10 @@
                     <div class="capability-grid">
                         <article class="capability"><h3>Search and research</h3><p>Search the web through configured services or DuckDuckGo, read URLs, query Wikipedia and arXiv, inspect YouTube content, work with local documents, and preserve useful findings in memory or the wiki vault.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Some online</span></div></article>
                         <article class="capability"><h3>Progressive external tools</h3><p>Keep core tools ready while deterministic local search finds enabled MCP, plugin, Custom Tool, and channel capabilities only when a request needs them. Auto mode binds the exact selected schema instead of unrelated catalogs; eager compatibility mode remains available without changing provider checks, profiles, approvals, budgets, or workspace policy.</p><div class="tags"><span class="tag">Auto by default</span><span class="tag">Policy preserving</span></div></article>
-                        <article class="capability"><h3>Files, shell, and browser</h3><p>Read and manage files, run approval-gated shell commands, automate browser sessions under Row-Bot&rsquo;s browser policy, inspect page state, redact sensitive tool output, and bring generated files back into a thread. Consequential navigation and browser takeover remain visible.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Approval gated</span></div></article>
-                        <article class="capability"><h3>Native Computer Use</h3><p>Opt into the Computer Use beta for Windows and macOS through a pinned, checksum-verified Cua Driver. Target-window capture, an exclusive interactive lease, point-of-risk approvals, blocked sensitive surfaces, ephemeral Vision fallback, and Stop/Take over/Resume controls constrain every session. The separately installed driver&rsquo;s consent-gated third-party telemetry is disclosed before enablement and is not a Row-Bot telemetry pipeline.</p><div class="tags"><span class="tag">Beta</span><span class="tag">Explicit install</span></div></article>
+                        <article class="capability"><h3>Files, shell, and managed browser</h3><p>Read and manage files, run approval-gated shell commands, and automate managed Chromium sessions under Row-Bot&rsquo;s browser policy. Snapshot-bound observations, sensitive-output redaction, visible consequential navigation, takeover controls, and action receipts keep browser work reviewable.</p><div class="tags"><span class="tag">Built in</span><span class="tag">Approval gated</span></div></article>
+                        <article class="capability"><h3>Native Computer Use</h3><p>Opt into the Computer Use beta for Windows and macOS through the pinned, checksum-verified Cua Driver 0.20.0. Target-window capture, semantic actions before coordinate fallback, action receipts, an exclusive interactive lease, point-of-risk approvals, blocked sensitive surfaces, ephemeral Vision fallback, and Stop/Take over/Resume controls constrain every session. The separately installed driver&rsquo;s consent-gated third-party telemetry is disclosed before enablement and is not a Row-Bot telemetry pipeline.</p><div class="tags"><span class="tag">Beta</span><span class="tag">Explicit install</span></div></article>
                         <article class="capability"><h3>Email and Calendar</h3><p>Use Gmail and Google Calendar with OAuth-backed tools for search, drafting, event lookup, typed mutations, and bulk creation. Calendar operations use request-scoped clients, safe concurrent refresh, retries, ordered writes, and timeout reconciliation.</p><div class="tags"><span class="tag">OAuth</span></div></article>
-                        <article class="capability"><h3>Analysis and output</h3><p>Calculate, query Wolfram Alpha, inspect weather, analyse images, search conversations, create charts, generate or edit images, and produce video through compatible provider models. Media choices remain scoped to the correct surface.</p><div class="tags"><span class="tag">Built in + providers</span></div></article>
+                        <article class="capability"><h3>Analysis and output</h3><p>Calculate, query Wolfram Alpha, inspect weather, analyse images, search conversations, create charts, generate or edit images, and produce video through compatible provider models. Media choices remain scoped to the correct surface, with xAI image options discovered from live model capability metadata.</p><div class="tags"><span class="tag">Built in + providers</span></div></article>
                     </div>
                 </section>
 
@@ -233,6 +234,7 @@
                         <article class="capability"><h3>Credential protection</h3><p>Use the operating-system credential store on desktop or an isolated encryption key with encrypted provider and channel records in server deployments. Read-only secret directories, safe fingerprints, and redacted status keep plaintext credentials out of application metadata and diagnostics.</p><div class="tags"><span class="tag">Encrypted at rest</span></div></article>
                         <article class="capability"><h3>Approval and risk policy</h3><p>Classify destructive, networked, private-data, metered, installation, Git, shell, browser, channel, and MCP actions conservatively. Approval cards show bounded reasons while retaining the original action payload for the decision.</p><div class="tags"><span class="tag">Reviewable</span></div></article>
                         <article class="capability"><h3>No hidden Row-Bot cloud</h3><p>Row-Bot has no required account, hosted sync service, or first-party telemetry pipeline. Optional providers, channels, tunnels, updates, search, and external tools remain individually visible choices. The opt-in Cua Driver has separately disclosed, consent-gated third-party telemetry; it is the reviewed exception, not Row-Bot telemetry.</p><div class="tags"><span class="tag">No first-party telemetry</span><span class="tag">Explicit services</span></div></article>
+                        <article class="capability"><h3>Conversation cleanup</h3><p>Select conversations with filter-aware bulk controls and remove them through one cleanup path. Active work is cancelled before deletion, while dirty Developer recovery state, workspaces, and Designer project ownership are preserved.</p><div class="tags"><span class="tag">Explicit action</span><span class="tag">Recovery aware</span></div></article>
                     </div>
                 </section>
 
@@ -267,7 +269,7 @@
 
     <footer class="site-footer">
         <div class="shell footer-grid">
-            <span>Row-Bot · v4.9.0 · Apache 2.0</span>
+            <span>Row-Bot · v4.9.1 · Apache 2.0</span>
             <div class="footer-links">
                 <a href="index.html">Home</a>
                 <a href="features.html" aria-current="page">Features</a>
@@ -282,6 +284,6 @@
         </div>
     </footer>
 
-    <script src="site.js?v=4.9.0" defer></script>
+    <script src="site.js?v=4.9.1" defer></script>
 </body>
 </html>
