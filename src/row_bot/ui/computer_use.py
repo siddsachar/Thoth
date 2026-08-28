@@ -205,15 +205,12 @@ def computer_use_settings_view(
             show_manage=has_runtime,
         )
     if code is ReadinessCode.DEGRADED:
-        needs_test = "calculator" in remediation or "test" in remediation
         needs_repair = "repair" in remediation or "reinstall" in remediation
         return ComputerUseSettingsView(
             "Finish setting up Computer Use",
             (
                 "Repair the managed macOS runtime inside Row-Bot before checking access again."
                 if needs_repair
-                else "Run a quick Calculator test to finish setup."
-                if needs_test
                 else "Check local access before using Computer Use."
             ),
             "build_circle",
@@ -221,11 +218,10 @@ def computer_use_settings_view(
             primary_action=(
                 "Repair Computer Use"
                 if needs_repair
-                else "Test Computer Use" if needs_test else "Check setup"
+                else "Check setup"
             ),
             needs_install=needs_repair,
             allow_check=True,
-            allow_test=needs_test,
             show_manage=has_runtime,
         )
     if code is ReadinessCode.READY:
@@ -234,7 +230,6 @@ def computer_use_settings_view(
             "Row-Bot can work with approved native apps in a task-scoped session.",
             "check_circle",
             "positive",
-            primary_action="Test Computer Use",
             allow_check=True,
             allow_test=True,
             show_manage=True,
@@ -447,13 +442,18 @@ def build_computer_use_settings_card(tool_registry: Any) -> None:
         try:
             await run.io_bound(service.acquire, owner, validate_context=False)
             service.grant_app_permission_for_local_ui(owner, "Calculator")
-            windows = await run.io_bound(service.launch_app, "Calculator", owner)
+            windows = await run.io_bound(
+                service.launch_app,
+                "Calculator",
+                owner,
+                approval_mode="allow_all",
+            )
             if not windows:
                 raise RuntimeError("Calculator launched but no target window was reported.")
             if service.current_observation(windows[0]["target_id"]) is None:
                 raise RuntimeError("Calculator opened, but Row-Bot could not verify its window.")
             mark_cua_observation_verified()
-            ui.notify("Computer Use is ready.", type="positive")
+            ui.notify("Computer Use test passed.", type="positive")
         except Exception as exc:
             ui.notify(str(exc), type="negative")
         finally:
@@ -464,7 +464,7 @@ def build_computer_use_settings_card(tool_registry: Any) -> None:
     uninstall_dialog = ui.dialog()
     with uninstall_dialog, ui.card().classes("q-pa-lg"):
         ui.label("Uninstall managed Cua Driver?").classes("text-h6")
-        ui.label("This removes only Row-Bot's private Cua runtime. Computer Use will be disabled until it is installed and tested again.").classes("text-sm")
+        ui.label("This removes only Row-Bot's private Cua runtime. Computer Use will be disabled until it is installed and checked again.").classes("text-sm")
         with ui.row().classes("w-full justify-end gap-2"):
             ui.button("Cancel", on_click=uninstall_dialog.close).props("flat no-caps")
             def _confirm_uninstall() -> None:
@@ -550,14 +550,6 @@ def build_computer_use_settings_card(tool_registry: Any) -> None:
                 ui.button(view.primary_action, icon="download", on_click=_install).props(
                     "unelevated dense no-caps color=primary"
                 )
-            elif not operation["value"] and view.primary_action == "Test Computer Use":
-                ui.button(view.primary_action, icon="calculate", on_click=_calculator_test).props(
-                    "unelevated dense no-caps color=primary"
-                )
-                if view.allow_check:
-                    ui.button("Check setup", icon="health_and_safety", on_click=_diagnostics).props(
-                        "flat dense no-caps"
-                    )
             elif not operation["value"] and view.primary_action == "Check setup":
                 ui.button(view.primary_action, icon="health_and_safety", on_click=_diagnostics).props(
                     "unelevated dense no-caps color=primary"
@@ -570,6 +562,16 @@ def build_computer_use_settings_card(tool_registry: Any) -> None:
                 ui.button("Recheck", icon="refresh", on_click=_diagnostics).props(
                     "unelevated dense no-caps color=primary"
                 )
+            elif not operation["value"] and view.allow_test:
+                ui.button(
+                    "Test with Calculator (optional)",
+                    icon="calculate",
+                    on_click=_calculator_test,
+                ).props("flat dense no-caps")
+                if view.allow_check:
+                    ui.button("Check setup", icon="health_and_safety", on_click=_diagnostics).props(
+                        "flat dense no-caps"
+                    )
 
         recovery_container.clear()
         if recovery is not None:

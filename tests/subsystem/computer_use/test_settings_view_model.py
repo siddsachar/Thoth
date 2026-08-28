@@ -36,19 +36,9 @@ from row_bot.ui.computer_use import (
             "Check setup",
         ),
         (
-            CuaReadiness(
-                ReadinessCode.DEGRADED,
-                "internal",
-                executable="cua.exe",
-                remediation="Test with Calculator.",
-            ),
-            "Finish setting up Computer Use",
-            "Test Computer Use",
-        ),
-        (
             CuaReadiness(ReadinessCode.READY, "internal", executable="cua.exe"),
             "Computer Use is ready",
-            "Test Computer Use",
+            "",
         ),
         (
             CuaReadiness(ReadinessCode.UNSUPPORTED, "internal"),

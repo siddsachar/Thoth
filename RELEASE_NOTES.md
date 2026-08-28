@@ -2,6 +2,44 @@
 
 ---
 
+## v4.9.1 - Optional Computer Use Verification & Calculator Reliability
+
+This patch release builds on v4.9.0 with a focused Computer Use setup fix. A
+successful Cua Driver integrity check and diagnostic run now establish
+readiness directly, while the visible Calculator launch remains available as
+an optional confidence check. This prevents a fresh Windows installation from
+being held in an incomplete setup state or raising `Called get_config outside
+of a runnable context` when the driver reports Calculator by its canonical
+Windows application name.
+
+- **Diagnostics-based readiness** - treats successful managed-runtime or
+  reviewed system-Cua diagnostics as the readiness boundary, without requiring
+  a separate application launch before Computer Use can be enabled.
+- **Optional Calculator verification** - keeps **Test with Calculator
+  (optional)** as a secondary settings action for users who want an additional
+  visible check, rather than presenting it as a setup or agent-use gate.
+- **Canonical Windows app handling** - runs the settings-owned Calculator probe
+  under its explicit local-UI approval path, so a returned `Windows Calculator`
+  identity cannot fall through to an agent-graph approval interrupt outside an
+  active runnable context.
+- **Clearer setup recovery** - keeps Check setup as the primary degraded-state
+  action and reports a successful optional probe as a test result without
+  changing the underlying diagnostic record.
+- **Regression and documentation coverage** - adds deterministic coverage for
+  managed and system-Cua readiness without an observation marker, canonical
+  Calculator identity handling, settings-state actions, and the regenerated
+  public reference/search artifacts.
+
+### Breaking Changes And Caveats
+
+- No application-data migration, public CLI change, Cua Driver upgrade, new
+  telemetry disclosure, or additional download is introduced by v4.9.1.
+- Computer Use remains beta, local-interactive-only, off by default, and gated
+  by the existing disclosure, reviewed runtime verification, diagnostics,
+  platform permissions, and task-scoped safety policy. The optional Calculator
+  probe does not replace an end-to-end task test on the applications a user
+  actually intends to automate.
+
 ## v4.9.0 - Native Computer Use, Desktop Buddy & Safe Conversation Cleanup
 
 This release builds on v4.8.0 with a rebuilt Browser and native Computer Use

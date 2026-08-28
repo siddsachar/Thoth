@@ -280,7 +280,7 @@ def test_mobile_screenshots_render_at_native_width() -> None:
     styles = (ROOT / "docs-site" / "src" / "css" / "custom.css").read_text(encoding="utf-8")
 
     assert "id.startsWith('mobile-')" in component
-    assert "const SCREENSHOT_REVISION = '4.9.0';" in component
+    assert "const SCREENSHOT_REVISION = '4.9.1';" in component
     assert ".png?v=${SCREENSHOT_REVISION}" in component
     assert "rowBotScreenshotMobile" in component
     assert "width={isMobile ? 390 : undefined}" in component
