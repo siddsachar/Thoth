@@ -1,5 +1,5 @@
 ; =============================================================================
-; Row-Bot v4.9.0 - Inno Setup Script
+; Row-Bot v4.9.1 - Inno Setup Script
 ; Self-contained installer: bundles embedded Python with all pip packages
 ; pre-installed.  No internet downloads at install time.
 ; =============================================================================
@@ -78,7 +78,7 @@
 #endif
 
 #define MyAppName      "Row-Bot"
-#define MyAppVersion   "4.9.0"
+#define MyAppVersion   "4.9.1"
 #define MyAppPublisher "Row-Bot"
 #define MyAppURL       "https://row-bot.ai"
 #define MyAppExeName   "launch_row_bot.vbs"

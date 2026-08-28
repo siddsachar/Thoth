@@ -40,7 +40,7 @@ manifest, and then runs the tarball's bundled `install.sh`. For a pinned
 version, pass it as an argument:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.9.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.9.1
 ```
 
 The bootstrapper installs published GitHub Release assets. It is not a way to
@@ -53,23 +53,23 @@ tarball instead of a native app bundle:
 
 ```bash
 ./installer/build_linux_app.sh
-./installer/build_linux_app.sh 4.9.0
+./installer/build_linux_app.sh 4.9.1
 ```
 
 From a source checkout, this root-level wrapper is also supported for support
 snippets and maintainer hotfixes:
 
 ```bash
-bash build_linux_app.sh 4.9.0
+bash build_linux_app.sh 4.9.1
 ```
 
 To test an unreleased Linux fix locally, build the tarball from the checkout and
 install the tarball it produced:
 
 ```bash
-bash installer/build_linux_app.sh 4.9.0
-tar -xzf dist/Row-Bot-4.9.0-Linux-*.tar.gz
-cd Row-Bot-4.9.0-Linux-*
+bash installer/build_linux_app.sh 4.9.1
+tar -xzf dist/Row-Bot-4.9.1-Linux-*.tar.gz
+cd Row-Bot-4.9.1-Linux-*
 ./install.sh
 ~/.local/bin/row-bot
 ```
@@ -165,7 +165,7 @@ The installer bundles the embedded Python runtime, pre-installed Python packages
 This will:
 1. Download Python 3.13 embeddable package (~15 MB)
 2. Download `get-pip.py` (~2.5 MB)
-3. Compile everything into `dist\Row-Bot-4.9.0-Windows-x64.exe`
+3. Compile everything into `dist\Row-Bot-4.9.1-Windows-x64.exe`
 
 ### Options
 
@@ -314,7 +314,7 @@ The app payload includes `pyproject.toml`, `uv.lock`, and generated `requirement
 
 ## End-User Experience
 
-1. Run `Row-Bot-4.9.0-Windows-x64.exe`
+1. Run `Row-Bot-4.9.1-Windows-x64.exe`
 2. Follow the wizard â€” the app payload is already bundled; optional model/runtime assets download only when a feature needs them
 3. Launch Row-Bot from Start Menu or Desktop shortcut
 4. The system tray icon appears; the app opens on the first available local port, normally `http://localhost:8080`

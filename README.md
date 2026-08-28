@@ -136,7 +136,7 @@ curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/i
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.9.0
+curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/installer/install-linux.sh | bash -s -- 4.9.1
 ```
 
 The installer downloads the release tarball, verifies its SHA256 from the GitHub release manifest, installs under `~/.local/share/row-bot`, creates `~/.local/bin/row-bot`, and stores user data in `~/.row-bot`. The default Linux build opens in your system browser. Native window and tray support are available when the required GTK, Qt, and AppIndicator libraries are installed.
@@ -166,7 +166,7 @@ arm64. From the repository root, pin the release and start the hardened
 loopback-only Compose profile:
 
 ```bash
-export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.9.0
+export ROW_BOT_IMAGE=ghcr.io/siddsachar/row-bot:4.9.1
 docker compose -f deploy/docker/compose.yaml up --detach
 docker compose -f deploy/docker/compose.yaml ps
 ```
@@ -754,7 +754,7 @@ Review the Docusaurus docs source and local preview instructions:
 | Browser Automation | Windows, macOS, or Linux desktop/source environment; Playwright 1.62.x; internet for an explicit managed Chromium install or repair unless a supported installed Chrome or Edge channel is selected. | The managed runtime must match Row-Bot's exact Playwright Chromium revision. Startup is read-only and never downloads it; Linux may require additional distribution packages. |
 | Computer Use beta | Windows 10/11 x86-64 or ARM64, or macOS 12+ on Intel/Apple Silicon; interactive local UI; internet for the explicit Cua Driver install or repair; Accessibility and Screen Recording permission on macOS. | Optional and off by default. Browser automation remains preferred for websites; Linux and unattended/background use are not supported. |
 | Developer Sandbox | Docker Desktop or a compatible Docker/Podman runtime. | Optional. Developer Studio also works with local execution in the selected repo. |
-| Docker / headless server | Docker Engine with Compose v2 on an amd64 or arm64 Linux host; enough persistent storage for `/data`, the encryption-key volume, documents, models, and backups. | Pin `ghcr.io/siddsachar/row-bot:4.9.0`, keep the default loopback publication, and use Tailscale or an operator-managed HTTPS proxy for remote reachability. |
+| Docker / headless server | Docker Engine with Compose v2 on an amd64 or arm64 Linux host; enough persistent storage for `/data`, the encryption-key volume, documents, models, and backups. | Pin `ghcr.io/siddsachar/row-bot:4.9.1`, keep the default loopback publication, and use Tailscale or an operator-managed HTTPS proxy for remote reachability. |
 | Public docs site | Node.js 20+ and npm. | Optional. Used only for local Docusaurus docs preview and generated-docs validation. |
 
 Your default Brain model is set by the setup wizard. If you choose the local path, Row-Bot uses one of the models already exposed by your local runtime; 14B-class models are recommended for stronger agent/tool behavior, while smaller 8B-class models are better for 8 GB machines. Hosted and custom endpoint setups can skip local model downloads entirely.
