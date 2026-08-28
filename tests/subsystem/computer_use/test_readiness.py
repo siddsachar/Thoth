@@ -84,6 +84,86 @@ def test_verified_system_override_must_match_exact_reviewed_version(tmp_path, mo
     assert readiness(enabled=True).code is ReadinessCode.DEGRADED
 
 
+def test_successful_system_diagnostics_do_not_require_calculator_test(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(readiness_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(readiness_module.platform, "machine", lambda: "AMD64")
+    binary = tmp_path / "cua-driver.exe"
+    binary.write_bytes(b"fake")
+    configure_system_cua(str(binary), enabled=True)
+    acknowledge_disclosure()
+
+    class _Completed:
+        returncode = 0
+        stdout = "cua-driver 0.20.0"
+        stderr = ""
+
+    monkeypatch.setattr(readiness_module.subprocess, "run", lambda *_args, **_kwargs: _Completed())
+    verify_system_cua()
+    readiness_module._set_readiness_marker("doctor_ok", True)
+
+    state = readiness(enabled=True)
+    settings = readiness_module._read_json(tmp_path / "computer_use_settings.json")
+    assert state.code is ReadinessCode.READY
+    assert "system_cua_observation_ok" not in settings
+
+
+def test_successful_managed_diagnostics_do_not_require_calculator_test(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(readiness_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(readiness_module.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(requirements, "RUNTIMES_DIR", tmp_path / "runtimes")
+    acknowledge_disclosure()
+    asset = readiness_module.selected_asset()
+    assert asset is not None
+    version_root = requirements.RUNTIMES_DIR / "cua-driver" / "0.20.0"
+    executable = version_root / "cua-driver.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"reviewed")
+    requirements._write_manifest(
+        "cua-driver",
+        {
+            "installed": True,
+            "version": "0.20.0",
+            "archive_sha256": asset["sha256"],
+            "root": str(version_root),
+            "executable_path": str(executable),
+            "source": "reviewed-pinned-archive",
+        },
+    )
+
+    class _HealthyDoctor:
+        def __init__(self, _executable, **_kwargs):
+            pass
+
+        def start(self):
+            return None
+
+        def call_internal(self, _name):
+            return SimpleNamespace(
+                structured={
+                    "schema_version": "1",
+                    "overall": "ok",
+                    "checks": [],
+                }
+            )
+
+        def close(self):
+            return None
+
+    import row_bot.computer_use.client as client_module
+
+    monkeypatch.setattr(client_module, "CuaClient", _HealthyDoctor)
+    result = readiness_module.run_cua_diagnostics()
+    stored = requirements._read_manifest("cua-driver")
+
+    assert result.code is ReadinessCode.READY
+    assert readiness(enabled=True).code is ReadinessCode.READY
+    assert stored["doctor_ok"] is True
+    assert "observation_ok" not in stored
+    assert "Calculator" not in result.message
+
+
 def test_failed_managed_doctor_rolls_back_to_retained_known_good(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(readiness_module.platform, "system", lambda: "Windows")

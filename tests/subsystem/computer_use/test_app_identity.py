@@ -639,6 +639,32 @@ def test_packaged_launch_uses_exact_inventory_name_under_local_ui_grant(
     assert approvals == []
 
 
+def test_optional_local_ui_test_accepts_canonical_calculator_name(
+    fake_client,
+    fake_transport,
+) -> None:
+    fake_transport.scenario.apps = (
+        {
+            "name": "Windows Calculator",
+            "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            "launch_path": "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+            "kind": "uwp",
+            "running": False,
+        },
+    )
+    service = ComputerUseService(client_factory=lambda: fake_client)
+    service.acquire(OWNER, validate_context=False)
+    service.grant_app_permission_for_local_ui(OWNER, "Calculator")
+
+    windows = service.launch_app(
+        "Calculator",
+        OWNER,
+        approval_mode="allow_all",
+    )
+
+    assert windows[0]["app"] == "Windows Calculator"
+
+
 def test_packaged_launch_accepts_one_exact_direct_inventory_aumid(
     fake_client,
     fake_transport,
