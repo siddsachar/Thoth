@@ -35,7 +35,7 @@ def test_active_session_and_settings_sources_expose_required_local_controls() ->
         "Computer Use is ready",
         "Install Computer Use",
         "Check setup",
-        "Test Computer Use",
+        "Test with Calculator (optional)",
         "Technical details",
         "Manage Computer Use",
         "Developer options",
@@ -44,6 +44,7 @@ def test_active_session_and_settings_sources_expose_required_local_controls() ->
         "macOS is blocking Computer Use",
     ):
         assert label in source
+    assert 'approval_mode="allow_all"' in source
     assert "Privacy_Accessibility" in source
     assert "Privacy_ScreenCapture" in source
     for label in (

@@ -231,8 +231,6 @@ def readiness(*, enabled: bool | None = None) -> CuaReadiness:
             return CuaReadiness(ReadinessCode.VERSION_MISMATCH, "System Cua must be verified against the reviewed version.", version=system_version, executable=executable, remediation="Run Verify system Cua after reviewing the telemetry warning.")
         if not settings.get("system_cua_doctor_ok"):
             return CuaReadiness(ReadinessCode.DEGRADED, "System Cua version is verified; run diagnostics before use.", version=system_version, executable=executable, hash_status="system-override", remediation="Run diagnostics.")
-        if not settings.get("system_cua_observation_ok"):
-            return CuaReadiness(ReadinessCode.DEGRADED, "Diagnostics passed; complete Test with Calculator before agent use.", version=system_version, executable=executable, hash_status="system-override", remediation="Test with Calculator.")
         return CuaReadiness(ReadinessCode.READY, "Approved system Cua is ready.", version=system_version, executable=executable, hash_status="system-override")
     if not installed or not executable:
         return CuaReadiness(ReadinessCode.NOT_INSTALLED, "Cua Driver is not installed.", version=str(manifest["version"]), remediation="Select Install Cua Driver.")
@@ -252,8 +250,6 @@ def readiness(*, enabled: bool | None = None) -> CuaReadiness:
         )
     if not installed.get("doctor_ok"):
         return CuaReadiness(ReadinessCode.DEGRADED, "Cua Driver integrity is verified; run diagnostics before use.", version=str(manifest["version"]), executable=executable, hash_status="verified", remediation="Run diagnostics.")
-    if not installed.get("observation_ok"):
-        return CuaReadiness(ReadinessCode.DEGRADED, "Diagnostics passed; complete Test with Calculator before agent use.", version=str(manifest["version"]), executable=executable, hash_status="verified", remediation="Test with Calculator.")
     return CuaReadiness(ReadinessCode.READY, "Cua Driver is ready for task-scoped Computer Use.", version=str(manifest["version"]), executable=executable, hash_status="verified")
 
 
@@ -366,7 +362,7 @@ def run_cua_diagnostics() -> CuaReadiness:
         if state.hash_status == "verified":
             finalize_pinned_archive_runtime(RUNTIME_ID)
         updated = readiness(enabled=True)
-        return CuaReadiness(updated.code, "Cua Driver diagnostics passed." + (" Complete Test with Calculator before agent use." if updated.code is not ReadinessCode.READY else ""), state.version, state.executable, state.hash_status, updated.remediation, report)
+        return CuaReadiness(updated.code, "Cua Driver diagnostics passed.", state.version, state.executable, state.hash_status, updated.remediation, report)
     failed = [check for check in report.get("checks") or [] if isinstance(check, dict) and check.get("status") == "fail"]
     permission = any(str(item.get("name") or "").startswith(("tcc_", "ax_", "screen_capture")) for item in failed)
     code = ReadinessCode.PERMISSION_MISSING if permission else ReadinessCode.DEGRADED if overall == "degraded" else ReadinessCode.FAILED
