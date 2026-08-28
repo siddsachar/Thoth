@@ -50,12 +50,23 @@ HAND_CURATED_MARKETING_FILES = (
     "Skills_System_Arch.png",
     "Workflows_Arch.png",
 )
+HAND_CURATED_PUBLISHED_FILES = (
+    "img/screenshots/real-ui/home-knowledge.png",
+)
 
 
 def _direct_child(root: Path, name: str) -> Path:
     resolved_root = root.resolve()
     target = (root / name).resolve()
     if target.parent != resolved_root:
+        raise ValueError(f"Refusing to operate outside {resolved_root}: {target}")
+    return target
+
+
+def _descendant(root: Path, relative_path: str) -> Path:
+    resolved_root = root.resolve()
+    target = (root / Path(*relative_path.split("/"))).resolve()
+    if resolved_root not in target.parents:
         raise ValueError(f"Refusing to operate outside {resolved_root}: {target}")
     return target
 
@@ -68,14 +79,23 @@ def _digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _directory_manifest(path: Path) -> dict[str, str]:
+def _directory_manifest(path: Path, *, excluded: frozenset[str] = frozenset()) -> dict[str, str]:
     if not path.is_dir():
         return {}
     return {
         item.relative_to(path).as_posix(): _digest(item)
         for item in sorted(path.rglob("*"))
-        if item.is_file()
+        if item.is_file() and item.relative_to(path).as_posix() not in excluded
     }
+
+
+def _curated_files_under(directory: str) -> frozenset[str]:
+    prefix = f"{directory}/"
+    return frozenset(
+        path.removeprefix(prefix)
+        for path in HAND_CURATED_PUBLISHED_FILES
+        if path.startswith(prefix)
+    )
 
 
 def _pagefind_shape(path: Path) -> dict[str, object]:
@@ -136,6 +156,9 @@ def validate_sources(build_dir: Path) -> list[str]:
     for name in OWNED_FILES:
         if not (build_dir / name).is_file():
             errors.append(f"Missing build file: {build_dir / name}")
+    for relative_path in HAND_CURATED_PUBLISHED_FILES:
+        if not _descendant(build_dir, relative_path).is_file():
+            errors.append(f"Missing hand-curated build file: {_descendant(build_dir, relative_path)}")
     return errors
 
 
@@ -148,13 +171,19 @@ def check_sync(build_dir: Path, publish_dir: Path) -> list[str]:
         if name == "pagefind":
             errors.extend(_check_pagefind(build_dir, publish_dir))
             continue
-        source = _directory_manifest(build_dir / name)
+        excluded = _curated_files_under(name)
+        source = _directory_manifest(build_dir / name, excluded=excluded)
         target_path = _direct_child(publish_dir, name)
-        target = _directory_manifest(target_path)
+        target = _directory_manifest(target_path, excluded=excluded)
         if not target_path.is_dir():
             errors.append(f"Missing published directory: {target_path}")
         elif source != target:
             errors.append(f"Published directory is stale: {target_path}")
+
+    for relative_path in HAND_CURATED_PUBLISHED_FILES:
+        target = _descendant(publish_dir, relative_path)
+        if not target.is_file():
+            errors.append(f"Missing hand-curated published file: {target}")
 
     for name in OWNED_FILES:
         source = build_dir / name
@@ -176,6 +205,11 @@ def sync(build_dir: Path, publish_dir: Path) -> None:
         raise FileNotFoundError("\n".join(errors))
 
     publish_dir.mkdir(parents=True, exist_ok=True)
+    preserved = {
+        relative_path: _descendant(publish_dir, relative_path).read_bytes()
+        for relative_path in HAND_CURATED_PUBLISHED_FILES
+        if _descendant(publish_dir, relative_path).is_file()
+    }
     for name in OWNED_DIRECTORIES:
         target = _direct_child(publish_dir, name)
         if target.exists():
@@ -183,6 +217,11 @@ def sync(build_dir: Path, publish_dir: Path) -> None:
                 raise ValueError(f"Expected a directory at {target}")
             shutil.rmtree(target)
         shutil.copytree(build_dir / name, target)
+
+    for relative_path, payload in preserved.items():
+        target = _descendant(publish_dir, relative_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
 
     for name in OWNED_FILES:
         shutil.copy2(build_dir / name, _direct_child(publish_dir, name))

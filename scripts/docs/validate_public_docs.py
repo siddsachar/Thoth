@@ -21,15 +21,22 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from scripts.docs.capture_real_ui_screenshots import DOM_ROOT, OUTPUT_ROOT, _validate_image
-from scripts.docs.collect_inventory import build_inventory
-from scripts.docs.generate_mdx import check_pages, render_pages
-from scripts.docs.schemas import public_route_for_doc
+from scripts.docs.capture_real_ui_screenshots import (  # noqa: E402
+    DOM_ROOT,
+    OUTPUT_ROOT,
+    SCREENSHOT_POLICY_FIELDS,
+    _apply_screenshot_policies,
+    _validate_image,
+)
+from scripts.docs.collect_inventory import build_inventory  # noqa: E402
+from scripts.docs.generate_mdx import check_pages, render_pages  # noqa: E402
+from scripts.docs.schemas import public_route_for_doc  # noqa: E402
 
 
 DOCS_SITE = ROOT / "docs-site"
 DOCS_ROOT = DOCS_SITE / "docs"
 METADATA_ROOT = ROOT / "docs-content" / "metadata"
+PUBLISHED_SCREENSHOT_ROOT = ROOT / "docs" / "img" / "screenshots" / "real-ui"
 
 SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
@@ -146,6 +153,7 @@ def _validate_required_files(errors: list[str]) -> None:
         METADATA_ROOT / "home_tabs.yml",
         METADATA_ROOT / "dialogs.yml",
         METADATA_ROOT / "screenshots.yml",
+        METADATA_ROOT / "screenshot_policies.yml",
         METADATA_ROOT / "how_to_guides.yml",
     ]
     for path in required_files:
@@ -166,6 +174,9 @@ def _validate_generated_pages(errors: list[str]) -> None:
 def _validate_metadata(errors: list[str]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     surfaces = _load_yaml(METADATA_ROOT / "ui_surfaces.yml").get("surfaces", {})
     screenshots = _load_yaml(METADATA_ROOT / "screenshots.yml").get("screenshots", {})
+    screenshot_policies = _load_yaml(
+        METADATA_ROOT / "screenshot_policies.yml"
+    ).get("screenshots", {})
     settings = _load_yaml(METADATA_ROOT / "settings.yml").get("tabs", {})
     home_tabs = _load_yaml(METADATA_ROOT / "home_tabs.yml").get("tabs", {})
     guides = _load_yaml(METADATA_ROOT / "how_to_guides.yml").get("guides", {})
@@ -201,6 +212,23 @@ def _validate_metadata(errors: list[str]) -> tuple[dict[str, Any], dict[str, Any
     if not isinstance(screenshots, dict):
         errors.append("screenshots.yml screenshots must be a mapping")
         screenshots = {}
+    if not isinstance(screenshot_policies, dict):
+        errors.append("screenshot_policies.yml screenshots must be a mapping")
+        screenshot_policies = {}
+    for screenshot_id, policy in screenshot_policies.items():
+        if screenshot_id not in screenshots:
+            errors.append(
+                f"Screenshot policy references unknown screenshot {screenshot_id}"
+            )
+        if not isinstance(policy, dict):
+            errors.append(f"Screenshot policy {screenshot_id} must be a mapping")
+            continue
+        unknown_fields = sorted(set(policy) - SCREENSHOT_POLICY_FIELDS)
+        if unknown_fields:
+            errors.append(
+                f"Screenshot policy {screenshot_id} has unknown fields: {unknown_fields}"
+            )
+    screenshots = _apply_screenshot_policies(screenshots, screenshot_policies)
     if not isinstance(settings, dict):
         errors.append("settings.yml tabs must be a mapping")
         settings = {}
@@ -290,6 +318,30 @@ def _validate_screenshots(errors: list[str], surfaces: dict[str, Any], screensho
         source = str(screenshot.get("source") or "")
         if source not in {"isolated-demo-data", "isolated-first-launch"}:
             errors.append(f"Screenshot {screenshot_id} source is invalid or missing")
+        capture_policy = str(screenshot.get("capture_policy") or "automated")
+        if capture_policy not in {"automated", "hand-curated"}:
+            errors.append(f"Screenshot {screenshot_id} capture_policy is invalid")
+        dimension_policy = str(screenshot.get("dimension_policy") or "viewport")
+        if dimension_policy not in {"viewport", "flexible"}:
+            errors.append(f"Screenshot {screenshot_id} dimension_policy is invalid")
+        curated_sha256 = str(screenshot.get("curated_sha256") or "").strip().lower()
+        if capture_policy == "hand-curated":
+            if dimension_policy != "flexible":
+                errors.append(
+                    f"Hand-curated screenshot {screenshot_id} must use flexible dimensions"
+                )
+            if not re.fullmatch(r"[0-9a-f]{64}", curated_sha256):
+                errors.append(
+                    f"Hand-curated screenshot {screenshot_id} must pin an approved SHA-256"
+                )
+        elif curated_sha256:
+            errors.append(
+                f"Automated screenshot {screenshot_id} cannot pin a curated SHA-256"
+            )
+        if dimension_policy == "flexible" and capture_policy != "hand-curated":
+            errors.append(
+                f"Flexible dimensions are reserved for hand-curated screenshot {screenshot_id}"
+            )
         if not isinstance(screenshot.get("public_asset"), bool):
             errors.append(f"Screenshot {screenshot_id} public_asset must be true or false")
         for required_key in ("title", "route", "capture_selector", "output", "docs_pages"):
@@ -313,6 +365,17 @@ def _validate_screenshots(errors: list[str], surfaces: dict[str, Any], screensho
                 errors.append(f"Deferred screenshot {screenshot_id} is referenced by user-facing docs")
             continue
         errors.extend(f"Screenshot {screenshot_id}: {error}" for error in _validate_image(output, {"id": screenshot_id, **screenshot}))
+        if capture_policy == "hand-curated":
+            published_output = PUBLISHED_SCREENSHOT_ROOT / str(
+                screenshot.get("output") or f"{screenshot_id}.png"
+            )
+            errors.extend(
+                f"Published screenshot {screenshot_id}: {error}"
+                for error in _validate_image(
+                    published_output,
+                    {"id": screenshot_id, **screenshot},
+                )
+            )
         if screenshot_id not in referenced:
             errors.append(f"Screenshot {screenshot_id} is not referenced by any UI surface")
         if not (screenshot.get("docs_pages") or screenshot_id in component_ids):
@@ -442,7 +505,13 @@ def _validate_pagefind(errors: list[str]) -> None:
 
 def _validate_secret_scans(errors: list[str]) -> None:
     paths = _doc_pages()
-    paths.extend([METADATA_ROOT / "screenshots.yml", ROOT / "docs-content" / "review-status.md"])
+    paths.extend(
+        [
+            METADATA_ROOT / "screenshots.yml",
+            METADATA_ROOT / "screenshot_policies.yml",
+            ROOT / "docs-content" / "review-status.md",
+        ]
+    )
     paths.extend([DOCS_SITE / "static" / "llms.txt", DOCS_SITE / "static" / "llms-full.txt"])
     report = ROOT / "docs-build" / "reports" / "docs-real-ui-review.md"
     if report.exists():

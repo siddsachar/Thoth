@@ -11,7 +11,12 @@ import pytest
 from scripts.docs.collect_inventory import ROOT, build_inventory
 from scripts.docs.generate_llms_txt import generate
 from scripts.docs.generate_mdx import check_pages, render_pages
-from scripts.docs.sync_github_pages import HAND_CURATED_MARKETING_FILES, check_sync, sync
+from scripts.docs.sync_github_pages import (
+    HAND_CURATED_MARKETING_FILES,
+    HAND_CURATED_PUBLISHED_FILES,
+    check_sync,
+    sync,
+)
 from scripts.docs.validate_public_docs import validate
 
 
@@ -185,11 +190,19 @@ def test_github_pages_sync_preserves_marketing_files(tmp_path: Path) -> None:
         marketing_files[marketing] = payload
     obsolete = publish_dir / "docs.html"
     obsolete.write_text("old route format", encoding="utf-8")
+    curated_relative = HAND_CURATED_PUBLISHED_FILES[0]
+    build_curated = build_dir / Path(*curated_relative.split("/"))
+    build_curated.parent.mkdir(parents=True, exist_ok=True)
+    build_curated.write_bytes(b"generated replacement")
+    published_curated = publish_dir / Path(*curated_relative.split("/"))
+    published_curated.parent.mkdir(parents=True, exist_ok=True)
+    published_curated.write_bytes(b"approved hand-curated image")
 
     sync(build_dir, publish_dir)
 
     assert check_sync(build_dir, publish_dir) == []
     assert all(path.read_bytes() == payload for path, payload in marketing_files.items())
+    assert published_curated.read_bytes() == b"approved hand-curated image"
     assert not obsolete.exists()
     published_entry = publish_dir / "pagefind" / "pagefind-entry.json"
     published_entry.write_text(
@@ -254,9 +267,9 @@ def test_docs_capture_is_opt_in_and_seed_data_is_safe(tmp_path: Path, monkeypatc
 
 
 def test_screenshot_manifest_is_real_ui_and_safe() -> None:
-    manifest_path = ROOT / "docs-content" / "metadata" / "screenshots.yml"
-    data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-    screenshots = data["screenshots"]
+    import scripts.docs.capture_real_ui_screenshots as capture
+
+    screenshots = capture._load_manifest()
 
     required = [shot for shot in screenshots.values() if shot["status"] == "required"]
     assert len(screenshots) >= 20
@@ -273,6 +286,61 @@ def test_screenshot_manifest_is_real_ui_and_safe() -> None:
     assert all(shot.get("viewport") in expected_dimensions for shot in required)
     assert screenshots["skills-hub"]["route"] == "/?dialog=skills-hub"
     assert screenshots["mcp-marketplace"]["route"] == "/?dialog=mcp-marketplace"
+    home_knowledge = screenshots["home-knowledge"]
+    assert home_knowledge["capture_policy"] == "hand-curated"
+    assert home_knowledge["dimension_policy"] == "flexible"
+    assert len(home_knowledge["curated_sha256"]) == 64
+
+
+def test_hand_curated_home_screenshot_matches_both_approved_copies() -> None:
+    import scripts.docs.capture_real_ui_screenshots as capture
+
+    manifest = capture._load_manifest()
+    shot = manifest["home-knowledge"]
+    source = (
+        ROOT
+        / "docs-site"
+        / "static"
+        / "img"
+        / "screenshots"
+        / "real-ui"
+        / "home-knowledge.png"
+    )
+    published = (
+        ROOT
+        / "docs"
+        / "img"
+        / "screenshots"
+        / "real-ui"
+        / "home-knowledge.png"
+    )
+
+    assert capture._validate_image(source, {"id": "home-knowledge", **shot}) == []
+    assert capture._validate_image(published, {"id": "home-knowledge", **shot}) == []
+    assert source.read_bytes() == published.read_bytes()
+
+
+def test_capture_preserves_hand_curated_screenshot_without_opening_a_browser() -> None:
+    import scripts.docs.capture_real_ui_screenshots as capture
+
+    class BrowserMustNotOpen:
+        def new_page(self, **_kwargs):
+            raise AssertionError("hand-curated screenshots must not be recaptured")
+
+    record = capture._capture_one(
+        BrowserMustNotOpen(),
+        0,
+        "home-knowledge",
+        {
+            "title": "Knowledge Home tab",
+            "output": "home-knowledge.png",
+            "capture_policy": "hand-curated",
+        },
+    )
+
+    assert record["status"] == "ok"
+    assert record["preserved"] is True
+    assert record["reason"] == "hand-curated asset preserved"
 
 
 def test_mobile_screenshots_render_at_native_width() -> None:

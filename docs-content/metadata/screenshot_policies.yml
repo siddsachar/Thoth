@@ -1,0 +1,7 @@
+screenshots:
+  home-knowledge:
+    # Shared by the marketing landing page and docs home. Replace only after
+    # explicit human review, then update both copies and this approved digest.
+    capture_policy: hand-curated
+    dimension_policy: flexible
+    curated_sha256: c741a11485df0d012584a210bf2bfdffffd0558826e2e5f6f71070d9a4cf0d88

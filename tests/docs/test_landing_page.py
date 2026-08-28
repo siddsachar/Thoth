@@ -108,7 +108,7 @@ def test_landing_page_is_evergreen_and_current() -> None:
     ]
     assert "Row-Bot 4.9.1 available" in HTML
     assert "Row-Bot &middot; v4.9.1 &middot; Apache 2.0" in HTML
-    assert 'src="img/screenshots/real-ui/home-knowledge.png?v=4.9.1"' in HTML
+    assert 'src="img/screenshots/real-ui/home-knowledge.png?v=4.9.1-r1"' in HTML
     assert (
         "agents, models, tools, memory, documents, workflows, code, design, "
         "messaging, and voice"
