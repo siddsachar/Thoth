@@ -28,9 +28,6 @@ jobs:
   probe:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
-    env:
-      PROBE_ROOT: ${{ runner.temp }}/row-bot-cua-probe
-      PROBE_REPORT: ${{ runner.temp }}/row-bot-cua-probe/report.json
 
     steps:
       - name: Require explicit Cua telemetry notice acceptance
@@ -58,14 +55,14 @@ jobs:
         run: |
           uv run python scripts/probe_macos_cua.py \
             --accept-cua-notice \
-            --data-dir "$PROBE_ROOT/data" \
-            --output "$PROBE_REPORT"
+            --data-dir "$RUNNER_TEMP/row-bot-cua-probe/data" \
+            --output "macos-cua-probe-report/report.json"
 
       - name: Upload sanitized probe report
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: macos-cua-probe-${{ inputs.runner }}
-          path: ${{ env.PROBE_REPORT }}
+          path: macos-cua-probe-report/report.json
           if-no-files-found: warn
           retention-days: 14
