@@ -1,0 +1,71 @@
+name: macOS Cua Probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      accept_cua_notice:
+        description: I reviewed and accept the Cua Driver 0.20.0 telemetry notice for this ephemeral probe
+        required: true
+        type: boolean
+        default: false
+      runner:
+        description: macOS runner architecture
+        required: true
+        type: choice
+        default: macos-15
+        options:
+          - macos-15
+          - macos-15-intel
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-cua-probe-${{ github.ref }}-${{ inputs.runner }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    env:
+      PROBE_ROOT: ${{ runner.temp }}/row-bot-cua-probe
+      PROBE_REPORT: ${{ runner.temp }}/row-bot-cua-probe/report.json
+
+    steps:
+      - name: Require explicit Cua telemetry notice acceptance
+        env:
+          ACCEPT_CUA_NOTICE: ${{ inputs.accept_cua_notice }}
+        run: |
+          if [[ "$ACCEPT_CUA_NOTICE" != "true" ]]; then
+            echo "Re-run and accept the reviewed Cua Driver 0.20.0 telemetry notice."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: python -m pip install "uv>=0.7,<1.0"
+
+      - name: Install locked Computer Use dependencies
+        run: uv sync --locked --extra mcp
+
+      - name: Run real Cua install and protocol probe
+        run: |
+          uv run python scripts/probe_macos_cua.py \
+            --accept-cua-notice \
+            --data-dir "$PROBE_ROOT/data" \
+            --output "$PROBE_REPORT"
+
+      - name: Upload sanitized probe report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-cua-probe-${{ inputs.runner }}
+          path: ${{ env.PROBE_REPORT }}
+          if-no-files-found: warn
+          retention-days: 14
