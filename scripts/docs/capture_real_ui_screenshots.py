@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import secrets
@@ -30,6 +31,7 @@ if str(SRC) not in sys.path:
 
 
 MANIFEST = ROOT / "docs-content" / "metadata" / "screenshots.yml"
+POLICIES = ROOT / "docs-content" / "metadata" / "screenshot_policies.yml"
 OUTPUT_ROOT = ROOT / "docs-site" / "static" / "img" / "screenshots" / "real-ui"
 RAW_OUTPUT_ROOT = ROOT / "docs-build" / "reports" / "real-data-screenshots"
 REPORT = ROOT / "docs-build" / "reports" / "screenshots.json"
@@ -43,6 +45,12 @@ VIEWPORTS = {
     "mobile": {"width": 390, "height": 844},
 }
 
+MINIMUM_VIEWPORTS = {
+    "desktop": {"width": 1280, "height": 720},
+    "wide": {"width": 1280, "height": 720},
+    "mobile": {"width": 320, "height": 568},
+}
+
 SECRET_PATTERNS = [
     "sk-",
     "ghp_",
@@ -53,12 +61,55 @@ SECRET_PATTERNS = [
     "/Users/",
 ]
 LAUNCH_SECRET_ENV = "ROW_BOT_LAUNCH_SECRET"
+SCREENSHOT_POLICY_FIELDS = frozenset(
+    {"capture_policy", "dimension_policy", "curated_sha256"}
+)
+
+
+def _is_hand_curated(shot: dict[str, Any]) -> bool:
+    return str(shot.get("capture_policy") or "automated") == "hand-curated"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_screenshot_policies() -> dict[str, Any]:
+    data = yaml.safe_load(POLICIES.read_text(encoding="utf-8")) or {}
+    screenshots = data.get("screenshots", {})
+    return screenshots if isinstance(screenshots, dict) else {}
+
+
+def _apply_screenshot_policies(
+    manifest: dict[str, Any],
+    policies: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    selected_policies = _load_screenshot_policies() if policies is None else policies
+    merged: dict[str, Any] = {}
+    for shot_id, shot in manifest.items():
+        if not isinstance(shot, dict):
+            merged[shot_id] = shot
+            continue
+        selected = dict(shot)
+        policy = selected_policies.get(shot_id, {})
+        if isinstance(policy, dict):
+            selected.update(
+                {key: policy[key] for key in SCREENSHOT_POLICY_FIELDS if key in policy}
+            )
+        merged[shot_id] = selected
+    return merged
 
 
 def _load_manifest() -> dict[str, Any]:
     data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8")) or {}
     screenshots = data.get("screenshots", {})
-    return screenshots if isinstance(screenshots, dict) else {}
+    if not isinstance(screenshots, dict):
+        return {}
+    return _apply_screenshot_policies(screenshots)
 
 
 def _free_port() -> int:
@@ -206,7 +257,18 @@ def _validate_image(path: Path, shot: dict[str, Any]) -> list[str]:
             viewport_name = str(shot.get("viewport") or "desktop")
             expected = VIEWPORTS.get(viewport_name, VIEWPORTS["desktop"])
             expected_size = (int(expected["width"]), int(expected["height"]))
-            if (width, height) != expected_size:
+            dimension_policy = str(shot.get("dimension_policy") or "viewport")
+            minimum = MINIMUM_VIEWPORTS.get(viewport_name, MINIMUM_VIEWPORTS["desktop"])
+            minimum_size = (int(minimum["width"]), int(minimum["height"]))
+            if dimension_policy == "flexible":
+                if width < minimum_size[0] or height < minimum_size[1]:
+                    errors.append(
+                        f"image dimensions {width}x{height} are below the {viewport_name} "
+                        f"minimum {minimum_size[0]}x{minimum_size[1]}"
+                    )
+            elif dimension_policy != "viewport":
+                errors.append(f"unknown dimension policy {dimension_policy}")
+            elif (width, height) != expected_size:
                 errors.append(
                     f"image dimensions {width}x{height} do not match {viewport_name} "
                     f"standard {expected_size[0]}x{expected_size[1]}"
@@ -216,6 +278,9 @@ def _validate_image(path: Path, shot: dict[str, Any]) -> list[str]:
                 errors.append(f"image appears blank or flat (variance {variance:.2f})")
     except Exception as exc:
         errors.append(f"could not inspect image: {exc}")
+    expected_sha256 = str(shot.get("curated_sha256") or "").strip().lower()
+    if expected_sha256 and _sha256(path) != expected_sha256:
+        errors.append("hand-curated image does not match its approved SHA-256")
     combined = " ".join(str(shot.get(key, "")) for key in ("id", "title", "output", "alt", "route"))
     for pattern in SECRET_PATTERNS:
         if pattern.lower() in combined.lower():
@@ -347,6 +412,8 @@ def _capture_one(
     *,
     real_data: bool = False,
 ) -> dict[str, Any]:
+    if _is_hand_curated(shot):
+        return _preserved_record(shot_id, shot)
     viewport = VIEWPORTS.get(str(shot.get("viewport") or "desktop"), VIEWPORTS["desktop"])
     page = browser.new_page(viewport=viewport)
     base_url = f"http://127.0.0.1:{port}"
@@ -441,12 +508,37 @@ def _blocked_record(shot_id: str, shot: dict[str, Any], reason: str) -> dict[str
     }
 
 
+def _preserved_record(shot_id: str, shot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": shot_id,
+        "title": shot.get("title", shot_id),
+        "status": "ok",
+        "deferred": False,
+        "preserved": True,
+        "review_status": shot.get("review_status", "needs-review"),
+        "source": shot.get("source", ""),
+        "public_asset": shot.get("public_asset", False),
+        "reason": "hand-curated asset preserved",
+        "output": str(
+            (OUTPUT_ROOT / str(shot.get("output") or f"{shot_id}.png")).relative_to(ROOT)
+        ).replace("\\", "/"),
+        "errors": [],
+    }
+
+
 def _write_report(records: list[dict[str, Any]], *, mode: str) -> dict[str, Any]:
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     summary = {
         "mode": mode,
         "total": len(records),
-        "captured": sum(1 for item in records if item.get("status") == "ok" and not item.get("deferred")),
+        "captured": sum(
+            1
+            for item in records
+            if item.get("status") == "ok"
+            and not item.get("deferred")
+            and not item.get("preserved")
+        ),
+        "preserved": sum(1 for item in records if item.get("preserved")),
         "failed": sum(1 for item in records if item.get("status") == "failed"),
         "deferred": sum(1 for item in records if item.get("deferred")),
         "records": records,
@@ -470,6 +562,7 @@ def _write_review_report(summary: dict[str, Any]) -> None:
         f"- Mode: {summary.get('mode', '')}",
         f"- Total records: {summary.get('total', 0)}",
         f"- Captured or validated: {summary.get('captured', 0)}",
+        f"- Hand-curated assets preserved: {summary.get('preserved', 0)}",
         f"- Failed: {summary.get('failed', 0)}",
         f"- Deferred: {summary.get('deferred', 0)}",
         "",
@@ -636,13 +729,26 @@ def capture(
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     RAW_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     DOM_ROOT.mkdir(parents=True, exist_ok=True)
-    manifest = _filter_manifest(manifest, source_filter)
-    manifest = _filter_scenario(manifest, scenario)
-    manifest = _filter_ids(manifest, screenshot_ids)
     if authorize_real_data and (use_temp_data or seed_demo_data):
         raise RuntimeError(
             "Authorized real-data capture requires retained data and --no-seed-demo-data."
         )
+    manifest = _apply_screenshot_policies(manifest)
+    manifest = _filter_manifest(manifest, source_filter)
+    manifest = _filter_scenario(manifest, scenario)
+    manifest = _filter_ids(manifest, screenshot_ids)
+    records: list[dict[str, Any]] = [
+        _preserved_record(shot_id, shot)
+        for shot_id, shot in manifest.items()
+        if isinstance(shot, dict) and _is_hand_curated(shot)
+    ]
+    manifest = {
+        shot_id: shot
+        for shot_id, shot in manifest.items()
+        if not isinstance(shot, dict) or not _is_hand_curated(shot)
+    }
+    if not manifest:
+        return _write_report(records, mode="capture")
     data_dir, temp_dir = _safe_capture_data_dir(
         None if use_temp_data else data_dir,
         authorize_real_data=authorize_real_data,
@@ -652,7 +758,6 @@ def capture(
     if _port_open(port):
         raise RuntimeError(f"selected port {port} is already in use")
 
-    records: list[dict[str, Any]] = []
     proc: subprocess.Popen | None = None
     try:
         if seed_demo_data:
