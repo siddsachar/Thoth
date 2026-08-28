@@ -12,16 +12,16 @@ CSS = (ROOT / "docs" / "site.css").read_text(encoding="utf-8")
 JS = (ROOT / "docs" / "site.js").read_text(encoding="utf-8")
 
 INDEX_WINDOWS_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.8.0/"
-    "Row-Bot-4.8.0-Windows-x64.exe"
+    "https://github.com/siddsachar/row-bot/releases/download/v4.9.0/"
+    "Row-Bot-4.9.0-Windows-x64.exe"
 )
 INDEX_MAC_URL = (
-    "https://github.com/siddsachar/row-bot/releases/download/v4.8.0/"
-    "Row-Bot-4.8.0-macOS-arm64.dmg"
+    "https://github.com/siddsachar/row-bot/releases/download/v4.9.0/"
+    "Row-Bot-4.9.0-macOS-arm64.dmg"
 )
 INDEX_LINUX_COMMAND = (
     "curl -fsSL https://raw.githubusercontent.com/siddsachar/row-bot/main/"
-    "installer/install-linux.sh | bash -s -- 4.8.0"
+    "installer/install-linux.sh | bash -s -- 4.9.0"
 )
 SITE_WINDOWS_URL = (
     "https://github.com/siddsachar/row-bot/releases/download/v4.9.0/"
@@ -92,8 +92,8 @@ def test_landing_page_is_evergreen_and_current() -> None:
     )
     assert json_ld_match
     metadata = json.loads(json_ld_match.group(1))
-    assert metadata["softwareVersion"] == "4.8.0"
-    assert metadata["downloadUrl"].endswith("/releases/tag/v4.8.0")
+    assert metadata["softwareVersion"] == "4.9.0"
+    assert metadata["downloadUrl"].endswith("/releases/tag/v4.9.0")
 
     parser = _parse()
     assert all(image.get("width") and image.get("height") for image in parser.images)
@@ -106,9 +106,9 @@ def test_landing_page_is_evergreen_and_current() -> None:
         "faq",
         "install",
     ]
-    assert "Row-Bot 4.8.0 available" in HTML
-    assert "Row-Bot &middot; v4.8.0 &middot; Apache 2.0" in HTML
-    assert 'src="img/screenshots/real-ui/home-knowledge.png?v=4.8.0"' in HTML
+    assert "Row-Bot 4.9.0 available" in HTML
+    assert "Row-Bot &middot; v4.9.0 &middot; Apache 2.0" in HTML
+    assert 'src="img/screenshots/real-ui/home-knowledge.png?v=4.9.0"' in HTML
     assert (
         "agents, models, tools, memory, documents, workflows, code, design, "
         "messaging, and voice"
@@ -266,7 +266,6 @@ def test_marketing_pages_share_analytics_and_download_conversion_contract() -> N
     assert "trackAdsConversion" in JS
 
     cache_versions = {name: "4.9.0" for name in MARKETING_PAGES}
-    cache_versions["index.html"] = "4.8.0"
     for name in MARKETING_PAGES:
         content = (ROOT / "docs" / name).read_text(encoding="utf-8")
         version = cache_versions[name]
@@ -341,6 +340,11 @@ def test_features_inventory_is_evergreen_and_documented() -> None:
     assert "deterministic local search" in features
     assert "Save exact owner-controlled HTTP or HTTPS browser addresses" in features
     assert "select up to five relevant enabled skills" in features
+    assert "Buddy desktop overlay" in features
+    assert "Conversation cleanup" in features
+    assert "managed Chromium sessions" in features
+    assert "Cua Driver 0.20.0" in features
+    assert "xAI image options discovered from live model capability metadata" in features
     assert "consent-gated third-party telemetry" in features
     assert "No first-party telemetry" in features
 
@@ -358,6 +362,8 @@ def test_architecture_contact_and_not_found_progressive_contracts() -> None:
     assert "event.key === 'Escape'" in JS
     assert "lightboxBackground.forEach" in JS
     assert "github.com/siddsachar/row-bot/blob/main/docs/ARCHITECTURE.md" in architecture
+    assert "Row-Bot's 4.9 control plane" in architecture
+    assert "current 4.9 runtime and security contracts" in architecture
     assert "conversations, documents, memory, workflows, and project assets" in architecture
     assert "Complete next-input metering" in architecture
     assert "exact trusted addresses" in architecture
