@@ -39,7 +39,7 @@ on:
       version:
         description: Version to build. Must match src/row_bot/version.py and installer/row_bot_setup.iss.
         type: string
-        default: "4.9.0"
+        default: "4.9.1"
       build_windows:
         description: Build the Windows installer
         type: boolean
@@ -64,7 +64,7 @@ concurrency:
 # Tracks the version this workflow is currently shipping. Kept in sync with
 # `installer/row_bot_setup.iss` (#define MyAppVersion) and `src/row_bot/version.py`.
 env:
-  ROW_BOT_VERSION: ${{ inputs.version || '4.9.0' }}
+  ROW_BOT_VERSION: ${{ inputs.version || '4.9.1' }}
   WINDOWS_PYTHON_VERSION: "3.13.2"
 
 jobs:
@@ -104,7 +104,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import re
-          expected = "${{ inputs.version || '4.9.0' }}"
+          expected = "${{ inputs.version || '4.9.1' }}"
           version_py = Path("src/row_bot/version.py").read_text(encoding="utf-8")
           setup_iss = Path("installer/row_bot_setup.iss").read_text(encoding="utf-8")
           py_match = re.search(r'__version__\s*=\s*"([^"]+)"', version_py)

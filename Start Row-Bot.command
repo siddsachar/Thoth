@@ -36,7 +36,7 @@ VENV_DIR="$PROJECT_DIR/.venv"
 ROW_BOT_HOME="$HOME/.row-bot"
 ROW_BOT_VERSION="$(awk -F'"' '/__version__/ { print $2; exit }' "$PROJECT_DIR/src/row_bot/version.py" 2>/dev/null || true)"
 if [ -z "$ROW_BOT_VERSION" ]; then
-    ROW_BOT_VERSION="4.9.0"
+    ROW_BOT_VERSION="4.9.1"
 fi
 OLLAMA_PORT=11434
 
