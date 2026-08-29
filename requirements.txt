@@ -169,7 +169,7 @@ orjson==3.11.9
 ormsgpack==1.12.2
 oss2==2.19.1 ; platform_machine != 'x86_64' or sys_platform != 'darwin'
 packaging==26.2
-pandas==2.3.3
+pandas==3.0.3
 phonemizer-fork==3.3.2
 pillow==12.3.0
 platformdirs==4.10.0
