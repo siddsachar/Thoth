@@ -340,6 +340,20 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
         "Gmail changes need deterministic input-schema and provider-conversion contracts.",
     ),
     SourceTestRule(
+        "tools_utility_and_retrieval",
+        (
+            "src/row_bot/tools/wikipedia_tool.py",
+            "src/row_bot/tools/arxiv_tool.py",
+            "src/row_bot/tools/calculator_tool.py",
+        ),
+        (
+            "tests/subsystem/tools/test_wikipedia_tool_subsystem.py",
+            "tests/subsystem/tools/test_arxiv_tool_subsystem.py",
+            "tests/subsystem/tools/test_calculator_tool_subsystem.py",
+        ),
+        "Wikipedia, ArXiv, and Calculator tool changes need deterministic subsystem test contracts.",
+    ),
+    SourceTestRule(
         "startup_runtime",
         (
             "src/row_bot/app_port.py",
