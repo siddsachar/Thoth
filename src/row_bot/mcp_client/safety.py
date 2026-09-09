@@ -43,7 +43,7 @@ def prefixed_tool_name(server_name: str, tool_name: str) -> str:
 
 
 def _annotation_value(tool: Any, key: str) -> Any:
-    annotations = getattr(tool, "annotations", None)
+    annotations = tool.get("annotations") if isinstance(tool, dict) else getattr(tool, "annotations", None)
     if annotations is None:
         return None
     if isinstance(annotations, dict):
@@ -54,15 +54,17 @@ def _annotation_value(tool: Any, key: str) -> Any:
 def is_destructive_tool(tool_name: str, description: str = "", tool_obj: Any = None) -> bool:
     """Classify whether an MCP tool should require approval by default."""
     normalized_name = sanitize_name_component(tool_name)
-    if normalized_name in _BROWSER_SESSION_SAFE_TOOLS:
-        return False
     if tool_obj is not None:
         destructive_hint = _annotation_value(tool_obj, "destructiveHint")
         read_only_hint = _annotation_value(tool_obj, "readOnlyHint")
         if destructive_hint is True:
             return True
+        if _DESTRUCTIVE_RE.search(normalized_name):
+            return True
         if read_only_hint is True:
             return False
+    if normalized_name in _BROWSER_SESSION_SAFE_TOOLS:
+        return False
     haystack = f"{tool_name} {description or ''}"
     normalized = sanitize_name_component(haystack)
     return bool(_DESTRUCTIVE_RE.search(normalized))

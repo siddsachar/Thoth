@@ -163,3 +163,13 @@ def _reset_test_data_env_between_tests():
     _set_default_test_data_env()
     yield
     _set_default_test_data_env()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_desktop_notification_outputs(monkeypatch):
+    # Exercise notification state/toasts normally while keeping deterministic
+    # tests from showing OS alerts or playing sounds on the developer's desktop.
+    from row_bot import notifications
+
+    monkeypatch.setattr(notifications, "_desktop_notify", lambda *args, **kwargs: None)
+    monkeypatch.setattr(notifications, "_play_sound", lambda *args, **kwargs: None)

@@ -1,0 +1,69 @@
+{
+  "recording_version": 1,
+  "protocol_version": "1.0",
+  "fixture_id": "F-P10",
+  "kind": "contract_only",
+  "deterministic_seed": "F-P10:v1",
+  "source": {
+    "base_commit": "272a0add768f7badc2536fa21e30e538a08833de",
+    "files": {
+      "src/row_bot/api/v1/__init__.py": "d14be0852486e10539fd8ed7cafe67c2753a7964679096fe9c1191497a1ba329",
+      "src/row_bot/api/v1/routes.py": "3f2a8bb5dc1ebdc3b414960f092e2ba278992de72fcca900606738a8561957ed",
+      "src/row_bot/api/v1/schemas.py": "eb2f11a7f81719cad25334d9ecee62eab704aaed1e61fe611563101c7346e8e3",
+      "src/row_bot/api/v1/security.py": "b810017771e61c4cbde241901f33d17d32fd02060805824f2dc60f230852a375",
+      "src/row_bot/application/__init__.py": "ddac8928976922c73246ae791f5cc0ff84837ef1a9890f5938ee56f58eb7d468",
+      "src/row_bot/application/attachment_context.py": "930e91b470edddb37e68a75996237d88db5f22e54442df9c825f5ad16ae45d1a",
+      "src/row_bot/application/attachments.py": "cca0ed909626291f72492322e1bddc42cc722e13fbfdc583742a48251d7f0361",
+      "src/row_bot/application/client_platform.py": "0f45a18b6dfdd72f10dceb76d712ad0983d941b5c2173f5c386555d9c7caf082",
+      "src/row_bot/application/generated_media.py": "2037b707b47b35a202eb23c34130809ec45315906a41ac32c791d9e9256376db",
+      "src/row_bot/application/lifecycle.py": "5d1826b2239c67b73c768a854f759189a319b83773797aa64e717cbf56ff97ff",
+      "src/row_bot/application/live_content.py": "a454a9646f1bda95ce597c4640b01d3cb8b409a8818d8717b36abb827279998d",
+      "src/row_bot/conversation_resources.py": "20daa4c2c0f7a50f0cae7f6d24d804950b9fb87035586624a01e5bb1b6c94768",
+      "src/row_bot/projection/__init__.py": "246b0f37fc792dc5787564e86fdd2d1153e380cbd362a9d3f2db70669131da00",
+      "src/row_bot/projection/canonical.py": "cd33b9b4d396464a6324d04194476c87854e40ec902d34201ebda432217102ed",
+      "src/row_bot/projection/conversation.py": "0c2322879ebd8a952f808a01549d8c7e785819fb033bfcc5542a0d88071fc66e",
+      "src/row_bot/runtime/__init__.py": "bec0d5569832ef34ca97d303981dc5484f68c77b8123f82fb63e3320a3634d0b",
+      "src/row_bot/runtime/admissions.py": "c9b4a489c2e4e39e5122214f6ef2035440e4d12c4a2ea1a0da78435c149d1008",
+      "src/row_bot/runtime/checkpoint_reader.py": "dba5a78e99585899d186084a0f494796e0f767c783539e796683938cd964d0f4",
+      "src/row_bot/runtime/executions.py": "93936596d57069e96e6fffdb7332ab5c36aed81868c44dc71c7651bb7dc35166",
+      "src/row_bot/tasks.py": "e8e34aa222c7737424d248360cf3438370fb2675fba81d685c7014e4f83e9b8b",
+      "src/row_bot/threads.py": "28db4fd9e103b0f250eb62877bf367ffbb9b5433f4ddede620517789fced0122",
+      "tests/helpers/client_platform_fakes.py": "3e5ebbac050c0afb409135c11f7d6afbf7df313c09bcd465f3c04980f6639717"
+    },
+    "sha256": "06bee57a02733859b6b84e75d1971ba91406381b9e1832ab5a94d59ede8e4a72"
+  },
+  "records": [
+    {
+      "schema": "Outcome",
+      "value": {
+        "mutation_status": "committed",
+        "projection_status": "pending",
+        "external_outcome": "not_applicable"
+      }
+    },
+    {
+      "schema": "Outcome",
+      "value": {
+        "mutation_status": "committed",
+        "projection_status": "degraded",
+        "external_outcome": "uncertain"
+      }
+    }
+  ],
+  "delivery_order": [
+    0,
+    1
+  ],
+  "barriers": [],
+  "assertions": [
+    "Committed data does not imply ready search index",
+    "Uncertain external delivery does not claim sent or trigger replay",
+    "Phase 4 storage/channel failure injection remains separately gated"
+  ],
+  "allowed_external_effects": [],
+  "bounds": {
+    "quiescence_timeout_seconds": 10,
+    "event_bytes": 65536
+  },
+  "expected_final_snapshot": null
+}

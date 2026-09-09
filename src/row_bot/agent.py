@@ -8,7 +8,8 @@ import math
 import threading
 import time
 import re
-from typing import Any
+import uuid
+from typing import Any, Iterator
 
 from row_bot.models import get_llm, get_llm_for, get_context_policy, get_context_size, get_current_model, is_model_local, is_cloud_model, get_cloud_provider, set_active_model_override, _active_model_override
 from row_bot.api_keys import apply_keys
@@ -754,7 +755,8 @@ def _new_agent_graph_input(user_input: str, config: dict, *, agent=None) -> tupl
         remaining_iterations(budget)
     )
     return normalized, {
-        "messages": [("human", user_input)],
+        "messages": [HumanMessage(content=user_input, id=str(configurable["platform_submission_id"]))]
+        if configurable.get("platform_submission_id") else [("human", user_input)],
         "execution_budget": budget,
     }
 
@@ -2288,7 +2290,7 @@ def _summary_matches_inputs(summary_state: dict | None, inputs: PreparationInput
 def _chat_projected_prefix_count(messages: tuple[BaseMessage, ...], boundary: int) -> int:
     """Count privacy-projected Chat Only messages represented by a raw prefix."""
     try:
-        from row_bot.ui.helpers import langchain_messages_to_ui_messages
+        from row_bot.message_projection import langchain_messages_to_ui_messages
 
         projected = langchain_messages_to_ui_messages(list(messages[:boundary]))
         return sum(
@@ -2444,7 +2446,6 @@ def _persist_context_usage(thread_id: str, usage: ContextUsage) -> None:
 def _mark_context_overflow(inputs: PreparationInputs | None) -> None:
     if inputs is None:
         return
-    _CONTEXT_OVERFLOWED_MODELS.add(inputs.model_ref)
     prepared = _prepare_model_input(
         inputs.raw_messages,
         inputs,
@@ -2501,7 +2502,7 @@ def _serialized_compaction_message(message: BaseMessage) -> str:
 def _chat_only_projected_messages(messages: tuple[BaseMessage, ...]) -> tuple[BaseMessage, ...]:
     """Apply Chat Only's existing no-tool-body privacy projection."""
     try:
-        from row_bot.ui.helpers import langchain_messages_to_ui_messages
+        from row_bot.message_projection import langchain_messages_to_ui_messages
 
         projected: list[BaseMessage] = []
         for message in langchain_messages_to_ui_messages(list(messages)):
@@ -2829,11 +2830,6 @@ def _fixed_prompt_tool_envelope_tokens(inputs: PreparationInputs) -> int:
 
 def _prepare_with_compaction(inputs: PreparationInputs) -> PreparedModelInput:
     thread_id = _current_thread_id_var.get() or ""
-    if inputs.model_ref in _CONTEXT_OVERFLOWED_MODELS:
-        raise ContextCompactionError(
-            "This model exceeded its reported context capacity in this session. "
-            "Choose a different model or adjust the context override before retrying."
-        )
     summary_state = _validated_summary_for_inputs(inputs)
     prepared = _prepare_model_input(
         inputs.raw_messages,
@@ -3128,6 +3124,17 @@ def _persist_settled_context_usage(
 
 def _pre_model_trim(state: dict, config: dict | None = None) -> dict:
     """Prepare every Agent model/tool-loop call through one accounting path."""
+    from row_bot.runtime.executions import current_execution, generation_registry
+    execution = current_execution()
+    if execution is not None:
+        generation_registry.check_dispatch(execution)
+        if execution.segment_id:
+            from row_bot.runtime import admissions
+            if admissions.deletion_state(execution.conversation_id) != "active":
+                raise InterruptedError("conversation_deleting")
+            segment_id = admissions.start_segment(execution.pass_id) if execution.invocation_started else execution.segment_id
+            execution.invocation_started = True
+            _emit_context_event("platform_segment", {"segment_id": segment_id})
     inputs = _collect_agent_preparation_inputs(state, config)
     prepared = _prepare_with_compaction(inputs)
     return {
@@ -4059,12 +4066,7 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
                 model_label = model_override
                 use_override = True
             else:
-                logger.warning(
-                    "Model override '%s' not resolvable — falling back to default '%s'",
-                    model_override,
-                    get_current_model(),
-                )
-                model_label = get_current_model()
+                raise ValueError("The explicitly selected model is unavailable.") from None
     else:
         model_label = get_current_model()
 
@@ -4339,9 +4341,10 @@ def get_agent_graph(enabled_tool_names: list[str] | None = None,
                 # Agent without tools is pointless — fall back to plain LLM
                 lc_tools = []
 
+            from langgraph.prebuilt import ToolNode
             agent = create_react_agent(
                 model=llm,
-                tools=lc_tools,
+                tools=ToolNode(lc_tools, wrap_tool_call=_wrap_platform_tool_call) if lc_tools else [],
                 prompt=None,
                 pre_model_hook=_pre_model_trim,
                 post_model_hook=post_model_budget_hook,
@@ -4878,6 +4881,31 @@ def _tool_call_runtime_name(tc: dict[str, Any]) -> str:
     return raw_name
 
 
+def _wrap_platform_tool_call(request: Any, execute: Any) -> Any:
+    """Bind generated media to its exact ToolMessage in parallel tool batches."""
+    from row_bot.application.attachment_context import tool_attachment_scope
+    from row_bot.runtime.executions import current_execution, generation_registry
+    handle = current_execution()
+    if handle is not None:
+        generation_registry.check_dispatch(handle)
+        handle.external_outcome = "uncertain"
+    with tool_attachment_scope() as caches:
+        result = execute(request)
+        if handle is not None:
+            handle.external_outcome = "sent"
+        if caches is None or not isinstance(result, ToolMessage):
+            return result
+        from row_bot.application.generated_media import capture_generated_media
+        additional = dict(result.additional_kwargs)
+        try:
+            media = capture_generated_media(caches.conversation_id, caches)
+            if media:
+                additional["platform_media"] = media
+        except ValueError:
+            additional["platform_media_error"] = "media_unavailable"
+        return result.model_copy(update={"additional_kwargs": additional})
+
+
 def _tool_call_payload(tc: dict[str, Any]) -> ToolCallPayload:
     raw_name = str(tc.get("name") or "")
     args = tc.get("args")
@@ -4895,11 +4923,7 @@ def _selected_model_label_from_config(config: dict) -> tuple[str, bool]:
     if model_override and model_override != get_current_model():
         if str(model_override).startswith("model:") or is_model_local(model_override) or is_cloud_model(model_override):
             return model_override, True
-        logger.warning(
-            "Model override '%s' not available - falling back to default '%s'",
-            model_override,
-            get_current_model(),
-        )
+        raise ValueError("The explicitly selected model is unavailable.")
     return get_current_model(), False
 
 
@@ -4929,12 +4953,15 @@ def _collect_chat_only_preparation_inputs(
     user_input: str,
     *,
     context_window: int | None = None,
+    submission_id: str = "",
 ) -> PreparationInputs:
-    from row_bot.ui.helpers import langchain_messages_to_ui_messages
+    from row_bot.message_projection import langchain_messages_to_ui_messages
     from row_bot.threads import get_latest_checkpoint_messages, get_latest_checkpoint_revision
 
     del context_window
     raw_messages = get_latest_checkpoint_messages(thread_id)
+    if submission_id:
+        raw_messages = [message for message in raw_messages if str(getattr(message, "id", "")) != submission_id]
     ui_messages = langchain_messages_to_ui_messages(raw_messages)
     messages = [SystemMessage(content=get_chat_only_system_prompt())]
     profile_context = _agent_profile_system_context(thread_id)
@@ -5087,6 +5114,7 @@ def stream_chat_only(
             thread_id,
             user_input,
             context_window=readiness.context_window,
+            submission_id=str((config.get("configurable") or {}).get("platform_submission_id") or ""),
         )
         prepared = _prepare_with_compaction(preparation_inputs)
     except (ContextCompactionError, TaskStoppedError) as exc:
@@ -5245,15 +5273,16 @@ def stream_chat_only(
         yield ("error", "The model returned reasoning but no final answer. Try again or switch models.")
         return
     if thread_id and answer:
+        output_message = AIMessage(
+            content=answer, id=str(uuid.uuid4()), additional_kwargs=additional_kwargs,
+            response_metadata=latest_response_metadata,
+        )
+        submission_id = str((config.get("configurable") or {}).get("platform_submission_id") or "")
         append_checkpoint_messages(
             thread_id,
             [
-                HumanMessage(content=user_input),
-                AIMessage(
-                    content=answer,
-                    additional_kwargs=additional_kwargs,
-                    response_metadata=latest_response_metadata,
-                ),
+                *([] if submission_id else [HumanMessage(content=user_input, id=str(uuid.uuid4()))]),
+                output_message,
             ],
         )
         try:
@@ -5276,6 +5305,8 @@ def stream_chat_only(
         except Exception:
             logger.debug("Settled Chat Only context snapshot failed", exc_info=True)
     yield from _reasoning_notice_events(thread_id)
+    if thread_id and answer:
+        yield from _platform_output_binding_events(config, output_message)
     yield ("done", answer)
 
 
@@ -5333,6 +5364,11 @@ def stream_agent(user_input: str, enabled_tool_names: list[str], config: dict,
     )
     if _disabled_custom_tool_response:
         yield ("token", _disabled_custom_tool_response)
+        if (config.get("configurable") or {}).get("platform_pass_id"):
+            from row_bot.threads import append_checkpoint_messages
+            output = AIMessage(content=_disabled_custom_tool_response, id=str(uuid.uuid4()))
+            if append_checkpoint_messages(str(config["configurable"]["thread_id"]), [output]):
+                yield from _platform_output_binding_events(config, output)
         yield ("done", _disabled_custom_tool_response)
         return
 
@@ -6004,7 +6040,8 @@ def _handle_agent_terminal(
     if budget["finalization_completed"]:
         for message in reversed(values.get("messages", [])):
             if isinstance(message, AIMessage) and _has_visible_message_content(message):
-                return {"type": "terminal", "terminal_reason": reason, "message": _content_to_str(message.content)}
+                return {"type": "terminal", "terminal_reason": reason, "message": _content_to_str(message.content),
+                        "native_message_id": str(message.id or "")}
         return {"type": "terminal", "terminal_reason": reason, "message": _terminal_fallback(surface, reason)}
 
     # Persist the claim before the optional provider call. If this process dies,
@@ -6051,14 +6088,15 @@ def _handle_agent_terminal(
     additional_kwargs = {"terminal_reason": reason}
     if reasoning:
         additional_kwargs["reasoning_content"] = reasoning
+    output = AIMessage(content=answer, id=str(uuid.uuid4()), additional_kwargs=additional_kwargs)
     agent.update_state(
         config,
         {
-            "messages": [AIMessage(content=answer, additional_kwargs=additional_kwargs)],
+            "messages": [output],
             "execution_budget": completed,
         },
     )
-    return {"type": "terminal", "terminal_reason": reason, "message": answer}
+    return {"type": "terminal", "terminal_reason": reason, "message": answer, "native_message_id": output.id}
 
 
 def _finalize_tool_result_answer_text(agent, config: dict) -> str:
@@ -6164,6 +6202,8 @@ def _stream_graph(agent, input_data, config: dict,
     decoder = _ReasoningTextStreamDecoder()
     _finish_reason: str | None = None  # tracks API finish_reason from last chunk
     _seen_tool_calls: set[str] = set()
+    _platform_segment_id = str((config.get("configurable") or {}).get("platform_segment_id") or "")
+    _platform_outputs: list[tuple[Any, str]] = []
     _tool_call_display_names: dict[str, str] = {}
     _answer_chars = 0
     _answer_chunks = 0
@@ -6259,6 +6299,7 @@ def _stream_graph(agent, input_data, config: dict,
             visible_partial=_joined_visible_answer(full_answer),
         )
         yield ("terminal", terminal)
+        yield from _platform_output_id_binding_events(config, terminal.get("native_message_id", ""))
         yield ("done", terminal["message"])
         return
     except Exception as exc:
@@ -6337,6 +6378,9 @@ def _stream_graph(agent, input_data, config: dict,
         if mode == "custom":
             if isinstance(data, dict):
                 event_type = str(data.get("type") or "")
+                if event_type == "platform_segment":
+                    _platform_segment_id = str((data.get("payload") or {}).get("segment_id") or "")
+                    yield ("platform_segment", data.get("payload") or {})
                 if event_type in {
                     "context_usage",
                     "compaction_started",
@@ -6354,6 +6398,8 @@ def _stream_graph(agent, input_data, config: dict,
                 if not isinstance(ndata, dict):
                     continue
                 for m in ndata.get("messages", []):
+                    if getattr(m, "type", "") == "ai" and getattr(m, "id", None) and _platform_segment_id:
+                        _platform_outputs.append((m, _platform_segment_id))
                     # Tool call initiated by the agent
                     tc_list = getattr(m, "tool_calls", [])
                     if tc_list:
@@ -6386,12 +6432,16 @@ def _stream_graph(agent, input_data, config: dict,
                         _last_tool_result_at = event_seen_at
                         _tool_result_count += 1
                         yield ("tool_done", {
+                            "tool_call_id": str(getattr(m, "tool_call_id", "") or ""),
+                            "message_id": str(getattr(m, "id", "") or ""),
                             "name": _tool_call_display_names.get(
                                 str(getattr(m, "tool_call_id", "") or ""),
                                 _resolve_tool_display_name(m.name),
                             ),
                             "raw_name": m.name,
                             "content": getattr(m, "content", ""),
+                            "media": (getattr(m, "additional_kwargs", {}) or {}).get("platform_media", []),
+                            "media_error": (getattr(m, "additional_kwargs", {}) or {}).get("platform_media_error", ""),
                         })
 
             if _browser_budget_exceeded:
@@ -6475,6 +6525,7 @@ def _stream_graph(agent, input_data, config: dict,
             visible_partial=_joined_visible_answer(full_answer),
         )
         yield ("terminal", terminal)
+        yield from _platform_output_id_binding_events(config, terminal.get("native_message_id", ""), segment_id=_platform_segment_id)
         yield ("done", terminal["message"])
         return
     except Exception as exc:
@@ -6519,12 +6570,16 @@ def _stream_graph(agent, input_data, config: dict,
                                         yield ("tool_call", _tool_call_payload(tc))
                                 if m.type == "tool":
                                     yield ("tool_done", {
+                                        "tool_call_id": str(getattr(m, "tool_call_id", "") or ""),
+                                        "message_id": str(getattr(m, "id", "") or ""),
                                         "name": _tool_call_display_names.get(
                                             str(getattr(m, "tool_call_id", "") or ""),
                                             _resolve_tool_display_name(m.name),
                                         ),
                                         "raw_name": m.name,
                                         "content": getattr(m, "content", ""),
+                                        "media": (getattr(m, "additional_kwargs", {}) or {}).get("platform_media", []),
+                                        "media_error": (getattr(m, "additional_kwargs", {}) or {}).get("platform_media_error", ""),
                                     })
                     elif mode == "messages":
                         msg, meta = data
@@ -6723,9 +6778,10 @@ def _stream_graph(agent, input_data, config: dict,
                         yield ("token", text)
                 if repair_answer.strip():
                     additional_kwargs = {"reasoning_content": repair_reasoning} if repair_reasoning else {}
-                    final_message = AIMessage(content=repair_answer, additional_kwargs=additional_kwargs)
+                    final_message = AIMessage(content=repair_answer, id=str(uuid.uuid4()), additional_kwargs=additional_kwargs)
                     try:
                         agent.update_state(config, {"messages": [final_message]})
+                        yield from _platform_output_binding_events(config, final_message, segment_id=_platform_segment_id)
                     except Exception:
                         logger.debug("tool-result finalization answer could not be persisted", exc_info=True)
                     full_answer.append(repair_answer)
@@ -6778,7 +6834,29 @@ def _stream_graph(agent, input_data, config: dict,
         logger.debug("Settled Agent context snapshot failed", exc_info=True)
     thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
     yield from _reasoning_notice_events(thread_id)
+    seen_output_ids: set[str] = set()
+    for output, segment_id in _platform_outputs:
+        if str(output.id) not in seen_output_ids:
+            seen_output_ids.add(str(output.id))
+            yield from _platform_output_binding_events(config, output, segment_id=segment_id)
+    if str(getattr(latest_ai_message, "id", "")) not in seen_output_ids:
+        yield from _platform_output_binding_events(config, latest_ai_message, segment_id=_platform_segment_id)
     yield ("done", _joined_visible_answer(full_answer))
+
+
+def _platform_output_binding_events(config: dict, message: Any, *, segment_id: str = "") -> Iterator[tuple[str, dict]]:
+    """Declare the actual producer-selected checkpoint identity, never a text match."""
+    message_id = str(getattr(message, "id", "") or "")
+    yield from _platform_output_id_binding_events(config, message_id, segment_id=segment_id)
+
+
+def _platform_output_id_binding_events(config: dict, message_id: str, *, segment_id: str = "") -> Iterator[tuple[str, dict]]:
+    configurable = config.get("configurable") or {}
+    if configurable.get("platform_pass_id") and message_id:
+        from row_bot.threads import get_latest_checkpoint_revision
+        yield ("output_binding", {"native_message_id": message_id,
+               "segment_id": segment_id or str(configurable.get("platform_segment_id") or ""),
+               "checkpoint_revision": get_latest_checkpoint_revision(str(configurable["thread_id"]))})
 
 if __name__ == "__main__":
     config = pick_or_create_thread()

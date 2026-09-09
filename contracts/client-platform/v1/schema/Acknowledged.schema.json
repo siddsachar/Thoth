@@ -1,0 +1,15 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "acknowledged": {
+      "const": true,
+      "title": "Acknowledged",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "acknowledged"
+  ],
+  "title": "Acknowledged",
+  "type": "object"
+}

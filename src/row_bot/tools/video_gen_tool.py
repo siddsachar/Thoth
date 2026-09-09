@@ -155,9 +155,25 @@ def video_output_override(directory: str | Path, filename: str | None = None) ->
         _video_output_dir_var.reset(dir_token)
 
 
+def _set_pending_video(value: dict) -> None:
+    from row_bot.application.attachment_context import current_caches
+    global _last_generated_video
+    caches = current_caches()
+    if caches is None:
+        _last_generated_video = value
+    else:
+        caches.pending_video = value
+
+
 def get_and_clear_last_video() -> dict | None:
     """Return and clear the pending generated video metadata, if any."""
     global _last_generated_video
+    from row_bot.application.attachment_context import current_caches
+    caches = current_caches()
+    if caches is not None:
+        vid = caches.pending_video
+        caches.pending_video = None
+        return vid
     vid = _last_generated_video
     _last_generated_video = None
     return vid
@@ -250,7 +266,8 @@ def _resolve_image_source(image_source: str) -> bytes:
       2. Key match in image_gen_tool._image_cache → pasted/attached image
       3. File path on disk / workspace-relative path
     """
-    from row_bot.tools.image_gen_tool import _image_cache
+    from row_bot.tools.image_gen_tool import _execution_image_cache
+    _image_cache = _execution_image_cache()
 
     # "last" — use the last generated image
     if image_source.strip().lower() == "last":
@@ -324,6 +341,11 @@ def _save_video_to_disk(video_bytes: bytes, prefix: str = "vid") -> str | None:
             return None
 
     try:
+        from row_bot.application.attachment_context import current_caches
+        caches = current_caches()
+        if caches is not None:
+            from row_bot.application.generated_media import save_generated_output
+            return save_generated_output(caches.conversation_id, video_bytes, prefix=prefix, extension="mp4")
         from row_bot.agent import _current_thread_id_var
         from row_bot.threads import save_media_file, _next_media_filename
 
@@ -426,14 +448,14 @@ def _generate_video_google(
     saved = _save_video_to_disk(video_bytes)
     mode = "image-to-video" if image_bytes else "text-to-video"
 
-    _last_generated_video = {
+    _set_pending_video({
         "path": saved,
         "filename": Path(saved).name if saved else None,
         "provider": "Google",
         "model": model,
         "duration": dur,
         "mode": mode,
-    }
+    })
 
     result = (
         f"Video generated successfully. Model: {model} | "
@@ -550,14 +572,14 @@ def _generate_video_xai(
     saved = _save_video_to_disk(video_bytes)
     mode = "image-to-video" if image_bytes else "text-to-video"
 
-    _last_generated_video = {
+    _set_pending_video({
         "path": saved,
         "filename": Path(saved).name if saved else None,
         "provider": provider_label,
         "model": model,
         "duration": dur,
         "mode": mode,
-    }
+    })
 
     result = (
         f"Video generated successfully. Model: {model} | "

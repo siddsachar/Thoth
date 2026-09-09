@@ -23,6 +23,41 @@ class SourceTestRule:
 
 SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
     SourceTestRule(
+        "unified_client_platform",
+        (
+            "src/row_bot/application/**", "src/row_bot/runtime/**",
+            "src/row_bot/projection/**", "src/row_bot/api/**",
+            "src/row_bot/ui/legacy_adapter/**", "src/row_bot/conversation_resources.py",
+            "src/row_bot/threads.py", "src/row_bot/tasks.py", "src/row_bot/cancellation.py", "src/row_bot/goals.py",
+            "src/row_bot/ui/state.py", "src/row_bot/ui/streaming.py", "src/row_bot/ui/chat.py",
+            "src/row_bot/app.py", "src/row_bot/file_context.py", "src/row_bot/message_projection.py",
+            "src/row_bot/channels/media.py", "src/row_bot/tools/chart_tool.py",
+            "src/row_bot/tools/image_gen_tool.py", "src/row_bot/tools/video_gen_tool.py",
+            "src/row_bot/developer/tool_context.py", "src/row_bot/designer/session.py",
+            "contracts/client-platform/**", "scripts/generate_client_platform_contracts.py",
+        ),
+        (
+            "tests/contracts/client_platform", "tests/subsystem/client_platform",
+            "tests/subsystem/client_protocol", "tests/subsystem/developer/test_conversation_resources.py",
+            "tests/subsystem/test_client_platform_boundaries.py",
+            "tests/subsystem/test_client_platform_lifecycle.py",
+            "tests/subsystem/test_client_platform_view_subscription.py",
+            "tests/subsystem/test_client_platform_event_queue.py",
+            "tests/subsystem/test_client_platform_attachment_context.py",
+            "tests/subsystem/test_client_platform_media_identity.py",
+            "tests/test_chat_attachment_filesystem_bridge.py", "tests/test_transcript_loading.py",
+            "tests/test_buddy_overlay.py", "tests/test_channel_workflow_model_routing.py",
+            "tests/subsystem/agents", "tests/subsystem/workflows",
+        ),
+        "Headless admission, projection, authenticated protocol and legacy adapters share one execution and durable resource authority.",
+    ),
+    SourceTestRule(
+        "client_platform_quality",
+        ("scripts/ui_performance_harness.py", "scripts/check_client_platform_boundaries.py"),
+        ("tests/subsystem/test_ui_performance_harness.py", "tests/subsystem/test_client_platform_boundaries.py"),
+        "Performance evidence attributes exact process roles and canonical read-only paths; new boundaries enforce imports and public annotations.",
+    ),
+    SourceTestRule(
         "thread_deletion_cleanup",
         (
             "src/row_bot/thread_cleanup.py",
@@ -678,6 +713,16 @@ SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
             "tests/contracts/installers",
         ),
         "Installer, release, dependency, and workflow changes need matrix and package contract coverage.",
+    ),
+    SourceTestRule(
+        "test_isolation",
+        ("tests/conftest.py",),
+        (
+            "tests/test_chat_only_runtime.py",
+            "tests/subsystem/workflows/test_delegate_agent_step.py",
+            "tests/test_buddy_core.py",
+        ),
+        "Test isolation changes need notification-producing chat, workflow and buddy coverage.",
     ),
     SourceTestRule(
         "tests",

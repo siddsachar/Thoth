@@ -119,7 +119,18 @@ async def _json_error(
     send: ASGISend,
     status: int,
     code: str,
+    scope: Mapping[str, object] | None = None,
 ) -> None:
+    if scope is not None and str(scope.get("path", "")).startswith("/api/v1/"):
+        from uuid import uuid4
+        safe_code = ("authentication_required" if status == 401 else
+                     "origin_rejected" if code.startswith("origin") else "action_denied")
+        body = json.dumps({"type": f"urn:row-bot:error:{safe_code}",
+                           "title": safe_code.replace("_", " "), "status": status,
+                           "code": safe_code, "request_id": str(uuid4()), "retryable": False,
+                           "recovery": "authenticate" if status == 401 else "none"}).encode()
+        await _send_http(send, status, body, content_type=b"application/problem+json")
+        return
     body = json.dumps(
         {"ok": False, "error": code},
         separators=(",", ":"),
@@ -240,7 +251,7 @@ class AccessMiddleware:
         if scope.get("type") == "websocket":
             await send({"type": "websocket.close", "code": 1008})
             return
-        await _json_error(send, exc.status_code, exc.code)
+        await _json_error(send, exc.status_code, exc.code, scope)
 
     async def _reject_authorization(
         self,
@@ -259,7 +270,7 @@ class AccessMiddleware:
         if status_code == 401 and classification.browser_navigation:
             await _redirect_connect(scope, send)
             return
-        await _json_error(send, status_code, reason)
+        await _json_error(send, status_code, reason, scope)
 
     async def __call__(
         self,
@@ -297,12 +308,29 @@ class AccessMiddleware:
             if scope.get("type") == "websocket":
                 await send({"type": "websocket.close", "code": 1011})
             else:
-                await _json_error(send, 401, "authentication_required")
+                await _json_error(send, 401, "authentication_required", scope)
             return
 
         forwarded_scope = dict(scope)
         forwarded_scope[PROVENANCE_SCOPE_KEY] = provenance
         forwarded_scope[ACCESS_CONTEXT_SCOPE_KEY] = context
+        async def revalidate_access() -> AccessContext | None:
+            """Reuse current access policy for long-lived authenticated delivery."""
+            try:
+                current_snapshot = self.runtime_policy.snapshot() if self.runtime_policy is not None else None
+                current_resolver = (RequestContextResolver(current_snapshot.config_for_scope(scope))
+                                    if current_snapshot is not None else self.resolver)
+                current_provenance = current_resolver.resolve_provenance(scope)
+                current_identity = await self._authenticate(scope, current_provenance)
+                current = current_resolver.resolve(scope, session=current_identity)
+                if (not current.authenticated or current.session_id != context.session_id
+                        or current.authentication_kind != context.authentication_kind
+                        or current.device_id != context.device_id or current.origin != context.origin):
+                    return None
+                return current
+            except Exception:
+                return None
+        forwarded_scope["row_bot_revalidate_access"] = revalidate_access
         state = dict(scope.get("state") or {})
         state["row_bot_access_context"] = context
         state["row_bot_request_provenance"] = provenance

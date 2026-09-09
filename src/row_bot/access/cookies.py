@@ -100,14 +100,9 @@ class AccessCookieManager:
     ) -> str:
         parsed = _parse_cookie_header(cookie_header)
         preferred = self.name_for(context)
-        alternate = (
-            self.names.http if preferred == self.names.https else self.names.https
-        )
-        for name in (preferred, alternate):
-            morsel = parsed.get(name)
-            if morsel is not None and morsel.value:
-                return morsel.value
-        return ""
+        # A plaintext cookie must never shadow or bootstrap the secure variant.
+        morsel = parsed.get(preferred)
+        return morsel.value if morsel is not None and morsel.value else ""
 
     def extract_from_scope(
         self,
@@ -169,7 +164,7 @@ class AccessCookieManager:
             path="/",
             secure=secure,
             httponly=True,
-            samesite="lax",
+            samesite="strict",
         )
 
     def clear(self, response: Response) -> None:
@@ -186,7 +181,7 @@ class AccessCookieManager:
                 path="/",
                 secure=secure,
                 httponly=True,
-                samesite="lax",
+                samesite="strict",
             )
 
 

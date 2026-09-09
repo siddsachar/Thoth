@@ -1,0 +1,285 @@
+{
+  "$defs": {
+    "CapabilityChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "requires_approval": {
+          "title": "Requires Approval",
+          "type": "boolean"
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "configuration_required",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unavailable Reason"
+        }
+      },
+      "required": [
+        "id",
+        "available",
+        "requires_approval"
+      ],
+      "title": "CapabilityChoice",
+      "type": "object"
+    },
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "attachment_bytes": {
+          "const": 26214400,
+          "default": 26214400,
+          "title": "Attachment Bytes",
+          "type": "integer"
+        },
+        "event_bytes": {
+          "const": 65536,
+          "default": 65536,
+          "title": "Event Bytes",
+          "type": "integer"
+        },
+        "json_bytes": {
+          "const": 262144,
+          "default": 262144,
+          "title": "Json Bytes",
+          "type": "integer"
+        },
+        "query_rows": {
+          "const": 200,
+          "default": 200,
+          "title": "Query Rows",
+          "type": "integer"
+        },
+        "stream_connections_per_session": {
+          "const": 4,
+          "default": 4,
+          "title": "Stream Connections Per Session",
+          "type": "integer"
+        },
+        "transcript_rows": {
+          "const": 100,
+          "default": 100,
+          "title": "Transcript Rows",
+          "type": "integer"
+        },
+        "upload_batch_bytes": {
+          "const": 104857600,
+          "default": 104857600,
+          "title": "Upload Batch Bytes",
+          "type": "integer"
+        },
+        "upload_chunk_bytes": {
+          "const": 1048576,
+          "default": 1048576,
+          "title": "Upload Chunk Bytes",
+          "type": "integer"
+        },
+        "upload_chunks_in_flight": {
+          "const": 4,
+          "default": 4,
+          "title": "Upload Chunks In Flight",
+          "type": "integer"
+        },
+        "upload_ttl_seconds": {
+          "const": 1800,
+          "default": 1800,
+          "title": "Upload Ttl Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "Limits",
+      "type": "object"
+    },
+    "ModelChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "label": {
+          "maxLength": 256,
+          "title": "Label",
+          "type": "string"
+        },
+        "model_ref": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Model Ref",
+          "type": "string"
+        },
+        "provider_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "configuration_required",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unavailable Reason"
+        }
+      },
+      "required": [
+        "provider_id",
+        "model_ref",
+        "label",
+        "available"
+      ],
+      "title": "ModelChoice",
+      "type": "object"
+    },
+    "NativeAdapter": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "const": false,
+          "default": false,
+          "title": "Available",
+          "type": "boolean"
+        }
+      },
+      "title": "NativeAdapter",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "authentication_kind": {
+      "enum": [
+        "local_owner",
+        "session"
+      ],
+      "title": "Authentication Kind",
+      "type": "string"
+    },
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/CapabilityChoice"
+      },
+      "maxItems": 4096,
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "catalog_stale": {
+      "default": true,
+      "title": "Catalog Stale",
+      "type": "boolean"
+    },
+    "client_group_id": {
+      "format": "uuid",
+      "title": "Client Group Id",
+      "type": "string"
+    },
+    "client_session_id": {
+      "format": "uuid",
+      "title": "Client Session Id",
+      "type": "string"
+    },
+    "csrf_token": {
+      "maxLength": 256,
+      "minLength": 32,
+      "title": "Csrf Token",
+      "type": "string"
+    },
+    "instance_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9:_-]+$",
+      "title": "Instance Id",
+      "type": "string"
+    },
+    "limits": {
+      "$ref": "#/$defs/Limits"
+    },
+    "minimum_client_version": {
+      "const": "1.0",
+      "title": "Minimum Client Version",
+      "type": "string"
+    },
+    "models": {
+      "items": {
+        "$ref": "#/$defs/ModelChoice"
+      },
+      "maxItems": 4096,
+      "title": "Models",
+      "type": "array"
+    },
+    "native_adapter": {
+      "$ref": "#/$defs/NativeAdapter"
+    },
+    "policy_revision": {
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "title": "Policy Revision",
+      "type": "string"
+    },
+    "protocol_version": {
+      "const": "1.0",
+      "title": "Protocol Version",
+      "type": "string"
+    },
+    "server_epoch": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9:_-]+$",
+      "title": "Server Epoch",
+      "type": "string"
+    },
+    "session_ttl_seconds": {
+      "maximum": 43200,
+      "minimum": 0,
+      "title": "Session Ttl Seconds",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "models",
+    "capabilities",
+    "protocol_version",
+    "minimum_client_version",
+    "instance_id",
+    "server_epoch",
+    "client_session_id",
+    "client_group_id",
+    "csrf_token",
+    "authentication_kind",
+    "policy_revision",
+    "session_ttl_seconds",
+    "native_adapter",
+    "limits"
+  ],
+  "title": "HandshakeView",
+  "type": "object"
+}

@@ -1,0 +1,16 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Cursor",
+      "type": "string"
+    }
+  },
+  "required": [
+    "cursor"
+  ],
+  "title": "Acknowledgement",
+  "type": "object"
+}

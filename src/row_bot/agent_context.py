@@ -59,7 +59,7 @@ def select_context_mode(
 
 
 def estimate_tokens(text: str) -> int:
-    return max(1, int(len(str(text or "")) / 4))
+    return max(1, (len(str(text or "")) + 3) // 4)
 
 
 def message_to_text(message: Any) -> str:
@@ -245,6 +245,17 @@ def build_child_agent_prompt(
         "Return a concise result for the parent agent. Include evidence, files or commands inspected, risks, and next steps when relevant.",
     ])
     prompt = "\n".join(parts).strip()
+    budget = profile_context_budget(profile)
+    if estimate_tokens(prompt) > budget:
+        # Context sections are atomic; removing a complete historical packet
+        # cannot leave a tool call separated from its result. Mission, profile,
+        # runtime restrictions and handoff remain mandatory.
+        for title, body in reversed(context_sections):
+            if estimate_tokens(prompt) <= budget:
+                break
+            prompt = prompt.replace(f"\n{title}:\n{body}", "", 1)
+        if estimate_tokens(prompt) > budget:
+            raise AgentContextError("The mandatory child packet exceeds its configured context allowance.")
     return {
         "mode": mode,
         "prompt": prompt,

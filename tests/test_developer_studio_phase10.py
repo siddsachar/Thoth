@@ -483,7 +483,7 @@ def test_developer_inspector_uses_snapshot_and_native_file_tree():
     snapshot_source = (root / "src" / "row_bot" / "developer" / "inspector_snapshot.py").read_text(encoding="utf-8")
 
     assert "from nicegui import ui" not in snapshot_source
-    assert "run.io_bound(_collect_snapshot_sync" in snapshot_source
+    assert "from nicegui" not in snapshot_source
     assert "def refresh_snapshot_now" not in snapshot_source
     assert "fingerprint" in snapshot_source
     assert "previous.fingerprint == snapshot.fingerprint" in snapshot_source

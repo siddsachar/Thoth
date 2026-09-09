@@ -345,6 +345,11 @@ def test_parent_thread_delete_cascades_chat_agent_state_but_keeps_workflows(tmp_
     )
 
     threads._delete_thread(parent_thread_id)
+    # A first Delete durably stops formerly running child records. An explicit
+    # retry observes their terminal acknowledgment and completes the cascade.
+    assert agent_runs.get_agent_run(child["id"])["status"] == "stopped"
+    assert threads._thread_exists(parent_thread_id)
+    threads._delete_thread(parent_thread_id)
 
     assert agent_runs.get_agent_run(child["id"]) is None
     assert agent_runs.get_agent_run(goal["id"]) is None

@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "description": "Phase 3 boundary only; this does not enable generated preview execution.",
+  "properties": {
+    "allowed_messages": {
+      "default": [
+        "selection.proposed",
+        "edit.proposed"
+      ],
+      "items": {
+        "enum": [
+          "selection.proposed",
+          "edit.proposed"
+        ],
+        "type": "string"
+      },
+      "title": "Allowed Messages",
+      "type": "array"
+    },
+    "artifact_ref": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9:_-]+$",
+      "title": "Artifact Ref",
+      "type": "string"
+    },
+    "message_limit_bytes": {
+      "const": 16384,
+      "default": 16384,
+      "title": "Message Limit Bytes",
+      "type": "integer"
+    },
+    "owner_origin_access": {
+      "const": false,
+      "default": false,
+      "title": "Owner Origin Access",
+      "type": "boolean"
+    },
+    "revision": {
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "title": "Revision",
+      "type": "string"
+    },
+    "sandbox": {
+      "const": "allow-scripts",
+      "default": "allow-scripts",
+      "title": "Sandbox",
+      "type": "string"
+    }
+  },
+  "required": [
+    "artifact_ref",
+    "revision"
+  ],
+  "title": "PreviewContract",
+  "type": "object"
+}

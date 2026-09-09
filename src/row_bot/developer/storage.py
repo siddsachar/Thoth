@@ -56,7 +56,6 @@ def _write_json_atomic(path: pathlib.Path, payload: dict) -> None:
 
 
 def _load_payload() -> dict:
-    _ensure_dirs()
     if not WORKSPACES_PATH.exists():
         return {"workspaces": [], "clone_parent_folders": []}
     try:

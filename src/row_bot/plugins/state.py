@@ -97,6 +97,12 @@ def set_plugin_enabled(plugin_id: str, enabled: bool) -> None:
     _state.setdefault(plugin_id, {})["enabled"] = enabled
     _save_state()
     if not enabled:
+        # Disabling invalidates in-flight registration, even if a later enable
+        # occurs before its old register() callback returns.
+        import sys
+        loaded_loader = sys.modules.get("row_bot.plugins.loader")
+        if loaded_loader is not None:
+            loaded_loader.revoke_registration(str(plugin_id))
         try:
             from row_bot.channels import registry as channel_registry
 

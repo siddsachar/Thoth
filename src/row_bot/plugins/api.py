@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qs
@@ -205,6 +206,8 @@ class PluginAPI:
         plugin_id: str,
         plugin_dir: "Any",       # pathlib.Path — avoid import for type stub
         state_backend: "Any",    # plugins.state module
+        *,
+        staged: bool = False,
     ):
         self._plugin_id = plugin_id
         self._plugin_dir = plugin_dir
@@ -212,6 +215,41 @@ class PluginAPI:
         self._registered_tools: list[PluginTool] = []
         self._registered_skills: list[dict] = []
         self._registered_channels: list[Any] = []
+        self._registered_webhooks: list[tuple] = []
+        self._registration_lock = threading.RLock()
+        self._registration_revoked = False
+        self._registration_sealed = False
+        self._staged = staged
+
+    def _check_active(self, *, registration: bool = False) -> None:
+        if self._registration_revoked or (registration and self._registration_sealed):
+            raise RuntimeError("Plugin registration is no longer active")
+        enabled = getattr(self._state, "is_plugin_enabled", None)
+        if enabled is not None and not enabled(self._plugin_id):
+            raise RuntimeError("Plugin is disabled")
+
+    def _revoke(self) -> None:
+        with self._registration_lock:
+            self._registration_revoked = True
+            self._registered_webhooks.clear()
+
+    def _check_dispatch(self) -> None:
+        with self._registration_lock:
+            self._check_active()
+            if self._staged:
+                raise RuntimeError("Plugin registration is not published")
+
+    def _publish_webhooks(self) -> None:
+        from row_bot.plugins.webhooks import register_plugin_webhook
+
+        with self._registration_lock:
+            self._check_active()
+            self._registration_sealed = True
+            for name, handler, methods, maximum in self._registered_webhooks:
+                register_plugin_webhook(self._plugin_id, name, handler,
+                                        methods=methods, max_body_bytes=maximum)
+            self._registered_webhooks.clear()
+            self._staged = False
 
     @property
     def plugin_id(self) -> str:
@@ -225,18 +263,24 @@ class PluginAPI:
     # ── Tool & Skill Registration ────────────────────────────────────────
     def register_tool(self, tool: "PluginTool") -> None:
         """Register a tool with Row-Bot. Called inside register()."""
-        self._registered_tools.append(tool)
+        with self._registration_lock:
+            self._check_active(registration=True)
+            self._registered_tools.append(tool)
         logger.debug("Plugin '%s' registered tool: %s", self._plugin_id, tool.name)
 
     def register_skill(self, skill_info: dict) -> None:
         """Register a skill dict with Row-Bot. Usually auto-discovered from skills/."""
-        self._registered_skills.append(skill_info)
+        with self._registration_lock:
+            self._check_active(registration=True)
+            self._registered_skills.append(skill_info)
         logger.debug("Plugin '%s' registered skill: %s",
                       self._plugin_id, skill_info.get("name", "?"))
 
     def register_channel(self, channel: Any) -> None:
         """Register a Row-Bot channel adapter owned by this plugin."""
-        self._registered_channels.append(channel)
+        with self._registration_lock:
+            self._check_active(registration=True)
+            self._registered_channels.append(channel)
         logger.debug(
             "Plugin '%s' registered channel: %s",
             self._plugin_id,
@@ -246,19 +290,23 @@ class PluginAPI:
     # ── Configuration ────────────────────────────────────────────────────
     def get_config(self, key: str, default: Any = None) -> Any:
         """Read a configuration value for this plugin."""
+        self._check_active()
         return self._state.get_plugin_config(self._plugin_id, key, default)
 
     def set_config(self, key: str, value: Any) -> None:
         """Write a configuration value for this plugin."""
+        self._check_active()
         self._state.set_plugin_config(self._plugin_id, key, value)
 
     # ── Secrets ──────────────────────────────────────────────────────────
     def get_secret(self, key: str) -> str | None:
         """Read a secret (API key) for this plugin."""
+        self._check_active()
         return self._state.get_plugin_secret(self._plugin_id, key)
 
     def set_secret(self, key: str, value: str) -> None:
         """Write a secret (API key) for this plugin."""
+        self._check_active()
         self._state.set_plugin_secret(self._plugin_id, key, value)
 
     async def handle_channel_message(
@@ -272,6 +320,7 @@ class PluginAPI:
         approval_context: dict[str, Any] | None = None,
     ) -> ChannelRunResult:
         """Route an inbound plugin-channel message through Row-Bot core."""
+        self._check_dispatch()
         from row_bot.plugins.channel_runtime import handle_plugin_channel_message
 
         return await handle_plugin_channel_message(
@@ -295,6 +344,7 @@ class PluginAPI:
         source: str = "",
     ) -> ChannelRunResult:
         """Resume an interrupted plugin-channel agent turn."""
+        self._check_dispatch()
         from row_bot.plugins.channel_runtime import handle_plugin_channel_approval
 
         return await handle_plugin_channel_approval(
@@ -315,6 +365,7 @@ class PluginAPI:
         max_chars: int = 80000,
     ) -> ChannelAttachmentResult:
         """Process an inbound attachment through Row-Bot's shared media pipeline."""
+        self._check_dispatch()
         from row_bot.plugins.channel_runtime import process_plugin_channel_attachment
 
         return process_plugin_channel_attachment(
@@ -324,11 +375,13 @@ class PluginAPI:
         )
 
     def record_channel_activity(self, channel_name: str) -> None:
+        self._check_dispatch()
         from row_bot.channels.base import record_activity
 
         record_activity(channel_name)
 
     def generate_channel_pairing_code(self, channel_name: str) -> str:
+        self._check_dispatch()
         from row_bot.channels import auth as channel_auth
 
         return channel_auth.generate_pairing_code(channel_name)
@@ -341,6 +394,7 @@ class PluginAPI:
         *,
         display_name: str = "",
     ) -> bool:
+        self._check_active()
         from row_bot.channels import auth as channel_auth
 
         return channel_auth.verify_pairing_code(
@@ -351,16 +405,19 @@ class PluginAPI:
         )
 
     def is_channel_user_approved(self, channel_name: str, user_id: str) -> bool:
+        self._check_active()
         from row_bot.channels import auth as channel_auth
 
         return channel_auth.is_user_approved(channel_name, user_id)
 
     def get_channel_approved_users(self, channel_name: str) -> list[str]:
+        self._check_active()
         from row_bot.channels import auth as channel_auth
 
         return channel_auth.get_approved_users(channel_name)
 
     def revoke_channel_user(self, channel_name: str, user_id: str) -> bool:
+        self._check_active()
         from row_bot.channels import auth as channel_auth
 
         return channel_auth.revoke_user(channel_name, user_id)
@@ -377,14 +434,29 @@ class PluginAPI:
         max_body_bytes: int = 1048576,
     ) -> str:
         from row_bot.plugins.webhooks import register_plugin_webhook
+        with self._registration_lock:
+            self._check_active(registration=True)
+            from row_bot.plugins.webhooks import _normalize_methods, _normalize_body_limit, webhook_path
+            webhook_path(self._plugin_id, name)
+            _normalize_methods(methods)
+            _normalize_body_limit(max_body_bytes)
+            if not callable(handler) or any(item[0] == name for item in self._registered_webhooks):
+                raise ValueError("Invalid or duplicate webhook registration")
+            original_handler = handler
 
-        return register_plugin_webhook(
-            self._plugin_id,
-            name,
-            handler,
-            methods=methods,
-            max_body_bytes=max_body_bytes,
-        )
+            async def guarded_handler(request: PluginWebhookRequest) -> PluginWebhookResponse:
+                import inspect
+                self._check_dispatch()
+                result = original_handler(request)
+                return await result if inspect.isawaitable(result) else result
+
+            if self._staged:
+                self._registered_webhooks.append((name, guarded_handler, methods, max_body_bytes))
+                return self.get_webhook_path(name)
+            return register_plugin_webhook(
+                self._plugin_id, name, guarded_handler,
+                methods=methods, max_body_bytes=max_body_bytes,
+            )
 
     def get_webhook_path(self, name: str) -> str:
         from row_bot.plugins.webhooks import webhook_path
@@ -392,6 +464,7 @@ class PluginAPI:
         return webhook_path(self._plugin_id, name)
 
     def get_webhook_url(self, name: str, *, start_tunnel: bool = False) -> str:
+        self._check_active()
         from row_bot.plugins.webhooks import webhook_url
 
         return webhook_url(self._plugin_id, name, start_tunnel=start_tunnel)
@@ -410,6 +483,7 @@ class PluginAPI:
         timeout_seconds: float = 5.0,
     ) -> BotFrameworkAuthResult:
         """Verify a Bot Framework Connector bearer token for this plugin."""
+        self._check_dispatch()
         return verify_bot_framework_jwt(
             authorization_header,
             app_id=app_id,

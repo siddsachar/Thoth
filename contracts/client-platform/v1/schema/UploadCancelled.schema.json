@@ -1,0 +1,15 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cancelled": {
+      "const": true,
+      "title": "Cancelled",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "cancelled"
+  ],
+  "title": "UploadCancelled",
+  "type": "object"
+}

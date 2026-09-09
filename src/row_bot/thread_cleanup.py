@@ -119,17 +119,23 @@ def is_thread_deleting(thread_id: str | None) -> bool:
     if not clean:
         return False
     with _deletion_lock:
-        return clean in _deleting_threads
+        if clean in _deleting_threads:
+            return True
+    from row_bot.runtime.admissions import deletion_state
+    return deletion_state(clean) != "active"
 
 
 def allow_thread_recreation(thread_id: str | None) -> None:
-    """End an in-process deletion guard for an explicit new conversation."""
+    """Reopen an explicitly recreated conversation after proven deletion."""
 
     clean = str(thread_id or "").strip()
     if not clean:
         return
     with _deletion_lock:
-        _deleting_threads.pop(clean, None)
+        if clean in _deleting_threads:
+            raise RuntimeError("Conversation is being deleted.")
+        from row_bot.runtime.admissions import reopen_completed_conversation
+        reopen_completed_conversation(clean)
         _deleting_generations.pop(clean, None)
 
 
@@ -165,15 +171,26 @@ def _purge_thread_files(thread_id: str) -> int:
     return removed
 
 
-def _request_thread_cancellation(thread_id: str, *, deletion_token: str = "") -> bool:
+def _request_thread_cancellation(thread_id: str, *, deletion_token: str = "",
+                                 _seen: set[str] | None = None) -> bool:
     """Request every known producer to stop; return whether work was active."""
 
-    active = False
+    seen = _seen if _seen is not None else set()
+    if thread_id in seen:
+        return False
+    seen.add(thread_id)
+    from row_bot.runtime import admissions
+    from row_bot.runtime.executions import generation_registry
+    if deletion_token:
+        admissions.close_admission(thread_id)
+        admissions.advance_deletion(thread_id, "stop_requested")
+    active = bool(generation_registry.active(thread_id) or admissions.unproven_producer(thread_id))
+    generation_registry.stop(thread_id, reason="conversation deleted")
     try:
         from row_bot.ui.state import _active_generations
 
         generation = _active_generations.get(thread_id)
-        active = generation is not None
+        active = active or generation is not None
         if generation is not None:
             generation.deletion_token = deletion_token
             with _deletion_lock:
@@ -207,6 +224,10 @@ def _request_thread_cancellation(thread_id: str, *, deletion_token: str = "") ->
             if str(run.get("status") or "") not in TERMINAL_STATUSES:
                 active = True
                 stop_agent_run(str(run.get("id") or ""))
+            child_id = str(run.get("thread_id") or "")
+            if child_id and child_id != thread_id:
+                child_active = _request_thread_cancellation(child_id, deletion_token=deletion_token, _seen=seen)
+                active = active or child_active
     except Exception:
         logger.debug("Could not stop Agent work for %s", thread_id, exc_info=True)
 
@@ -395,13 +416,30 @@ def _deferred_finish(thread_id: str, token: str) -> None:
 def delete_thread(thread_id: str) -> ThreadDeletionResult:
     clean = normalize_thread_id(thread_id)
     from row_bot import threads
+    from row_bot.runtime import admissions
+    from row_bot.runtime.executions import generation_registry
 
     context = threads._get_thread_cleanup_context(clean)  # noqa: SLF001
+    if admissions.deletion_receipt(clean):
+        _purge_thread_files(clean)
+        return ThreadDeletionResult(thread_id=clean, deleted=True)
+    resuming_delete = admissions.deletion_state(clean) != "active"
+    if not context.get("exists") and not resuming_delete:
+        # Old interrupted cleanups can leave exact owned sidecars after their
+        # metadata row is gone. Never treat a missing row as proof of quiescence.
+        if generation_registry.active(clean) or admissions.unproven_producer(clean):
+            admissions.close_admission(clean)
+            generation_registry.stop(clean, reason="delete")
+            return ThreadDeletionResult(thread_id=clean, deleted=False)
+        return ThreadDeletionResult(thread_id=clean, deleted=bool(_purge_thread_files(clean)))
+    admissions.close_admission(clean)
+    admissions.advance_deletion(clean, "stop_requested")
+    generation_registry.stop(clean, reason="delete")
     with _deletion_lock:
         if clean in _deleting_threads:
             return ThreadDeletionResult(
                 thread_id=clean,
-                deleted=bool(context.get("exists")),
+                deleted=False,
             )
         token = _mark_thread_deleting(clean)
     active_work = False
@@ -411,6 +449,25 @@ def delete_thread(thread_id: str) -> ThreadDeletionResult:
     changed = 0
     try:
         active_work = _request_thread_cancellation(clean, deletion_token=token)
+        if active_work or generation_registry.active(clean):
+            with _deletion_lock:
+                _deleting_threads.pop(clean, None)
+            return ThreadDeletionResult(thread_id=clean, deleted=False,
+                                        warnings=("Stop requested; owned work has not acknowledged cleanup.",))
+        admissions.advance_deletion(clean, "producer_released")
+        admissions.advance_deletion(clean, "children_cleaned")
+        # Capture allocation authority while its durable run still exists.
+        # A later workspace lookup may identify a resource shared with a parent.
+        owned_agent_run_id = ""
+        try:
+            from row_bot.agent_runs import get_agent_run_for_thread
+
+            owned_run = get_agent_run_for_thread(clean)
+            if owned_run and str(owned_run.get("thread_id") or "") == clean:
+                owned_agent_run_id = str(owned_run.get("id") or "")
+        except Exception:
+            warnings.append("Agent workspace ownership could not be verified; unproven allocations were kept.")
+            logger.warning("Agent workspace ownership could not be verified for %s", clean, exc_info=True)
         first_changed, first_warnings = _purge_owned_state(clean)
         changed += first_changed
         warnings.extend(first_warnings)
@@ -437,6 +494,7 @@ def delete_thread(thread_id: str) -> ThreadDeletionResult:
                 clean,
                 workspace_id=str(context.get("developer_workspace_id") or ""),
                 project_workspace_id=str(context.get("project_workspace_id") or ""),
+                owned_agent_run_id=owned_agent_run_id,
             )
             retained_worktree_path = str(
                 developer_result.get("retained_worktree_path") or ""
@@ -452,25 +510,20 @@ def delete_thread(thread_id: str) -> ThreadDeletionResult:
         changed += second_changed
         warnings.extend(second_warnings)
         _clear_in_memory_state(clean)
+        admissions.advance_deletion(clean, "resources_cleaned")
+        admissions.advance_deletion(clean, "physical_delete_ready")
     except Exception:
         with _deletion_lock:
             if _deleting_threads.get(clean) == token:
                 _deleting_threads.pop(clean, None)
         raise
 
-    if active_work:
-        threading.Thread(
-            target=_deferred_finish,
-            args=(clean, token),
-            name=f"thread-delete-finalize-{clean[:24]}",
-            daemon=True,
-        ).start()
-    else:
-        finish_thread_deletion(clean, token)
+    finish_thread_deletion(clean, token)
+    admissions.deletion_completed(clean)
 
     return ThreadDeletionResult(
         thread_id=clean,
-        deleted=bool(context.get("exists") or changed),
+        deleted=bool(context.get("exists") or changed or resuming_delete),
         retained_worktree_path=retained_worktree_path,
         retained_sandbox=retained_sandbox,
         warnings=tuple(dict.fromkeys(warnings)),

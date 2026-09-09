@@ -1,0 +1,1017 @@
+{
+  "recording_version": 1,
+  "protocol_version": "1.0",
+  "fixture_id": "F-P03",
+  "kind": "service_recording",
+  "deterministic_seed": "F-P03:v1",
+  "source": {
+    "base_commit": "272a0add768f7badc2536fa21e30e538a08833de",
+    "files": {
+      "src/row_bot/api/v1/__init__.py": "d14be0852486e10539fd8ed7cafe67c2753a7964679096fe9c1191497a1ba329",
+      "src/row_bot/api/v1/routes.py": "3f2a8bb5dc1ebdc3b414960f092e2ba278992de72fcca900606738a8561957ed",
+      "src/row_bot/api/v1/schemas.py": "eb2f11a7f81719cad25334d9ecee62eab704aaed1e61fe611563101c7346e8e3",
+      "src/row_bot/api/v1/security.py": "b810017771e61c4cbde241901f33d17d32fd02060805824f2dc60f230852a375",
+      "src/row_bot/application/__init__.py": "ddac8928976922c73246ae791f5cc0ff84837ef1a9890f5938ee56f58eb7d468",
+      "src/row_bot/application/attachment_context.py": "930e91b470edddb37e68a75996237d88db5f22e54442df9c825f5ad16ae45d1a",
+      "src/row_bot/application/attachments.py": "cca0ed909626291f72492322e1bddc42cc722e13fbfdc583742a48251d7f0361",
+      "src/row_bot/application/client_platform.py": "0f45a18b6dfdd72f10dceb76d712ad0983d941b5c2173f5c386555d9c7caf082",
+      "src/row_bot/application/generated_media.py": "2037b707b47b35a202eb23c34130809ec45315906a41ac32c791d9e9256376db",
+      "src/row_bot/application/lifecycle.py": "5d1826b2239c67b73c768a854f759189a319b83773797aa64e717cbf56ff97ff",
+      "src/row_bot/application/live_content.py": "a454a9646f1bda95ce597c4640b01d3cb8b409a8818d8717b36abb827279998d",
+      "src/row_bot/conversation_resources.py": "20daa4c2c0f7a50f0cae7f6d24d804950b9fb87035586624a01e5bb1b6c94768",
+      "src/row_bot/projection/__init__.py": "246b0f37fc792dc5787564e86fdd2d1153e380cbd362a9d3f2db70669131da00",
+      "src/row_bot/projection/canonical.py": "cd33b9b4d396464a6324d04194476c87854e40ec902d34201ebda432217102ed",
+      "src/row_bot/projection/conversation.py": "0c2322879ebd8a952f808a01549d8c7e785819fb033bfcc5542a0d88071fc66e",
+      "src/row_bot/runtime/__init__.py": "bec0d5569832ef34ca97d303981dc5484f68c77b8123f82fb63e3320a3634d0b",
+      "src/row_bot/runtime/admissions.py": "c9b4a489c2e4e39e5122214f6ef2035440e4d12c4a2ea1a0da78435c149d1008",
+      "src/row_bot/runtime/checkpoint_reader.py": "dba5a78e99585899d186084a0f494796e0f767c783539e796683938cd964d0f4",
+      "src/row_bot/runtime/executions.py": "93936596d57069e96e6fffdb7332ab5c36aed81868c44dc71c7651bb7dc35166",
+      "src/row_bot/tasks.py": "e8e34aa222c7737424d248360cf3438370fb2675fba81d685c7014e4f83e9b8b",
+      "src/row_bot/threads.py": "28db4fd9e103b0f250eb62877bf367ffbb9b5433f4ddede620517789fced0122",
+      "tests/helpers/client_platform_fakes.py": "3e5ebbac050c0afb409135c11f7d6afbf7df313c09bcd465f3c04980f6639717"
+    },
+    "sha256": "06bee57a02733859b6b84e75d1971ba91406381b9e1832ab5a94d59ede8e4a72"
+  },
+  "records": [
+    {
+      "schema": "SubscriptionView",
+      "value": {
+        "subscription_id": "0f247d82-8460-5b03-a6ee-71bfb3b4559e",
+        "snapshot": {
+          "conversation_id": "conversation-a",
+          "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+          "projection_revision": "0",
+          "cursor": "fa028fce-b83d-5c56-a0fb-9d9ae257f5a8",
+          "checkpoint_revision": "",
+          "rows": [],
+          "generation": null
+        },
+        "cursor": "fa028fce-b83d-5c56-a0fb-9d9ae257f5a8"
+      }
+    },
+    {
+      "schema": "Command",
+      "value": {
+        "command_id": "18731c56-846b-55be-8a4d-b0cb7b8b59cd",
+        "client_session_id": "30dc9ab1-1651-5bbe-aced-db8820cbc403",
+        "type": "conversation.submit",
+        "expected_revision": "0",
+        "payload": {
+          "submission_id": "2076370a-bd41-55cc-9598-4f10ef0e4f98",
+          "text": "Synthetic prompt reconnect-output",
+          "attachment_refs": [],
+          "model_selection": {
+            "provider_id": "fixture",
+            "model_ref": "fixture/model"
+          }
+        }
+      }
+    },
+    {
+      "schema": "CommandReceipt",
+      "value": {
+        "command_id": "18731c56-846b-55be-8a4d-b0cb7b8b59cd",
+        "status": "accepted",
+        "conversation_id": "conversation-a",
+        "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+        "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+        "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+        "submission_id": "2076370a-bd41-55cc-9598-4f10ef0e4f98"
+      }
+    },
+    {
+      "schema": "EventPage",
+      "value": {
+        "snapshot_required": false,
+        "events": [
+          {
+            "cursor": "49690200-7249-55df-8d34-dba5dac6318d",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "5b5f03e4-332d-5548-af35-11983ff2b23e",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "1",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "1",
+              "source_sequence_end": "1",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+                "conversation_id": "conversation-a",
+                "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+                "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+                "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "status": "running",
+                "revision": "1",
+                "cancel_requested": false,
+                "quiesced": false,
+                "cleanup_complete": false,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": true
+              }
+            }
+          },
+          {
+            "cursor": "c33939fa-9cd2-5fa8-9fd7-9b2711dfefb4",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "dfd7f29b-4433-553a-8349-5f967e8d2a1b",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "2",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "2",
+              "source_sequence_end": "2",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [
+                  "2076370a-bd41-55cc-9598-4f10ef0e4f98"
+                ],
+                "revision": "2"
+              }
+            }
+          },
+          {
+            "cursor": "fc7078cf-7134-5982-a467-90814c631056",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "e059e768-c91e-541f-8037-aadc0e1abcb5",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "3",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "3",
+              "source_sequence_end": "3",
+              "type": "generation.activity",
+              "payload": {
+                "state": "thinking"
+              }
+            }
+          },
+          {
+            "cursor": "56bd2094-5e2c-5adb-aceb-248b92a98a39",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "efe2ca40-f0bc-58af-894b-da2cef249e57",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "4",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "4",
+              "source_sequence_end": "4",
+              "type": "transcript.delta",
+              "payload": {
+                "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+                "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "row_id": "assistant:live:574109c0-2bb8-5f05-8644-ffcd76feab98:081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "render_revision": "4",
+                "public_text_delta": "Synthetic reconnect-output"
+              }
+            }
+          },
+          {
+            "cursor": "058dc4d8-7581-5cf4-aac4-bdc5e57b2dc5",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "c9fdec46-c6e2-5c8b-861e-d9f09a7225d4",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "5",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "5",
+              "source_sequence_end": "5",
+              "type": "transcript.checkpoint",
+              "payload": {
+                "checkpoint_revision": "848db109-5424-5542-8ba3-e6a7c3c40998"
+              }
+            }
+          },
+          {
+            "cursor": "fb337be3-6a1c-5712-9106-c48d4a956db0",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "e45de4da-f229-532d-a77a-4dcbdf68ff85",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "6",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "6",
+              "source_sequence_end": "6",
+              "type": "transcript.settled",
+              "payload": {
+                "row_id": "assistant:live:574109c0-2bb8-5f05-8644-ffcd76feab98:081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "adoption": "exact"
+              }
+            }
+          },
+          {
+            "cursor": "1002479a-06b7-5662-b1e8-08438e198f2d",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "4b73d491-545c-56da-8688-576873ae3613",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "7",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "7",
+              "source_sequence_end": "7",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [],
+                "revision": "7"
+              }
+            }
+          },
+          {
+            "cursor": "0dd0ec75-553e-50d8-a429-789bcf47745a",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "0c30e8ff-cb21-567c-b6fb-66be70ca5dfa",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "8",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "8",
+              "source_sequence_end": "8",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+                "conversation_id": "conversation-a",
+                "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+                "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+                "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "status": "completed",
+                "revision": "2",
+                "cancel_requested": false,
+                "quiesced": true,
+                "cleanup_complete": true,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": false
+              }
+            }
+          }
+        ],
+        "cursor": "0dd0ec75-553e-50d8-a429-789bcf47745a"
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "5b5f03e4-332d-5548-af35-11983ff2b23e",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "1",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "1",
+        "source_sequence_end": "1",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+          "conversation_id": "conversation-a",
+          "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+          "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+          "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "status": "running",
+          "revision": "1",
+          "cancel_requested": false,
+          "quiesced": false,
+          "cleanup_complete": false,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": true
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "dfd7f29b-4433-553a-8349-5f967e8d2a1b",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "2",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "2",
+        "source_sequence_end": "2",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [
+            "2076370a-bd41-55cc-9598-4f10ef0e4f98"
+          ],
+          "revision": "2"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "e059e768-c91e-541f-8037-aadc0e1abcb5",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "3",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "3",
+        "source_sequence_end": "3",
+        "type": "generation.activity",
+        "payload": {
+          "state": "thinking"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "efe2ca40-f0bc-58af-894b-da2cef249e57",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "4",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "4",
+        "source_sequence_end": "4",
+        "type": "transcript.delta",
+        "payload": {
+          "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+          "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "row_id": "assistant:live:574109c0-2bb8-5f05-8644-ffcd76feab98:081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "render_revision": "4",
+          "public_text_delta": "Synthetic reconnect-output"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "c9fdec46-c6e2-5c8b-861e-d9f09a7225d4",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "5",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "5",
+        "source_sequence_end": "5",
+        "type": "transcript.checkpoint",
+        "payload": {
+          "checkpoint_revision": "848db109-5424-5542-8ba3-e6a7c3c40998"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "e45de4da-f229-532d-a77a-4dcbdf68ff85",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "6",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "6",
+        "source_sequence_end": "6",
+        "type": "transcript.settled",
+        "payload": {
+          "row_id": "assistant:live:574109c0-2bb8-5f05-8644-ffcd76feab98:081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "adoption": "exact"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "4b73d491-545c-56da-8688-576873ae3613",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "7",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "7",
+        "source_sequence_end": "7",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [],
+          "revision": "7"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "0c30e8ff-cb21-567c-b6fb-66be70ca5dfa",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "8",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "8",
+        "source_sequence_end": "8",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+          "conversation_id": "conversation-a",
+          "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+          "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+          "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "status": "completed",
+          "revision": "2",
+          "cancel_requested": false,
+          "quiesced": true,
+          "cleanup_complete": true,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": false
+        }
+      }
+    },
+    {
+      "schema": "EventPage",
+      "value": {
+        "snapshot_required": false,
+        "events": [
+          {
+            "cursor": "49690200-7249-55df-8d34-dba5dac6318d",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "5b5f03e4-332d-5548-af35-11983ff2b23e",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "1",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "1",
+              "source_sequence_end": "1",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+                "conversation_id": "conversation-a",
+                "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+                "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+                "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "status": "running",
+                "revision": "1",
+                "cancel_requested": false,
+                "quiesced": false,
+                "cleanup_complete": false,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": true
+              }
+            }
+          },
+          {
+            "cursor": "c33939fa-9cd2-5fa8-9fd7-9b2711dfefb4",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "dfd7f29b-4433-553a-8349-5f967e8d2a1b",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "2",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "2",
+              "source_sequence_end": "2",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [
+                  "2076370a-bd41-55cc-9598-4f10ef0e4f98"
+                ],
+                "revision": "2"
+              }
+            }
+          },
+          {
+            "cursor": "fc7078cf-7134-5982-a467-90814c631056",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "e059e768-c91e-541f-8037-aadc0e1abcb5",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "3",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "3",
+              "source_sequence_end": "3",
+              "type": "generation.activity",
+              "payload": {
+                "state": "thinking"
+              }
+            }
+          },
+          {
+            "cursor": "56bd2094-5e2c-5adb-aceb-248b92a98a39",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "efe2ca40-f0bc-58af-894b-da2cef249e57",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "4",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "4",
+              "source_sequence_end": "4",
+              "type": "transcript.delta",
+              "payload": {
+                "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+                "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "row_id": "assistant:live:574109c0-2bb8-5f05-8644-ffcd76feab98:081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "render_revision": "4",
+                "public_text_delta": "Synthetic reconnect-output"
+              }
+            }
+          },
+          {
+            "cursor": "058dc4d8-7581-5cf4-aac4-bdc5e57b2dc5",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "c9fdec46-c6e2-5c8b-861e-d9f09a7225d4",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "5",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "5",
+              "source_sequence_end": "5",
+              "type": "transcript.checkpoint",
+              "payload": {
+                "checkpoint_revision": "848db109-5424-5542-8ba3-e6a7c3c40998"
+              }
+            }
+          },
+          {
+            "cursor": "fb337be3-6a1c-5712-9106-c48d4a956db0",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "e45de4da-f229-532d-a77a-4dcbdf68ff85",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "6",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "6",
+              "source_sequence_end": "6",
+              "type": "transcript.settled",
+              "payload": {
+                "row_id": "assistant:live:574109c0-2bb8-5f05-8644-ffcd76feab98:081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "adoption": "exact"
+              }
+            }
+          },
+          {
+            "cursor": "1002479a-06b7-5662-b1e8-08438e198f2d",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "4b73d491-545c-56da-8688-576873ae3613",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "7",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "7",
+              "source_sequence_end": "7",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [],
+                "revision": "7"
+              }
+            }
+          },
+          {
+            "cursor": "0dd0ec75-553e-50d8-a429-789bcf47745a",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "0c30e8ff-cb21-567c-b6fb-66be70ca5dfa",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "conversation_id": "conversation-a",
+              "projection_revision": "8",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+              "source_sequence_start": "8",
+              "source_sequence_end": "8",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+                "conversation_id": "conversation-a",
+                "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+                "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+                "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+                "status": "completed",
+                "revision": "2",
+                "cancel_requested": false,
+                "quiesced": true,
+                "cleanup_complete": true,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": false
+              }
+            }
+          }
+        ],
+        "cursor": "0dd0ec75-553e-50d8-a429-789bcf47745a"
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "5b5f03e4-332d-5548-af35-11983ff2b23e",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "1",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "1",
+        "source_sequence_end": "1",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+          "conversation_id": "conversation-a",
+          "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+          "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+          "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "status": "running",
+          "revision": "1",
+          "cancel_requested": false,
+          "quiesced": false,
+          "cleanup_complete": false,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": true
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "dfd7f29b-4433-553a-8349-5f967e8d2a1b",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "2",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "2",
+        "source_sequence_end": "2",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [
+            "2076370a-bd41-55cc-9598-4f10ef0e4f98"
+          ],
+          "revision": "2"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "e059e768-c91e-541f-8037-aadc0e1abcb5",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "3",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "3",
+        "source_sequence_end": "3",
+        "type": "generation.activity",
+        "payload": {
+          "state": "thinking"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "efe2ca40-f0bc-58af-894b-da2cef249e57",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "4",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "4",
+        "source_sequence_end": "4",
+        "type": "transcript.delta",
+        "payload": {
+          "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+          "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "row_id": "assistant:live:574109c0-2bb8-5f05-8644-ffcd76feab98:081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "render_revision": "4",
+          "public_text_delta": "Synthetic reconnect-output"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "c9fdec46-c6e2-5c8b-861e-d9f09a7225d4",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "5",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "5",
+        "source_sequence_end": "5",
+        "type": "transcript.checkpoint",
+        "payload": {
+          "checkpoint_revision": "848db109-5424-5542-8ba3-e6a7c3c40998"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "e45de4da-f229-532d-a77a-4dcbdf68ff85",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "6",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "6",
+        "source_sequence_end": "6",
+        "type": "transcript.settled",
+        "payload": {
+          "row_id": "assistant:live:574109c0-2bb8-5f05-8644-ffcd76feab98:081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "adoption": "exact"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "4b73d491-545c-56da-8688-576873ae3613",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "7",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "7",
+        "source_sequence_end": "7",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [],
+          "revision": "7"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "0c30e8ff-cb21-567c-b6fb-66be70ca5dfa",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "conversation_id": "conversation-a",
+        "projection_revision": "8",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "4fe31412-9123-561c-a8ea-9cc2f8607758",
+        "source_sequence_start": "8",
+        "source_sequence_end": "8",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+          "conversation_id": "conversation-a",
+          "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+          "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+          "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+          "status": "completed",
+          "revision": "2",
+          "cancel_requested": false,
+          "quiesced": true,
+          "cleanup_complete": true,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": false
+        }
+      }
+    },
+    {
+      "schema": "EventPage",
+      "value": {
+        "snapshot_required": true,
+        "snapshot": {
+          "conversation_id": "conversation-a",
+          "server_epoch": "006d06a5-fab6-5857-8fde-150a808009de",
+          "projection_revision": "8",
+          "cursor": "0aeec8e8-cdbb-55ec-9ab6-1edcb197bbb1",
+          "checkpoint_revision": "848db109-5424-5542-8ba3-e6a7c3c40998",
+          "rows": [
+            {
+              "id": "user:submission:2076370a-bd41-55cc-9598-4f10ef0e4f98",
+              "message_id": "2076370a-bd41-55cc-9598-4f10ef0e4f98",
+              "role": "user",
+              "blocks": [
+                {
+                  "type": "text",
+                  "text": "Synthetic prompt reconnect-output"
+                }
+              ],
+              "tool_call_ids": [],
+              "tool_call_id": ""
+            },
+            {
+              "id": "assistant:checkpoint:e04df6bb-fa50-5273-96bf-e824beeae276",
+              "message_id": "e04df6bb-fa50-5273-96bf-e824beeae276",
+              "role": "assistant",
+              "blocks": [
+                {
+                  "type": "text",
+                  "text": "Synthetic reconnect-output"
+                }
+              ],
+              "tool_call_ids": [],
+              "tool_call_id": ""
+            }
+          ],
+          "generation": {
+            "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+            "conversation_id": "conversation-a",
+            "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+            "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+            "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+            "status": "completed",
+            "revision": "2",
+            "cancel_requested": false,
+            "quiesced": true,
+            "cleanup_complete": true,
+            "external_outcome": "known_not_sent",
+            "approval_id": null,
+            "can_stop": false
+          }
+        },
+        "events": [],
+        "cursor": "0aeec8e8-cdbb-55ec-9ab6-1edcb197bbb1"
+      }
+    }
+  ],
+  "delivery_order": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21
+  ],
+  "barriers": [
+    "epoch changed after durable final checkpoint"
+  ],
+  "assertions": [
+    "Same cursor replays the same events without provider dispatch",
+    "Epoch reset snapshot and cursor share a cut"
+  ],
+  "allowed_external_effects": [],
+  "bounds": {
+    "quiescence_timeout_seconds": 10,
+    "event_bytes": 65536
+  },
+  "expected_final_snapshot": {
+    "conversation_id": "conversation-a",
+    "server_epoch": "006d06a5-fab6-5857-8fde-150a808009de",
+    "projection_revision": "8",
+    "cursor": "0aeec8e8-cdbb-55ec-9ab6-1edcb197bbb1",
+    "checkpoint_revision": "848db109-5424-5542-8ba3-e6a7c3c40998",
+    "rows": [
+      {
+        "id": "user:submission:2076370a-bd41-55cc-9598-4f10ef0e4f98",
+        "message_id": "2076370a-bd41-55cc-9598-4f10ef0e4f98",
+        "role": "user",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "Synthetic prompt reconnect-output"
+          }
+        ],
+        "tool_call_ids": [],
+        "tool_call_id": ""
+      },
+      {
+        "id": "assistant:checkpoint:e04df6bb-fa50-5273-96bf-e824beeae276",
+        "message_id": "e04df6bb-fa50-5273-96bf-e824beeae276",
+        "role": "assistant",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "Synthetic reconnect-output"
+          }
+        ],
+        "tool_call_ids": [],
+        "tool_call_id": ""
+      }
+    ],
+    "generation": {
+      "execution_id": "543d611d-db06-5c38-99bf-38d184327513",
+      "conversation_id": "conversation-a",
+      "generation_id": "36b059c3-cdcf-5527-8ae7-a911a3725581",
+      "pass_id": "574109c0-2bb8-5f05-8644-ffcd76feab98",
+      "segment_id": "081b4432-82ed-53e7-a053-5ef81adcbdd3",
+      "status": "completed",
+      "revision": "2",
+      "cancel_requested": false,
+      "quiesced": true,
+      "cleanup_complete": true,
+      "external_outcome": "known_not_sent",
+      "approval_id": null,
+      "can_stop": false
+    }
+  }
+}

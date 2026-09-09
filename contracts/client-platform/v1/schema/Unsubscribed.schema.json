@@ -1,0 +1,15 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "unsubscribed": {
+      "const": true,
+      "title": "Unsubscribed",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "unsubscribed"
+  ],
+  "title": "Unsubscribed",
+  "type": "object"
+}

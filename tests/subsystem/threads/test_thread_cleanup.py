@@ -475,19 +475,43 @@ def test_parent_delete_cancels_active_child_and_blocks_late_child_writes(
         enabled_tools=[],
     )
     state_module._active_generations[child_id] = generation
+    from row_bot.runtime import executions
+    registry = executions.GenerationRuntimeRegistry()
+    monkeypatch.setattr(executions, "generation_registry", registry)
+    handle = registry.register(child_id, stop_event=generation.stop_event, domain="agent", domain_id=child_run["id"])
+    entered, release = threading.Event(), threading.Event()
+    def producer():
+        entered.set()
+        assert release.wait(timeout=5)
+        agent_runs.finish_agent_run(child_run["id"], "stopped")
+    worker = registry.launch(handle, producer)
+    assert entered.wait(timeout=2)
     try:
-        cleanup.delete_thread(parent_id)
+        result = cleanup.delete_thread(parent_id)
 
+        assert result.deleted is False
         assert stop_order == [(child_run["id"], True)]
         assert generation.stop_event.is_set()
+        assert not handle.producer_done.is_set()
+        assert agent_runs.get_agent_run(child_run["id"])["status"] == "stopping"
+        assert cleanup.is_thread_deleting(parent_id) is True
         assert cleanup.is_thread_deleting(child_id) is True
         threads._save_thread_meta(child_id, "Late child resurrection")
-        assert threads._thread_exists(child_id) is False
+        assert threads._thread_exists(child_id) is True
+        assert threads.get_thread_name(child_id) == "Active child"
+        with pytest.raises((ValueError, RuntimeError), match="delet"):
+            threads._save_thread_meta(child_id, "Premature explicit recreation", allow_recreate=True)
     finally:
+        release.set()
+        worker.join(timeout=3)
         state_module._active_generations.pop(child_id, None)
-        cleanup.finish_thread_deletion(child_id, generation.deletion_token)
 
-    assert cleanup.is_thread_deleting(child_id) is False
+    assert handle.producer_done.is_set()
+    assert cleanup.delete_thread(parent_id).deleted is True
+    assert not threads._thread_exists(parent_id)
+    assert not threads._thread_exists(child_id)
+    # Durable tombstones continue rejecting implicit late writes after cleanup.
+    assert cleanup.is_thread_deleting(child_id) is True
     assert agent_runs.get_agent_run(child_run["id"]) is None
 
 
@@ -527,6 +551,27 @@ def test_explicit_channel_recreation_can_reuse_a_deleted_thread_id(tmp_path, mon
 
     assert cleanup.is_thread_deleting(thread_id) is False
     assert threads._thread_exists(thread_id) is True
+
+
+def test_deletion_resumes_after_metadata_purge_before_durable_completion(tmp_path, monkeypatch) -> None:
+    stack = _fresh_stack(tmp_path, monkeypatch)
+    threads, cleanup = stack["threads"], stack["cleanup"]
+    from row_bot.runtime import admissions
+    thread_id = threads.create_thread("Crash cut", thread_id="delete-after-row-purge")
+    admissions.close_admission(thread_id)
+    admissions.advance_deletion(thread_id, "producer_released")
+    threads._purge_thread_rows(thread_id)
+    late_sidecar = threads._THREAD_UI_DIR / f"{thread_id}.draft.json"
+    late_sidecar.write_text("{}", encoding="utf-8")
+
+    result = cleanup.delete_thread(thread_id)
+
+    assert result.deleted is True
+    assert not late_sidecar.exists()
+    assert admissions.deletion_receipt(thread_id) == "DeleteCompleted"
+    assert cleanup.delete_thread(thread_id).deleted is True
+    threads._save_thread_meta(thread_id, "Late implicit write")
+    assert not threads._thread_exists(thread_id)
 
 
 def test_deletion_guard_stays_until_an_active_producer_finalizes(tmp_path, monkeypatch) -> None:

@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import base64 as _b64
 import hashlib
-import io
 import json
 import logging
 import os
@@ -22,20 +21,19 @@ from typing import Any
 
 from row_bot.brand import APP_DISPLAY_NAME, APP_NATIVE_ENV
 from row_bot.data_paths import get_row_bot_data_dir
-from row_bot.ui.constants import (
-    IMAGE_EXTENSIONS,
-    DATA_EXTENSIONS,
-    TEXT_EXTENSIONS,
-    CHARS_PER_TOKEN_APPROX,
+from row_bot.message_projection import (  # compatibility exports for existing callers
+    langchain_messages_to_ui_messages, strip_file_context,
+)
+from row_bot.file_context import (  # compatibility exports for legacy callers
+    ATTACHMENT_CONTEXT_START,
+    ATTACHMENT_CONTEXT_END,
+    file_budget,
+    materialize_chat_attachments,
+    process_attached_files,
+    wrap_attachment_context,
 )
 
-from row_bot.models import get_context_size
-from row_bot.vision import VisionService
-
 logger = logging.getLogger(__name__)
-
-ATTACHMENT_CONTEXT_START = "<row_bot_attachment_context>"
-ATTACHMENT_CONTEXT_END = "</row_bot_attachment_context>"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -86,156 +84,7 @@ def mark_setup_complete() -> None:
 # FILE PROCESSING
 # ═════════════════════════════════════════════════════════════════════════════
 
-def file_budget(model_name: str | None = None) -> int:
-    """Dynamic char budget for attached files: 35 % of the model's context window.
 
-    For 32K context →  ~28K chars (7K tokens)
-    For 128K context → ~114K chars (28K tokens)
-    Falls back to 40K chars if context size is unavailable.
-    """
-    try:
-        ctx = get_context_size(model_name)
-    except Exception:
-        ctx = 32_768
-    return int(ctx * 0.35 * CHARS_PER_TOKEN_APPROX)
-
-
-def strip_file_context(content: str) -> str:
-    """Replace verbose file-context blocks with compact badges for display."""
-    if ATTACHMENT_CONTEXT_START in content and ATTACHMENT_CONTEXT_END in content:
-        before, rest = content.split(ATTACHMENT_CONTEXT_START, 1)
-        hidden, after = rest.split(ATTACHMENT_CONTEXT_END, 1)
-        badges: list[str] = []
-        for line in hidden.splitlines():
-            if not line.startswith("[Attached "):
-                continue
-            header = line.split("\n", 1)[0]
-            bracket_end = header.find("]")
-            scoped = header[: bracket_end + 1] if bracket_end != -1 else header
-            after_colon = scoped.split(": ", 1)[1] if ": " in scoped else scoped
-            fname = after_colon.split("]")[0].strip()
-            if "ALREADY ANALYZED" in fname:
-                fname = fname.split("ALREADY ANALYZED", 1)[0].strip()
-            for marker in (" — ", " - ", ","):
-                if marker in fname:
-                    fname = fname.split(marker, 1)[0].strip()
-            badges.append(f"\U0001f4ce {fname}")
-        visible = "\n\n".join(part.strip() for part in (before, after) if part.strip())
-        if badges:
-            return "\n\n".join(part for part in (", ".join(badges), visible) if part)
-        return visible
-
-    if "[Attached " not in content:
-        return content
-    parts = content.split("\n\n")
-    badges: list[str] = []
-    user_parts: list[str] = []
-    for part in parts:
-        if part.startswith("[Attached "):
-            header = part.split("\n", 1)[0]
-            bracket_end = header.find("]")
-            scoped = header[: bracket_end + 1] if bracket_end != -1 else header
-            after_colon = scoped.split(": ", 1)[1] if ": " in scoped else scoped
-            fname = after_colon.split("]")[0].strip()
-            # Drop analysis metadata so badges show only the filename.
-            if "ALREADY ANALYZED" in fname:
-                fname = fname.split("ALREADY ANALYZED", 1)[0].strip()
-            for marker in (" — ", " - ", ","):
-                if marker in fname:
-                    fname = fname.split(marker, 1)[0].strip()
-            badges.append(f"📎 {fname}")
-        elif part.startswith(("[Trimmed ", "[Truncated ", "--- Page ")):
-            continue
-        elif part.lstrip().startswith(("[Trimmed ", "[Truncated ")):
-            continue
-        else:
-            user_parts.append(part)
-    result_parts: list[str] = []
-    if badges:
-        result_parts.append(", ".join(badges))
-    if user_parts:
-        result_parts.append("\n\n".join(user_parts))
-    return "\n\n".join(result_parts) if result_parts else content
-
-
-def wrap_attachment_context(context: str) -> str:
-    """Mark attachment context so transcript reload can strip it cleanly."""
-    context = str(context or "").strip()
-    if not context:
-        return ""
-    return f"{ATTACHMENT_CONTEXT_START}\n{context}\n{ATTACHMENT_CONTEXT_END}"
-
-
-def materialize_chat_attachments(files: list[dict]) -> list[dict]:
-    """Persist chat attachments and copy them into the workspace.
-
-    Each file dict is updated with ``workspace_path`` when copying succeeds.
-    """
-    if not files:
-        return []
-
-    from row_bot.channels.media import copy_to_workspace, save_inbound_file
-
-    manifest: list[dict] = []
-    for f in files:
-        name = str(f.get("name") or "attachment")
-        data = f.get("data", b"")
-        if not isinstance(data, (bytes, bytearray)):
-            manifest.append({"name": name, "workspace_path": None, "error": "missing bytes"})
-            continue
-        try:
-            saved = save_inbound_file(bytes(data), name)
-            ws_rel = copy_to_workspace(saved, workspace_filename=name)
-            if ws_rel:
-                f["workspace_path"] = ws_rel
-            f["saved_path"] = str(saved)
-            manifest.append({
-                "name": name,
-                "saved_path": str(saved),
-                "workspace_path": ws_rel,
-                "size": len(data),
-                "suffix": pathlib.Path(name).suffix.lower(),
-            })
-        except Exception as exc:
-            logger.warning("Failed to materialize chat attachment %s: %s", name, exc)
-            manifest.append({"name": name, "workspace_path": None, "error": str(exc)})
-    return manifest
-
-
-def _workspace_hint(f: dict) -> str:
-    ws_path = str(f.get("workspace_path") or "").replace("\\", "/").strip()
-    if not ws_path:
-        return ""
-    return (
-        f"Workspace path: {ws_path}\n"
-        "For full file access, call workspace_read_file with this exact "
-        "workspace-relative path."
-    )
-
-
-def _with_workspace_hint(header: str, body: str, f: dict) -> str:
-    hint = _workspace_hint(f)
-    if hint:
-        return f"{header}\n{hint}\n{body}".rstrip()
-    return f"{header}\n{body}".rstrip()
-
-
-def _vision_analysis_failed(text: str) -> bool:
-    value = str(text or "").strip()
-    if not value:
-        return True
-    lowered = value.lower()
-    failure_prefixes = (
-        "vision analysis failed",
-        "vision is disabled",
-        "failed to capture",
-        "failed to read image",
-        "image file not found",
-        "image file is empty",
-        "could not access the camera",
-        "ollama is not installed",
-    )
-    return lowered.startswith(failure_prefixes)
 
 
 def _message_signature(msg: dict) -> str:
@@ -318,6 +167,7 @@ def persist_thread_media_state(thread_id: str | None, messages: list[dict]) -> N
                 "idx": idx,
                 "role": str(msg.get("role", "")),
                 "sig": _message_signature(msg),
+                "message_id": str(msg.get("checkpoint_message_id") or msg.get("message_id") or ""),
                 "media": media_items,
             })
         save_thread_media(thread_id, {"version": 2, "entries": entries})
@@ -345,8 +195,12 @@ def _hydrate_thread_media(thread_id: str, messages: list[dict]) -> list[dict]:
             return messages
 
         used_indices: set[int] = set()
+        by_id: dict[str, list[int]] = {}
         by_sig: dict[tuple[str, str], list[int]] = {}
         for i, msg in enumerate(messages):
+            message_id = str(msg.get("checkpoint_message_id") or msg.get("message_id") or "")
+            if message_id:
+                by_id.setdefault(message_id, []).append(i)
             key = (str(msg.get("role", "")), _message_signature(msg))
             by_sig.setdefault(key, []).append(i)
 
@@ -361,7 +215,15 @@ def _hydrate_thread_media(thread_id: str, messages: list[dict]) -> list[dict]:
 
             target_idx = None
             idx = entry.get("idx")
-            if isinstance(idx, int) and 0 <= idx < len(messages):
+            message_id = str(entry.get("message_id") or "")
+            if message_id:
+                candidates = by_id.get(message_id, [])
+                if len(candidates) != 1 or candidates[0] in used_indices:
+                    continue
+                target_idx = candidates[0]
+                if str(messages[target_idx].get("role", "")) != role:
+                    continue
+            elif isinstance(idx, int) and 0 <= idx < len(messages):
                 m = messages[idx]
                 if str(m.get("role", "")) == role and _message_signature(m) == sig:
                     target_idx = idx
@@ -411,304 +273,6 @@ def _hydrate_thread_media(thread_id: str, messages: list[dict]) -> list[dict]:
     return messages
 
 
-def process_attached_files(
-    files: list[dict],
-    vision_svc: VisionService | None,
-    attached_data_cache: dict[str, bytes],
-    model_name: str | None = None,
-) -> tuple[str, list[str], list[str]]:
-    """Process uploaded files and return (context_text, image_b64_list, warnings).
-
-    *files* is a list of ``{"name": str, "data": bytes}`` dicts.
-    """
-    budget = file_budget(model_name)
-    context_parts: list[str] = []
-    images_b64: list[str] = []
-    warnings: list[str] = []
-
-    for f in files:
-        name = f["name"]
-        data = f["data"]
-        suffix = pathlib.Path(name).suffix.lower()
-
-        if suffix in IMAGE_EXTENSIONS:
-            b64 = _b64.b64encode(data).decode("ascii")
-            images_b64.append(b64)
-            if vision_svc and vision_svc.enabled:
-                description = vision_svc.analyze(
-                    data, f"Describe this image in detail. The filename is '{name}'."
-                )
-                if _vision_analysis_failed(description):
-                    context_parts.append(_with_workspace_hint(
-                        f"[Attached image: {name} - vision analysis failed]",
-                        description,
-                        f,
-                    ))
-                else:
-                    context_parts.append(
-                        _with_workspace_hint(
-                            f"[Attached image: {name} — ALREADY ANALYZED, do NOT call analyze_image]",
-                            description,
-                            f,
-                        )
-                    )
-            else:
-                context_parts.append(_with_workspace_hint(
-                    f"[Attached image: {name} — vision is disabled, cannot analyze]",
-                    "",
-                    f,
-                ))
-
-        elif suffix == ".pdf":
-            try:
-                from pypdf import PdfReader
-                reader = PdfReader(io.BytesIO(data))
-                pages = []
-                for i, page in enumerate(reader.pages):
-                    text = page.extract_text() or ""
-                    if text.strip():
-                        pages.append(f"--- Page {i+1} ---\n{text}")
-                    if sum(len(p) for p in pages) > budget:
-                        pages.append(f"[Truncated — {len(reader.pages)} pages total, showing first {i+1}]")
-                        warnings.append(f"📎 {name}: truncated — {len(reader.pages)} pages total, only first {i+1} shown")
-                        break
-                content = "\n".join(pages) if pages else "(No extractable text found)"
-                context_parts.append(_with_workspace_hint(
-                    f"[Attached PDF: {name}, {len(reader.pages)} pages]",
-                    content,
-                    f,
-                ))
-            except Exception as exc:
-                context_parts.append(_with_workspace_hint(
-                    f"[Attached PDF: {name} — failed to extract text: {exc}]",
-                    "",
-                    f,
-                ))
-
-        elif suffix in DATA_EXTENSIONS:
-            try:
-                from row_bot.data_reader import read_data_file
-                buf = io.BytesIO(data)
-                summary = read_data_file(buf, name=name, max_chars=budget)
-                context_parts.append(_with_workspace_hint(
-                    f"[Attached data file: {name}]",
-                    summary,
-                    f,
-                ))
-                attached_data_cache[name] = data
-            except Exception as exc:
-                context_parts.append(_with_workspace_hint(
-                    f"[Attached data file: {name} — failed to parse: {exc}]",
-                    "",
-                    f,
-                ))
-
-        elif suffix in TEXT_EXTENSIONS:
-            try:
-                text = data.decode("utf-8", errors="replace")
-                if len(text) > budget:
-                    warnings.append(f"📎 {name}: truncated — showing first {budget:,} of {len(text):,} chars")
-                    text = text[:budget] + f"\n[Truncated — {len(data)} bytes total]"
-                context_parts.append(_with_workspace_hint(
-                    f"[Attached file: {name}]",
-                    text,
-                    f,
-                ))
-            except Exception as exc:
-                context_parts.append(_with_workspace_hint(
-                    f"[Attached file: {name} — failed to read: {exc}]",
-                    "",
-                    f,
-                ))
-        else:
-            context_parts.append(_with_workspace_hint(
-                f"[Attached file: {name} — unsupported file type '{suffix}']",
-                "",
-                f,
-            ))
-
-    # ── Total-budget cap: proportionally shrink if combined text > budget ──
-    total_chars = sum(len(p) for p in context_parts)
-    if total_chars > budget and len(context_parts) > 0:
-        for idx, part in enumerate(context_parts):
-            share = len(part) / total_chars
-            cap = max(2_000, int(budget * share))
-            if len(part) > cap:
-                warnings.append(f"📎 Trimmed to fit context — showing first {cap:,} of {len(part):,} chars")
-                context_parts[idx] = (
-                    part[:cap]
-                    + f"\n[Trimmed to fit — showing first {cap:,} of {len(part):,} chars]"
-                )
-
-    return "\n\n".join(context_parts), images_b64, warnings
-
-
-def langchain_messages_to_ui_messages(messages: list) -> list[dict]:
-    """Convert raw LangChain checkpoint messages into Row-Bot UI messages."""
-    import re as _re
-
-    def _restore_row_bot_ui_metadata(msg_dict: dict, m: object) -> dict:
-        checkpoint_message_id = str(getattr(m, "id", "") or "").strip()
-        if checkpoint_message_id:
-            msg_dict["checkpoint_message_id"] = checkpoint_message_id
-        ak = getattr(m, "additional_kwargs", None) or {}
-        metadata = ak.get("row_bot_ui") if isinstance(ak, dict) else None
-        if not isinstance(metadata, dict):
-            return msg_dict
-        for key in (
-            "timestamp",
-            "turn_boundary",
-            "agent_run_ids",
-            "agent_run_refresh_key",
-            "agent_lifecycle",
-            "agent_completion_for",
-            "agent_approval_for",
-            "approval_request_id",
-            "approval_resume_token",
-            "approval_status",
-            "channel_notification_key",
-            "orchestration_id",
-            "orchestration_message_kind",
-            "goal_completion_for",
-            "goal_run_id",
-            "goal_status",
-        ):
-            if key in metadata:
-                msg_dict[key] = metadata[key]
-        return msg_dict
-
-    msgs: list[dict] = []
-    pending_tool_results: list[dict] = []
-    pending_charts: list[str] = []
-    pending_tool_invoke_names: dict[str, str] = {}
-    for m in messages:
-        m_type = getattr(m, "type", "")
-        if m_type == "human":
-            pending_tool_invoke_names.clear()
-        if m_type == "tool":
-            tool_name = getattr(m, "name", "") or "tool"
-            if tool_name == "tool_invoke":
-                tool_call_id = getattr(m, "tool_call_id", "")
-                normalized_call_id = (
-                    tool_call_id.strip()
-                    if isinstance(tool_call_id, str)
-                    else ""
-                )
-                if normalized_call_id:
-                    tool_name = pending_tool_invoke_names.pop(
-                        normalized_call_id,
-                        tool_name,
-                    )
-            content_value = getattr(m, "content", "")
-            tool_content = content_value if isinstance(content_value, str) else str(content_value)
-            if tool_content and tool_content.startswith("__CHART__:"):
-                marker_end = tool_content.find("\n\n", 10)
-                if marker_end == -1:
-                    fig_json = tool_content[10:]
-                    display_text = "Chart created"
-                else:
-                    fig_json = tool_content[10:marker_end]
-                    display_text = tool_content[marker_end + 2:]
-                pending_charts.append(fig_json)
-                tool_content = display_text
-            pending_tool_results.append({"name": tool_name, "content": tool_content})
-        elif m_type == "human" and getattr(m, "content", None):
-            pending_tool_results.clear()
-            pending_charts.clear()
-            user_images: list[str] = []
-            content_value = getattr(m, "content", "")
-            if isinstance(content_value, list):
-                text_parts = []
-                for part in content_value:
-                    if isinstance(part, dict):
-                        if part.get("type") == "text":
-                            text_parts.append(part["text"])
-                        elif part.get("type") == "image_url":
-                            url = part.get("image_url", {}).get("url", "")
-                            if url.startswith("data:image"):
-                                b64 = url.split(",", 1)[1] if "," in url else ""
-                                if b64:
-                                    user_images.append(b64)
-                content = "\n".join(text_parts)
-            else:
-                content = content_value
-            msg_dict: dict = {"role": "user", "content": strip_file_context(str(content or ""))}
-            if user_images:
-                msg_dict["images"] = user_images
-            _restore_row_bot_ui_metadata(msg_dict, m)
-            msgs.append(msg_dict)
-        elif m_type == "ai":
-            ai_kwargs = getattr(m, "additional_kwargs", None) or {}
-            ui_metadata = (
-                ai_kwargs.get("row_bot_ui")
-                if isinstance(ai_kwargs, dict)
-                else None
-            )
-            if isinstance(ui_metadata, dict) and ui_metadata.get("hidden"):
-                pending_tool_results.clear()
-                pending_charts.clear()
-                pending_tool_invoke_names.clear()
-                continue
-            for tool_call in getattr(m, "tool_calls", []) or []:
-                if not isinstance(tool_call, dict) or tool_call.get("name") != "tool_invoke":
-                    continue
-                call_id = tool_call.get("id")
-                args = tool_call.get("args")
-                underlying_name = args.get("name") if isinstance(args, dict) else None
-                if not isinstance(call_id, str) or not call_id.strip():
-                    continue
-                if not isinstance(underlying_name, str):
-                    continue
-                normalized_name = _re.sub(r"\s+", " ", underlying_name).strip()[:180]
-                if normalized_name:
-                    pending_tool_invoke_names[call_id.strip()] = normalized_name
-            ai_content = getattr(m, "content", "") or ""
-            if isinstance(ai_content, list):
-                text_parts = []
-                for block in ai_content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text_parts.append(block.get("text", ""))
-                    elif isinstance(block, str):
-                        text_parts.append(block)
-                ai_content = "\n".join(text_parts)
-            if not isinstance(ai_content, str):
-                ai_content = str(ai_content) if ai_content else ""
-            if not ai_content.strip():
-                ak = ai_kwargs
-                if ak.get("reasoning_content") and not getattr(m, "tool_calls", []):
-                    continue
-                if pending_tool_results and not getattr(m, "tool_calls", []):
-                    msg_dict = {"role": "assistant", "content": "", "tool_results": list(pending_tool_results)}
-                    if pending_charts:
-                        msg_dict["charts"] = list(pending_charts)
-                        pending_charts = []
-                    pending_tool_results = []
-                    msgs.append(msg_dict)
-                continue
-            thinking = ""
-            ak = ai_kwargs
-            if ak.get("reasoning_content"):
-                thinking = ak["reasoning_content"]
-            think_parts = _re.findall(r"<think>(.*?)</think>", ai_content, flags=_re.DOTALL)
-            if think_parts:
-                thinking = (thinking + "\n" + "\n".join(think_parts)).strip()
-                ai_content = _re.sub(r"<think>.*?</think>", "", ai_content, flags=_re.DOTALL).strip()
-            if not ai_content:
-                continue
-            msg_dict = {"role": "assistant", "content": ai_content}
-            _restore_row_bot_ui_metadata(msg_dict, m)
-            if thinking:
-                msg_dict["thinking"] = thinking
-            if pending_tool_results:
-                msg_dict["tool_results"] = list(pending_tool_results)
-                pending_tool_results = []
-            if pending_charts:
-                msg_dict["charts"] = list(pending_charts)
-                pending_charts = []
-            msgs.append(msg_dict)
-    if pending_tool_results:
-        msgs.append({"role": "assistant", "content": "", "tool_results": list(pending_tool_results)})
-    return msgs
 
 
 def load_thread_messages(thread_id: str) -> list[dict]:
@@ -742,136 +306,6 @@ def load_thread_messages(thread_id: str) -> list[dict]:
         logger.debug("Failed to load thread messages for %s", thread_id, exc_info=True)
         return []
 
-    """Rebuild the message list from the LangGraph checkpoint."""
-    import re as _re
-    # Legacy body below is intentionally unreachable; transcript loading now
-    # uses direct checkpoint reads above.
-
-    config = {"configurable": {"thread_id": thread_id}}
-    try:
-        agent = None
-        snapshot = None
-        if snapshot and snapshot.values and "messages" in snapshot.values:
-            msgs: list[dict] = []
-            pending_tool_results: list[dict] = []
-            pending_charts: list[str] = []
-            for m in snapshot.values["messages"]:
-                if m.type == "tool":
-                    tool_name = getattr(m, "name", "") or "tool"
-                    tool_content = m.content if isinstance(m.content, str) else str(m.content)
-
-                    # Extract chart JSON from __CHART__: markers
-                    if tool_content and tool_content.startswith("__CHART__:"):
-                        marker_end = tool_content.find("\n\n", 10)
-                        if marker_end == -1:
-                            fig_json = tool_content[10:]
-                            display_text = "Chart created"
-                        else:
-                            fig_json = tool_content[10:marker_end]
-                            display_text = tool_content[marker_end + 2:]
-                        pending_charts.append(fig_json)
-                        tool_content = display_text
-
-                    pending_tool_results.append({
-                        "name": tool_name,
-                        "content": tool_content,
-                    })
-                elif m.type == "human" and m.content:
-                    pending_tool_results.clear()
-                    pending_charts.clear()
-                    # Check for user-attached images (base64 in multimodal content)
-                    user_images: list[str] = []
-                    if isinstance(m.content, list):
-                        text_parts = []
-                        for part in m.content:
-                            if isinstance(part, dict):
-                                if part.get("type") == "text":
-                                    text_parts.append(part["text"])
-                                elif part.get("type") == "image_url":
-                                    url = part.get("image_url", {}).get("url", "")
-                                    if url.startswith("data:image"):
-                                        b64 = url.split(",", 1)[1] if "," in url else ""
-                                        if b64:
-                                            user_images.append(b64)
-                        content = "\n".join(text_parts)
-                    else:
-                        content = m.content
-                    msg_dict: dict = {"role": "user", "content": strip_file_context(content)}
-                    if user_images:
-                        msg_dict["images"] = user_images
-                    msgs.append(msg_dict)
-                elif m.type == "ai":
-                    ai_content = m.content or ""
-                    if isinstance(ai_content, list):
-                        text_parts = []
-                        for block in ai_content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                text_parts.append(block.get("text", ""))
-                            elif isinstance(block, str):
-                                text_parts.append(block)
-                        ai_content = "\n".join(text_parts)
-                    if not isinstance(ai_content, str):
-                        ai_content = str(ai_content) if ai_content else ""
-
-                    # Empty-content AI message: if this is a terminal
-                    # response (no tool_calls) and there are pending tool
-                    # results, flush them cleanly — the model simply
-                    # produced no text after the tool ran (e.g. image gen).
-                    if not ai_content.strip():
-                        if pending_tool_results and not getattr(m, "tool_calls", []):
-                            msg_dict = {
-                                "role": "assistant",
-                                "content": "",
-                                "tool_results": list(pending_tool_results),
-                            }
-                            if pending_charts:
-                                msg_dict["charts"] = list(pending_charts)
-                                pending_charts = []
-                            pending_tool_results = []
-                            msgs.append(msg_dict)
-                        continue
-
-                    # ── Recover thinking / reasoning content ──────────
-                    thinking = ""
-                    ak = getattr(m, "additional_kwargs", None) or {}
-                    if ak.get("reasoning_content"):
-                        thinking = ak["reasoning_content"]
-                    # Some models embed <think>…</think> in content
-                    think_parts = _re.findall(
-                        r"<think>(.*?)</think>", ai_content, flags=_re.DOTALL
-                    )
-                    if think_parts:
-                        thinking = (thinking + "\n" + "\n".join(think_parts)).strip()
-                        ai_content = _re.sub(
-                            r"<think>.*?</think>", "", ai_content, flags=_re.DOTALL
-                        ).strip()
-                    if not ai_content:
-                        continue
-
-                    msg_dict = {"role": "assistant", "content": ai_content}
-                    if thinking:
-                        msg_dict["thinking"] = thinking
-                    if pending_tool_results:
-                        msg_dict["tool_results"] = list(pending_tool_results)
-                        pending_tool_results = []
-                    if pending_charts:
-                        msg_dict["charts"] = list(pending_charts)
-                        pending_charts = []
-                    msgs.append(msg_dict)
-
-            # Flush orphaned tool results that were never attached to a
-            # final AI message (e.g. recursion limit hit mid-tool-loop).
-            if pending_tool_results:
-                msgs.append({
-                    "role": "assistant",
-                    "content": "",
-                    "tool_results": list(pending_tool_results),
-                })
-            return _hydrate_thread_media(thread_id, msgs)
-    except Exception:
-        pass
-    return []
-
 
 def persist_detached_thread_media(
     thread_id: str,
@@ -880,6 +314,7 @@ def persist_detached_thread_media(
     images: list[str] | None = None,
     image_persist_flags: list[bool] | None = None,
     videos: list[dict | str] | None = None,
+    message_id: str | None = None,
 ) -> bool:
     """Persist detached-run media onto the matching checkpoint-backed assistant message."""
     pending_images = list(images or [])
@@ -895,7 +330,17 @@ def persist_detached_thread_media(
     assistant_sig = _message_signature({"role": "assistant", "content": assistant_text})
     target_idx: int | None = None
 
+    if message_id:
+        candidates = [i for i, msg in enumerate(messages)
+                      if msg.get("role") == "assistant"
+                      and str(msg.get("checkpoint_message_id") or msg.get("message_id") or "") == message_id]
+        if len(candidates) != 1:
+            return False
+        target_idx = candidates[0]
+
     for idx in range(len(messages) - 1, -1, -1):
+        if message_id:
+            break
         msg = messages[idx]
         if str(msg.get("role", "")) != "assistant":
             continue
@@ -903,7 +348,7 @@ def persist_detached_thread_media(
             target_idx = idx
             break
 
-    if target_idx is None and not assistant_text.strip():
+    if target_idx is None and not message_id and not assistant_text.strip():
         for idx in range(len(messages) - 1, -1, -1):
             if str(messages[idx].get("role", "")) == "assistant":
                 target_idx = idx

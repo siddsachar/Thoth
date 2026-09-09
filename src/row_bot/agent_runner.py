@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from row_bot.approval_policy import DEFAULT_APPROVAL_MODE, normalize_approval_mode
+from row_bot.runtime.executions import generation_registry
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ _ACTIVE_AGENT_RUNS: dict[str, dict[str, Any]] = {}
 _DISPATCH_CONDITION = threading.Condition(threading.RLock())
 _DISPATCH_QUEUE: list[tuple[str, str]] = []
 _DISPATCH_ACTIVE: dict[str, str] = {}
+_DISPATCH_WRITER_KEYS: dict[str, str] = {}
 
 
 def notify_agent_runtime_settings_changed() -> None:
@@ -38,15 +40,20 @@ def _acquire_child_capacity(
     run_id: str,
     parent_key: str,
     stop_event: threading.Event,
+    *,
+    write_lock_key: str = "",
+    thread_id: str = "",
+    workspace_id: str = "",
 ) -> bool:
     from row_bot.agent_settings import load_agent_runtime_settings
-    from row_bot.agent_runs import update_agent_status
+    from row_bot.agent_runs import update_agent_status, get_agent_write_lock, acquire_agent_write_lock
 
     ticket = (str(run_id), str(parent_key or "top-level"))
     with _DISPATCH_CONDITION:
+        _DISPATCH_WRITER_KEYS[ticket[0]] = write_lock_key
         if ticket not in _DISPATCH_QUEUE:
             _DISPATCH_QUEUE.append(ticket)
-        queued_status_published = False
+        queued_status_published = ""
         while not stop_event.is_set():
             settings = load_agent_runtime_settings()
             parent_active, global_active = _dispatch_counts(ticket[1])
@@ -58,6 +65,8 @@ def _acquire_child_capacity(
                     for queued in _DISPATCH_QUEUE
                     if _dispatch_counts(queued[1])[0]
                     < settings.max_concurrent_children
+                    and (not _DISPATCH_WRITER_KEYS.get(queued[0])
+                         or not get_agent_write_lock(_DISPATCH_WRITER_KEYS[queued[0]]))
                 ),
                 None,
             )
@@ -66,15 +75,26 @@ def _acquire_child_capacity(
                 and parent_active < settings.max_concurrent_children
                 and global_active < settings.max_active_children_global
             ):
+                if write_lock_key and not acquire_agent_write_lock(
+                    write_lock_key, run_id, thread_id=thread_id, workspace_id=workspace_id,
+                    metadata_json={"runtime_surface": "agent_child"},
+                ):
+                    _DISPATCH_CONDITION.wait(timeout=0.1)
+                    continue
                 _DISPATCH_QUEUE.remove(ticket)
                 _DISPATCH_ACTIVE[ticket[0]] = ticket[1]
                 return True
-            if not queued_status_published:
-                update_agent_status(run_id, "queued", "Queued for Agent capacity")
-                queued_status_published = True
+            waiting_for = ("Queued for writer lock" if parent_active < settings.max_concurrent_children
+                           and global_active < settings.max_active_children_global
+                           and write_lock_key and get_agent_write_lock(write_lock_key)
+                           else "Queued for Agent capacity")
+            if waiting_for != queued_status_published:
+                update_agent_status(run_id, "queued", waiting_for)
+                queued_status_published = waiting_for
             _DISPATCH_CONDITION.wait(timeout=0.1)
         if ticket in _DISPATCH_QUEUE:
             _DISPATCH_QUEUE.remove(ticket)
+        _DISPATCH_WRITER_KEYS.pop(ticket[0], None)
         _DISPATCH_CONDITION.notify_all()
         return False
 
@@ -82,6 +102,7 @@ def _acquire_child_capacity(
 def _release_child_capacity(run_id: str) -> None:
     with _DISPATCH_CONDITION:
         _DISPATCH_ACTIVE.pop(str(run_id), None)
+        _DISPATCH_WRITER_KEYS.pop(str(run_id), None)
         _DISPATCH_QUEUE[:] = [ticket for ticket in _DISPATCH_QUEUE if ticket[0] != str(run_id)]
         _DISPATCH_CONDITION.notify_all()
 
@@ -117,6 +138,9 @@ def _arm_child_timeout(run_id: str, stop_event: threading.Event) -> threading.Ti
             if entry is not None:
                 entry["timed_out"] = True
         stop_event.set()
+        for handle in generation_registry.active():
+            if handle.domain == "agent" and handle.domain_id == run_id:
+                generation_registry.cancel(handle, reason="deadline")
 
     if remaining <= 0:
         expire()
@@ -586,6 +610,31 @@ def spawn_agent_run(
     )
     child_skills = _profile_child_skills(parent_defaults["skills_override"], profile_snapshot)
     set_thread_skills_override(child_thread_id, child_skills)
+    if parent_thread_id:
+        from row_bot.conversation_resources import inherit_bindings, list_bindings
+        try:
+            parent_resources = list_bindings(parent_thread_id)
+            child_resources = list_bindings(child_thread_id)
+            inherit_bindings(parent_thread_id, child_thread_id,
+                             expected_parent_revision=parent_resources.revision,
+                             expected_child_revision=child_resources.revision,
+                             preserve_child_workspace=True)
+        except Exception as exc:
+            # No run owns this new metadata yet; do not leave a ghost child
+            # when its parent's resource snapshot can no longer be inherited.
+            from row_bot.thread_cleanup import _purge_owned_state, _clear_in_memory_state
+            _purge_owned_state(child_thread_id)
+            _clear_in_memory_state(child_thread_id)
+            if worktree_allocation:
+                from row_bot.developer.worktrees import get_worktree_for_workspace, cleanup_thread_developer_state
+                allocation = get_worktree_for_workspace(effective_developer_workspace_id)
+                if (allocation and allocation.get("owner_kind") == "agent_run"
+                        and allocation.get("owner_id") == run_id):
+                    cleanup_thread_developer_state(child_thread_id,
+                        workspace_id=effective_developer_workspace_id,
+                        project_workspace_id=str(allocation.get("project_workspace_id") or ""),
+                        owned_agent_run_id=run_id)
+            raise AgentRunnerError("Child resources could not be inherited safely.") from exc
 
     tool_allowlist = _profile_tool_allowlist(profile_snapshot)
     child_tools = _filter_child_tools(
@@ -704,7 +753,7 @@ def spawn_agent_run(
         )
 
     stop_event = threading.Event()
-    thread = threading.Thread(
+    thread = generation_registry.thread(
         target=_run_agent_thread,
         args=(
             run_id,
@@ -715,7 +764,12 @@ def spawn_agent_run(
             requires_write_lock,
             write_lock_key,
         ),
-        daemon=True,
+        conversation_id=str(config["configurable"]["thread_id"]),
+        stop_event=stop_event,
+        domain="agent",
+        domain_id=run_id,
+        resource_context=True,
+        on_entry_failure=lambda exc: _agent_entry_failed(run_id, exc),
         name=f"agent-run-{run_id}",
     )
     with _ACTIVE_LOCK:
@@ -810,6 +864,22 @@ def _pause_agent_for_approval(
     notify_agent_run_approval(approval_id)
 
 
+def _agent_entry_failed(run_id: str, exc: BaseException) -> None:
+    """Finish domain state when cancellation/resource gates reject entry."""
+    from row_bot.agent_runs import finish_agent_run
+    from row_bot.cancellation import current_cancellation_scope
+    scope = current_cancellation_scope()
+    stopped = isinstance(exc, InterruptedError) or bool(scope and scope.is_cancelled())
+    try:
+        finish_agent_run(run_id, "stopped" if stopped else "failed",
+                         status_message="Stop requested before dispatch" if stopped else "Execution resources are unavailable")
+    finally:
+        _release_child_capacity(run_id)
+        _notify_child_agent_waiters(run_id)
+        with _ACTIVE_LOCK:
+            _ACTIVE_AGENT_RUNS.pop(run_id, None)
+
+
 def _run_agent_thread(
     run_id: str,
     prompt: str,
@@ -823,7 +893,8 @@ def _run_agent_thread(
         acquire_agent_write_lock,
         append_agent_event,
         finish_agent_run,
-        get_agent_parent_messages,
+        pending_parent_message_records,
+        acknowledge_parent_messages,
         get_agent_run,
         release_agent_write_lock,
         start_agent_run,
@@ -852,11 +923,17 @@ def _run_agent_thread(
             or configurable.get("parent_thread_id")
             or "top-level"
         )
-        capacity_acquired = _acquire_child_capacity(run_id, parent_key, stop_event)
+        capacity_acquired = _acquire_child_capacity(
+            run_id, parent_key, stop_event,
+            write_lock_key=write_lock_key if requires_write_lock else "",
+            thread_id=str(configurable.get("thread_id") or ""),
+            workspace_id=str(configurable.get("developer_workspace_id") or ""),
+        )
         if not capacity_acquired:
             finish_agent_run(run_id, "stopped", status_message="Stop requested while queued")
             return
-        if requires_write_lock:
+        lock_acquired = bool(capacity_acquired and requires_write_lock)
+        if requires_write_lock and not lock_acquired:
             update_agent_status(run_id, "queued", "Queued for writer lock")
             while not stop_event.is_set():
                 if acquire_agent_write_lock(
@@ -879,9 +956,10 @@ def _run_agent_thread(
             "turn.started",
             {"thread_id": (config.get("configurable") or {}).get("thread_id", "")},
         )
-        parent_messages = get_agent_parent_messages(run_id)
+        parent_records = pending_parent_message_records(run_id)
+        parent_messages = [item["content"] for item in parent_records]
         if parent_messages:
-            joined = "\n".join(f"- {message}" for message in parent_messages[-5:])
+            joined = "\n".join(f"- {message}" for message in parent_messages)
             prompt = f"{prompt}\n\n[Parent follow-up before start]\n{joined}"
             append_agent_event(
                 run_id,
@@ -889,29 +967,24 @@ def _run_agent_thread(
                 {"count": len(parent_messages)},
                 visibility="internal",
             )
-            try:
-                from row_bot.agent_orchestrator import mark_steering_delivered
-
-                mark_steering_delivered(run_id, parent_messages)
-            except Exception:
-                logger.debug("Could not acknowledge queued Agent guidance", exc_info=True)
-        applied_parent_message_count = len(parent_messages)
         result = _invoke_agent(
             prompt,
             enabled_tool_names,
             config,
             stop_event=stop_event,
         )
+        if not stop_event.is_set():
+            acknowledge_parent_messages(run_id, [item["id"] for item in parent_records])
         if not stop_event.is_set() and not (
             isinstance(result, dict)
             and result.get("type") in {"interrupt", "error", "terminal"}
         ):
-            latest_parent_messages = get_agent_parent_messages(run_id)
-            follow_ups = latest_parent_messages[applied_parent_message_count:]
+            follow_up_records = pending_parent_message_records(run_id)
+            follow_ups = [item["content"] for item in follow_up_records]
             if follow_ups:
                 follow_up_prompt = (
                     "[Parent guidance received at the next safe boundary]\n"
-                    + "\n".join(f"- {message}" for message in follow_ups[-5:])
+                    + "\n".join(f"- {message}" for message in follow_ups)
                     + "\n\nUpdate or verify your result in light of this guidance."
                 )
                 append_agent_event(
@@ -920,18 +993,14 @@ def _run_agent_thread(
                     {"count": len(follow_ups), "boundary": "post_turn"},
                     visibility="internal",
                 )
-                try:
-                    from row_bot.agent_orchestrator import mark_steering_delivered
-
-                    mark_steering_delivered(run_id, follow_ups)
-                except Exception:
-                    logger.debug("Could not acknowledge Agent guidance", exc_info=True)
                 result = _invoke_agent(
                     follow_up_prompt,
                     enabled_tool_names,
                     config,
                     stop_event=stop_event,
                 )
+                if not stop_event.is_set():
+                    acknowledge_parent_messages(run_id, [item["id"] for item in follow_up_records])
         if _child_timed_out(run_id):
             finish_agent_run(
                 run_id,
@@ -1108,10 +1177,15 @@ def resume_agent_run(
         {"approved": True, "resume_token": resume_token},
     )
     stop_event = threading.Event()
-    thread = threading.Thread(
+    thread = generation_registry.thread(
         target=_resume_agent_thread,
         args=(run_id, enabled_tool_names, config, interrupt_ids, stop_event),
-        daemon=True,
+        conversation_id=str(config["configurable"]["thread_id"]),
+        stop_event=stop_event,
+        domain="agent",
+        domain_id=run_id,
+        resource_context=True,
+        on_entry_failure=lambda exc: _agent_entry_failed(run_id, exc),
         name=f"agent-resume-{run_id}",
     )
     with _ACTIVE_LOCK:
@@ -1147,12 +1221,16 @@ def _resume_agent_thread(
     try:
         run = get_agent_run(run_id) or {}
         parent_key = str(run.get("parent_run_id") or run.get("parent_thread_id") or "top-level")
-        capacity_acquired = _acquire_child_capacity(run_id, parent_key, stop_event)
+        write_lock_key = str(run.get("write_lock_key") or "")
+        capacity_acquired = _acquire_child_capacity(
+            run_id, parent_key, stop_event, write_lock_key=write_lock_key,
+            thread_id=str(run.get("thread_id") or ""), workspace_id=str(run.get("workspace_id") or ""),
+        )
         if not capacity_acquired:
             finish_agent_run(run_id, "stopped", status_message="Stop requested while queued")
             return
-        write_lock_key = str(run.get("write_lock_key") or "")
-        if write_lock_key:
+        lock_acquired = bool(capacity_acquired and write_lock_key)
+        if write_lock_key and not lock_acquired:
             update_agent_status(run_id, "queued", "Queued for writer lock")
             while not stop_event.is_set():
                 if acquire_agent_write_lock(
@@ -1182,22 +1260,24 @@ def _resume_agent_thread(
             and result.get("type") in {"interrupt", "error", "terminal"}
         ):
             try:
-                from row_bot.agent_orchestrator import (
-                    mark_steering_delivered,
-                    pending_steering_for_run,
+                from row_bot.agent_runs import (
+                    acknowledge_parent_messages,
+                    pending_parent_message_records,
                 )
 
-                follow_ups = pending_steering_for_run(run_id)
+                follow_up_records = pending_parent_message_records(run_id)
+                follow_ups = [item["content"] for item in follow_up_records]
                 if follow_ups:
                     result = _invoke_agent(
                         "[Parent guidance received after approval]\n"
-                        + "\n".join(f"- {message}" for message in follow_ups[-5:])
+                        + "\n".join(f"- {message}" for message in follow_ups)
                         + "\n\nUpdate or verify your result in light of this guidance.",
                         enabled_tool_names,
                         config,
                         stop_event=stop_event,
                     )
-                    mark_steering_delivered(run_id, follow_ups)
+                    if not stop_event.is_set():
+                        acknowledge_parent_messages(run_id, [item["id"] for item in follow_up_records])
             except Exception:
                 logger.debug("Could not apply Agent guidance after approval", exc_info=True)
         if _child_timed_out(run_id):

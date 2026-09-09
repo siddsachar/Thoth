@@ -188,6 +188,12 @@ def _goal_from_row(row: sqlite3.Row | Mapping[str, Any] | None) -> dict[str, Any
 
 def _ensure_goal_schema() -> None:
     ensure_agent_run_schema()
+    conn = _get_conn()
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS goal_turn_claims (goal_id TEXT NOT NULL, turn_id TEXT NOT NULL, PRIMARY KEY(goal_id,turn_id))")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_goal(goal_id: str) -> dict[str, Any] | None:
@@ -447,6 +453,7 @@ def set_goal_status(
     reason: str = "",
     verdict: str = "",
     finish_run_status: str = "",
+    expected_revision: int | None = None,
 ) -> dict[str, Any] | None:
     _ensure_goal_schema()
     status = _normalize_status(status)
@@ -455,9 +462,9 @@ def set_goal_status(
     conn = _get_conn()
     try:
         conn.execute(
-            "UPDATE thread_goals SET status = ?, last_verdict = ?, last_reason = ?, updated_at = ? "
-            "WHERE id = ?",
-            (status, verdict, str(reason or ""), now, str(goal_id)),
+            "UPDATE thread_goals SET status = ?, last_verdict = ?, last_reason = ?, updated_at = ?, revision=revision+1 "
+            "WHERE id = ? AND (? IS NULL OR revision=?)",
+            (status, verdict, str(reason or ""), now, str(goal_id), expected_revision, expected_revision),
         )
         changed = conn.total_changes
         conn.commit()
@@ -511,7 +518,7 @@ def update_goal_progress(
         conn.execute(
             "UPDATE thread_goals SET status = ?, updated_at = ?, last_verdict = ?, "
             "last_reason = ?, last_progress = ?, evidence_json = ?, blockers_json = ?, "
-            "last_blocker = ?, blocker_count = ? WHERE id = ?",
+            "last_blocker = ?, blocker_count = ?, revision=revision+1 WHERE id = ? AND revision=?",
             (
                 normalized_status,
                 now,
@@ -523,6 +530,7 @@ def update_goal_progress(
                 blocker_text or previous_blocker,
                 blocker_count,
                 str(goal["id"]),
+                int(goal.get("revision") or 0),
             ),
         )
         conn.commit()
@@ -736,41 +744,57 @@ def after_turn(
         model_override=model_override,
         verifier=verifier,
     )
+    latest_goal = get_goal(goal["id"])
+    if not latest_goal or int(latest_goal.get("revision") or 0) != int(goal.get("revision") or 0):
+        return GoalContinuationDecision(latest_goal, False, reason="goal changed during verification",
+                                        status=str((latest_goal or {}).get("status") or "cleared"))
     verdict = _normalize_verdict(str(verifier_result.get("verdict") or "continue"))
     reason = str(verifier_result.get("reason") or "")
     if verdict == "complete":
-        goal = set_goal_status(
+        updated = set_goal_status(
             goal["id"],
             "completed",
             reason=reason or "Verifier agreed the goal is complete.",
             verdict="complete",
             finish_run_status="completed",
-        ) or goal
-        return GoalContinuationDecision(goal, False, reason="verifier complete", status="completed")
+            expected_revision=int(goal.get("revision") or 0),
+        )
+        goal = updated or get_goal(goal["id"]) or goal
+        return GoalContinuationDecision(goal, False, reason="verifier complete" if updated else "goal changed during verification", status=str(goal["status"]))
     if verdict in {"blocked", "needs_user"}:
-        goal = set_goal_status(
+        updated = set_goal_status(
             goal["id"],
             "blocked",
             reason=reason or "Verifier found the goal blocked.",
             verdict="blocked",
             finish_run_status="blocked",
-        ) or goal
-        return GoalContinuationDecision(goal, False, reason="verifier blocked", status="blocked")
+            expected_revision=int(goal.get("revision") or 0),
+        )
+        goal = updated or get_goal(goal["id"]) or goal
+        return GoalContinuationDecision(goal, False, reason="verifier blocked" if updated else "goal changed during verification", status=str(goal["status"]))
     if verdict == "paused":
-        goal = set_goal_status(
+        updated = set_goal_status(
             goal["id"],
             "paused",
             reason=reason or "Verifier paused the goal.",
             verdict="paused",
-        ) or goal
-        return GoalContinuationDecision(goal, False, reason="verifier paused", status="paused")
+            expected_revision=int(goal.get("revision") or 0),
+        )
+        goal = updated or get_goal(goal["id"]) or goal
+        return GoalContinuationDecision(goal, False, reason="verifier paused" if updated else "goal changed during verification", status=str(goal["status"]))
     if reason:
-        goal = _record_verifier_reason(goal["id"], verdict, reason) or goal
-    claimed = _claim_continuation(goal["id"], turn_id)
+        updated = _record_verifier_reason(goal["id"], verdict, reason, expected_revision=int(goal.get("revision") or 0))
+        if not updated:
+            latest = get_goal(goal["id"]) or goal
+            return GoalContinuationDecision(latest, False, reason="goal changed during verification", status=str(latest["status"]))
+        goal = updated
+    claimed = _claim_continuation(goal["id"], turn_id, expected_revision=int(goal.get("revision") or 0))
     if not claimed:
         latest = get_goal(goal["id"])
-        return GoalContinuationDecision(latest or goal, False, reason="continuation already claimed", status="active")
+        return GoalContinuationDecision(latest or goal, False, reason="continuation already claimed or goal changed", status=str((latest or goal).get("status") or "cleared"))
     latest = get_goal(goal["id"]) or goal
+    if latest.get("status") != "active" or int(latest.get("revision") or 0) != int(goal.get("revision") or 0) + 1:
+        return GoalContinuationDecision(latest, False, reason="goal changed after continuation claim", status=str(latest.get("status") or "cleared"))
     active_run_id = str(latest.get("active_run_id") or "")
     if active_run_id:
         try:
@@ -879,6 +903,7 @@ def _claim_turn(thread_id: str, turn_id: str) -> dict[str, Any] | None:
     now = _now()
     conn = _get_conn()
     try:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM thread_goals WHERE thread_id = ? "
             "AND status IN ('active', 'waiting_approval', 'paused', 'completed', 'blocked') "
@@ -888,11 +913,12 @@ def _claim_turn(thread_id: str, turn_id: str) -> dict[str, Any] | None:
         goal = _goal_from_row(row)
         if not goal:
             return None
-        if str(goal.get("last_turn_id") or "") == str(turn_id):
+        if conn.execute("INSERT OR IGNORE INTO goal_turn_claims(goal_id,turn_id) VALUES(?,?)",
+                        (goal["id"], str(turn_id))).rowcount != 1:
             return None
         conn.execute(
             "UPDATE thread_goals SET turns_used = COALESCE(turns_used, 0) + 1, "
-            "last_turn_id = ?, continuation_key = '', updated_at = ? "
+            "last_turn_id = ?, continuation_key = '', updated_at = ?, revision=revision+1 "
             "WHERE id = ? AND COALESCE(last_turn_id, '') != ?",
             (str(turn_id), now, str(goal["id"]), str(turn_id)),
         )
@@ -905,17 +931,17 @@ def _claim_turn(thread_id: str, turn_id: str) -> dict[str, Any] | None:
     return get_goal(goal["id"])
 
 
-def _claim_continuation(goal_id: str, turn_id: str) -> bool:
+def _claim_continuation(goal_id: str, turn_id: str, *, expected_revision: int | None = None) -> bool:
     _ensure_goal_schema()
     key = f"{turn_id}:continue"
     now = _now()
     conn = _get_conn()
     try:
         conn.execute(
-            "UPDATE thread_goals SET continuation_key = ?, updated_at = ? "
+            "UPDATE thread_goals SET continuation_key = ?, updated_at = ?, revision=revision+1 "
             "WHERE id = ? AND status = 'active' AND last_turn_id = ? "
-            "AND COALESCE(continuation_key, '') != ?",
-            (key, now, str(goal_id), str(turn_id), key),
+            "AND COALESCE(continuation_key, '') != ? AND (? IS NULL OR revision=?)",
+            (key, now, str(goal_id), str(turn_id), key, expected_revision, expected_revision),
         )
         changed = conn.total_changes
         conn.commit()
@@ -1061,14 +1087,14 @@ def _record_verifier_failure(goal_id: str, reason: str) -> Mapping[str, Any]:
     return {"verdict": "continue", "reason": reason}
 
 
-def _record_verifier_reason(goal_id: str, verdict: str, reason: str) -> dict[str, Any] | None:
+def _record_verifier_reason(goal_id: str, verdict: str, reason: str, *, expected_revision: int | None = None) -> dict[str, Any] | None:
     _ensure_goal_schema()
     now = _now()
     conn = _get_conn()
     try:
         conn.execute(
-            "UPDATE thread_goals SET last_verdict = ?, last_reason = ?, updated_at = ? WHERE id = ?",
-            (_normalize_verdict(verdict), str(reason or ""), now, str(goal_id)),
+            "UPDATE thread_goals SET last_verdict = ?, last_reason = ?, updated_at = ?,revision=revision+1 WHERE id = ? AND (? IS NULL OR revision=?)",
+            (_normalize_verdict(verdict), str(reason or ""), now, str(goal_id), expected_revision, expected_revision),
         )
         changed = conn.total_changes
         conn.commit()

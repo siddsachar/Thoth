@@ -1,0 +1,22 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "client_session_id": {
+      "format": "uuid",
+      "title": "Client Session Id",
+      "type": "string"
+    },
+    "csrf_token": {
+      "maxLength": 256,
+      "minLength": 32,
+      "title": "Csrf Token",
+      "type": "string"
+    }
+  },
+  "required": [
+    "client_session_id",
+    "csrf_token"
+  ],
+  "title": "SessionProof",
+  "type": "object"
+}

@@ -159,6 +159,42 @@ def test_thread_deletion_removes_clean_worktree_but_retains_branch_and_repositor
     assert _git_out(repo, "branch", "--list", branch_name).strip()
 
 
+def test_child_delete_captures_owned_allocation_before_purging_run(tmp_path, monkeypatch):
+    _tasks, threads, storage, worktrees = _fresh_modules(tmp_path, monkeypatch)
+    importlib.reload(importlib.import_module("row_bot.agent_profiles"))
+    runs = importlib.reload(importlib.import_module("row_bot.agent_runs"))
+    from row_bot.developer.state import DeveloperWorkspace
+    from row_bot.thread_cleanup import delete_thread
+
+    project = tmp_path / "synthetic-project"
+    project.mkdir()
+    sentinel = project / "retained.txt"
+    sentinel.write_text("Synthetic project remains", encoding="utf-8")
+    # An already absent owned path needs only metadata reconciliation, no Git.
+    allocated_path = tmp_path / ".row-bot-worktrees" / "absent-child"
+    storage.save_workspace(DeveloperWorkspace(id="owned-child", name="Owned child", path=str(allocated_path)))
+    parent = threads.create_thread("Parent owning the child run")
+    child = threads.create_thread("Completed child", thread_type="agent_child",
+                                  developer_workspace_id="owned-child")
+    run = runs.create_agent_run(run_id="owned-child-run", parent_thread_id=parent,
+                               thread_id=child, status="completed")
+    worktrees._insert_or_update(row_id="owned-allocation", owner_kind="agent_run", owner_id=run["id"],
+                               project_workspace_id="synthetic-project", project_path=str(project),
+                               worktree_workspace_id="owned-child", worktree_path=str(allocated_path),
+                               status="active")
+    monkeypatch.setattr(worktrees, "worktree_diff_summary", lambda *args, **kwargs: {"ok": True, "dirty": False})
+    monkeypatch.setattr(worktrees.subprocess, "run", lambda *args, **kwargs: pytest.fail("No Git operation needed"))
+
+    result = delete_thread(parent)
+
+    assert result.deleted
+    assert not threads._thread_exists(child)
+    assert runs.get_agent_run(run["id"]) is None
+    assert worktrees.get_worktree("agent_run", run["id"]) is None
+    assert storage.get_workspace("owned-child") is None
+    assert sentinel.read_text(encoding="utf-8") == "Synthetic project remains"
+
+
 def test_thread_deletion_preserves_dirty_worktree_and_exposes_recovery_workspace(tmp_path, monkeypatch):
     _tasks, threads, storage, worktrees = _fresh_modules(tmp_path, monkeypatch)
     from row_bot.thread_cleanup import delete_thread

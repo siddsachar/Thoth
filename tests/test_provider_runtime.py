@@ -1922,9 +1922,13 @@ def test_agent_graph_installs_custom_tool_validation_repair(tmp_path, monkeypatc
 
     graph = agent.get_agent_graph(["duckduckgo"])
 
-    assert graph.tools == [tool]
-    assert "Invalid tool call for duckduckgo" in graph.tools[0].invoke({})
-    assert "ROW_BOT_TOOL_VALIDATION_RETRY_REQUIRED" in graph.tools[0].invoke({})
+    from langgraph.prebuilt import ToolNode
+
+    assert isinstance(graph.tools, ToolNode)
+    assert graph.tools.tools_by_name == {"duckduckgo": tool}
+    bound_tool = graph.tools.tools_by_name["duckduckgo"]
+    assert "Invalid tool call for duckduckgo" in bound_tool.invoke({})
+    assert "ROW_BOT_TOOL_VALIDATION_RETRY_REQUIRED" in bound_tool.invoke({})
 
     agent.clear_agent_cache()
 

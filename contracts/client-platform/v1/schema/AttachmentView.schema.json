@@ -1,0 +1,49 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "attachment_ref": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9:_-]+$",
+      "title": "Attachment Ref",
+      "type": "string"
+    },
+    "mime_type": {
+      "enum": [
+        "image/png",
+        "image/jpeg",
+        "video/mp4",
+        "application/pdf",
+        "application/octet-stream"
+      ],
+      "title": "Mime Type",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 240,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "revision": {
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "title": "Revision",
+      "type": "string"
+    },
+    "size_bytes": {
+      "maximum": 26214400,
+      "minimum": 1,
+      "title": "Size Bytes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "attachment_ref",
+    "name",
+    "mime_type",
+    "size_bytes",
+    "revision"
+  ],
+  "title": "AttachmentView",
+  "type": "object"
+}

@@ -109,13 +109,21 @@ def save_inbound_file(data: bytes, filename: str) -> pathlib.Path:
 
     Returns the absolute ``Path`` to the saved file.
     """
-    _INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    from uuid import uuid4
+    from row_bot.application.attachments import _managed_root, _safe_path, _write
 
-    # Prefix with timestamp to avoid collisions
-    ts = int(time.time())
-    safe_name = f"{ts}_{_safe_filename(filename)}"
-    dest = _INBOX_DIR / safe_name
-    dest.write_bytes(data)
+    inbox = _managed_root(_INBOX_DIR)
+    inbox.mkdir(parents=True, exist_ok=True)
+    _safe_path(inbox, inbox)
+    # Unique ownership begins at exclusive creation, including same-name files
+    # received by different conversations during the same clock tick.
+    while True:
+        dest = inbox / f"{int(time.time())}_{uuid4().hex}_{_safe_filename(filename)}"
+        try:
+            _write(inbox, dest, data)
+            break
+        except FileExistsError:
+            continue
     log.info("Saved inbound file: %s (%d bytes)", dest, len(data))
     return dest
 
@@ -208,35 +216,106 @@ def copy_to_workspace(saved_path: pathlib.Path, workspace_filename: str | None =
     on success, or ``None`` if the workspace is not configured or the copy
     fails.
     """
-    import shutil
+    import stat
 
-    try:
-        from row_bot.tools.registry import get_tool_config
-        root = get_tool_config("filesystem", "workspace_root", "")
-        if not root:
+    from row_bot.application.attachments import AttachmentError, _managed_root, _open, _safe_path
+
+    from row_bot.conversation_resources import current_execution_context, ResourceError
+    context = current_execution_context()
+    binding = context.resolve("workspace") if context is not None else None
+    if binding is not None:
+        from row_bot.developer.storage import get_workspace
+        workspace = get_workspace(binding.resource_id)
+        if workspace is None:
+            raise ResourceError("resource_unavailable")
+        root = workspace.path
+    else:
+        try:
+            from row_bot.tools.registry import get_tool_config
+            root = get_tool_config("filesystem", "workspace_root", "")
+            if not root:
+                root = str(pathlib.Path.home() / "Documents" / "Row-Bot")
+        except Exception:
             root = str(pathlib.Path.home() / "Documents" / "Row-Bot")
-    except Exception:
-        root = str(pathlib.Path.home() / "Documents" / "Row-Bot")
 
-    dest_dir = pathlib.Path(root) / _RECEIVED_FOLDER
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    dest_name = _safe_filename(workspace_filename) if workspace_filename else saved_path.name
-    dest = dest_dir / dest_name
-    # Avoid overwrites — append a suffix if needed
-    if dest.exists():
-        stem = dest.stem
-        suffix = dest.suffix
-        counter = 1
-        while dest.exists():
-            dest = dest_dir / f"{stem}_{counter}{suffix}"
-            counter += 1
-
+    descriptor = -1
+    dest: pathlib.Path | None = None
     try:
-        shutil.copy2(saved_path, dest)
+        workspace_root = _managed_root(pathlib.Path(root))
+        workspace_root.mkdir(parents=True, exist_ok=True)
+        _safe_path(workspace_root, workspace_root)
+        root_identity = workspace_root.stat()
+        dest_dir = workspace_root / _RECEIVED_FOLDER
+        _safe_path(workspace_root, dest_dir)
+        dest_dir.mkdir(exist_ok=True)
+        _safe_path(workspace_root, dest_dir)
+        directory_identity = dest_dir.stat()
+
+        def validate_destination() -> None:
+            _safe_path(workspace_root, dest_dir)
+            if (not os.path.samestat(root_identity, workspace_root.stat())
+                    or not os.path.samestat(directory_identity, dest_dir.stat())):
+                raise AttachmentError("action_denied")
+            if descriptor >= 0 and dest is not None:
+                _safe_path(workspace_root, dest)
+                if not os.path.samestat(os.fstat(descriptor), dest.stat()):
+                    raise AttachmentError("action_denied")
+
+        source_path = saved_path.absolute()
+        with _open(source_path.parent, source_path) as source:
+            source_identity = os.fstat(source.fileno())
+            if not stat.S_ISREG(source_identity.st_mode):
+                raise AttachmentError("action_denied")
+            name = _safe_filename(workspace_filename or saved_path.name)
+            stem, suffix = pathlib.Path(name).stem, pathlib.Path(name).suffix
+            counter = 0
+            while True:
+                validate_destination()
+                dest = dest_dir / (name if counter == 0 else f"{stem}_{counter}{suffix}")
+                _safe_path(workspace_root, dest)
+                try:
+                    descriptor = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                                         | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                    break
+                except FileExistsError:
+                    counter += 1
+            # Check the opened identity before any bytes and each bounded write.
+            # A renamed directory or reparse point must not redirect a copy.
+            validate_destination()
+            remaining = source_identity.st_size
+            while remaining:
+                data = source.read(min(65536, remaining))
+                if not data:
+                    raise AttachmentError("revision_conflict")
+                view = memoryview(data)
+                while view:
+                    validate_destination()
+                    written = os.write(descriptor, view)
+                    if not written:
+                        raise OSError("workspace_copy_failed")
+                    view = view[written:]
+                remaining -= len(data)
+            current_source = os.fstat(source.fileno())
+            if (source.read(1) or current_source.st_size != source_identity.st_size
+                    or current_source.st_mtime_ns != source_identity.st_mtime_ns):
+                raise AttachmentError("revision_conflict")
+            validate_destination()
+            os.fsync(descriptor)
         rel = f"{_RECEIVED_FOLDER}/{dest.name}"
         log.info("Copied to workspace: %s", rel)
         return rel
     except Exception as exc:
+        # Remove only this attempt's unchanged, still-contained partial file.
+        if descriptor >= 0 and dest is not None:
+            try:
+                validate_destination()
+                os.close(descriptor)
+                descriptor = -1
+                dest.unlink()
+            except (OSError, AttachmentError):
+                pass
         log.warning("Could not copy file to workspace: %s", exc)
         return None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)

@@ -48,7 +48,7 @@ def test_https_cookie_uses_host_prefix_and_secure_attributes() -> None:
     assert header.startswith(f"{manager.names.https}=session-token;")
     assert "HttpOnly" in header
     assert "Secure" in header
-    assert "SameSite=lax" in header
+    assert "SameSite=strict" in header
     assert "Path=/" in header
     assert "Max-Age=43200" in header
     assert "Domain=" not in header
@@ -71,7 +71,7 @@ def test_http_cookie_is_instance_scoped_without_secure_flag() -> None:
     assert header.startswith(f"{manager.names.http}=session-token;")
     assert "HttpOnly" in header
     assert "Secure" not in header
-    assert "SameSite=lax" in header
+    assert "SameSite=strict" in header
     assert "Max-Age=2592000" in header
 
 

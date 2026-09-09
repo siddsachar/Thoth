@@ -7,12 +7,18 @@ versions and block any plugin that would downgrade or change them.
 from __future__ import annotations
 
 import logging
+import json
 import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from typing import Any
+
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from row_bot.runtime_paths import app_path
 
@@ -38,8 +44,8 @@ def _get_core_requirements() -> dict[str, str]:
     installed versions via importlib.metadata.
     """
     global _core_requirements
-    if _core_requirements is not None:
-        return _core_requirements
+    # Installation is an authority boundary: an updater or repair may have
+    # changed the environment since a previous Plugin Center read.
 
     # Read requirements.txt to get the list of core package names
     req_path = app_path("requirements.txt")
@@ -86,61 +92,68 @@ def check_dependencies(plugin_deps: list[str]) -> DepCheckResult:
     if not plugin_deps:
         return DepCheckResult(ok=True, conflicts=[], warnings=[])
 
-    core = _get_core_requirements()
+    return _resolve_dependencies(plugin_deps)[0]
+
+
+def _resolve_dependencies(plugin_deps: list[str]) -> tuple[DepCheckResult, dict[str, str]]:
+    """Verify the complete resolver plan against immutable host constraints.
+
+    Exit status alone is not evidence of compatibility. No unverified plan may
+    reach installation; the installer uses these same constraints and pins.
+    """
+    core = {canonicalize_name(k): v for k, v in _get_core_requirements().items()}
     conflicts: list[str] = []
     warnings: list[str] = []
-
-    # Quick static check: does the plugin require a specific version of a core package?
-    for dep_str in plugin_deps:
-        match = re.match(r"([a-zA-Z0-9_\-\.]+)", dep_str)
-        if not match:
-            continue
-        dep_name = match.group(1).lower().replace("-", "_").replace(".", "_")
-        if dep_name in core:
-            # Plugin depends on a core package — check if version spec conflicts
-            core_ver = core[dep_name]
-            # If plugin pins a different version, flag it
-            if "==" in dep_str:
-                pinned = dep_str.split("==")[1].strip()
-                if pinned != core_ver:
-                    conflicts.append(
-                        f"'{dep_str}' conflicts with core dependency "
-                        f"{dep_name}=={core_ver}"
-                    )
-
-    # Deeper check: use pip dry-run to detect conflicts
+    pins = dict(core)
     try:
-        result = subprocess.run(
-            [
-                sys.executable, "-m", "pip", "install",
-                "--dry-run", "--no-input", "--report", "-",
-                *plugin_deps,
-            ],
-            capture_output=True, text=True, timeout=60,
-        )
-        if result.returncode != 0:
-            stderr = result.stderr.strip()
-            # Parse pip error for conflict details
-            for line in stderr.splitlines():
-                line_lower = line.lower()
-                if "conflict" in line_lower or "incompatible" in line_lower:
-                    # Check if it involves a core package
-                    for core_pkg in core:
-                        if core_pkg.replace("_", "-") in line_lower or core_pkg in line_lower:
-                            conflicts.append(line.strip())
-                            break
-                    else:
-                        warnings.append(line.strip())
-    except subprocess.TimeoutExpired:
-        warnings.append("Dependency check timed out — could not verify compatibility")
-    except Exception as exc:
-        warnings.append(f"Dependency check failed: {exc}")
+        if not core:
+            raise ValueError("Host dependency constraints unavailable")
+        for value in plugin_deps:
+            req = Requirement(value)
+            name = canonicalize_name(req.name)
+            if req.url:
+                raise ValueError("Direct dependency references require isolated installation")
+            if name in core and (not req.marker or req.marker.evaluate()):
+                if not req.specifier.contains(core[name], prereleases=True):
+                    raise ValueError("Plugin requirement conflicts with host constraints")
+        with tempfile.TemporaryDirectory(prefix="rb-deps-") as tmp:
+            constraint = pathlib.Path(tmp) / "constraints.txt"
+            report = pathlib.Path(tmp) / "report.json"
+            constraint.write_text(_constraint_text(core), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--dry-run", "--no-input",
+                 "--disable-pip-version-check", "--constraint", str(constraint),
+                 "--report", str(report), *plugin_deps],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                raise ValueError("Dependency resolver did not verify compatibility")
+            plan = json.loads(report.read_text(encoding="utf-8"))
+        if not isinstance(plan, dict) or plan.get("version") != "1" or not isinstance(plan.get("install"), list):
+            raise ValueError("Dependency resolver report is invalid")
+        for item in plan["install"]:
+            metadata = item["metadata"]
+            name = canonicalize_name(metadata["name"])
+            version = str(Version(metadata["version"]))
+            if name in pins and Version(pins[name]) != Version(version):
+                raise ValueError("Resolver plan changes a constrained distribution")
+            pins[name] = version
+            # Even an exit-zero report may carry prohibited transitive edges.
+            for value in metadata.get("requires_dist", []):
+                req = Requirement(value)
+                dep = canonicalize_name(req.name)
+                if req.url:
+                    raise ValueError("Transitive direct references require isolated installation")
+                if dep in core and (not req.marker or req.marker.evaluate()):
+                    if req.url or not req.specifier.contains(core[dep], prereleases=True):
+                        raise ValueError("Resolver plan conflicts with host dependencies")
+    except Exception:
+        conflicts.append("Dependency compatibility could not be verified; installation blocked")
+    return DepCheckResult(not conflicts, conflicts, warnings), pins
 
-    return DepCheckResult(
-        ok=len(conflicts) == 0,
-        conflicts=conflicts,
-        warnings=warnings,
-    )
+
+def _constraint_text(pins: dict[str, str]) -> str:
+    return "".join(f"{name}=={version}\n" for name, version in sorted(pins.items()))
 
 
 def install_dependencies(plugin_deps: list[str]) -> tuple[bool, str]:
@@ -152,7 +165,7 @@ def install_dependencies(plugin_deps: list[str]) -> tuple[bool, str]:
         return True, "No dependencies to install"
 
     # Safety check first
-    check = check_dependencies(plugin_deps)
+    check, pins = _resolve_dependencies(plugin_deps)
     if not check.ok:
         return False, (
             "Cannot install — conflicts with core Row-Bot dependencies:\n"
@@ -160,10 +173,15 @@ def install_dependencies(plugin_deps: list[str]) -> tuple[bool, str]:
         )
 
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--no-input", *plugin_deps],
-            capture_output=True, text=True, timeout=300,
-        )
+        with tempfile.TemporaryDirectory(prefix="rb-deps-") as tmp:
+            constraint = pathlib.Path(tmp) / "constraints.txt"
+            constraint.write_text(_constraint_text(pins), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--no-input", "--no-deps",
+                 "--disable-pip-version-check", "--constraint", str(constraint),
+                 *plugin_deps, *(f"{name}=={version}" for name, version in sorted(pins.items()))],
+                capture_output=True, text=True, timeout=300,
+            )
         if result.returncode == 0:
             return True, "Dependencies installed successfully"
         else:

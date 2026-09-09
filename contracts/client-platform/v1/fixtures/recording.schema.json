@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Synthetic client platform protocol recording",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recording_version", "protocol_version", "fixture_id", "kind", "deterministic_seed", "source", "records", "delivery_order", "barriers", "assertions", "allowed_external_effects", "bounds", "expected_final_snapshot"],
+  "properties": {
+    "recording_version": {"const": 1},
+    "protocol_version": {"const": "1.0"},
+    "fixture_id": {"type": "string", "pattern": "^F-P(0[1-9]|10)$"},
+    "kind": {"enum": ["service_recording", "contract_only"]},
+    "deterministic_seed": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["base_commit", "files", "sha256"],
+      "properties": {
+        "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "files": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "records": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "object", "additionalProperties": false, "required": ["schema", "value"],
+        "properties": {"schema": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$"}, "value": {"type": "object"}}}
+    },
+    "delivery_order": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+    "barriers": {"type": "array", "items": {"type": "string"}},
+    "assertions": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "allowed_external_effects": {"const": []},
+    "bounds": {"type": "object", "additionalProperties": false, "required": ["quiescence_timeout_seconds", "event_bytes"],
+      "properties": {"quiescence_timeout_seconds": {"const": 10}, "event_bytes": {"const": 65536}}},
+    "expected_final_snapshot": {"type": ["object", "null"]}
+  }
+}

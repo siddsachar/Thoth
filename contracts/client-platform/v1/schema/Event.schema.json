@@ -1,0 +1,1980 @@
+{
+  "$defs": {
+    "AgentActivity": {
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "waiting_approval",
+            "waiting_user",
+            "paused",
+            "interrupted",
+            "completed",
+            "completed_delivery_failed",
+            "failed",
+            "stopped",
+            "stopping",
+            "blocked",
+            "timed_out",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "status",
+        "revision"
+      ],
+      "title": "AgentActivity",
+      "type": "object"
+    },
+    "AgentActivityEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/AgentActivity"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent.activity",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "AgentActivityEvent",
+      "type": "object"
+    },
+    "ApprovalRequired": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9:_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Id"
+        },
+        "status": {
+          "const": "waiting_approval",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ApprovalRequired",
+      "type": "object"
+    },
+    "ApprovalRequiredEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ApprovalRequired"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "approval.required",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "ApprovalRequiredEvent",
+      "type": "object"
+    },
+    "GenerationActivity": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "thinking",
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "GenerationActivity",
+      "type": "object"
+    },
+    "GenerationActivityEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/GenerationActivity"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "generation.activity",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "GenerationActivityEvent",
+      "type": "object"
+    },
+    "GenerationError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "const": "generation_failed",
+          "title": "Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "GenerationError",
+      "type": "object"
+    },
+    "GenerationErrorEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/GenerationError"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "generation.error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "GenerationErrorEvent",
+      "type": "object"
+    },
+    "GenerationState": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9:_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval Id"
+        },
+        "can_stop": {
+          "title": "Can Stop",
+          "type": "boolean"
+        },
+        "cancel_requested": {
+          "title": "Cancel Requested",
+          "type": "boolean"
+        },
+        "cleanup_complete": {
+          "title": "Cleanup Complete",
+          "type": "boolean"
+        },
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "execution_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "external_outcome": {
+          "enum": [
+            "known_not_sent",
+            "sent",
+            "uncertain",
+            "not_applicable"
+          ],
+          "title": "External Outcome",
+          "type": "string"
+        },
+        "generation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Generation Id",
+          "type": "string"
+        },
+        "pass_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Pass Id",
+          "type": "string"
+        },
+        "quiesced": {
+          "title": "Quiesced",
+          "type": "boolean"
+        },
+        "revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "segment_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9:_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Segment Id"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "stopping",
+            "stopped",
+            "waiting_approval",
+            "completed",
+            "interrupted"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "conversation_id",
+        "generation_id",
+        "pass_id",
+        "status",
+        "revision",
+        "cancel_requested",
+        "quiesced",
+        "cleanup_complete",
+        "external_outcome",
+        "approval_id",
+        "can_stop"
+      ],
+      "title": "GenerationState",
+      "type": "object"
+    },
+    "GenerationStateEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/GenerationState"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "generation.state",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "GenerationStateEvent",
+      "type": "object"
+    },
+    "MediaAvailable": {
+      "additionalProperties": false,
+      "properties": {
+        "media_ref": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Media Ref",
+          "type": "string"
+        },
+        "message_id": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Message Id",
+          "type": "string"
+        },
+        "mime_type": {
+          "enum": [
+            "image/png",
+            "image/jpeg",
+            "video/mp4",
+            "application/pdf",
+            "application/octet-stream"
+          ],
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Tool Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "media_ref",
+        "mime_type"
+      ],
+      "title": "MediaAvailable",
+      "type": "object"
+    },
+    "MediaAvailableEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/MediaAvailable"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "media.available",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "MediaAvailableEvent",
+      "type": "object"
+    },
+    "MediaError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "payload_too_large",
+            "media_unavailable"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "message_id": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Message Id",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Tool Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "MediaError",
+      "type": "object"
+    },
+    "MediaErrorEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/MediaError"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "media.error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "MediaErrorEvent",
+      "type": "object"
+    },
+    "ProjectionReset": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "const": "content_evicted",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "ProjectionReset",
+      "type": "object"
+    },
+    "ProjectionResetEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ProjectionReset"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "projection.reset",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "ProjectionResetEvent",
+      "type": "object"
+    },
+    "QueueUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "submission_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9:_-]+$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Submission Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "submission_ids",
+        "revision"
+      ],
+      "title": "QueueUpdated",
+      "type": "object"
+    },
+    "QueueUpdatedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/QueueUpdated"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "queue.updated",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "QueueUpdatedEvent",
+      "type": "object"
+    },
+    "ResourceChanged": {
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "title": "ResourceChanged",
+      "type": "object"
+    },
+    "ResourceChangedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ResourceChanged"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "resource.changed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "ResourceChangedEvent",
+      "type": "object"
+    },
+    "ToolActivity": {
+      "additionalProperties": false,
+      "properties": {
+        "message_id": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Message Id",
+          "type": "string"
+        },
+        "pass_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9:_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pass Id"
+        },
+        "segment_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9:_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Segment Id"
+        },
+        "state": {
+          "enum": [
+            "tool_call",
+            "tool_done"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Tool Call Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "ToolActivity",
+      "type": "object"
+    },
+    "ToolActivityEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ToolActivity"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool.activity",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "ToolActivityEvent",
+      "type": "object"
+    },
+    "TranscriptCheckpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint_revision": {
+          "maxLength": 128,
+          "title": "Checkpoint Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "checkpoint_revision"
+      ],
+      "title": "TranscriptCheckpoint",
+      "type": "object"
+    },
+    "TranscriptCheckpointEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranscriptCheckpoint"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "transcript.checkpoint",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "TranscriptCheckpointEvent",
+      "type": "object"
+    },
+    "TranscriptDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "pass_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Pass Id",
+          "type": "string"
+        },
+        "public_text_delta": {
+          "maxLength": 60000,
+          "title": "Public Text Delta",
+          "type": "string"
+        },
+        "render_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Render Revision",
+          "type": "string"
+        },
+        "row_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Row Id",
+          "type": "string"
+        },
+        "segment_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Segment Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pass_id",
+        "segment_id",
+        "row_id",
+        "render_revision",
+        "public_text_delta"
+      ],
+      "title": "TranscriptDelta",
+      "type": "object"
+    },
+    "TranscriptDeltaEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranscriptDelta"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "transcript.delta",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "TranscriptDeltaEvent",
+      "type": "object"
+    },
+    "TranscriptSettled": {
+      "additionalProperties": false,
+      "properties": {
+        "adoption": {
+          "enum": [
+            "exact",
+            "no_adoption"
+          ],
+          "title": "Adoption",
+          "type": "string"
+        },
+        "row_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Row Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "row_id",
+        "adoption"
+      ],
+      "title": "TranscriptSettled",
+      "type": "object"
+    },
+    "TranscriptSettledEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranscriptSettled"
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "protocol_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        },
+        "source": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "checkpoint",
+            "approval",
+            "resource"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Epoch",
+          "type": "string"
+        },
+        "source_sequence_end": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence End",
+          "type": "string"
+        },
+        "source_sequence_start": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Source Sequence Start",
+          "type": "string"
+        },
+        "source_stream_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Source Stream Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "type": {
+          "const": "transcript.settled",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "topic",
+        "server_epoch",
+        "conversation_id",
+        "projection_revision",
+        "source_stream_id",
+        "source_epoch",
+        "source_sequence_start",
+        "source_sequence_end",
+        "type",
+        "payload"
+      ],
+      "title": "TranscriptSettledEvent",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "agent.activity": "#/$defs/AgentActivityEvent",
+      "approval.required": "#/$defs/ApprovalRequiredEvent",
+      "generation.activity": "#/$defs/GenerationActivityEvent",
+      "generation.error": "#/$defs/GenerationErrorEvent",
+      "generation.state": "#/$defs/GenerationStateEvent",
+      "media.available": "#/$defs/MediaAvailableEvent",
+      "media.error": "#/$defs/MediaErrorEvent",
+      "projection.reset": "#/$defs/ProjectionResetEvent",
+      "queue.updated": "#/$defs/QueueUpdatedEvent",
+      "resource.changed": "#/$defs/ResourceChangedEvent",
+      "tool.activity": "#/$defs/ToolActivityEvent",
+      "transcript.checkpoint": "#/$defs/TranscriptCheckpointEvent",
+      "transcript.delta": "#/$defs/TranscriptDeltaEvent",
+      "transcript.settled": "#/$defs/TranscriptSettledEvent"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/GenerationStateEvent"
+    },
+    {
+      "$ref": "#/$defs/TranscriptDeltaEvent"
+    },
+    {
+      "$ref": "#/$defs/ToolActivityEvent"
+    },
+    {
+      "$ref": "#/$defs/GenerationActivityEvent"
+    },
+    {
+      "$ref": "#/$defs/ApprovalRequiredEvent"
+    },
+    {
+      "$ref": "#/$defs/GenerationErrorEvent"
+    },
+    {
+      "$ref": "#/$defs/TranscriptCheckpointEvent"
+    },
+    {
+      "$ref": "#/$defs/TranscriptSettledEvent"
+    },
+    {
+      "$ref": "#/$defs/ResourceChangedEvent"
+    },
+    {
+      "$ref": "#/$defs/AgentActivityEvent"
+    },
+    {
+      "$ref": "#/$defs/QueueUpdatedEvent"
+    },
+    {
+      "$ref": "#/$defs/MediaAvailableEvent"
+    },
+    {
+      "$ref": "#/$defs/ProjectionResetEvent"
+    },
+    {
+      "$ref": "#/$defs/MediaErrorEvent"
+    }
+  ]
+}

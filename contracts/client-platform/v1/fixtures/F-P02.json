@@ -1,0 +1,1701 @@
+{
+  "recording_version": 1,
+  "protocol_version": "1.0",
+  "fixture_id": "F-P02",
+  "kind": "service_recording",
+  "deterministic_seed": "F-P02:v1",
+  "source": {
+    "base_commit": "272a0add768f7badc2536fa21e30e538a08833de",
+    "files": {
+      "src/row_bot/api/v1/__init__.py": "d14be0852486e10539fd8ed7cafe67c2753a7964679096fe9c1191497a1ba329",
+      "src/row_bot/api/v1/routes.py": "3f2a8bb5dc1ebdc3b414960f092e2ba278992de72fcca900606738a8561957ed",
+      "src/row_bot/api/v1/schemas.py": "eb2f11a7f81719cad25334d9ecee62eab704aaed1e61fe611563101c7346e8e3",
+      "src/row_bot/api/v1/security.py": "b810017771e61c4cbde241901f33d17d32fd02060805824f2dc60f230852a375",
+      "src/row_bot/application/__init__.py": "ddac8928976922c73246ae791f5cc0ff84837ef1a9890f5938ee56f58eb7d468",
+      "src/row_bot/application/attachment_context.py": "930e91b470edddb37e68a75996237d88db5f22e54442df9c825f5ad16ae45d1a",
+      "src/row_bot/application/attachments.py": "cca0ed909626291f72492322e1bddc42cc722e13fbfdc583742a48251d7f0361",
+      "src/row_bot/application/client_platform.py": "0f45a18b6dfdd72f10dceb76d712ad0983d941b5c2173f5c386555d9c7caf082",
+      "src/row_bot/application/generated_media.py": "2037b707b47b35a202eb23c34130809ec45315906a41ac32c791d9e9256376db",
+      "src/row_bot/application/lifecycle.py": "5d1826b2239c67b73c768a854f759189a319b83773797aa64e717cbf56ff97ff",
+      "src/row_bot/application/live_content.py": "a454a9646f1bda95ce597c4640b01d3cb8b409a8818d8717b36abb827279998d",
+      "src/row_bot/conversation_resources.py": "20daa4c2c0f7a50f0cae7f6d24d804950b9fb87035586624a01e5bb1b6c94768",
+      "src/row_bot/projection/__init__.py": "246b0f37fc792dc5787564e86fdd2d1153e380cbd362a9d3f2db70669131da00",
+      "src/row_bot/projection/canonical.py": "cd33b9b4d396464a6324d04194476c87854e40ec902d34201ebda432217102ed",
+      "src/row_bot/projection/conversation.py": "0c2322879ebd8a952f808a01549d8c7e785819fb033bfcc5542a0d88071fc66e",
+      "src/row_bot/runtime/__init__.py": "bec0d5569832ef34ca97d303981dc5484f68c77b8123f82fb63e3320a3634d0b",
+      "src/row_bot/runtime/admissions.py": "c9b4a489c2e4e39e5122214f6ef2035440e4d12c4a2ea1a0da78435c149d1008",
+      "src/row_bot/runtime/checkpoint_reader.py": "dba5a78e99585899d186084a0f494796e0f767c783539e796683938cd964d0f4",
+      "src/row_bot/runtime/executions.py": "93936596d57069e96e6fffdb7332ab5c36aed81868c44dc71c7651bb7dc35166",
+      "src/row_bot/tasks.py": "e8e34aa222c7737424d248360cf3438370fb2675fba81d685c7014e4f83e9b8b",
+      "src/row_bot/threads.py": "28db4fd9e103b0f250eb62877bf367ffbb9b5433f4ddede620517789fced0122",
+      "tests/helpers/client_platform_fakes.py": "3e5ebbac050c0afb409135c11f7d6afbf7df313c09bcd465f3c04980f6639717"
+    },
+    "sha256": "06bee57a02733859b6b84e75d1971ba91406381b9e1832ab5a94d59ede8e4a72"
+  },
+  "records": [
+    {
+      "schema": "SubscriptionView",
+      "value": {
+        "subscription_id": "bbe60726-e14e-58ce-8d90-60ec50b88c78",
+        "snapshot": {
+          "conversation_id": "conversation-a",
+          "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+          "projection_revision": "0",
+          "cursor": "bc02c494-66e0-5a01-a237-7a16f69528ea",
+          "checkpoint_revision": "",
+          "rows": [],
+          "generation": null
+        },
+        "cursor": "bc02c494-66e0-5a01-a237-7a16f69528ea"
+      }
+    },
+    {
+      "schema": "Command",
+      "value": {
+        "command_id": "f1490f9b-f594-5125-bfae-c922e284cf94",
+        "client_session_id": "665c5611-4e9d-5350-ac7e-44559c76534a",
+        "type": "conversation.submit",
+        "expected_revision": "0",
+        "payload": {
+          "submission_id": "6c3a416a-03db-57d2-8ad6-28be6d3626f2",
+          "text": "Synthetic prompt reordered-output",
+          "attachment_refs": [],
+          "model_selection": {
+            "provider_id": "fixture",
+            "model_ref": "fixture/model"
+          }
+        }
+      }
+    },
+    {
+      "schema": "CommandReceipt",
+      "value": {
+        "command_id": "f1490f9b-f594-5125-bfae-c922e284cf94",
+        "status": "accepted",
+        "conversation_id": "conversation-a",
+        "generation_id": "3fcc3d35-b9f0-5456-a378-4b505693bd22",
+        "execution_id": "a1be0f29-d030-5d34-a510-ac3e1c5a95e9",
+        "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+        "submission_id": "6c3a416a-03db-57d2-8ad6-28be6d3626f2"
+      }
+    },
+    {
+      "schema": "EventPage",
+      "value": {
+        "snapshot_required": false,
+        "events": [
+          {
+            "cursor": "546cdac1-98ed-5052-a9ab-ffde838bad5c",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "049cfc3c-5a47-5964-987e-3fb950038925",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "1",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "1",
+              "source_sequence_end": "1",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "a1be0f29-d030-5d34-a510-ac3e1c5a95e9",
+                "conversation_id": "conversation-a",
+                "generation_id": "3fcc3d35-b9f0-5456-a378-4b505693bd22",
+                "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+                "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "status": "running",
+                "revision": "1",
+                "cancel_requested": false,
+                "quiesced": false,
+                "cleanup_complete": false,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": true
+              }
+            }
+          },
+          {
+            "cursor": "ddd2cf44-bfd2-567e-a640-87654878dfbb",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "722a1279-5119-5a4e-b9b4-8ecc4ed6556b",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "2",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "2",
+              "source_sequence_end": "2",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [
+                  "6c3a416a-03db-57d2-8ad6-28be6d3626f2"
+                ],
+                "revision": "2"
+              }
+            }
+          },
+          {
+            "cursor": "16a47465-b037-54dc-81df-2d36c09b22a7",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "27833fe4-9048-56a1-83fc-696f7808314f",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "3",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "3",
+              "source_sequence_end": "3",
+              "type": "generation.activity",
+              "payload": {
+                "state": "thinking"
+              }
+            }
+          },
+          {
+            "cursor": "6f07bd93-03e0-5b94-892a-a6ee583cd8ec",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "f445cb31-3d2f-5c28-bace-38bd947fa5af",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "4",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "4",
+              "source_sequence_end": "4",
+              "type": "transcript.delta",
+              "payload": {
+                "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+                "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "row_id": "assistant:live:3fb70196-5ebc-5ade-ba6f-9788f0c97e49:1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "render_revision": "4",
+                "public_text_delta": "Synthetic reordered-output"
+              }
+            }
+          },
+          {
+            "cursor": "527e7ff6-12fb-5fea-94a8-3b4b0dd60e60",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "bca7b0ff-6783-5e06-9e81-8de8f82e6205",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "5",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "5",
+              "source_sequence_end": "5",
+              "type": "transcript.checkpoint",
+              "payload": {
+                "checkpoint_revision": "764f1b4b-a1b0-5e58-b66f-24428e4c9fc8"
+              }
+            }
+          },
+          {
+            "cursor": "2deec929-3c3d-5758-a882-af4943710476",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "1db34e22-ef95-57a2-a638-769f1f922b87",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "6",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "6",
+              "source_sequence_end": "6",
+              "type": "transcript.settled",
+              "payload": {
+                "row_id": "assistant:live:3fb70196-5ebc-5ade-ba6f-9788f0c97e49:1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "adoption": "exact"
+              }
+            }
+          },
+          {
+            "cursor": "d2ea963a-a7f2-55bc-904d-7c2efc13dfea",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "8957bf1d-7222-5e9a-968e-1383d1a43a78",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "7",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "7",
+              "source_sequence_end": "7",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [],
+                "revision": "7"
+              }
+            }
+          },
+          {
+            "cursor": "065bd495-a35b-51b6-a912-d6dc22a91597",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "2bacd776-25b0-5d67-a3b9-f7d4a7af6bdc",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "8",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "8",
+              "source_sequence_end": "8",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "a1be0f29-d030-5d34-a510-ac3e1c5a95e9",
+                "conversation_id": "conversation-a",
+                "generation_id": "3fcc3d35-b9f0-5456-a378-4b505693bd22",
+                "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+                "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "status": "completed",
+                "revision": "2",
+                "cancel_requested": false,
+                "quiesced": true,
+                "cleanup_complete": true,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": false
+              }
+            }
+          },
+          {
+            "cursor": "352bd939-47d9-5a95-9a60-64df309a014d",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "6bd0bf2c-b022-54ae-9e55-bff1207d90f6",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "9",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "9",
+              "source_sequence_end": "9",
+              "type": "agent.activity",
+              "payload": {
+                "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+                "status": "queued",
+                "revision": "1"
+              }
+            }
+          },
+          {
+            "cursor": "22f14729-51bb-54c4-840d-c0ad529a4fc8",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "759411d7-3ef5-5aea-af8c-f55bca8e7888",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "10",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "10",
+              "source_sequence_end": "10",
+              "type": "agent.activity",
+              "payload": {
+                "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+                "status": "running",
+                "revision": "2"
+              }
+            }
+          },
+          {
+            "cursor": "7611d03e-a00f-535a-912c-825c3148e9ce",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "ad337328-a12c-5494-803d-f9160debbd5e",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "11",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "11",
+              "source_sequence_end": "11",
+              "type": "agent.activity",
+              "payload": {
+                "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+                "status": "completed",
+                "revision": "3"
+              }
+            }
+          }
+        ],
+        "cursor": "7611d03e-a00f-535a-912c-825c3148e9ce"
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "049cfc3c-5a47-5964-987e-3fb950038925",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "1",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "1",
+        "source_sequence_end": "1",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "a1be0f29-d030-5d34-a510-ac3e1c5a95e9",
+          "conversation_id": "conversation-a",
+          "generation_id": "3fcc3d35-b9f0-5456-a378-4b505693bd22",
+          "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+          "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "status": "running",
+          "revision": "1",
+          "cancel_requested": false,
+          "quiesced": false,
+          "cleanup_complete": false,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": true
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "722a1279-5119-5a4e-b9b4-8ecc4ed6556b",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "2",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "2",
+        "source_sequence_end": "2",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [
+            "6c3a416a-03db-57d2-8ad6-28be6d3626f2"
+          ],
+          "revision": "2"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "27833fe4-9048-56a1-83fc-696f7808314f",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "3",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "3",
+        "source_sequence_end": "3",
+        "type": "generation.activity",
+        "payload": {
+          "state": "thinking"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "f445cb31-3d2f-5c28-bace-38bd947fa5af",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "4",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "4",
+        "source_sequence_end": "4",
+        "type": "transcript.delta",
+        "payload": {
+          "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+          "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "row_id": "assistant:live:3fb70196-5ebc-5ade-ba6f-9788f0c97e49:1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "render_revision": "4",
+          "public_text_delta": "Synthetic reordered-output"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "bca7b0ff-6783-5e06-9e81-8de8f82e6205",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "5",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "5",
+        "source_sequence_end": "5",
+        "type": "transcript.checkpoint",
+        "payload": {
+          "checkpoint_revision": "764f1b4b-a1b0-5e58-b66f-24428e4c9fc8"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "1db34e22-ef95-57a2-a638-769f1f922b87",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "6",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "6",
+        "source_sequence_end": "6",
+        "type": "transcript.settled",
+        "payload": {
+          "row_id": "assistant:live:3fb70196-5ebc-5ade-ba6f-9788f0c97e49:1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "adoption": "exact"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "8957bf1d-7222-5e9a-968e-1383d1a43a78",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "7",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "7",
+        "source_sequence_end": "7",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [],
+          "revision": "7"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "2bacd776-25b0-5d67-a3b9-f7d4a7af6bdc",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "8",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "8",
+        "source_sequence_end": "8",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "a1be0f29-d030-5d34-a510-ac3e1c5a95e9",
+          "conversation_id": "conversation-a",
+          "generation_id": "3fcc3d35-b9f0-5456-a378-4b505693bd22",
+          "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+          "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "status": "completed",
+          "revision": "2",
+          "cancel_requested": false,
+          "quiesced": true,
+          "cleanup_complete": true,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": false
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "6bd0bf2c-b022-54ae-9e55-bff1207d90f6",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "9",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "9",
+        "source_sequence_end": "9",
+        "type": "agent.activity",
+        "payload": {
+          "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+          "status": "queued",
+          "revision": "1"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "759411d7-3ef5-5aea-af8c-f55bca8e7888",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "10",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "10",
+        "source_sequence_end": "10",
+        "type": "agent.activity",
+        "payload": {
+          "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+          "status": "running",
+          "revision": "2"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "ad337328-a12c-5494-803d-f9160debbd5e",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "11",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "11",
+        "source_sequence_end": "11",
+        "type": "agent.activity",
+        "payload": {
+          "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+          "status": "completed",
+          "revision": "3"
+        }
+      }
+    },
+    {
+      "schema": "SubscriptionView",
+      "value": {
+        "subscription_id": "bf04be77-fe2e-5803-9f09-409c1c8128ac",
+        "snapshot": {
+          "conversation_id": "conversation-b",
+          "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+          "projection_revision": "0",
+          "cursor": "c3afce21-24b6-5317-8246-b42b2011d415",
+          "checkpoint_revision": "",
+          "rows": [],
+          "generation": null
+        },
+        "cursor": "c3afce21-24b6-5317-8246-b42b2011d415"
+      }
+    },
+    {
+      "schema": "Command",
+      "value": {
+        "command_id": "1b5c3919-7400-567c-9915-8b284b1a1fea",
+        "client_session_id": "665c5611-4e9d-5350-ac7e-44559c76534a",
+        "type": "conversation.submit",
+        "expected_revision": "0",
+        "payload": {
+          "submission_id": "4fcedf84-7125-5d39-8e5a-3263dca5f2ca",
+          "text": "Synthetic pressure",
+          "attachment_refs": [],
+          "model_selection": {
+            "provider_id": "fixture",
+            "model_ref": "fixture/model"
+          }
+        }
+      }
+    },
+    {
+      "schema": "CommandReceipt",
+      "value": {
+        "command_id": "1b5c3919-7400-567c-9915-8b284b1a1fea",
+        "status": "accepted",
+        "conversation_id": "conversation-b",
+        "generation_id": "c70b14aa-516a-5bfe-a662-c42eaec02207",
+        "execution_id": "4ba498e6-a183-5fd7-825d-62860c759483",
+        "pass_id": "2df21574-bce8-54eb-9f62-6a86afdd2260",
+        "submission_id": "4fcedf84-7125-5d39-8e5a-3263dca5f2ca"
+      }
+    },
+    {
+      "schema": "Command",
+      "value": {
+        "command_id": "4e524577-3898-587c-afca-d7bce0fd7179",
+        "client_session_id": "665c5611-4e9d-5350-ac7e-44559c76534a",
+        "type": "conversation.submit",
+        "expected_revision": "0",
+        "payload": {
+          "submission_id": "b6eacdaa-049a-5f26-8602-298c01f8e17f",
+          "text": "Synthetic pressure",
+          "attachment_refs": [],
+          "model_selection": {
+            "provider_id": "fixture",
+            "model_ref": "fixture/model"
+          }
+        }
+      }
+    },
+    {
+      "schema": "CommandReceipt",
+      "value": {
+        "command_id": "4e524577-3898-587c-afca-d7bce0fd7179",
+        "status": "accepted",
+        "conversation_id": "conversation-a",
+        "generation_id": "b8205642-2810-5e12-b761-0615e0fdebe5",
+        "execution_id": "845fd40b-94e5-5da2-9456-cae1a6c7e644",
+        "pass_id": "b99cb411-b68c-54ea-ab9b-49c1dabd4338",
+        "submission_id": "b6eacdaa-049a-5f26-8602-298c01f8e17f"
+      }
+    },
+    {
+      "schema": "EventPage",
+      "value": {
+        "snapshot_required": false,
+        "events": [
+          {
+            "cursor": "d44c9eb7-c169-511b-8982-1b3e3edf7833",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "4673fce9-ba95-588c-8ecd-b218e16be504",
+              "topic": "conversation.conversation-b",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-b",
+              "projection_revision": "1",
+              "source": "runtime",
+              "source_stream_id": "conversation-b",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "1",
+              "source_sequence_end": "1",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "4ba498e6-a183-5fd7-825d-62860c759483",
+                "conversation_id": "conversation-b",
+                "generation_id": "c70b14aa-516a-5bfe-a662-c42eaec02207",
+                "pass_id": "2df21574-bce8-54eb-9f62-6a86afdd2260",
+                "segment_id": "3c0cb00f-888e-5941-a623-2d3aec9c5a61",
+                "status": "running",
+                "revision": "1",
+                "cancel_requested": false,
+                "quiesced": false,
+                "cleanup_complete": false,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": true
+              }
+            }
+          },
+          {
+            "cursor": "19b9765a-7b9b-5d93-8c25-3c2fc22d56c8",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "b6f798a4-2a9b-54ec-8fb5-c39fd88cda1e",
+              "topic": "conversation.conversation-b",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-b",
+              "projection_revision": "2",
+              "source": "runtime",
+              "source_stream_id": "conversation-b",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "2",
+              "source_sequence_end": "2",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [
+                  "4fcedf84-7125-5d39-8e5a-3263dca5f2ca"
+                ],
+                "revision": "2"
+              }
+            }
+          },
+          {
+            "cursor": "a03793b8-a806-5ff7-b1e4-e9f35b02a459",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "b3512b26-5de3-50b7-be26-8907a406ea0a",
+              "topic": "conversation.conversation-b",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-b",
+              "projection_revision": "3",
+              "source": "runtime",
+              "source_stream_id": "conversation-b",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "3",
+              "source_sequence_end": "3",
+              "type": "transcript.delta",
+              "payload": {
+                "pass_id": "2df21574-bce8-54eb-9f62-6a86afdd2260",
+                "segment_id": "3c0cb00f-888e-5941-a623-2d3aec9c5a61",
+                "row_id": "assistant:live:2df21574-bce8-54eb-9f62-6a86afdd2260:3c0cb00f-888e-5941-a623-2d3aec9c5a61",
+                "render_revision": "3",
+                "public_text_delta": "Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic "
+              }
+            }
+          },
+          {
+            "cursor": "b0ab350e-b99d-5ee3-bfe8-bffa8dc3fcc9",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "8b4bcffd-9221-54e1-b1ef-dd1a6516615f",
+              "topic": "conversation.conversation-b",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-b",
+              "projection_revision": "4",
+              "source": "runtime",
+              "source_stream_id": "conversation-b",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "4",
+              "source_sequence_end": "4",
+              "type": "projection.reset",
+              "payload": {
+                "reason": "content_evicted"
+              }
+            }
+          }
+        ],
+        "cursor": "b0ab350e-b99d-5ee3-bfe8-bffa8dc3fcc9"
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "4673fce9-ba95-588c-8ecd-b218e16be504",
+        "topic": "conversation.conversation-b",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-b",
+        "projection_revision": "1",
+        "source": "runtime",
+        "source_stream_id": "conversation-b",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "1",
+        "source_sequence_end": "1",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "4ba498e6-a183-5fd7-825d-62860c759483",
+          "conversation_id": "conversation-b",
+          "generation_id": "c70b14aa-516a-5bfe-a662-c42eaec02207",
+          "pass_id": "2df21574-bce8-54eb-9f62-6a86afdd2260",
+          "segment_id": "3c0cb00f-888e-5941-a623-2d3aec9c5a61",
+          "status": "running",
+          "revision": "1",
+          "cancel_requested": false,
+          "quiesced": false,
+          "cleanup_complete": false,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": true
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "b6f798a4-2a9b-54ec-8fb5-c39fd88cda1e",
+        "topic": "conversation.conversation-b",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-b",
+        "projection_revision": "2",
+        "source": "runtime",
+        "source_stream_id": "conversation-b",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "2",
+        "source_sequence_end": "2",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [
+            "4fcedf84-7125-5d39-8e5a-3263dca5f2ca"
+          ],
+          "revision": "2"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "b3512b26-5de3-50b7-be26-8907a406ea0a",
+        "topic": "conversation.conversation-b",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-b",
+        "projection_revision": "3",
+        "source": "runtime",
+        "source_stream_id": "conversation-b",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "3",
+        "source_sequence_end": "3",
+        "type": "transcript.delta",
+        "payload": {
+          "pass_id": "2df21574-bce8-54eb-9f62-6a86afdd2260",
+          "segment_id": "3c0cb00f-888e-5941-a623-2d3aec9c5a61",
+          "row_id": "assistant:live:2df21574-bce8-54eb-9f62-6a86afdd2260:3c0cb00f-888e-5941-a623-2d3aec9c5a61",
+          "render_revision": "3",
+          "public_text_delta": "Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic "
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "8b4bcffd-9221-54e1-b1ef-dd1a6516615f",
+        "topic": "conversation.conversation-b",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-b",
+        "projection_revision": "4",
+        "source": "runtime",
+        "source_stream_id": "conversation-b",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "4",
+        "source_sequence_end": "4",
+        "type": "projection.reset",
+        "payload": {
+          "reason": "content_evicted"
+        }
+      }
+    },
+    {
+      "schema": "EventPage",
+      "value": {
+        "snapshot_required": false,
+        "events": [
+          {
+            "cursor": "546cdac1-98ed-5052-a9ab-ffde838bad5c",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "049cfc3c-5a47-5964-987e-3fb950038925",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "1",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "1",
+              "source_sequence_end": "1",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "a1be0f29-d030-5d34-a510-ac3e1c5a95e9",
+                "conversation_id": "conversation-a",
+                "generation_id": "3fcc3d35-b9f0-5456-a378-4b505693bd22",
+                "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+                "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "status": "running",
+                "revision": "1",
+                "cancel_requested": false,
+                "quiesced": false,
+                "cleanup_complete": false,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": true
+              }
+            }
+          },
+          {
+            "cursor": "ddd2cf44-bfd2-567e-a640-87654878dfbb",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "722a1279-5119-5a4e-b9b4-8ecc4ed6556b",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "2",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "2",
+              "source_sequence_end": "2",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [
+                  "6c3a416a-03db-57d2-8ad6-28be6d3626f2"
+                ],
+                "revision": "2"
+              }
+            }
+          },
+          {
+            "cursor": "16a47465-b037-54dc-81df-2d36c09b22a7",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "27833fe4-9048-56a1-83fc-696f7808314f",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "3",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "3",
+              "source_sequence_end": "3",
+              "type": "generation.activity",
+              "payload": {
+                "state": "thinking"
+              }
+            }
+          },
+          {
+            "cursor": "6f07bd93-03e0-5b94-892a-a6ee583cd8ec",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "f445cb31-3d2f-5c28-bace-38bd947fa5af",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "4",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "4",
+              "source_sequence_end": "4",
+              "type": "transcript.delta",
+              "payload": {
+                "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+                "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "row_id": "assistant:live:3fb70196-5ebc-5ade-ba6f-9788f0c97e49:1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "render_revision": "4",
+                "public_text_delta": "Synthetic reordered-output"
+              }
+            }
+          },
+          {
+            "cursor": "527e7ff6-12fb-5fea-94a8-3b4b0dd60e60",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "bca7b0ff-6783-5e06-9e81-8de8f82e6205",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "5",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "5",
+              "source_sequence_end": "5",
+              "type": "transcript.checkpoint",
+              "payload": {
+                "checkpoint_revision": "764f1b4b-a1b0-5e58-b66f-24428e4c9fc8"
+              }
+            }
+          },
+          {
+            "cursor": "2deec929-3c3d-5758-a882-af4943710476",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "1db34e22-ef95-57a2-a638-769f1f922b87",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "6",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "6",
+              "source_sequence_end": "6",
+              "type": "transcript.settled",
+              "payload": {
+                "row_id": "assistant:live:3fb70196-5ebc-5ade-ba6f-9788f0c97e49:1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "adoption": "exact"
+              }
+            }
+          },
+          {
+            "cursor": "d2ea963a-a7f2-55bc-904d-7c2efc13dfea",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "8957bf1d-7222-5e9a-968e-1383d1a43a78",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "7",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "7",
+              "source_sequence_end": "7",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [],
+                "revision": "7"
+              }
+            }
+          },
+          {
+            "cursor": "065bd495-a35b-51b6-a912-d6dc22a91597",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "2bacd776-25b0-5d67-a3b9-f7d4a7af6bdc",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "8",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "8",
+              "source_sequence_end": "8",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "a1be0f29-d030-5d34-a510-ac3e1c5a95e9",
+                "conversation_id": "conversation-a",
+                "generation_id": "3fcc3d35-b9f0-5456-a378-4b505693bd22",
+                "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+                "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+                "status": "completed",
+                "revision": "2",
+                "cancel_requested": false,
+                "quiesced": true,
+                "cleanup_complete": true,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": false
+              }
+            }
+          },
+          {
+            "cursor": "352bd939-47d9-5a95-9a60-64df309a014d",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "6bd0bf2c-b022-54ae-9e55-bff1207d90f6",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "9",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "9",
+              "source_sequence_end": "9",
+              "type": "agent.activity",
+              "payload": {
+                "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+                "status": "queued",
+                "revision": "1"
+              }
+            }
+          },
+          {
+            "cursor": "22f14729-51bb-54c4-840d-c0ad529a4fc8",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "759411d7-3ef5-5aea-af8c-f55bca8e7888",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "10",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "10",
+              "source_sequence_end": "10",
+              "type": "agent.activity",
+              "payload": {
+                "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+                "status": "running",
+                "revision": "2"
+              }
+            }
+          },
+          {
+            "cursor": "7611d03e-a00f-535a-912c-825c3148e9ce",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "ad337328-a12c-5494-803d-f9160debbd5e",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "11",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "11",
+              "source_sequence_end": "11",
+              "type": "agent.activity",
+              "payload": {
+                "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+                "status": "completed",
+                "revision": "3"
+              }
+            }
+          },
+          {
+            "cursor": "23d65dc8-8e4b-555e-8cc3-fedb8294e321",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "33a89340-9369-5638-93be-cfbc7bee30b8",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "12",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "12",
+              "source_sequence_end": "12",
+              "type": "generation.state",
+              "payload": {
+                "execution_id": "845fd40b-94e5-5da2-9456-cae1a6c7e644",
+                "conversation_id": "conversation-a",
+                "generation_id": "b8205642-2810-5e12-b761-0615e0fdebe5",
+                "pass_id": "b99cb411-b68c-54ea-ab9b-49c1dabd4338",
+                "segment_id": "7ee3a5c1-adc0-53e9-b53f-c7b424319283",
+                "status": "running",
+                "revision": "1",
+                "cancel_requested": false,
+                "quiesced": false,
+                "cleanup_complete": false,
+                "external_outcome": "known_not_sent",
+                "approval_id": null,
+                "can_stop": true
+              }
+            }
+          },
+          {
+            "cursor": "43bf595c-9616-5a29-b9e2-fcfc8d756d5d",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "92a43513-6e52-529b-a7d3-1ba785a82cf0",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "13",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "13",
+              "source_sequence_end": "13",
+              "type": "queue.updated",
+              "payload": {
+                "submission_ids": [
+                  "b6eacdaa-049a-5f26-8602-298c01f8e17f"
+                ],
+                "revision": "13"
+              }
+            }
+          },
+          {
+            "cursor": "b5f0ef34-3049-5e7a-84c3-2f158cc87aa1",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "3a1b5ba4-84a3-5314-b9b4-3cfe314ff42d",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "conversation_id": "conversation-a",
+              "projection_revision": "14",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+              "source_sequence_start": "14",
+              "source_sequence_end": "14",
+              "type": "transcript.delta",
+              "payload": {
+                "pass_id": "b99cb411-b68c-54ea-ab9b-49c1dabd4338",
+                "segment_id": "7ee3a5c1-adc0-53e9-b53f-c7b424319283",
+                "row_id": "assistant:live:b99cb411-b68c-54ea-ab9b-49c1dabd4338:7ee3a5c1-adc0-53e9-b53f-c7b424319283",
+                "render_revision": "14",
+                "public_text_delta": "Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic "
+              }
+            }
+          }
+        ],
+        "cursor": "b5f0ef34-3049-5e7a-84c3-2f158cc87aa1"
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "049cfc3c-5a47-5964-987e-3fb950038925",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "1",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "1",
+        "source_sequence_end": "1",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "a1be0f29-d030-5d34-a510-ac3e1c5a95e9",
+          "conversation_id": "conversation-a",
+          "generation_id": "3fcc3d35-b9f0-5456-a378-4b505693bd22",
+          "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+          "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "status": "running",
+          "revision": "1",
+          "cancel_requested": false,
+          "quiesced": false,
+          "cleanup_complete": false,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": true
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "722a1279-5119-5a4e-b9b4-8ecc4ed6556b",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "2",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "2",
+        "source_sequence_end": "2",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [
+            "6c3a416a-03db-57d2-8ad6-28be6d3626f2"
+          ],
+          "revision": "2"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "27833fe4-9048-56a1-83fc-696f7808314f",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "3",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "3",
+        "source_sequence_end": "3",
+        "type": "generation.activity",
+        "payload": {
+          "state": "thinking"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "f445cb31-3d2f-5c28-bace-38bd947fa5af",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "4",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "4",
+        "source_sequence_end": "4",
+        "type": "transcript.delta",
+        "payload": {
+          "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+          "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "row_id": "assistant:live:3fb70196-5ebc-5ade-ba6f-9788f0c97e49:1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "render_revision": "4",
+          "public_text_delta": "Synthetic reordered-output"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "bca7b0ff-6783-5e06-9e81-8de8f82e6205",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "5",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "5",
+        "source_sequence_end": "5",
+        "type": "transcript.checkpoint",
+        "payload": {
+          "checkpoint_revision": "764f1b4b-a1b0-5e58-b66f-24428e4c9fc8"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "1db34e22-ef95-57a2-a638-769f1f922b87",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "6",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "6",
+        "source_sequence_end": "6",
+        "type": "transcript.settled",
+        "payload": {
+          "row_id": "assistant:live:3fb70196-5ebc-5ade-ba6f-9788f0c97e49:1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "adoption": "exact"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "8957bf1d-7222-5e9a-968e-1383d1a43a78",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "7",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "7",
+        "source_sequence_end": "7",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [],
+          "revision": "7"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "2bacd776-25b0-5d67-a3b9-f7d4a7af6bdc",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "8",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "8",
+        "source_sequence_end": "8",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "a1be0f29-d030-5d34-a510-ac3e1c5a95e9",
+          "conversation_id": "conversation-a",
+          "generation_id": "3fcc3d35-b9f0-5456-a378-4b505693bd22",
+          "pass_id": "3fb70196-5ebc-5ade-ba6f-9788f0c97e49",
+          "segment_id": "1daf6669-6031-5b21-9d85-3ba87d8ec9e1",
+          "status": "completed",
+          "revision": "2",
+          "cancel_requested": false,
+          "quiesced": true,
+          "cleanup_complete": true,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": false
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "6bd0bf2c-b022-54ae-9e55-bff1207d90f6",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "9",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "9",
+        "source_sequence_end": "9",
+        "type": "agent.activity",
+        "payload": {
+          "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+          "status": "queued",
+          "revision": "1"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "759411d7-3ef5-5aea-af8c-f55bca8e7888",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "10",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "10",
+        "source_sequence_end": "10",
+        "type": "agent.activity",
+        "payload": {
+          "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+          "status": "running",
+          "revision": "2"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "ad337328-a12c-5494-803d-f9160debbd5e",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "11",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "11",
+        "source_sequence_end": "11",
+        "type": "agent.activity",
+        "payload": {
+          "run_id": "766c465e-6e95-5d06-afde-a1dfe0166b76",
+          "status": "completed",
+          "revision": "3"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "33a89340-9369-5638-93be-cfbc7bee30b8",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "12",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "12",
+        "source_sequence_end": "12",
+        "type": "generation.state",
+        "payload": {
+          "execution_id": "845fd40b-94e5-5da2-9456-cae1a6c7e644",
+          "conversation_id": "conversation-a",
+          "generation_id": "b8205642-2810-5e12-b761-0615e0fdebe5",
+          "pass_id": "b99cb411-b68c-54ea-ab9b-49c1dabd4338",
+          "segment_id": "7ee3a5c1-adc0-53e9-b53f-c7b424319283",
+          "status": "running",
+          "revision": "1",
+          "cancel_requested": false,
+          "quiesced": false,
+          "cleanup_complete": false,
+          "external_outcome": "known_not_sent",
+          "approval_id": null,
+          "can_stop": true
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "92a43513-6e52-529b-a7d3-1ba785a82cf0",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "13",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "13",
+        "source_sequence_end": "13",
+        "type": "queue.updated",
+        "payload": {
+          "submission_ids": [
+            "b6eacdaa-049a-5f26-8602-298c01f8e17f"
+          ],
+          "revision": "13"
+        }
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "3a1b5ba4-84a3-5314-b9b4-3cfe314ff42d",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "conversation_id": "conversation-a",
+        "projection_revision": "14",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+        "source_sequence_start": "14",
+        "source_sequence_end": "14",
+        "type": "transcript.delta",
+        "payload": {
+          "pass_id": "b99cb411-b68c-54ea-ab9b-49c1dabd4338",
+          "segment_id": "7ee3a5c1-adc0-53e9-b53f-c7b424319283",
+          "row_id": "assistant:live:b99cb411-b68c-54ea-ab9b-49c1dabd4338:7ee3a5c1-adc0-53e9-b53f-c7b424319283",
+          "render_revision": "14",
+          "public_text_delta": "Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic Synthetic "
+        }
+      }
+    }
+  ],
+  "delivery_order": [
+    39,
+    38,
+    37,
+    24,
+    23,
+    22,
+    21,
+    14,
+    13,
+    12,
+    11,
+    10,
+    9,
+    8,
+    7,
+    6,
+    5,
+    4,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    21,
+    22,
+    23,
+    24,
+    37,
+    38,
+    39
+  ],
+  "barriers": [
+    "duplicated reversed delivery after producer quiescence"
+  ],
+  "assertions": [
+    "Duplicate event IDs are the same semantic event",
+    "Reordered delivery requires sequence reconciliation before application"
+  ],
+  "allowed_external_effects": [],
+  "bounds": {
+    "quiescence_timeout_seconds": 10,
+    "event_bytes": 65536
+  },
+  "expected_final_snapshot": {
+    "conversation_id": "conversation-a",
+    "server_epoch": "58d975e9-0602-5e9a-b80e-b18bdf3af9e9",
+    "projection_revision": "18",
+    "cursor": "a8d32fb3-158a-595b-9c67-d8af662b688e",
+    "checkpoint_revision": "3cd0ec66-945c-5e5c-8206-3d0593ec9ac9",
+    "rows": [
+      {
+        "id": "user:submission:6c3a416a-03db-57d2-8ad6-28be6d3626f2",
+        "message_id": "6c3a416a-03db-57d2-8ad6-28be6d3626f2",
+        "role": "user",
+        "tool_call_ids": [],
+        "tool_call_id": "",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "Synthetic prompt reordered-output"
+          }
+        ]
+      },
+      {
+        "id": "assistant:checkpoint:9ca1a31e-1125-5b80-8b57-d3b349bbbb9f",
+        "message_id": "9ca1a31e-1125-5b80-8b57-d3b349bbbb9f",
+        "role": "assistant",
+        "tool_call_ids": [],
+        "tool_call_id": "",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "Synthetic reordered-output"
+          }
+        ]
+      },
+      {
+        "id": "user:submission:b6eacdaa-049a-5f26-8602-298c01f8e17f",
+        "message_id": "b6eacdaa-049a-5f26-8602-298c01f8e17f",
+        "role": "user",
+        "tool_call_ids": [],
+        "tool_call_id": "",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "Synthetic pressure"
+          }
+        ]
+      },
+      {
+        "id": "assistant:checkpoint:0b4b817d-bdf0-5d20-a31e-8dc33ba3628f",
+        "message_id": "0b4b817d-bdf0-5d20-a31e-8dc33ba3628f",
+        "role": "assistant",
+        "tool_call_ids": [],
+        "tool_call_id": "",
+        "blocks": [],
+        "content_status": "lazy",
+        "content_ref": "0b4b817d-bdf0-5d20-a31e-8dc33ba3628f"
+      }
+    ],
+    "generation": {
+      "execution_id": "845fd40b-94e5-5da2-9456-cae1a6c7e644",
+      "conversation_id": "conversation-a",
+      "generation_id": "b8205642-2810-5e12-b761-0615e0fdebe5",
+      "pass_id": "b99cb411-b68c-54ea-ab9b-49c1dabd4338",
+      "status": "completed",
+      "revision": "2",
+      "cancel_requested": false,
+      "quiesced": true,
+      "cleanup_complete": true,
+      "external_outcome": "known_not_sent",
+      "approval_id": null,
+      "can_stop": false,
+      "segment_id": "7ee3a5c1-adc0-53e9-b53f-c7b424319283"
+    }
+  }
+}

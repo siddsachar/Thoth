@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "external_outcome": {
+      "default": "not_applicable",
+      "enum": [
+        "not_applicable",
+        "known_not_sent",
+        "sent",
+        "uncertain"
+      ],
+      "title": "External Outcome",
+      "type": "string"
+    },
+    "mutation_status": {
+      "enum": [
+        "accepted",
+        "committed",
+        "rejected",
+        "uncertain"
+      ],
+      "title": "Mutation Status",
+      "type": "string"
+    },
+    "projection_status": {
+      "enum": [
+        "pending",
+        "finalizing",
+        "ready",
+        "degraded"
+      ],
+      "title": "Projection Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "mutation_status",
+    "projection_status"
+  ],
+  "title": "Outcome",
+  "type": "object"
+}

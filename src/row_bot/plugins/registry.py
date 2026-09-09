@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import logging
+from functools import wraps
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -177,7 +178,7 @@ def get_langchain_tools(
                     parent_name=tool_name,
                     plugin_id=plugin_id,
                 ):
-                    tools.append(lc_tool)
+                    tools.append(_guard_tool(lc_tool, plugin_id, tool_name, tool))
     try:
         from row_bot.mcp_client import runtime as mcp_runtime
 
@@ -197,6 +198,37 @@ def get_langchain_tools(
     except Exception as exc:
         logger.debug("Plugin MCP tool injection skipped: %s", exc, exc_info=True)
     return tools
+
+
+def _guard_tool(lc_tool, plugin_id: str, tool_name: str, original):
+    """A retained graph callable cannot outlive its registration or enablement."""
+    from row_bot.plugins import state
+
+    def check() -> None:
+        if (not state.is_plugin_enabled(plugin_id)
+                or _plugin_tools.get(tool_name) is not original
+                or _tool_to_plugin.get(tool_name) != plugin_id):
+            raise RuntimeError("Plugin capability was revoked")
+        api = getattr(original, "plugin_api", None)
+        if api is not None:
+            api._check_dispatch()
+
+    updates = {}
+    func = getattr(lc_tool, "func", None)
+    if func is not None:
+        @wraps(func)
+        def guarded(*args, **kwargs):
+            check()
+            return func(*args, **kwargs)
+        updates["func"] = guarded
+    coroutine = getattr(lc_tool, "coroutine", None)
+    if coroutine is not None:
+        @wraps(coroutine)
+        async def guarded_async(*args, **kwargs):
+            check()
+            return await coroutine(*args, **kwargs)
+        updates["coroutine"] = guarded_async
+    return lc_tool.model_copy(update=updates) if updates else lc_tool
 
 
 def get_skills_prompt(allow_names: Iterable[str] | None = None) -> str:

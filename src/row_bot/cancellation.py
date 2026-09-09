@@ -36,6 +36,8 @@ class CancellationScope:
         self._next_token = 0
         self.reason = ""
         self.cancelled_at = 0.0
+        self._callbacks_drained = False
+        self.cleanup_failures: list[str] = []
 
     def is_cancelled(self) -> bool:
         return self.stop_event.is_set()
@@ -78,8 +80,9 @@ class CancellationScope:
         import time
 
         with self._lock:
-            if self.is_cancelled():
+            if self._callbacks_drained:
                 return False
+            self._callbacks_drained = True
             self.reason = str(reason or "user")
             self.cancelled_at = time.perf_counter()
             self.stop_event.set()
@@ -94,6 +97,8 @@ class CancellationScope:
         try:
             callback()
         except Exception:
+            with self._lock:
+                self.cleanup_failures.append("cleanup_failed")
             logger.debug("Cancellation callback failed%s", f" for {label}" if label else "", exc_info=True)
 
 

@@ -1,0 +1,68 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "expires_at": {
+      "anyOf": [
+        {
+          "maxLength": 80,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
+    },
+    "id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9:_-]+$",
+      "title": "Id",
+      "type": "string"
+    },
+    "nonce": {
+      "maxLength": 256,
+      "minLength": 32,
+      "title": "Nonce",
+      "type": "string"
+    },
+    "policy_revision": {
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "title": "Policy Revision",
+      "type": "string"
+    },
+    "revision": {
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "title": "Revision",
+      "type": "string"
+    },
+    "status": {
+      "const": "pending",
+      "title": "Status",
+      "type": "string"
+    },
+    "summary": {
+      "anyOf": [
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Summary"
+    }
+  },
+  "required": [
+    "id",
+    "status",
+    "revision",
+    "policy_revision",
+    "nonce"
+  ],
+  "title": "ApprovalView",
+  "type": "object"
+}

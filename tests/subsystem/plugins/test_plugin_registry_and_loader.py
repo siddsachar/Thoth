@@ -715,8 +715,17 @@ def test_refresh_plugin_runtime_registers_enabled_tool_for_agent_graph(
     graph = agent.get_agent_graph([])
 
     assert registry.get_plugin_tool_names() == ["sample_tool"]
-    assert [tool.name for tool in graph.tools] == [
+    from langgraph.prebuilt import ToolNode
+
+    assert isinstance(graph.tools, ToolNode)
+    bound_tools = graph.tools.tools_by_name
+    assert list(bound_tools) == [
         "tool_search", "tool_invoke", "skill_search", "skill_load",
     ]
+    discovered = json.loads(bound_tools["tool_search"].invoke({"query": "sample_tool"}))
+    assert [item["name"] for item in discovered["results"]] == ["sample_tool"]
+    assert bound_tools["tool_invoke"].invoke({
+        "name": "sample_tool", "arguments": {"query": "bound graph fixture"},
+    }) == "sample:bound graph fixture"
     assert mcp_calls == ["discover", "discover"]
     assert plugin_dir.exists()

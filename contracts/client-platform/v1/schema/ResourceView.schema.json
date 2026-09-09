@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "ResourceBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "workspace",
+            "artifact",
+            "browser_session",
+            "task",
+            "document"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "resource_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "context",
+            "primary",
+            "reference",
+            "output"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "kind",
+        "resource_id",
+        "role",
+        "revision"
+      ],
+      "title": "ResourceBinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "binding": {
+      "$ref": "#/$defs/ResourceBinding"
+    },
+    "conversation_revision": {
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "title": "Conversation Revision",
+      "type": "string"
+    },
+    "resource_ref": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9:_-]+$",
+      "title": "Resource Ref",
+      "type": "string"
+    },
+    "resource_revision": {
+      "maxLength": 128,
+      "title": "Resource Revision",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 256,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "resource_ref",
+    "conversation_revision",
+    "binding",
+    "title",
+    "resource_revision",
+    "available"
+  ],
+  "title": "ResourceView",
+  "type": "object"
+}

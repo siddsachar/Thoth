@@ -498,7 +498,7 @@ def build_chat(
 
     if _window.older_count:
         with p.chat_container:
-            with ui.row().classes("w-full justify-center q-py-sm"):
+            with ui.row().classes("w-full justify-center q-py-sm").props("data-transcript-prefix-control"):
                 _load_label = f"Load earlier messages ({_window.older_count})"
 
                 def _load_earlier() -> None:

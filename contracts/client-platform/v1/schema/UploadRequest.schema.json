@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "batch_id": {
+      "format": "uuid",
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "conversation_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9:_-]+$",
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 240,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    },
+    "size_bytes": {
+      "maximum": 26214400,
+      "minimum": 1,
+      "title": "Size Bytes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "conversation_id",
+    "name",
+    "size_bytes",
+    "sha256",
+    "batch_id"
+  ],
+  "title": "UploadRequest",
+  "type": "object"
+}

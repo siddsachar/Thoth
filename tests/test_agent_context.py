@@ -106,15 +106,15 @@ def test_full_context_falls_back_to_recent_when_over_budget(monkeypatch):
 
     agent_context = importlib.reload(agent_context)
     messages = [
-        {"role": "user", "content": "x" * 400},
-        {"role": "assistant", "content": "y" * 400},
-        {"role": "user", "content": "z" * 400},
+        {"role": "user", "content": "x" * 4000},
+        {"role": "assistant", "content": "y" * 4000},
+        {"role": "user", "content": "z" * 4000},
     ]
     _patch_parent_context(monkeypatch, messages=messages)
 
     packet = agent_context.build_child_agent_prompt(
         objective="Review huge transcript.",
-        profile_snapshot=_profile(max_context_tokens=20),
+        profile_snapshot=_profile(max_context_tokens=400),
         context_mode="full",
         parent_thread_id="parent-thread",
     )

@@ -1,0 +1,700 @@
+{
+  "$defs": {
+    "ApprovalPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "nonce": {
+          "maxLength": 256,
+          "minLength": 32,
+          "title": "Nonce",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision",
+        "nonce"
+      ],
+      "title": "ApprovalPayload",
+      "type": "object"
+    },
+    "ApprovalResolveCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ApprovalPayload"
+        },
+        "type": {
+          "const": "approval.resolve",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ApprovalResolveCommand",
+      "type": "object"
+    },
+    "BindPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_resource_revision": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Resource Revision"
+        },
+        "kind": {
+          "enum": [
+            "workspace",
+            "artifact"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "resource_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "role": {
+          "default": "context",
+          "enum": [
+            "context",
+            "primary",
+            "reference",
+            "output"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "resource_id"
+      ],
+      "title": "BindPayload",
+      "type": "object"
+    },
+    "ConversationBindCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/BindPayload"
+        },
+        "type": {
+          "const": "conversation.bind",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationBindCommand",
+      "type": "object"
+    },
+    "ConversationCreateCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/CreatePayload"
+        },
+        "type": {
+          "const": "conversation.create",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationCreateCommand",
+      "type": "object"
+    },
+    "ConversationDeleteCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/EmptyPayload"
+        },
+        "type": {
+          "const": "conversation.delete",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationDeleteCommand",
+      "type": "object"
+    },
+    "ConversationPinCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/PinPayload"
+        },
+        "type": {
+          "const": "conversation.pin",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationPinCommand",
+      "type": "object"
+    },
+    "ConversationRenameCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/RenamePayload"
+        },
+        "type": {
+          "const": "conversation.rename",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationRenameCommand",
+      "type": "object"
+    },
+    "ConversationResumeCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ResumePayload"
+        },
+        "type": {
+          "const": "conversation.resume",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationResumeCommand",
+      "type": "object"
+    },
+    "ConversationSteerCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/SteerPayload"
+        },
+        "type": {
+          "const": "conversation.steer",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationSteerCommand",
+      "type": "object"
+    },
+    "ConversationStopCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/EmptyPayload"
+        },
+        "type": {
+          "const": "conversation.stop",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationStopCommand",
+      "type": "object"
+    },
+    "ConversationSubmitCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/SubmitPayload"
+        },
+        "type": {
+          "const": "conversation.submit",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationSubmitCommand",
+      "type": "object"
+    },
+    "ConversationUnbindCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "client_session_id": {
+          "format": "uuid",
+          "title": "Client Session Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/UnbindPayload"
+        },
+        "type": {
+          "const": "conversation.unbind",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "client_session_id",
+        "expected_revision",
+        "type",
+        "payload"
+      ],
+      "title": "ConversationUnbindCommand",
+      "type": "object"
+    },
+    "CreatePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "default": "New conversation",
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "title": "CreatePayload",
+      "type": "object"
+    },
+    "EmptyPayload": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "EmptyPayload",
+      "type": "object"
+    },
+    "ModelSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "model_ref": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Model Ref",
+          "type": "string"
+        },
+        "provider_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Provider Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider_id",
+        "model_ref"
+      ],
+      "title": "ModelSelection",
+      "type": "object"
+    },
+    "PinPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "pinned": {
+          "title": "Pinned",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pinned"
+      ],
+      "title": "PinPayload",
+      "type": "object"
+    },
+    "RenamePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "RenamePayload",
+      "type": "object"
+    },
+    "ResumePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "model_selection": {
+          "$ref": "#/$defs/ModelSelection"
+        }
+      },
+      "required": [
+        "model_selection"
+      ],
+      "title": "ResumePayload",
+      "type": "object"
+    },
+    "SteerPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "steering_id": {
+          "format": "uuid",
+          "title": "Steering Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "steering_id",
+        "text"
+      ],
+      "title": "SteerPayload",
+      "type": "object"
+    },
+    "SubmitPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attachment_refs": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9:_-]+$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Attachment Refs",
+          "type": "array"
+        },
+        "model_selection": {
+          "$ref": "#/$defs/ModelSelection"
+        },
+        "submission_id": {
+          "format": "uuid",
+          "title": "Submission Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 200000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "submission_id",
+        "text",
+        "model_selection"
+      ],
+      "title": "SubmitPayload",
+      "type": "object"
+    },
+    "UnbindPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Binding Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id"
+      ],
+      "title": "UnbindPayload",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "approval.resolve": "#/$defs/ApprovalResolveCommand",
+      "conversation.bind": "#/$defs/ConversationBindCommand",
+      "conversation.create": "#/$defs/ConversationCreateCommand",
+      "conversation.delete": "#/$defs/ConversationDeleteCommand",
+      "conversation.pin": "#/$defs/ConversationPinCommand",
+      "conversation.rename": "#/$defs/ConversationRenameCommand",
+      "conversation.resume": "#/$defs/ConversationResumeCommand",
+      "conversation.steer": "#/$defs/ConversationSteerCommand",
+      "conversation.stop": "#/$defs/ConversationStopCommand",
+      "conversation.submit": "#/$defs/ConversationSubmitCommand",
+      "conversation.unbind": "#/$defs/ConversationUnbindCommand"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ConversationCreateCommand"
+    },
+    {
+      "$ref": "#/$defs/ConversationRenameCommand"
+    },
+    {
+      "$ref": "#/$defs/ConversationPinCommand"
+    },
+    {
+      "$ref": "#/$defs/ConversationDeleteCommand"
+    },
+    {
+      "$ref": "#/$defs/ConversationSubmitCommand"
+    },
+    {
+      "$ref": "#/$defs/ConversationStopCommand"
+    },
+    {
+      "$ref": "#/$defs/ConversationSteerCommand"
+    },
+    {
+      "$ref": "#/$defs/ConversationResumeCommand"
+    },
+    {
+      "$ref": "#/$defs/ConversationBindCommand"
+    },
+    {
+      "$ref": "#/$defs/ConversationUnbindCommand"
+    },
+    {
+      "$ref": "#/$defs/ApprovalResolveCommand"
+    }
+  ]
+}

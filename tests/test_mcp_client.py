@@ -142,12 +142,20 @@ class McpClientFoundationTests(unittest.TestCase):
         self.assertTrue(is_destructive_tool("delete_file"))
         self.assertFalse(is_destructive_tool("search_messages"))
         readonly_tool = SimpleNamespace(annotations=SimpleNamespace(readOnlyHint=True, destructiveHint=False))
-        self.assertFalse(is_destructive_tool("update_index", tool_obj=readonly_tool))
+        self.assertTrue(is_destructive_tool("update_index", tool_obj=readonly_tool))
+        self.assertFalse(is_destructive_tool("search_messages", tool_obj=readonly_tool))
         destructive_tool = SimpleNamespace(annotations={"destructiveHint": True})
         self.assertTrue(is_destructive_tool("lookup", tool_obj=destructive_tool))
-        self.assertFalse(is_destructive_tool("browser_click", "Perform click on a web page", destructive_tool))
-        self.assertFalse(is_destructive_tool("browser_navigate", "Navigate to a URL", destructive_tool))
-        self.assertFalse(is_destructive_tool("browser_fill_form", "Fill multiple form fields", destructive_tool))
+        for name, description in (
+            ("browser_click", "Perform click on a web page"),
+            ("browser_navigate", "Navigate to a URL"),
+            ("browser_fill_form", "Fill multiple form fields"),
+        ):
+            with self.subTest(tool=name):
+                self.assertTrue(is_destructive_tool(name, description, destructive_tool))
+                self.assertFalse(is_destructive_tool(name, description, readonly_tool))
+        contradictory = SimpleNamespace(annotations={"readOnlyHint": True, "destructiveHint": True})
+        self.assertTrue(is_destructive_tool("lookup", tool_obj=contradictory))
         self.assertTrue(is_destructive_tool("browser_evaluate", "Evaluate JavaScript expression on page or element", destructive_tool))
         self.assertTrue(is_destructive_tool("browser_run_code", "Run Playwright code snippet", destructive_tool))
         self.assertTrue(is_destructive_tool("browser_file_upload", "Upload one or multiple files", destructive_tool))
@@ -821,13 +829,16 @@ class McpClientFoundationTests(unittest.TestCase):
             captured_tools.clear()
 
             def _capture_agent(*, tools, **kwargs):
-                for item in tools:
-                    captured_tools[item.name] = item
+                from langgraph.prebuilt import ToolNode
+
+                self.assertIsInstance(tools, ToolNode)
+                captured_tools.update(tools.tools_by_name)
                 return SimpleNamespace(tools=tools)
 
             agent.clear_agent_cache()
             bg_token = agent._background_workflow_var.set(True)
             mode_token = agent._approval_mode_var.set(mode)
+            discovery_token = agent._current_external_discovery_active_var.set(False)
             try:
                 with patch.object(agent.tool_registry, "get_tool", return_value=_make_mcp_parent(tool)), \
                      patch.object(agent, "get_llm", return_value=object()), \
@@ -847,6 +858,7 @@ class McpClientFoundationTests(unittest.TestCase):
                     agent.get_agent_graph(["mcp"])
                     return captured_tools["mcp_manual_delete_note"].func()
             finally:
+                agent._current_external_discovery_active_var.reset(discovery_token)
                 agent._approval_mode_var.reset(mode_token)
                 agent._background_workflow_var.reset(bg_token)
                 agent.clear_agent_cache()
