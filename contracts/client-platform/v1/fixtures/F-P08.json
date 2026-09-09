@@ -20,17 +20,17 @@
       "src/row_bot/application/live_content.py": "a454a9646f1bda95ce597c4640b01d3cb8b409a8818d8717b36abb827279998d",
       "src/row_bot/conversation_resources.py": "20daa4c2c0f7a50f0cae7f6d24d804950b9fb87035586624a01e5bb1b6c94768",
       "src/row_bot/projection/__init__.py": "246b0f37fc792dc5787564e86fdd2d1153e380cbd362a9d3f2db70669131da00",
-      "src/row_bot/projection/canonical.py": "cd33b9b4d396464a6324d04194476c87854e40ec902d34201ebda432217102ed",
+      "src/row_bot/projection/canonical.py": "4552f992a802831b1afc0484f83edf3cd61624006b955373267f03253a6872a6",
       "src/row_bot/projection/conversation.py": "0c2322879ebd8a952f808a01549d8c7e785819fb033bfcc5542a0d88071fc66e",
       "src/row_bot/runtime/__init__.py": "bec0d5569832ef34ca97d303981dc5484f68c77b8123f82fb63e3320a3634d0b",
       "src/row_bot/runtime/admissions.py": "c9b4a489c2e4e39e5122214f6ef2035440e4d12c4a2ea1a0da78435c149d1008",
-      "src/row_bot/runtime/checkpoint_reader.py": "dba5a78e99585899d186084a0f494796e0f767c783539e796683938cd964d0f4",
+      "src/row_bot/runtime/checkpoint_reader.py": "46256781634d39c80023a7ab8d15bbccee6b412c37f58d633b58b06782d8caa1",
       "src/row_bot/runtime/executions.py": "93936596d57069e96e6fffdb7332ab5c36aed81868c44dc71c7651bb7dc35166",
       "src/row_bot/tasks.py": "e8e34aa222c7737424d248360cf3438370fb2675fba81d685c7014e4f83e9b8b",
       "src/row_bot/threads.py": "28db4fd9e103b0f250eb62877bf367ffbb9b5433f4ddede620517789fced0122",
       "tests/helpers/client_platform_fakes.py": "3e5ebbac050c0afb409135c11f7d6afbf7df313c09bcd465f3c04980f6639717"
     },
-    "sha256": "06bee57a02733859b6b84e75d1971ba91406381b9e1832ab5a94d59ede8e4a72"
+    "sha256": "5237323051fbfc130e20d80cac1e6b987efcfb4370c6887e4d3636c2832e26ac"
   },
   "records": [
     {
@@ -48,7 +48,7 @@
         "csrf_token": "73d6bc33-c2e1-52e2-bfff-f26c7f4458bb",
         "authentication_kind": "local_owner",
         "policy_revision": "1",
-        "session_ttl_seconds": 43199,
+        "session_ttl_seconds": 43200,
         "native_adapter": {
           "available": false
         },
@@ -81,7 +81,7 @@
         "csrf_token": "f3d13cb7-738c-5660-b86b-62c3cbae6559",
         "authentication_kind": "local_owner",
         "policy_revision": "1",
-        "session_ttl_seconds": 43199,
+        "session_ttl_seconds": 43200,
         "native_adapter": {
           "available": false
         },

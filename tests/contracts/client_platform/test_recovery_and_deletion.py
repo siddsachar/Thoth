@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage
 import pytest
 
 from tests.contracts.client_platform.test_headless_lifecycle import command, platform as platform, submit
-from tests.contracts.client_platform.test_protocol_boundaries import client as client
+from tests.contracts.client_platform.test_protocol_boundaries import client as client, protocol_clock as protocol_clock
 from tests.helpers.client_platform_fakes import ScriptedAgentStream, StreamBarrier, fixture_id
 
 pytestmark = pytest.mark.contract

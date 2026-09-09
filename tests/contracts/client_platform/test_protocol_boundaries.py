@@ -9,8 +9,9 @@ import pytest
 from row_bot.access.config import AccessConfig, DeploymentMode
 from row_bot.api.v1.routes import create_client_platform_app
 from row_bot.api.v1.schemas import Event
+from row_bot.api.v1.security import ClientSecurity, current_policy_snapshot
 from tests.contracts.client_platform.test_headless_lifecycle import command, platform as platform
-from tests.helpers.client_platform_fakes import ScriptedAgentStream, StreamBarrier, fixture_id
+from tests.helpers.client_platform_fakes import FakeMonotonicClock, ScriptedAgentStream, StreamBarrier, fixture_id
 
 pytestmark = pytest.mark.contract
 
@@ -48,8 +49,15 @@ def test_discovery_reads_metadata_without_constructing_tool_adapters(monkeypatch
 
 
 @pytest.fixture
-def client(platform):
+def protocol_clock():
+    return FakeMonotonicClock()
+
+
+@pytest.fixture
+def client(platform, protocol_clock):
     app = create_client_platform_app(platform, access_config=AccessConfig(deployment_mode=DeploymentMode.DESKTOP),
+                                    security=ClientSecurity(platform.instance_id, clock=protocol_clock,
+                                                            policy=current_policy_snapshot),
                                     choices=lambda: {"models": [], "capabilities": [], "catalog_stale": False})
     with TestClient(app, base_url="http://localhost", client=("127.0.0.1", 18181)) as client:
         response = client.post("/api/v1/handshake", json={}, headers={"Origin": "http://localhost"})

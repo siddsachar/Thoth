@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 import pytest
 
 from tests.contracts.client_platform.test_headless_lifecycle import command, platform as platform
-from tests.contracts.client_platform.test_protocol_boundaries import client as client
+from tests.contracts.client_platform.test_protocol_boundaries import client as client, protocol_clock as protocol_clock
 from tests.helpers.client_platform_fakes import CheckpointCommit, RecordedProtocolTrace, ScriptedAgentStream, StreamBarrier, ToolMediaResult, fixture_id
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -277,7 +277,7 @@ def test_record_f_p06_supported_and_unsupported_minor(client):
     finish(trace)
 
 
-def test_record_f_p07_upload_chunks_and_authenticated_reference(platform, client):
+def test_record_f_p07_upload_chunks_and_authenticated_reference(platform, client, protocol_clock):
     trace = RecordedProtocolTrace("F-P07")
     data = b"z" * 1048576 + b"safe!"
     body = {"conversation_id": "conversation-a", "name": "synthetic.bin", "size_bytes": len(data),
@@ -286,11 +286,19 @@ def test_record_f_p07_upload_chunks_and_authenticated_reference(platform, client
     created = client.post("/api/v1/uploads/sessions", json=body)
     assert created.status_code == 200, created.text
     upload = created.json()
+    assert upload["expires_in_seconds"] == 1800
     trace.record("UploadView", upload)
     for offset in (0, 1048576):
+        # The recording must not depend on the host's monotonic clock resolution.
+        # Idle time decreases the remaining TTL; each chunk renews it exactly.
+        protocol_clock.advance(2.5)
+        status = client.get(f"/api/v1/uploads/{upload['upload_id']}")
+        assert status.status_code == 200, status.text
+        assert status.json()["expires_in_seconds"] == 1797
         chunk = client.put(f"/api/v1/uploads/{upload['upload_id']}/chunks", params={"offset": offset},
                            content=data[offset:offset + 1048576], headers={"Content-Type": "application/octet-stream"})
         assert chunk.status_code == 200, chunk.text
+        assert chunk.json()["expires_in_seconds"] == 1800
         trace.record("UploadView", chunk.json())
     completed = client.post(f"/api/v1/uploads/{upload['upload_id']}/complete",
                             json={"command_id": fixture_id("upload-complete")},
