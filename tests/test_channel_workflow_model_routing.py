@@ -1,4 +1,5 @@
 import importlib
+import contextvars
 import pathlib
 import sqlite3
 import sys
@@ -34,7 +35,9 @@ def _isolated_provider_config(tmp_path, monkeypatch):
 def _isolated_tasks_module(tmp_path, monkeypatch):
     monkeypatch.setenv("ROW_BOT_DATA_DIR", str(tmp_path / "data"))
     import row_bot.tasks as tasks
+    import row_bot.threads as threads
 
+    monkeypatch.setattr(threads, "DB_PATH", str(tmp_path / "data" / "threads.db"))
     return importlib.reload(tasks)
 
 
@@ -312,6 +315,7 @@ def test_phase4_failed_custom_workflow_does_not_retry_default_provider(tmp_path,
         prompts=["say hi"],
         model_override=ref,
     )
+    thread_id = tasks._prepare_task_thread(tasks.get_task(task_id))
     calls = []
 
     class _Var:
@@ -328,6 +332,8 @@ def test_phase4_failed_custom_workflow_does_not_retry_default_provider(tmp_path,
     )
 
     def _invoke_agent(_prompt, _tools, config, stop_event=None):
+        from row_bot.conversation_resources import current_execution_context
+        assert current_execution_context().conversation_id == thread_id
         calls.append((config.get("configurable") or {}).get("model_override"))
         raise RuntimeError("model failed to load")
 
@@ -340,11 +346,11 @@ def test_phase4_failed_custom_workflow_does_not_retry_default_provider(tmp_path,
             self._target = target
 
         def start(self):
-            self._target()
+            contextvars.Context().run(self._target)
 
     monkeypatch.setattr(tasks.threading, "Thread", _ImmediateThread)
 
-    tasks.run_task_background(task_id, "wf_thread", [], notification=False)
+    tasks.run_task_background(task_id, thread_id, [], notification=False)
     runs = tasks.get_recent_runs(1)
 
     assert calls == [ref]
@@ -361,6 +367,14 @@ def test_phase5_delivery_failure_is_separate_from_execution_success(tmp_path, mo
         prompts=["say hi"],
         channels=["slack"],
     )
+    thread_id = tasks._prepare_task_thread(tasks.get_task(task_id))
+    calls = []
+
+    def _invoke_agent(*_args, **_kwargs):
+        from row_bot.conversation_resources import current_execution_context
+        assert current_execution_context().conversation_id == thread_id
+        calls.append("execution")
+        return "execution ok"
 
     class _Var:
         def set(self, value):
@@ -372,7 +386,7 @@ def test_phase5_delivery_failure_is_separate_from_execution_success(tmp_path, mo
         _background_workflow_var=_Var(),
         _approval_mode_var=_Var(),
         _persistent_thread_var=_Var(),
-        invoke_agent=lambda *_args, **_kwargs: "execution ok",
+        invoke_agent=_invoke_agent,
         repair_orphaned_tool_calls=lambda *_args, **_kwargs: None,
     )
     monkeypatch.setitem(sys.modules, "agent", fake_agent)
@@ -383,7 +397,7 @@ def test_phase5_delivery_failure_is_separate_from_execution_success(tmp_path, mo
             self._target = target
 
         def start(self):
-            self._target()
+            contextvars.Context().run(self._target)
 
     class _FailingChannel:
         name = "slack"
@@ -393,15 +407,18 @@ def test_phase5_delivery_failure_is_separate_from_execution_success(tmp_path, mo
             return "chat"
 
         def send_message(self, target, text):
+            assert "execution ok" in text
+            calls.append("delivery")
             raise RuntimeError("telegram unavailable")
 
     monkeypatch.setattr(tasks.threading, "Thread", _ImmediateThread)
     monkeypatch.setattr(tasks, "get_task_channels", lambda _task: [_FailingChannel()])
 
-    tasks.run_task_background(task_id, "wf_delivery_thread", [], notification=False)
+    tasks.run_task_background(task_id, thread_id, [], notification=False)
     run = tasks.get_recent_runs(1)[0]
 
     assert run["status"] == "completed_delivery_failed"
+    assert calls == ["execution", "delivery"]
     assert "Slack: telegram unavailable" in run["status_message"]
     assert tasks._workflow_final_status_for_delivery("delivery_failed") == "completed_delivery_failed"
 

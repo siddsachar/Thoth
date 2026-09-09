@@ -1212,14 +1212,25 @@ def dependencies_ready(run_id: str) -> bool:
 def wait_for_dependencies(run_id: str, stop_event: threading.Event) -> bool:
     """Wait eventfully for member dependencies without consuming capacity."""
 
-    while not stop_event.is_set():
-        if dependencies_ready(run_id):
-            return True
+    from row_bot.cancellation import current_cancellation_scope
+
+    with _SERVICE_LOCK:
+        event = _DEPENDENCY_EVENTS.setdefault(str(run_id), threading.Event())
+    scope = current_cancellation_scope()
+    unregister = scope.register(event.set) if scope else lambda: None
+    try:
+        while not stop_event.is_set():
+            event.clear()
+            if dependencies_ready(run_id):
+                return not stop_event.is_set()
+            # Bounded fallback also supports legacy callers supplying only an event.
+            event.wait(0.25)
+        return False
+    finally:
+        unregister()
         with _SERVICE_LOCK:
-            event = _DEPENDENCY_EVENTS.setdefault(str(run_id), threading.Event())
-        event.wait()
-        event.clear()
-    return False
+            if _DEPENDENCY_EVENTS.get(str(run_id)) is event:
+                _DEPENDENCY_EVENTS.pop(str(run_id), None)
 
 
 _DEPENDENCY_EVENTS: dict[str, threading.Event] = {}
@@ -2779,22 +2790,24 @@ def message_orchestration(
     delivered = 0
     for member in targets:
         target_run_id = str(member["run_id"])
-        if append_agent_parent_message(target_run_id, content):
+        message_id = str(uuid.uuid4())
+        if append_agent_parent_message(target_run_id, content, message_id=message_id):
             delivered += 1
             record_message(
                 orchestration_id,
                 kind="steering",
                 content=content,
                 run_id=target_run_id,
+                message_id=message_id,
                 delivery_status="pending",
             )
     return delivered
 
 
-def mark_steering_delivered(run_id: str, contents: Sequence[str]) -> None:
+def mark_steering_delivered(run_id: str, message_ids: Sequence[str]) -> None:
     """Acknowledge guidance after a child consumes it at a safe boundary."""
 
-    clean = {str(content or "").strip() for content in contents if str(content or "").strip()}
+    clean = {str(message_id) for message_id in message_ids if message_id}
     if not clean:
         return
     member = get_member_for_run(run_id)
@@ -2808,7 +2821,7 @@ def mark_steering_delivered(run_id: str, contents: Sequence[str]) -> None:
             "AND delivery_status = 'pending'",
             (member["orchestration_id"], str(run_id)),
         ).fetchall()
-        ids = [str(row["id"]) for row in rows if str(row["content"]).strip() in clean]
+        ids = [str(row["id"]) for row in rows if str(row["id"]) in clean]
         if ids:
             placeholders = ", ".join("?" for _ in ids)
             conn.execute(

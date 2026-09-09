@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "CapabilityChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "requires_approval": {
+          "title": "Requires Approval",
+          "type": "boolean"
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "configuration_required",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unavailable Reason"
+        }
+      },
+      "required": [
+        "id",
+        "available",
+        "requires_approval"
+      ],
+      "title": "CapabilityChoice",
+      "type": "object"
+    },
+    "ModelChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "label": {
+          "maxLength": 256,
+          "title": "Label",
+          "type": "string"
+        },
+        "model_ref": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Model Ref",
+          "type": "string"
+        },
+        "provider_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "configuration_required",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unavailable Reason"
+        }
+      },
+      "required": [
+        "provider_id",
+        "model_ref",
+        "label",
+        "available"
+      ],
+      "title": "ModelChoice",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/CapabilityChoice"
+      },
+      "maxItems": 4096,
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "catalog_stale": {
+      "default": true,
+      "title": "Catalog Stale",
+      "type": "boolean"
+    },
+    "models": {
+      "items": {
+        "$ref": "#/$defs/ModelChoice"
+      },
+      "maxItems": 4096,
+      "title": "Models",
+      "type": "array"
+    }
+  },
+  "required": [
+    "models",
+    "capabilities"
+  ],
+  "title": "Choices",
+  "type": "object"
+}

@@ -8,6 +8,8 @@ import time
 import gc
 import hashlib
 import threading
+from contextlib import closing, contextmanager
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 
 from row_bot.data_paths import get_row_bot_data_dir
@@ -43,6 +45,9 @@ _THREAD_META_COLUMNS = {
     "agent_profile_slug": "TEXT DEFAULT ''",
     "pinned_at": "TEXT DEFAULT ''",
     "reasoning_selections_json": "TEXT NOT NULL DEFAULT ''",
+    "resource_bindings_json": "TEXT NOT NULL DEFAULT ''",
+    "resource_revision": "INTEGER NOT NULL DEFAULT 0",
+    "client_revision": "INTEGER NOT NULL DEFAULT 0",
 }
 
 THREAD_NAME_SOURCE_AUTO = "auto"
@@ -56,6 +61,54 @@ _DEFAULT_AUTO_NAME_PREFIXES = (
     f"{_DESKTOP_THREAD_BADGE} Thread ",
     f"{_MOBILE_THREAD_BADGE} Thread ",
 )
+
+_CHECKPOINT_LOCKS: dict[str, threading.RLock] = {}
+_CHECKPOINT_LOCKS_GUARD = threading.Lock()
+_CHECKPOINT_LOCK_DEPTH = threading.local()
+
+
+@contextmanager
+def checkpoint_mutation(thread_id: str) -> Iterator[None]:
+    """Serialize checkpoint admission, native writes and snapshot installation."""
+    with _CHECKPOINT_LOCKS_GUARD:
+        lock = _CHECKPOINT_LOCKS.setdefault(str(thread_id), threading.RLock())
+    with lock:
+        depths = getattr(_CHECKPOINT_LOCK_DEPTH, "depths", {})
+        _CHECKPOINT_LOCK_DEPTH.depths = depths
+        key = (str(DB_PATH), str(thread_id))
+        if depths.get(key, 0):
+            depths[key] += 1
+            try:
+                yield
+            finally:
+                depths[key] -= 1
+            return
+        lock_dir = pathlib.Path(DB_PATH).parent / ".checkpoint-locks"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        path = lock_dir / (hashlib.sha256(str(thread_id).encode()).hexdigest() + ".lock")
+        with path.open("a+b") as handle:
+            handle.seek(0, 2)
+            if handle.tell() == 0:
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            import os
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            depths[key] = 1
+            try:
+                yield
+            finally:
+                depths.pop(key, None)
+                handle.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _thread_write_blocked(thread_id: str | None) -> bool:
@@ -238,14 +291,35 @@ def _checkpoint_cleanup_skip_threads(cutoff_iso: str) -> set[str]:
 
 def _set_thread_project_id(thread_id: str, project_id: str) -> None:
     """Link a thread to a designer project."""
+    _set_legacy_resource(thread_id, "project_id", project_id, "artifact")
+
+
+def _set_legacy_resource(thread_id: str, column: str, resource_id: str, kind: str) -> None:
+    from row_bot.application.client_platform import _COMMAND_LOCK
     _ensure_thread_db()
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "UPDATE thread_meta SET project_id = ? WHERE thread_id = ?",
-        (project_id, thread_id),
-    )
-    conn.commit()
-    conn.close()
+    with _COMMAND_LOCK:
+        if _thread_write_blocked(thread_id):
+            return
+        with closing(sqlite3.connect(DB_PATH)) as connection, connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM thread_meta WHERE thread_id=?", (thread_id,)).fetchone()
+            if not row or str(row[column] or "") == str(resource_id or ""):
+                return
+            encoded = str(row["resource_bindings_json"] or "")
+            if encoded:
+                bindings = json.loads(encoded)
+                if kind == "workspace" and column == "project_workspace_id" and row["developer_workspace_id"]:
+                    pass  # Root repository metadata is not the allocated working resource.
+                else:
+                    bindings = [binding for binding in bindings if not (binding["kind"] == kind and (
+                        binding.get("role") == "primary" or binding["resource_id"] == str(row[column] or "")))]
+                    if resource_id:
+                        bindings.append({"binding_id": str(uuid.uuid4()), "kind": kind, "resource_id": resource_id,
+                                         "role": "primary", "revision": "1"})
+                    encoded = json.dumps(bindings, separators=(",", ":"))
+            connection.execute(f"UPDATE thread_meta SET {column}=?,resource_bindings_json=?,resource_revision=resource_revision+1,client_revision=client_revision+1 WHERE thread_id=?",
+                               (resource_id, encoded, thread_id))
 
 
 def _get_thread_project_id(thread_id: str) -> str:
@@ -286,26 +360,12 @@ def _get_thread_type(thread_id: str) -> str:
 
 def _set_thread_developer_workspace(thread_id: str, workspace_id: str) -> None:
     """Link a thread to a Developer workspace."""
-    _ensure_thread_db()
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "UPDATE thread_meta SET developer_workspace_id = ? WHERE thread_id = ?",
-        (workspace_id, thread_id),
-    )
-    conn.commit()
-    conn.close()
+    _set_legacy_resource(thread_id, "developer_workspace_id", workspace_id, "workspace")
 
 
 def _set_thread_project_workspace(thread_id: str, workspace_id: str) -> None:
     """Link a Developer thread to its root project workspace."""
-    _ensure_thread_db()
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "UPDATE thread_meta SET project_workspace_id = ? WHERE thread_id = ?",
-        (workspace_id, thread_id),
-    )
-    conn.commit()
-    conn.close()
+    _set_legacy_resource(thread_id, "project_workspace_id", workspace_id, "workspace")
 
 
 def _get_thread_approval_mode_raw(thread_id: str) -> str:
@@ -472,12 +532,9 @@ def create_thread(
     """Create or replace the metadata row for a conversation thread."""
     _ensure_thread_db()
     tid = str(thread_id or uuid.uuid4().hex[:12])
-    try:
-        from row_bot.thread_cleanup import allow_thread_recreation
+    from row_bot.thread_cleanup import allow_thread_recreation
 
-        allow_thread_recreation(tid)
-    except Exception:
-        logger.debug("Could not clear deletion guard for new thread %s", tid, exc_info=True)
+    allow_thread_recreation(tid)
     safe_name = _normalize_thread_name(name, fallback="Untitled")
     safe_source = _normalize_thread_name_source(name_source)
     safe_approval = (
@@ -1737,9 +1794,11 @@ class _DeletionAwareSqliteSaver(SqliteSaver):
     """Block checkpoint writes while the deletion service owns a thread id."""
 
     def put(self, config, checkpoint, metadata, new_versions):
-        if _thread_write_blocked(_checkpoint_config_thread_id(config)):
-            return config
-        return super().put(config, checkpoint, metadata, new_versions)
+        thread_id = _checkpoint_config_thread_id(config)
+        with checkpoint_mutation(thread_id):
+            if _thread_write_blocked(thread_id):
+                return config
+            return super().put(config, checkpoint, metadata, new_versions)
 
     def put_writes(self, config, writes, task_id, task_path="") -> None:
         if _thread_write_blocked(_checkpoint_config_thread_id(config)):
@@ -1874,6 +1933,10 @@ def get_latest_checkpoint_revision(thread_id: str) -> str:
 
     if not thread_id:
         return ""
+    if hasattr(checkpointer, "cursor"):
+        with checkpointer.cursor(transaction=False) as cursor:
+            row = cursor.execute("SELECT checkpoint_id FROM checkpoints WHERE thread_id=? AND checkpoint_ns='' ORDER BY checkpoint_id DESC LIMIT 1", (str(thread_id),)).fetchone()
+            return str(row[0]) if row else ""
     config = {"configurable": {"thread_id": str(thread_id), "checkpoint_ns": ""}}
     try:
         checkpoint_tuple = checkpointer.get_tuple(config)
@@ -1907,8 +1970,93 @@ def get_latest_checkpoint_revision(thread_id: str) -> str:
     return ""
 
 
+def migrate_checkpoint_message_ids(thread_id: str) -> str:
+    """Compare-write missing native IDs once, retaining every existing field/order."""
+    from langgraph.checkpoint.base import empty_checkpoint
+    with checkpoint_mutation(thread_id):
+        with closing(sqlite3.connect(DB_PATH)) as connection, connection:
+            connection.execute("CREATE TABLE IF NOT EXISTS checkpoint_identity_migrations (thread_id TEXT PRIMARY KEY,checkpoint_revision TEXT NOT NULL,version INTEGER NOT NULL)")
+            if connection.execute("SELECT 1 FROM checkpoint_identity_migrations WHERE thread_id=? AND version=1", (thread_id,)).fetchone():
+                return get_latest_checkpoint_revision(thread_id)
+        config = {"configurable": {"thread_id": str(thread_id), "checkpoint_ns": ""}}
+        from row_bot.runtime.checkpoint_reader import open_checkpoint
+        normalize_format = False
+        try:
+            with open_checkpoint(thread_id) as reader:
+                if reader is None:
+                    return ""
+                for _index, _record in reader.records():
+                    pass
+                revision = reader.revision
+            with closing(sqlite3.connect(DB_PATH)) as connection, connection:
+                connection.execute("INSERT INTO checkpoint_identity_migrations VALUES(?,?,1)", (thread_id, revision))
+            return revision
+        except ValueError as exc:
+            if str(exc) not in {"checkpoint_identity_migration_required", "checkpoint_format_unsupported"}:
+                raise
+            normalize_format = str(exc) == "checkpoint_format_unsupported"
+        saved = checkpointer.get_tuple(config)
+        if not saved:
+            return ""
+        messages = saved.checkpoint.get("channel_values", {}).get("messages", [])
+        missing = [message for message in messages if getattr(message, "type", "") in {"human", "ai", "tool"} and not getattr(message, "id", None)]
+        revision = str(saved.config["configurable"]["checkpoint_id"])
+        if missing or normalize_format:
+            if _thread_write_blocked(thread_id):
+                raise ValueError("conversation_deleting")
+            replacement = []
+            for message in messages:
+                if getattr(message, "type", "") in {"human", "ai", "tool"} and not getattr(message, "id", None):
+                    message = message.model_copy(update={"id": str(uuid.uuid4())})
+                replacement.append(message)
+            updated = {**saved.checkpoint, **{key: value for key, value in empty_checkpoint().items() if key in {"id", "ts"}}}
+            updated["channel_values"] = {**saved.checkpoint.get("channel_values", {}), "messages": replacement}
+            versions = dict(updated.get("channel_versions", {}))
+            versions["messages"] = checkpointer.get_next_version(versions.get("messages"), None)
+            updated["channel_versions"] = versions
+            written = checkpointer.put(saved.config, updated,
+                {**(saved.metadata or {}), "row_bot_message_identity_version": 1, "source": "update"},
+                {"messages": versions["messages"]})
+            revision = str(written["configurable"].get("checkpoint_id") or "")
+            if revision != str(updated["id"]):
+                raise ValueError("identity_migration_conflict")
+        with closing(sqlite3.connect(DB_PATH)) as connection, connection:
+            connection.execute("CREATE TABLE IF NOT EXISTS checkpoint_identity_migrations (thread_id TEXT PRIMARY KEY,checkpoint_revision TEXT NOT NULL,version INTEGER NOT NULL)")
+            connection.execute("INSERT INTO checkpoint_identity_migrations VALUES(?,?,1) ON CONFLICT(thread_id) DO UPDATE SET checkpoint_revision=excluded.checkpoint_revision,version=1",
+                               (thread_id, revision))
+        return revision
+
+
 def append_checkpoint_messages(thread_id: str, messages: list) -> bool:
     """Append simple chat messages to checkpoint storage without constructing a graph."""
+    with checkpoint_mutation(thread_id):
+        return _append_checkpoint_messages_locked(thread_id, messages)
+
+
+def replace_admitted_human_content(thread_id: str, message_id: str, content: str, *, expected_revision: str) -> str:
+    """Finish attachment preparation on the exact admitted input before dispatch."""
+    from langgraph.checkpoint.base import empty_checkpoint
+    with checkpoint_mutation(thread_id):
+        if _thread_write_blocked(thread_id):
+            raise ValueError("conversation_deleting")
+        saved = checkpointer.get_tuple({"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}})
+        if not saved or str(saved.config["configurable"]["checkpoint_id"]) != expected_revision:
+            raise ValueError("checkpoint_revision_conflict")
+        messages = list(saved.checkpoint.get("channel_values", {}).get("messages", []))
+        matches = [index for index, message in enumerate(messages) if getattr(message, "id", None) == message_id]
+        if len(matches) != 1 or getattr(messages[matches[0]], "type", "") != "human":
+            raise ValueError("checkpoint_message_identity_conflict")
+        messages[matches[0]] = messages[matches[0]].model_copy(update={"content": content})
+        updated = {**saved.checkpoint, **{key: value for key, value in empty_checkpoint().items() if key in {"id", "ts"}}}
+        updated["channel_values"] = {**saved.checkpoint.get("channel_values", {}), "messages": messages}
+        versions = dict(updated.get("channel_versions", {}))
+        versions["messages"] = checkpointer.get_next_version(versions.get("messages"), None)
+        updated["channel_versions"] = versions
+        written = checkpointer.put(saved.config, updated, {**(saved.metadata or {}), "source": "update"}, {"messages": versions["messages"]})
+        return str(written["configurable"]["checkpoint_id"])
+
+
+def _append_checkpoint_messages_locked(thread_id: str, messages: list) -> bool:
     if not thread_id or not messages or _thread_write_blocked(thread_id):
         return False
     try:
@@ -1923,6 +2071,20 @@ def append_checkpoint_messages(thread_id: str, messages: list) -> bool:
         existing = channel_values.get("messages", [])
         if not isinstance(existing, list):
             existing = []
+        by_id = {str(message.id): message for message in existing if getattr(message, "id", None)}
+        accepted = []
+        for message in messages:
+            if getattr(message, "type", "") in {"human", "ai", "tool"} and not getattr(message, "id", None):
+                message = message.model_copy(update={"id": str(uuid.uuid4())})
+            identity = str(getattr(message, "id", "") or "")
+            if identity and identity in by_id:
+                if message != by_id[identity]:
+                    raise ValueError("checkpoint_message_identity_conflict")
+                continue
+            accepted.append(message)
+        if not accepted:
+            return True
+        messages = accepted
         channel_values["messages"] = [*existing, *messages]
 
         next_checkpoint = empty_checkpoint()

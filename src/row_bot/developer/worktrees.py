@@ -715,6 +715,7 @@ def cleanup_thread_developer_state(
     *,
     workspace_id: str = "",
     project_workspace_id: str = "",
+    owned_agent_run_id: str = "",
 ) -> dict[str, Any]:
     """Remove thread-owned Developer state while preserving recoverable work."""
 
@@ -753,7 +754,14 @@ def cleanup_thread_developer_state(
     worktree = get_worktree_for_thread(clean_thread_id)
     if worktree is None and workspace_id:
         candidate = get_worktree_for_workspace(workspace_id)
-        if candidate is not None:
+        # Resource bindings can be shared. A workspace ID alone does not grant
+        # ownership of its allocation; callers capture their durable run owner
+        # before purging it, or supply the exact newly allocated run on rollback.
+        if candidate is not None and (
+            (candidate.get("owner_kind") == "thread" and candidate.get("owner_id") == clean_thread_id)
+            or (owned_agent_run_id and candidate.get("owner_kind") == "agent_run"
+                and candidate.get("owner_id") == owned_agent_run_id)
+        ):
             worktree = candidate
 
     recovery_workspace_id = ""

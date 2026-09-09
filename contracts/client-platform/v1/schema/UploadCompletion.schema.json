@@ -1,0 +1,15 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "command_id": {
+      "format": "uuid",
+      "title": "Command Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "command_id"
+  ],
+  "title": "UploadCompletion",
+  "type": "object"
+}

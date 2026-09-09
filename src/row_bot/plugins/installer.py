@@ -382,16 +382,7 @@ def _local_path_from_ref(ref: str) -> pathlib.Path | None:
 # ── Dependency Installation ──────────────────────────────────────────────────
 def _install_plugin_deps(deps: list[str]) -> InstallResult:
     """Install plugin Python dependencies with core freeze protection."""
-    from row_bot.plugins.sandbox import check_dependencies, install_dependencies
-
-    # Pre-check for conflicts
-    check_result = check_dependencies(deps)
-    if not check_result.ok:
-        conflicts = "; ".join(check_result.conflicts)
-        return InstallResult(
-            success=False, plugin_id="",
-            message=f"Dependency conflicts with core: {conflicts}",
-        )
+    from row_bot.plugins.sandbox import install_dependencies
 
     # Install
     try:

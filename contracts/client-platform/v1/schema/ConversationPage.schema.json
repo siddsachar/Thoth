@@ -1,0 +1,263 @@
+{
+  "$defs": {
+    "ConversationView": {
+      "additionalProperties": false,
+      "properties": {
+        "generation_state": {
+          "items": {
+            "$ref": "#/$defs/GenerationState"
+          },
+          "maxItems": 32,
+          "title": "Generation State",
+          "type": "array"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "pinned": {
+          "title": "Pinned",
+          "type": "boolean"
+        },
+        "resource_bindings": {
+          "items": {
+            "$ref": "#/$defs/ResourceBinding"
+          },
+          "maxItems": 200,
+          "title": "Resource Bindings",
+          "type": "array"
+        },
+        "revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 256,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "title",
+        "pinned"
+      ],
+      "title": "ConversationView",
+      "type": "object"
+    },
+    "GenerationState": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9:_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval Id"
+        },
+        "can_stop": {
+          "title": "Can Stop",
+          "type": "boolean"
+        },
+        "cancel_requested": {
+          "title": "Cancel Requested",
+          "type": "boolean"
+        },
+        "cleanup_complete": {
+          "title": "Cleanup Complete",
+          "type": "boolean"
+        },
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "execution_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "external_outcome": {
+          "enum": [
+            "known_not_sent",
+            "sent",
+            "uncertain",
+            "not_applicable"
+          ],
+          "title": "External Outcome",
+          "type": "string"
+        },
+        "generation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Generation Id",
+          "type": "string"
+        },
+        "pass_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Pass Id",
+          "type": "string"
+        },
+        "quiesced": {
+          "title": "Quiesced",
+          "type": "boolean"
+        },
+        "revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "segment_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9:_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Segment Id"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "stopping",
+            "stopped",
+            "waiting_approval",
+            "completed",
+            "interrupted"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "conversation_id",
+        "generation_id",
+        "pass_id",
+        "status",
+        "revision",
+        "cancel_requested",
+        "quiesced",
+        "cleanup_complete",
+        "external_outcome",
+        "approval_id",
+        "can_stop"
+      ],
+      "title": "GenerationState",
+      "type": "object"
+    },
+    "ResourceBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "workspace",
+            "artifact",
+            "browser_session",
+            "task",
+            "document"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "resource_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "context",
+            "primary",
+            "reference",
+            "output"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "kind",
+        "resource_id",
+        "role",
+        "revision"
+      ],
+      "title": "ResourceBinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "has_more": {
+      "title": "Has More",
+      "type": "boolean"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/ConversationView"
+      },
+      "maxItems": 200,
+      "title": "Items",
+      "type": "array"
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Next Cursor"
+    }
+  },
+  "required": [
+    "items",
+    "has_more"
+  ],
+  "title": "ConversationPage",
+  "type": "object"
+}

@@ -1,0 +1,66 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "checkpoint_revision": {
+      "maxLength": 128,
+      "title": "Checkpoint Revision",
+      "type": "string"
+    },
+    "content_ref": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Content Ref",
+      "type": "string"
+    },
+    "conversation_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9:_-]+$",
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "data": {
+      "maxLength": 87384,
+      "title": "Data",
+      "type": "string"
+    },
+    "encoding": {
+      "const": "base64",
+      "title": "Encoding",
+      "type": "string"
+    },
+    "has_more": {
+      "title": "Has More",
+      "type": "boolean"
+    },
+    "media_type": {
+      "const": "application/json",
+      "title": "Media Type",
+      "type": "string"
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Next Cursor"
+    }
+  },
+  "required": [
+    "conversation_id",
+    "content_ref",
+    "checkpoint_revision",
+    "encoding",
+    "media_type",
+    "data",
+    "has_more",
+    "next_cursor"
+  ],
+  "title": "LazyContent",
+  "type": "object"
+}

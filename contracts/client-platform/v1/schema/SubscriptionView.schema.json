@@ -1,0 +1,350 @@
+{
+  "$defs": {
+    "GenerationState": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9:_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval Id"
+        },
+        "can_stop": {
+          "title": "Can Stop",
+          "type": "boolean"
+        },
+        "cancel_requested": {
+          "title": "Cancel Requested",
+          "type": "boolean"
+        },
+        "cleanup_complete": {
+          "title": "Cleanup Complete",
+          "type": "boolean"
+        },
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "execution_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "external_outcome": {
+          "enum": [
+            "known_not_sent",
+            "sent",
+            "uncertain",
+            "not_applicable"
+          ],
+          "title": "External Outcome",
+          "type": "string"
+        },
+        "generation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Generation Id",
+          "type": "string"
+        },
+        "pass_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Pass Id",
+          "type": "string"
+        },
+        "quiesced": {
+          "title": "Quiesced",
+          "type": "boolean"
+        },
+        "revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "segment_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9:_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Segment Id"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "stopping",
+            "stopped",
+            "waiting_approval",
+            "completed",
+            "interrupted"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "conversation_id",
+        "generation_id",
+        "pass_id",
+        "status",
+        "revision",
+        "cancel_requested",
+        "quiesced",
+        "cleanup_complete",
+        "external_outcome",
+        "approval_id",
+        "can_stop"
+      ],
+      "title": "GenerationState",
+      "type": "object"
+    },
+    "Snapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint_revision": {
+          "maxLength": 128,
+          "title": "Checkpoint Revision",
+          "type": "string"
+        },
+        "conversation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "cursor": {
+          "maxLength": 2048,
+          "title": "Cursor",
+          "type": "string"
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "projection_revision": {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "title": "Projection Revision",
+          "type": "string"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/TranscriptRow"
+          },
+          "maxItems": 200,
+          "title": "Rows",
+          "type": "array"
+        },
+        "server_epoch": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9:_-]+$",
+          "title": "Server Epoch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "server_epoch",
+        "projection_revision",
+        "cursor",
+        "checkpoint_revision",
+        "rows",
+        "generation"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "TextBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "maxLength": 2097152,
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "title": "TextBlock",
+      "type": "object"
+    },
+    "TranscriptRow": {
+      "additionalProperties": false,
+      "properties": {
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/TextBlock"
+          },
+          "maxItems": 256,
+          "title": "Blocks",
+          "type": "array"
+        },
+        "content_ref": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Ref"
+        },
+        "content_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "inline",
+                "lazy",
+                "oversized"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Status"
+        },
+        "id": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        },
+        "render_revision": {
+          "anyOf": [
+            {
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Render Revision"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "tool_call_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Tool Call Ids",
+          "type": "array"
+        },
+        "tool_calls_ref": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Calls Ref"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "blocks"
+      ],
+      "title": "TranscriptRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "maxLength": 2048,
+      "title": "Cursor",
+      "type": "string"
+    },
+    "snapshot": {
+      "$ref": "#/$defs/Snapshot"
+    },
+    "subscription_id": {
+      "format": "uuid",
+      "title": "Subscription Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "subscription_id",
+    "snapshot",
+    "cursor"
+  ],
+  "title": "SubscriptionView",
+  "type": "object"
+}

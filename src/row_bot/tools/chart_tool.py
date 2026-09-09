@@ -152,7 +152,8 @@ def _load_data(data_source: str, sheet: str | None) -> pd.DataFrame:
 
     # 1) Try the attachment cache (populated by the UI when user attaches files)
     name_lower = Path(data_source).name.lower()
-    for cached_name, cached_bytes in _attachment_cache.items():
+    from row_bot.application.attachment_context import tool_cache
+    for cached_name, cached_bytes in tool_cache("data", _attachment_cache).items():
         if cached_name.lower() == name_lower:
             suffix = Path(cached_name).suffix.lower()
             buf = io.BytesIO(cached_bytes)

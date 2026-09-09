@@ -57,6 +57,11 @@ def message_key(index: int, msg: dict) -> str:
         ]
     )
     digest = hashlib.sha1(shape.encode("utf-8", errors="replace")).hexdigest()[:12]
+    message_id = str(msg.get("checkpoint_message_id") or msg.get("message_id") or "")
+    if message_id:
+        # Identity comes from the checkpoint; the digest only invalidates the
+        # rendered representation when annotations or tool/media state change.
+        return f"{role}:checkpoint:{message_id}:render:{digest}"
     return f"{index}:{role}:{digest}"
 
 
@@ -132,6 +137,9 @@ def transcript_message_child_bounds(
 def durable_message_key(msg: dict) -> str:
     """Return the stable identity of a backend-published UI message."""
 
+    message_id = str(msg.get("checkpoint_message_id") or msg.get("message_id") or "")
+    if message_id:
+        return f"checkpoint:{message_id}"
     channel_key = str(msg.get("channel_notification_key") or "").strip()
     if channel_key:
         return f"channel:{channel_key}"

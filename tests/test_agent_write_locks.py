@@ -102,6 +102,12 @@ def test_write_capable_agents_queue_until_lock_released(tmp_path, monkeypatch):
 
 def test_distinct_developer_workspaces_allow_concurrent_writers(tmp_path, monkeypatch):
     threads, agent_runs, agent_runner = _fresh_lock_modules(tmp_path, monkeypatch)
+    from row_bot.developer.state import DeveloperWorkspace
+    from row_bot.developer.storage import save_workspace
+    for workspace_id in ("dev-first-folder", "dev-second-folder"):
+        path = tmp_path / workspace_id
+        path.mkdir()
+        save_workspace(DeveloperWorkspace(id=workspace_id, name=workspace_id, path=str(path)))
     parent_thread_id = threads.create_thread("Parent")
     first_started = threading.Event()
     second_started = threading.Event()

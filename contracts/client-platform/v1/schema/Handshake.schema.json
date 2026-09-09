@@ -1,0 +1,71 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "client_build": {
+      "default": "unknown",
+      "maxLength": 128,
+      "title": "Client Build",
+      "type": "string"
+    },
+    "client_group_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Client Group Id"
+    },
+    "client_session_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Client Session Id"
+    },
+    "maximum_minor": {
+      "default": 0,
+      "maximum": 65535,
+      "minimum": 0,
+      "title": "Maximum Minor",
+      "type": "integer"
+    },
+    "minimum_minor": {
+      "default": 0,
+      "maximum": 65535,
+      "minimum": 0,
+      "title": "Minimum Minor",
+      "type": "integer"
+    },
+    "presentation_features": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9:_-]+$",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Presentation Features",
+      "type": "array"
+    },
+    "protocol_major": {
+      "default": 1,
+      "maximum": 65535,
+      "minimum": 0,
+      "title": "Protocol Major",
+      "type": "integer"
+    }
+  },
+  "title": "Handshake",
+  "type": "object"
+}

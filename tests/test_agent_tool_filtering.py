@@ -1,15 +1,39 @@
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field
 
 from row_bot.providers.models import TransportMode
 from row_bot.providers.tool_schema import ToolSchemaCompatibilityError
+
+
+@pytest.fixture(autouse=True)
+def _restore_agent_context_after_filtering_test():
+    import row_bot.agent as agent
+
+    # Graph preparation and the forced-resume case mutate execution context as
+    # well as approval mode. Restore every original binding, including unset
+    # bindings, so a child-resume fixture cannot affect a later workflow test.
+    variables = {value for value in vars(agent).values() if isinstance(value, ContextVar)}
+    tokens = [(variable, variable.set(variable.get(None))) for variable in variables]
+    try:
+        yield
+    finally:
+        for variable, token in reversed(tokens):
+            variable.reset(token)
+
+
+def _bound_tools(graph: SimpleNamespace) -> dict[str, BaseTool]:
+    from langgraph.prebuilt import ToolNode
+
+    assert isinstance(graph.tools, ToolNode)
+    return graph.tools.tools_by_name
 
 
 def _lc_tool(name: str) -> StructuredTool:
@@ -93,8 +117,8 @@ def test_get_agent_graph_without_allowlist_progressively_exposes_plugin_and_chan
 
     graph = agent.get_agent_graph(["filesystem"])
 
-    assert [tool.name for tool in graph.tools] == ["filesystem", "tool_search", "tool_invoke"]
-    search = next(tool for tool in graph.tools if tool.name == "tool_search")
+    assert list(_bound_tools(graph)) == ["filesystem", "tool_search", "tool_invoke"]
+    search = _bound_tools(graph)["tool_search"]
     results = json.loads(search.invoke({"query": "lookup", "limit": 5}))["results"]
     assert [result["name"] for result in results] == ["plugin_lookup"]
     channel_results = json.loads(search.invoke({"query": "channel", "limit": 5}))["results"]
@@ -136,8 +160,8 @@ def test_get_agent_graph_with_allowlist_filters_plugin_and_channel_tools(monkeyp
         tool_allowlist=["filesystem", "plugin_lookup"],
     )
 
-    assert [tool.name for tool in graph.tools] == ["filesystem", "tool_search", "tool_invoke"]
-    search = next(tool for tool in graph.tools if tool.name == "tool_search")
+    assert list(_bound_tools(graph)) == ["filesystem", "tool_search", "tool_invoke"]
+    search = _bound_tools(graph)["tool_search"]
     assert [
         result["name"]
         for result in json.loads(search.invoke({"query": "plugin", "limit": 5}))["results"]
@@ -175,8 +199,8 @@ def test_get_agent_graph_with_allowlist_filters_individual_mcp_tools(monkeypatch
 
     graph = agent.get_agent_graph(["mcp"], tool_allowlist=["mcp_local_echo"])
 
-    assert [tool.name for tool in graph.tools] == ["tool_search", "tool_invoke"]
-    search = next(tool for tool in graph.tools if tool.name == "tool_search")
+    assert list(_bound_tools(graph)) == ["tool_search", "tool_invoke"]
+    search = _bound_tools(graph)["tool_search"]
     assert json.loads(search.invoke({"query": "echo"}))["results"][0]["name"] == "mcp_local_echo"
     assert allow_args == [{"mcp_local_echo"}]
     assert agent._current_effective_tool_parent_names_var.get() == ("mcp",)
@@ -191,7 +215,7 @@ def test_get_agent_graph_memory_allowlist_exposes_normal_memory_tools(monkeypatc
     monkeypatch.setattr(plugin_registry, "get_destructive_names", lambda allow_names=None: set())
 
     graph = agent.get_agent_graph(["memory"], tool_allowlist=["memory"])
-    names = {tool.name for tool in graph.tools}
+    names = set(_bound_tools(graph))
 
     assert {
         "save_memory",
@@ -232,8 +256,8 @@ def test_get_agent_graph_parent_mcp_allowlist_includes_all_mcp_tools(monkeypatch
 
     graph = agent.get_agent_graph(["mcp"], tool_allowlist=["mcp"])
 
-    assert [tool.name for tool in graph.tools] == ["tool_search", "tool_invoke"]
-    search = next(tool for tool in graph.tools if tool.name == "tool_search")
+    assert list(_bound_tools(graph)) == ["tool_search", "tool_invoke"]
+    search = _bound_tools(graph)["tool_search"]
     assert {
         result["name"]
         for result in json.loads(search.invoke({"query": "mcp", "limit": 5}))["results"]
@@ -263,7 +287,7 @@ def test_eager_loading_mode_preserves_direct_external_tool_list(monkeypatch):
 
     graph = agent.get_agent_graph(["filesystem"])
 
-    assert [tool.name for tool in graph.tools] == ["filesystem", "plugin_lookup"]
+    assert list(_bound_tools(graph)) == ["filesystem", "plugin_lookup"]
 
 
 def test_get_agent_graph_cache_key_includes_allowlist(monkeypatch):
@@ -331,7 +355,7 @@ def test_gemini_final_boundary_isolates_malformed_mcp_plugin_and_channel_tools(m
 
     graph = agent.get_agent_graph(["filesystem", "mcp"])
 
-    assert [tool.name for tool in graph.tools] == ["filesystem"]
+    assert list(_bound_tools(graph)) == ["filesystem"]
 
 
 def test_gemini_explicit_allowlist_fails_for_malformed_tool(monkeypatch):
@@ -385,8 +409,8 @@ def test_forced_approval_resume_keeps_empty_discovery_bridge_bound(monkeypatch):
 
     graph = agent.get_agent_graph([], tool_allowlist=[])
 
-    assert [tool.name for tool in graph.tools] == ["tool_search", "tool_invoke"]
-    invoke = next(tool for tool in graph.tools if tool.name == "tool_invoke")
+    assert list(_bound_tools(graph)) == ["tool_search", "tool_invoke"]
+    invoke = _bound_tools(graph)["tool_invoke"]
     payload = json.loads(invoke.invoke({"name": "removed_target", "arguments": {}}))
     assert payload["ok"] is False
     assert payload["error"]["code"] == "unknown_tool"
@@ -417,7 +441,7 @@ def test_external_target_keeps_underlying_approval_name_and_one_repeat_guard(mon
     monkeypatch.setattr(channel_registry, "running_channels", lambda: [])
 
     graph = agent.get_agent_graph([])
-    invoke = next(tool for tool in graph.tools if tool.name == "tool_invoke")
+    invoke = _bound_tools(graph)["tool_invoke"]
     payload = invoke.invoke({
         "name": "plugin_lookup",
         "arguments": {"query": "alpha"},
@@ -450,7 +474,7 @@ def test_blocked_destructive_external_target_is_not_searchable(monkeypatch):
     monkeypatch.setattr(channel_registry, "running_channels", lambda: [])
 
     graph = agent.get_agent_graph([])
-    search = next(tool for tool in graph.tools if tool.name == "tool_search")
+    search = _bound_tools(graph)["tool_search"]
     payload = json.loads(search.invoke({"query": "plugin", "limit": 5}))
 
     assert [result["name"] for result in payload["results"]] == ["plugin_lookup"]
@@ -479,7 +503,7 @@ def test_discovery_assembly_failure_falls_back_to_same_filtered_external_snapsho
 
     graph = agent.get_agent_graph([], tool_allowlist=["plugin_allowed"])
 
-    assert [tool.name for tool in graph.tools] == ["plugin_allowed"]
+    assert list(_bound_tools(graph)) == ["plugin_allowed"]
 
 
 def test_cache_identity_tracks_external_metadata_and_skill_snapshot(monkeypatch):

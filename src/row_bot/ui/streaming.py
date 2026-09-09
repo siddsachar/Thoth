@@ -264,7 +264,7 @@ async def _agent_ready_forced_surface(model_ref: str, surface: str) -> bool:
             return True
         model_id = model_id_from_choice_value(model_ref)
         details = readiness.user_message()
-        ui.notify(
+        _notify_readiness(
             f"{model_id} cannot run {surface}: this area requires an Agent-ready model. {details}",
             type="negative",
             close_button=True,
@@ -272,13 +272,21 @@ async def _agent_ready_forced_surface(model_ref: str, surface: str) -> bool:
         )
         return False
     except Exception as exc:
-        ui.notify(
+        _notify_readiness(
             f"Could not verify Agent Mode readiness for {surface}: {exc}",
             type="negative",
             close_button=True,
             timeout=12000,
         )
         return False
+
+
+def _notify_readiness(message: str, **kwargs: Any) -> None:
+    """Background resumes may outlive their original page slot."""
+    try:
+        ui.notify(message, **kwargs)
+    except RuntimeError:
+        logger.info("Readiness denied for a detached approval resume")
 
 
 # ── Captured-image memory cap ────────────────────────────────────────
@@ -772,6 +780,8 @@ def request_generation_stop(
     """Request cancellation for the active generation and release the UI promptly."""
 
     normalized_thread_id = str(thread_id or "")
+    from row_bot.runtime.executions import generation_registry
+    generation_registry.stop(normalized_thread_id, reason=reason)
     had_pending_interrupt = False
     if state is not None and str(getattr(state, "thread_id", "") or "") == normalized_thread_id:
         had_pending_interrupt = getattr(state, "pending_interrupt", None) is not None
@@ -1268,12 +1278,14 @@ def _queued_control_message(
     agent_name: str = "",
     message_id: str | None = None,
 ) -> dict:
+    intent_id = message_id or uuid.uuid4().hex[:12]
     return {
         "role": "user",
         "content": str(text or "").strip(),
+        "message_id": intent_id,
         "timestamp": datetime.now().strftime("%H:%M"),
         "queued_control": {
-            "id": message_id or uuid.uuid4().hex[:12],
+            "id": intent_id,
             "kind": str(kind or "follow_up"),
             "status": str(status or "queued_parent_turn"),
             "label": str(label or "Queued"),
@@ -1281,6 +1293,22 @@ def _queued_control_message(
             "agent_name": str(agent_name or ""),
         },
     }
+
+
+def _optimistic_user_submission(content: str, messages: list[dict], *,
+                                queued_ids: list[str] | None = None,
+                                images: list[str] | None = None) -> dict:
+    """Keep the renderer's intent identity through durable Human admission."""
+    matched = {str(value) for value in (queued_ids or ())}
+    queued = next((message for message in messages if _queued_control_id(message) in matched), None)
+    identity = (str(queued.get("message_id") or _queued_control_id(queued))
+                if queued is not None else str(uuid.uuid4()))
+    if queued is not None:
+        queued["message_id"] = identity
+    message = {"role": "user", "content": content, "message_id": identity}
+    if images:
+        message["images"] = list(images)
+    return message
 
 
 def _queued_control_ids(messages: list[dict], ids: list[str] | None) -> set[str]:
@@ -3348,6 +3376,9 @@ async def consume_generation(
         try:
             event = gen.q.get_nowait()
         except queue.Empty:
+            owned_handle = getattr(gen.q, "handle", None)
+            if owned_handle is not None and owned_handle.producer_done.is_set():
+                break
             _empty_wait_started = time.perf_counter()
             if not gen.detached:
                 _flush_live_renders("queue-empty live render")
@@ -3371,6 +3402,8 @@ async def consume_generation(
 
         if event is None:
             break
+        if isinstance(event, tuple) and event[0] == "_platform_spool":
+            event = await run.io_bound(gen.q.materialize, event)
 
         if _stopped_shown:
             continue
@@ -3759,6 +3792,10 @@ async def consume_generation(
                 gen.interrupt_rendered = True
             _break_loop = True
 
+        elif event_type == "output_binding":
+            gen.checkpoint_message_id = str(payload.get("native_message_id") or "")
+            gen.checkpoint_revision = str(payload.get("checkpoint_revision") or "")
+
         elif event_type == "done":
             _voice_diag("generation_event:done", final_chars=len(str(payload or "")))
             gen.accumulated = payload
@@ -3795,6 +3832,10 @@ async def consume_generation(
 
     except Exception:
         logger.error("Error in generation consumer", exc_info=True)
+    finally:
+        close_consumer = getattr(gen.q, "close_consumer", None)
+        if close_consumer is not None:
+            await run.io_bound(close_consumer)
 
     # ── Finalise ─────────────────────────────────────────────────────
     if gen.status == "streaming":
@@ -3961,7 +4002,9 @@ async def consume_generation(
     if _has_final_output:
         await _capture_balanced_browser_screenshot(gen, state)
         visible_content = gen.accumulated if str(gen.accumulated or "").strip() else ""
-        a_msg: dict = {"role": "assistant", "content": visible_content}
+        a_msg: dict = {"role": "assistant", "content": visible_content,
+                       "checkpoint_message_id": gen.checkpoint_message_id,
+                       "message_id": gen.checkpoint_message_id}
         attach_thinking_to_message(a_msg, gen.thinking_text)
         if gen.warnings:
             a_msg["warnings"] = list(gen.warnings)
@@ -4045,6 +4088,7 @@ async def consume_generation(
                 _persisted_detached = persist_detached_thread_media(
                     gen.thread_id,
                     gen.accumulated,
+                    message_id=gen.checkpoint_message_id,
                     images=gen.captured_images,
                     image_persist_flags=gen.captured_images_persist,
                     videos=gen.captured_videos,
@@ -5031,9 +5075,8 @@ async def send_message(
     else:
         display_content = text
 
-    user_msg: dict = {"role": "user", "content": display_content}
-    if user_images:
-        user_msg["images"] = user_images
+    user_msg = _optimistic_user_submission(display_content, turn_messages,
+        queued_ids=queued_message_ids if queued_visible_user_msg else None, images=user_images)
     if not queued_visible_user_msg and not internal_goal_continuation:
         turn_messages.append(user_msg)
         persist_thread_media_state(gen_thread_id, turn_messages)
@@ -5156,7 +5199,8 @@ async def send_message(
     from row_bot.approval_policy import DEFAULT_APPROVAL_MODE, normalize_approval_mode
     from row_bot.threads import _get_thread_approval_mode
 
-    _thread_mo = target.model_override
+    from row_bot.providers.selection import model_choice_value
+    _thread_mo = model_choice_value(selected_model)
     _thread_approval_mode = normalize_approval_mode(
         target.approval_mode or await run.io_bound(_get_thread_approval_mode, gen_thread_id),
         DEFAULT_APPROVAL_MODE,
@@ -5190,12 +5234,13 @@ async def send_message(
             "runtime_surface": runtime_surface,
             "runtime_mode": runtime_mode,
             "generation_id": generation_id,
+            "platform_submission_id": user_msg["message_id"],
             "root_objective": str(text or "").strip(),
             "approval_mode": _thread_approval_mode,
             "voice_mode": bool(voice_mode),
             "voice_transport": str(state.voice_coordinator.transport or ""),
             **({"internal_goal_continuation": True} if internal_goal_continuation else {}),
-            **({"model_override": _thread_mo} if _thread_mo else {}),
+            "model_override": _thread_mo,
             **({"developer_workspace_id": target.developer_workspace_id} if target.developer_workspace_id else {}),
             **({"project_workspace_id": project_workspace_id} if project_workspace_id else {}),
             **({"designer_project_id": target.designer_project_id} if target.designer_project_id else {}),
@@ -5224,9 +5269,14 @@ async def send_message(
     # ── Create generation state ──────────────────────────────────────
     stop_ev = threading.Event()
     cancel_scope = CancellationScope(stop_ev)
+    from row_bot.application.client_platform import client_platform_service
+    from row_bot.ui.legacy_adapter.generation import LegacyEventQueue, launch_legacy_generation
+    execution = client_platform_service.admit_execution(
+        gen_thread_id, config, text=agent_input, cancel_scope=cancel_scope,
+    )
     gen = GenerationState(
         thread_id=gen_thread_id,
-        q=queue.Queue(),
+        q=LegacyEventQueue(execution),
         stop_event=stop_ev,
         cancel_scope=cancel_scope,
         config=config,
@@ -5356,7 +5406,7 @@ async def send_message(
             finally:
                 scope_cm.__exit__(None, None, None)
 
-    threading.Thread(target=_sync_stream, daemon=True).start()
+    launch_legacy_generation(execution, gen.q, _sync_stream)
 
     asyncio.create_task(consume_generation(gen, state, p, cb))
     cb.rebuild_thread_list()
@@ -5552,6 +5602,14 @@ async def resume_after_interrupt(
     from row_bot.threads import _get_thread_approval_mode
 
     _thread_mo = state.thread_model_override or ""
+    from row_bot.application.client_platform import client_platform_service
+    pending_items = pending if isinstance(pending, list) else [pending]
+    approval_ids = {str(item.get("_platform_approval_id")) for item in pending_items
+                    if isinstance(item, dict) and item.get("_platform_approval_id")}
+    if approval_ids:
+        if len(approval_ids) != 1:
+            raise ValueError("approval_identity_conflict")
+        _thread_mo = client_platform_service.pending_approval_model_ref(next(iter(approval_ids)), gen_thread_id)
     _thread_approval_mode = normalize_approval_mode(
         getattr(state, "thread_approval_mode", "") or await run.io_bound(_get_thread_approval_mode, gen_thread_id),
         DEFAULT_APPROVAL_MODE,
@@ -5604,8 +5662,11 @@ async def resume_after_interrupt(
         )
         return
     from row_bot.models import get_current_model
+    from row_bot.providers.selection import model_choice_value
+    _thread_mo = model_choice_value(_thread_mo or get_current_model())
 
-    if not await _agent_ready_forced_surface(_thread_mo or get_current_model(), runtime_surface):
+    if not await _agent_ready_forced_surface(_thread_mo, runtime_surface):
+        state.pending_interrupt = pending
         return
     generation_id = source_generation_id or f"{gen_thread_id}:{uuid.uuid4().hex[:12]}"
     profile_runtime_config = await run.io_bound(_profile_runtime_config_for_thread, gen_thread_id)
@@ -5616,7 +5677,7 @@ async def resume_after_interrupt(
             "runtime_mode": "agent",
             "generation_id": generation_id,
             "approval_mode": _thread_approval_mode,
-            **({"model_override": _thread_mo} if _thread_mo else {}),
+            "model_override": _thread_mo,
             **({"developer_workspace_id": state.active_developer_workspace_id} if getattr(state, "active_developer_workspace_id", None) else {}),
             **({"project_workspace_id": project_workspace_id} if project_workspace_id else {}),
             **({"designer_project_id": str(state.active_designer_project.id)} if getattr(state, "active_designer_project", None) else {}),
@@ -5637,9 +5698,17 @@ async def resume_after_interrupt(
 
     stop_ev = threading.Event()
     cancel_scope = CancellationScope(stop_ev)
+    from row_bot.application.client_platform import client_platform_service
+    from row_bot.ui.legacy_adapter.generation import LegacyEventQueue, launch_legacy_generation
+    if approval_ids:
+        approval_context = client_platform_service.claim_legacy_approval(next(iter(approval_ids)), gen_thread_id, approved)
+        config["configurable"]["model_override"] = approval_context["model_selection"]["model_ref"]
+    execution = client_platform_service.admit_execution(
+        gen_thread_id, config, cancel_scope=cancel_scope,
+    )
     gen = GenerationState(
         thread_id=gen_thread_id,
-        q=queue.Queue(),
+        q=LegacyEventQueue(execution),
         stop_event=stop_ev,
         cancel_scope=cancel_scope,
         config=config,
@@ -5712,7 +5781,7 @@ async def resume_after_interrupt(
             finally:
                 scope_cm.__exit__(None, None, None)
 
-    threading.Thread(target=_sync_resume, daemon=True).start()
+    launch_legacy_generation(execution, gen.q, _sync_resume)
 
     asyncio.create_task(consume_generation(gen, state, p, cb))
     cb.rebuild_thread_list()

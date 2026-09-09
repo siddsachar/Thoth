@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import contextvars
+from functools import wraps
 import json
 import sys
 import threading
@@ -14,6 +16,12 @@ def _fresh_agent_runner_modules(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ROW_BOT_DATA_DIR", str(data_dir))
+    # Keep package and dotted imports on one storage owner; isolate its paths
+    # without leaving a stale package attribute after sys.modules eviction.
+    workspace_storage = importlib.import_module("row_bot.developer.storage")
+    monkeypatch.setattr(workspace_storage, "DATA_DIR", data_dir)
+    monkeypatch.setattr(workspace_storage, "DEVELOPER_DIR", data_dir / "developer")
+    monkeypatch.setattr(workspace_storage, "WORKSPACES_PATH", data_dir / "developer" / "workspaces.json")
     for name in (
         "row_bot.tasks",
         "row_bot.threads",
@@ -39,6 +47,22 @@ def _fresh_agent_runner_modules(tmp_path, monkeypatch):
     agent_context = importlib.reload(agent_context)
     agent_runner = importlib.reload(agent_runner)
     return agent_runner, agent_runs, agent_profiles, agent_context, threads
+
+
+def _workspace(tmp_path, workspace_id, folder):
+    from row_bot.developer.state import DeveloperWorkspace
+    from row_bot.developer.storage import save_workspace
+    path = tmp_path / folder
+    path.mkdir(exist_ok=True)
+    save_workspace(DeveloperWorkspace(id=workspace_id, name=workspace_id, path=str(path)))
+    return path
+
+
+def _isolated_runtime_context(function):
+    @wraps(function)
+    def isolated(*args, **kwargs):
+        return contextvars.Context().run(function, *args, **kwargs)
+    return isolated
 
 
 def test_spawn_agent_run_creates_child_thread_and_completes(tmp_path, monkeypatch):
@@ -234,6 +258,7 @@ def test_default_dispatcher_runs_cumulative_children_in_bounded_waves(
                 agent_runner.spawn_agent_run(
                     f"Wave {parent_index}-{child_index}",
                     parent_thread_id=parents[parent_index],
+                    profile="review",
                 )
             )
 
@@ -472,6 +497,7 @@ def test_builtin_profile_skills_flow_to_child_agent(tmp_path, monkeypatch):
     assert {"run.created", "run.started", "turn.completed", "run.completed"} <= event_types
 
 
+@_isolated_runtime_context
 def test_child_skill_snapshot_starts_profile_skills_and_loads_others_task_locally(
     tmp_path,
     monkeypatch,
@@ -837,14 +863,15 @@ def test_stop_agent_run_sets_live_stop_event_and_durable_status(tmp_path, monkey
     )
     parent_thread_id = threads.create_thread("Parent")
     started = threading.Event()
+    release = threading.Event()
 
     class TaskStoppedError(Exception):
         pass
 
     def fake_slow(prompt, enabled_tool_names, config, *, stop_event):
         started.set()
-        while not stop_event.is_set():
-            time.sleep(0.01)
+        assert stop_event.wait(3)
+        assert release.wait(3)
         raise TaskStoppedError("stopped")
 
     monkeypatch.setattr(agent_runner, "_invoke_agent", fake_slow)
@@ -859,9 +886,13 @@ def test_stop_agent_run_sets_live_stop_event_and_durable_status(tmp_path, monkey
 
     assert started.wait(timeout=1.0)
     stopped = agent_runner.stop_agent_run(run["id"])
+    try:
+        assert stopped["status"] == "stopping"
+        assert agent_runner.list_active_agent_run_ids() == [run["id"]]
+    finally:
+        release.set()
     final = agent_runner.wait_for_agent_run(run["id"], timeout=2.0)
 
-    assert stopped["status"] == "stopped"
     assert stopped["stop_requested"] is True
     assert final["status"] == "stopped"
     assert agent_runner.list_active_agent_run_ids() == []
@@ -874,11 +905,12 @@ def test_stop_agent_run_preserves_stop_when_invocation_returns_late_success(tmp_
     )
     parent_thread_id = threads.create_thread("Parent")
     started = threading.Event()
+    release = threading.Event()
 
     def fake_slow_success(prompt, enabled_tool_names, config, *, stop_event):
         started.set()
-        while not stop_event.is_set():
-            time.sleep(0.01)
+        assert stop_event.wait(3)
+        assert release.wait(3)
         return "late success"
 
     monkeypatch.setattr(agent_runner, "_invoke_agent", fake_slow_success)
@@ -893,9 +925,13 @@ def test_stop_agent_run_preserves_stop_when_invocation_returns_late_success(tmp_
 
     assert started.wait(timeout=1.0)
     stopped = agent_runner.stop_agent_run(run["id"])
+    try:
+        assert stopped["status"] == "stopping"
+        assert agent_runner.list_active_agent_run_ids() == [run["id"]]
+    finally:
+        release.set()
     final = agent_runner.wait_for_agent_run(run["id"], timeout=2.0)
 
-    assert stopped["status"] == "stopped"
     assert final["status"] == "stopped"
     assert final["summary"] == ""
     event_types = [event["type"] for event in _agent_runs.get_agent_events(run["id"])]
@@ -971,6 +1007,7 @@ def test_worktree_workspace_mode_allocates_child_workspace(tmp_path, monkeypatch
         tmp_path,
         monkeypatch,
     )
+    _workspace(tmp_path, "dev_parent", "parent")
     parent_thread_id = threads.create_thread(
         "Parent",
         developer_workspace_id="dev_parent",
@@ -994,6 +1031,7 @@ def test_worktree_workspace_mode_allocates_child_workspace(tmp_path, monkeypatch
         parent_thread_id="",
     ):
         calls.append((run_id, parent_workspace_id, objective, branch_slug, seed_mode, parent_thread_id))
+        _workspace(tmp_path, "dev_worktree", "repo-wt")
         return {
             "status": "active",
             "owner_kind": "agent_run",
@@ -1043,6 +1081,7 @@ def test_two_worktree_child_agents_receive_distinct_workspaces(tmp_path, monkeyp
         tmp_path,
         monkeypatch,
     )
+    _workspace(tmp_path, "dev_parent", "parent")
     parent_thread_id = threads.create_thread(
         "Parent",
         developer_workspace_id="dev_parent",
@@ -1063,6 +1102,7 @@ def test_two_worktree_child_agents_receive_distinct_workspaces(tmp_path, monkeyp
         seed_mode="current_changes",
         parent_thread_id="",
     ):
+        _workspace(tmp_path, f"dev_worktree_{run_id}", f"repo-wt-{run_id}")
         return {
             "status": "active",
             "owner_kind": "agent_run",
@@ -1107,6 +1147,7 @@ def test_orchestrated_write_children_are_forced_into_distinct_worktrees(
         monkeypatch,
     )
     from row_bot.agent_orchestrator import create_or_get_orchestration
+    _workspace(tmp_path, "dev_parent", "parent")
 
     parent_thread_id = threads.create_thread(
         "Parent",
@@ -1130,6 +1171,7 @@ def test_orchestrated_write_children_are_forced_into_distinct_worktrees(
     )
 
     def fake_allocate(run_id, parent_workspace_id, **_kwargs):
+        _workspace(tmp_path, f"workspace-{run_id}", f"worktree-{run_id}")
         return {
             "status": "active",
             "project_workspace_id": parent_workspace_id,
@@ -1180,6 +1222,7 @@ def test_orchestrated_writer_keeps_single_writer_mode_for_non_git_workspace(
         monkeypatch,
     )
     from row_bot.agent_orchestrator import create_or_get_orchestration
+    _workspace(tmp_path, "dev_folder", "folder")
 
     parent_thread_id = threads.create_thread(
         "Non-Git parent",

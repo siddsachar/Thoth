@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "chunk_bytes": {
+      "const": 1048576,
+      "default": 1048576,
+      "title": "Chunk Bytes",
+      "type": "integer"
+    },
+    "expires_in_seconds": {
+      "maximum": 1800,
+      "minimum": 0,
+      "title": "Expires In Seconds",
+      "type": "integer"
+    },
+    "received_bytes": {
+      "maximum": 26214400,
+      "minimum": 0,
+      "title": "Received Bytes",
+      "type": "integer"
+    },
+    "size_bytes": {
+      "maximum": 26214400,
+      "minimum": 1,
+      "title": "Size Bytes",
+      "type": "integer"
+    },
+    "upload_id": {
+      "format": "uuid",
+      "title": "Upload Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "upload_id",
+    "size_bytes",
+    "received_bytes",
+    "expires_in_seconds"
+  ],
+  "title": "UploadView",
+  "type": "object"
+}

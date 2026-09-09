@@ -25,6 +25,19 @@ def _project_key(project: DesignerProject) -> str:
 def _get_execution_key() -> str | None:
     """Return the current execution thread key when available."""
 
+    from row_bot.conversation_resources import current_execution_context
+
+    resources = current_execution_context()
+    if resources is not None:
+        binding = resources.resolve("artifact")
+        if binding is not None:
+            bind_project_to_thread(resources.conversation_id, binding.resource_id)
+        else:
+            # A captured empty binding set cannot fall back to a visible project
+            # or a previously cached execution for this conversation.
+            _active_projects_by_key.pop(resources.conversation_id, None)
+        return resources.conversation_id
+
     try:
         from row_bot.agent import get_current_thread_id
 

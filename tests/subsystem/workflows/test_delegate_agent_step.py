@@ -373,6 +373,11 @@ def test_delegate_agent_step_uses_worktree_workspace(tmp_path, monkeypatch) -> N
     calls: list[dict] = []
     _install_fake_agent(monkeypatch, calls)
     _run_workflow_synchronously(monkeypatch, tasks)
+    from row_bot.developer import storage
+    from row_bot.developer.state import DeveloperWorkspace
+    parent_path = tmp_path / "parent-repository"
+    parent_path.mkdir()
+    storage.save_workspace(DeveloperWorkspace(id="dev_parent", name="Parent", path=str(parent_path)))
 
     def fake_allocate(
         run_id,
@@ -383,13 +388,16 @@ def test_delegate_agent_step_uses_worktree_workspace(tmp_path, monkeypatch) -> N
         seed_mode="current_changes",
         parent_thread_id="",
     ):
+        worktree_path = tmp_path / f"repo-wt-{run_id}"
+        worktree_path.mkdir()
+        storage.save_workspace(DeveloperWorkspace(id=f"dev_worktree_{run_id}", name="Allocated child", path=str(worktree_path)))
         return {
             "status": "active",
             "owner_kind": "agent_run",
             "owner_id": run_id,
             "project_workspace_id": parent_workspace_id,
             "worktree_workspace_id": f"dev_worktree_{run_id}",
-            "worktree_path": str(tmp_path / f"repo-wt-{run_id}"),
+            "worktree_path": str(worktree_path),
             "branch_name": f"row-bot/{run_id}-delegate",
             "metadata_json": {"seeded_from_current_changes": False},
         }

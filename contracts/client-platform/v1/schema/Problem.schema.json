@@ -1,0 +1,65 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "title": "Code",
+      "type": "string"
+    },
+    "current_revision": {
+      "anyOf": [
+        {
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Revision"
+    },
+    "recovery": {
+      "default": "none",
+      "enum": [
+        "reload_then_review",
+        "authenticate",
+        "retry",
+        "update_client",
+        "none"
+      ],
+      "title": "Recovery",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "retryable": {
+      "default": false,
+      "title": "Retryable",
+      "type": "boolean"
+    },
+    "status": {
+      "title": "Status",
+      "type": "integer"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "type": {
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "title",
+    "status",
+    "code",
+    "request_id"
+  ],
+  "title": "Problem",
+  "type": "object"
+}

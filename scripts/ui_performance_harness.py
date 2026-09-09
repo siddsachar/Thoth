@@ -14,7 +14,9 @@ import os
 import sqlite3
 import sys
 import time
-from dataclasses import asdict, dataclass
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -32,6 +34,24 @@ class CheckResult:
     ok: bool
     detail: str = ""
     rss_mb: float | None = None
+    measurement: str = "probe_helper"
+    process_role: str = "probe"
+    pid: int = field(default_factory=os.getpid)
+
+
+def process_sample(role: str, pid: int | None) -> dict[str, object]:
+    """Attribute a point sample to an explicit process, never infer server RSS."""
+    sample: dict[str, object] = {"role": role, "pid": pid, "rss_mb": None, "status": "unavailable"}
+    if pid is None:
+        return sample
+    try:
+        import psutil
+
+        sample["rss_mb"] = psutil.Process(pid).memory_info().rss / (1024 * 1024)
+        sample["status"] = "observed"
+    except Exception:
+        pass
+    return sample
 
 
 def _rss_mb() -> float | None:
@@ -44,7 +64,18 @@ def _rss_mb() -> float | None:
 
 
 def _row_bot_home() -> Path:
-    return Path(os.environ.get("ROW_BOT_HOME") or (Path.home() / ".row-bot"))
+    from row_bot.data_paths import get_row_bot_data_dir
+
+    return get_row_bot_data_dir(create=False)
+
+
+@contextmanager
+def _read_metadata(db_path: Path) -> Iterator[sqlite3.Connection]:
+    connection = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def _fetch(name: str, url: str, timeout: float) -> CheckResult:
@@ -61,10 +92,12 @@ def _fetch(name: str, url: str, timeout: float) -> CheckResult:
             ok=200 <= response.status < 500,
             detail=f"status={response.status} bytes_sampled={len(body)}",
             rss_mb=None if before is None or after is None else after - before,
+            measurement="http_reachability",
         )
     except Exception as exc:
         elapsed = (time.perf_counter() - started) * 1000.0
-        return CheckResult(name=name, elapsed_ms=elapsed, ok=False, detail=str(exc), rss_mb=None)
+        return CheckResult(name=name, elapsed_ms=elapsed, ok=False, detail=type(exc).__name__,
+                           rss_mb=None, measurement="http_reachability")
 
 
 def _resolve_transcript_thread(selector: str) -> tuple[str, str]:
@@ -72,13 +105,13 @@ def _resolve_transcript_thread(selector: str) -> tuple[str, str]:
     if not db_path.exists():
         raise FileNotFoundError(f"threads.db not found at {db_path}")
     if selector and selector != "latest":
-        with sqlite3.connect(db_path) as conn:
+        with _read_metadata(db_path) as conn:
             row = conn.execute(
                 "SELECT thread_id, COALESCE(name, '') FROM thread_meta WHERE thread_id = ?",
                 (selector,),
             ).fetchone()
         return (selector, row[1] if row else "")
-    with sqlite3.connect(db_path) as conn:
+    with _read_metadata(db_path) as conn:
         row = conn.execute(
             """
             SELECT thread_id, COALESCE(name, '')
@@ -96,7 +129,7 @@ def _profile_transcript(selector: str) -> CheckResult:
     from row_bot.ui.helpers import load_thread_messages
     from row_bot.ui.transcript import TRANSCRIPT_WINDOW_SIZE, choose_transcript_window, message_keys
 
-    thread_id, name = _resolve_transcript_thread(selector)
+    thread_id, _name = _resolve_transcript_thread(selector)
     before = _rss_mb()
     started = time.perf_counter()
     messages = load_thread_messages(thread_id)
@@ -106,7 +139,7 @@ def _profile_transcript(selector: str) -> CheckResult:
     keys = message_keys(messages[window.start:window.end], start=window.start)
     ok = elapsed <= 1_000.0 and window.visible_count <= TRANSCRIPT_WINDOW_SIZE
     detail = (
-        f"thread_id={thread_id} name={name!r} rows={len(messages)} "
+        f"rows={len(messages)} "
         f"window={window.start}:{window.end} visible={window.visible_count} "
         f"keys={len(keys)}"
     )
@@ -125,7 +158,7 @@ def _resolve_latest_blank_thread() -> tuple[str, str]:
         raise FileNotFoundError(f"threads.db not found at {db_path}")
     from row_bot.ui.helpers import load_thread_messages
 
-    with sqlite3.connect(db_path) as conn:
+    with _read_metadata(db_path) as conn:
         rows = conn.execute(
             """
             SELECT thread_id, COALESCE(name, '')
@@ -144,7 +177,7 @@ def _profile_blank_thread() -> CheckResult:
     from row_bot.ui.helpers import load_thread_messages
     from row_bot.ui.transcript import TRANSCRIPT_WINDOW_SIZE, choose_transcript_window, message_keys
 
-    thread_id, name = _resolve_latest_blank_thread()
+    thread_id, _name = _resolve_latest_blank_thread()
     before = _rss_mb()
     started = time.perf_counter()
     messages = load_thread_messages(thread_id)
@@ -154,7 +187,7 @@ def _profile_blank_thread() -> CheckResult:
     keys = message_keys(messages[window.start:window.end], start=window.start)
     ok = elapsed <= 250.0 and len(messages) == 0 and window.visible_count == 0 and not keys
     detail = (
-        f"thread_id={thread_id} name={name!r} rows={len(messages)} "
+        f"rows={len(messages)} "
         f"window={window.start}:{window.end} visible={window.visible_count} "
         f"keys={len(keys)}"
     )
@@ -174,6 +207,9 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--output", default="")
+    parser.add_argument("--server-pid", type=int, help="Explicit running server PID for a separate RSS sample.")
+    parser.add_argument("--browser-pid", type=int, action="append", default=[],
+                        help="Explicit browser/renderer PID; repeat to record each independently.")
     parser.add_argument(
         "--profile-transcript",
         default="",
@@ -206,6 +242,7 @@ def main() -> int:
                     ok=smoke.ok,
                     detail=f"port={smoke.port}",
                     rss_mb=None,
+                    measurement="owned_child_http_readiness",
                 )
             )
         except Exception as exc:
@@ -248,6 +285,14 @@ def main() -> int:
             )
     payload = {
         "base_url": base,
+        "process_samples": [process_sample("probe", os.getpid()),
+                            process_sample("server", args.server_pid),
+                            *(process_sample("browser", pid) for pid in args.browser_pid)],
+        "measurement_notes": [
+            "CheckResult.rss_mb is the probe-process RSS delta, not server or browser memory.",
+            "HTTP reachability/readiness does not measure browser paint or interactive usability.",
+            "Process samples are explicit-PID point observations; summed RSS is not unique memory.",
+        ],
         "results": [asdict(result) for result in results],
         "launch_messages": launch_messages,
         "budgets": {
@@ -261,7 +306,7 @@ def main() -> int:
             "rss_delta_mb": 250,
         },
         "manual_scenarios": [
-            "Settings > Knowledge > search MANUALQA-20260527 > Edit > add manual-qa tag > Save",
+            "Settings > Knowledge > search a disposable fixture > Edit > Save",
             "Settings > Models",
             "Knowledge Map graph details and edit",
             "Large transcript with streaming finalization",

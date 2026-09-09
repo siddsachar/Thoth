@@ -1,0 +1,244 @@
+{
+  "recording_version": 1,
+  "protocol_version": "1.0",
+  "fixture_id": "F-P08",
+  "kind": "service_recording",
+  "deterministic_seed": "F-P08:v1",
+  "source": {
+    "base_commit": "272a0add768f7badc2536fa21e30e538a08833de",
+    "files": {
+      "src/row_bot/api/v1/__init__.py": "d14be0852486e10539fd8ed7cafe67c2753a7964679096fe9c1191497a1ba329",
+      "src/row_bot/api/v1/routes.py": "3f2a8bb5dc1ebdc3b414960f092e2ba278992de72fcca900606738a8561957ed",
+      "src/row_bot/api/v1/schemas.py": "eb2f11a7f81719cad25334d9ecee62eab704aaed1e61fe611563101c7346e8e3",
+      "src/row_bot/api/v1/security.py": "b810017771e61c4cbde241901f33d17d32fd02060805824f2dc60f230852a375",
+      "src/row_bot/application/__init__.py": "ddac8928976922c73246ae791f5cc0ff84837ef1a9890f5938ee56f58eb7d468",
+      "src/row_bot/application/attachment_context.py": "930e91b470edddb37e68a75996237d88db5f22e54442df9c825f5ad16ae45d1a",
+      "src/row_bot/application/attachments.py": "cca0ed909626291f72492322e1bddc42cc722e13fbfdc583742a48251d7f0361",
+      "src/row_bot/application/client_platform.py": "0f45a18b6dfdd72f10dceb76d712ad0983d941b5c2173f5c386555d9c7caf082",
+      "src/row_bot/application/generated_media.py": "2037b707b47b35a202eb23c34130809ec45315906a41ac32c791d9e9256376db",
+      "src/row_bot/application/lifecycle.py": "5d1826b2239c67b73c768a854f759189a319b83773797aa64e717cbf56ff97ff",
+      "src/row_bot/application/live_content.py": "a454a9646f1bda95ce597c4640b01d3cb8b409a8818d8717b36abb827279998d",
+      "src/row_bot/conversation_resources.py": "20daa4c2c0f7a50f0cae7f6d24d804950b9fb87035586624a01e5bb1b6c94768",
+      "src/row_bot/projection/__init__.py": "246b0f37fc792dc5787564e86fdd2d1153e380cbd362a9d3f2db70669131da00",
+      "src/row_bot/projection/canonical.py": "4552f992a802831b1afc0484f83edf3cd61624006b955373267f03253a6872a6",
+      "src/row_bot/projection/conversation.py": "0c2322879ebd8a952f808a01549d8c7e785819fb033bfcc5542a0d88071fc66e",
+      "src/row_bot/runtime/__init__.py": "bec0d5569832ef34ca97d303981dc5484f68c77b8123f82fb63e3320a3634d0b",
+      "src/row_bot/runtime/admissions.py": "c9b4a489c2e4e39e5122214f6ef2035440e4d12c4a2ea1a0da78435c149d1008",
+      "src/row_bot/runtime/checkpoint_reader.py": "46256781634d39c80023a7ab8d15bbccee6b412c37f58d633b58b06782d8caa1",
+      "src/row_bot/runtime/executions.py": "93936596d57069e96e6fffdb7332ab5c36aed81868c44dc71c7651bb7dc35166",
+      "src/row_bot/tasks.py": "e8e34aa222c7737424d248360cf3438370fb2675fba81d685c7014e4f83e9b8b",
+      "src/row_bot/threads.py": "28db4fd9e103b0f250eb62877bf367ffbb9b5433f4ddede620517789fced0122",
+      "tests/helpers/client_platform_fakes.py": "3e5ebbac050c0afb409135c11f7d6afbf7df313c09bcd465f3c04980f6639717"
+    },
+    "sha256": "5237323051fbfc130e20d80cac1e6b987efcfb4370c6887e4d3636c2832e26ac"
+  },
+  "records": [
+    {
+      "schema": "HandshakeView",
+      "value": {
+        "models": [],
+        "capabilities": [],
+        "catalog_stale": false,
+        "protocol_version": "1.0",
+        "minimum_client_version": "1.0",
+        "instance_id": "64760b18-a86d-5ec8-b778-1f7a23c0d878",
+        "server_epoch": "886fee39-2f15-5562-a961-c36d37a947dc",
+        "client_session_id": "764b2f45-cd9c-5a54-9232-2d95be6dad25",
+        "client_group_id": "d9115557-00bd-5909-b67f-9cf49a5b7d37",
+        "csrf_token": "73d6bc33-c2e1-52e2-bfff-f26c7f4458bb",
+        "authentication_kind": "local_owner",
+        "policy_revision": "1",
+        "session_ttl_seconds": 43200,
+        "native_adapter": {
+          "available": false
+        },
+        "limits": {
+          "json_bytes": 262144,
+          "event_bytes": 65536,
+          "query_rows": 200,
+          "transcript_rows": 100,
+          "stream_connections_per_session": 4,
+          "attachment_bytes": 26214400,
+          "upload_chunk_bytes": 1048576,
+          "upload_batch_bytes": 104857600,
+          "upload_chunks_in_flight": 4,
+          "upload_ttl_seconds": 1800
+        }
+      }
+    },
+    {
+      "schema": "HandshakeView",
+      "value": {
+        "models": [],
+        "capabilities": [],
+        "catalog_stale": false,
+        "protocol_version": "1.0",
+        "minimum_client_version": "1.0",
+        "instance_id": "64760b18-a86d-5ec8-b778-1f7a23c0d878",
+        "server_epoch": "886fee39-2f15-5562-a961-c36d37a947dc",
+        "client_session_id": "a7070aee-7dfd-5894-89b5-81b0bed930b0",
+        "client_group_id": "d9115557-00bd-5909-b67f-9cf49a5b7d37",
+        "csrf_token": "f3d13cb7-738c-5660-b86b-62c3cbae6559",
+        "authentication_kind": "local_owner",
+        "policy_revision": "1",
+        "session_ttl_seconds": 43200,
+        "native_adapter": {
+          "available": false
+        },
+        "limits": {
+          "json_bytes": 262144,
+          "event_bytes": 65536,
+          "query_rows": 200,
+          "transcript_rows": 100,
+          "stream_connections_per_session": 4,
+          "attachment_bytes": 26214400,
+          "upload_chunk_bytes": 1048576,
+          "upload_batch_bytes": 104857600,
+          "upload_chunks_in_flight": 4,
+          "upload_ttl_seconds": 1800
+        }
+      }
+    },
+    {
+      "schema": "Problem",
+      "value": {
+        "type": "urn:row-bot:error:action_denied",
+        "title": "Action denied",
+        "status": 403,
+        "code": "action_denied",
+        "request_id": "21f0404e-a0a6-53b4-a449-09e6aaac746a",
+        "retryable": false,
+        "recovery": "none"
+      }
+    },
+    {
+      "schema": "SubscriptionView",
+      "value": {
+        "subscription_id": "0259896b-0ee3-5eab-b5c4-1733ec4d933f",
+        "snapshot": {
+          "conversation_id": "conversation-a",
+          "server_epoch": "886fee39-2f15-5562-a961-c36d37a947dc",
+          "projection_revision": "0",
+          "cursor": "8625acec-5c18-5d19-b87a-120da8dc0f28",
+          "checkpoint_revision": "",
+          "rows": [],
+          "generation": null
+        },
+        "cursor": "8625acec-5c18-5d19-b87a-120da8dc0f28"
+      }
+    },
+    {
+      "schema": "Command",
+      "value": {
+        "command_id": "de3451aa-336d-50b7-902d-de3bcd832da2",
+        "client_session_id": "7c2944dc-39cb-53c1-b02e-510d6120a1cb",
+        "type": "conversation.bind",
+        "expected_revision": "0",
+        "payload": {
+          "kind": "workspace",
+          "resource_id": "recorded-workspace",
+          "role": "context"
+        }
+      }
+    },
+    {
+      "schema": "CommandReceipt",
+      "value": {
+        "command_id": "de3451aa-336d-50b7-902d-de3bcd832da2",
+        "status": "completed",
+        "conversation_id": "conversation-a",
+        "revision": "1"
+      }
+    },
+    {
+      "schema": "EventPage",
+      "value": {
+        "snapshot_required": false,
+        "events": [
+          {
+            "cursor": "11f13824-390e-5b2a-bf1c-b262c09307fc",
+            "event": {
+              "protocol_version": "1.0",
+              "event_id": "2b1fdeee-ce12-589c-9178-22f8aa53f6d6",
+              "topic": "conversation.conversation-a",
+              "server_epoch": "886fee39-2f15-5562-a961-c36d37a947dc",
+              "conversation_id": "conversation-a",
+              "projection_revision": "1",
+              "source": "runtime",
+              "source_stream_id": "conversation-a",
+              "source_epoch": "886fee39-2f15-5562-a961-c36d37a947dc",
+              "source_sequence_start": "1",
+              "source_sequence_end": "1",
+              "type": "resource.changed",
+              "payload": {
+                "revision": "1"
+              }
+            }
+          }
+        ],
+        "cursor": "11f13824-390e-5b2a-bf1c-b262c09307fc"
+      }
+    },
+    {
+      "schema": "Event",
+      "value": {
+        "protocol_version": "1.0",
+        "event_id": "2b1fdeee-ce12-589c-9178-22f8aa53f6d6",
+        "topic": "conversation.conversation-a",
+        "server_epoch": "886fee39-2f15-5562-a961-c36d37a947dc",
+        "conversation_id": "conversation-a",
+        "projection_revision": "1",
+        "source": "runtime",
+        "source_stream_id": "conversation-a",
+        "source_epoch": "886fee39-2f15-5562-a961-c36d37a947dc",
+        "source_sequence_start": "1",
+        "source_sequence_end": "1",
+        "type": "resource.changed",
+        "payload": {
+          "revision": "1"
+        }
+      }
+    },
+    {
+      "schema": "ConversationView",
+      "value": {
+        "id": "conversation-a",
+        "revision": "1",
+        "title": "conversation-a",
+        "pinned": false,
+        "generation_state": [],
+        "resource_bindings": [
+          {
+            "binding_id": "d6c736cc-b892-520b-80fc-e2102a94ba48",
+            "kind": "workspace",
+            "resource_id": "recorded-workspace",
+            "role": "context",
+            "revision": "1"
+          }
+        ]
+      }
+    }
+  ],
+  "delivery_order": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "barriers": [],
+  "assertions": [
+    "Trusted local windows share the server-issued intent group",
+    "A caller cannot choose an enrollment group"
+  ],
+  "allowed_external_effects": [],
+  "bounds": {
+    "quiescence_timeout_seconds": 10,
+    "event_bytes": 65536
+  },
+  "expected_final_snapshot": null
+}

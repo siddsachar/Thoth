@@ -28,6 +28,7 @@ from row_bot.buddy.overlay import (
     should_defer_native_show,
     _WindowsForegroundBackend,
 )
+from tests.contracts.client_platform.test_headless_lifecycle import platform  # noqa: F401
 
 
 class FakeWindow:
@@ -504,7 +505,9 @@ def test_foreground_tracker_does_not_reject_external_apps_by_title_alone():
         ),
     ],
 )
-def test_overlay_send_uses_captured_surface_and_never_adds_implicit_images(monkeypatch, target, expected):
+def test_overlay_send_uses_captured_surface_and_never_adds_implicit_images(monkeypatch, tmp_path, platform, target, expected):
+    import importlib
+
     import row_bot.developer.agent_context as developer_context
     import row_bot.developer.profile as developer_profile
     import row_bot.agent as agent
@@ -512,7 +515,51 @@ def test_overlay_send_uses_captured_surface_and_never_adds_implicit_images(monke
     import row_bot.tools.registry as tool_registry
     import row_bot.ui.helpers as helpers
     import row_bot.ui.streaming as streaming
-    from row_bot.ui.state import _active_generations
+    import row_bot.ui.state as ui_state
+    from row_bot.application import client_platform
+    from row_bot.ui.legacy_adapter import generation as legacy
+
+    # The overlay uses the real shared admission/worker owner. Register the
+    # captured conversation and resource domains in the fixture's private stores.
+    monkeypatch.setattr(client_platform, "client_platform_service", platform)
+    monkeypatch.setattr(legacy, "client_platform_service", platform)
+    active_generations = {}
+    monkeypatch.setattr(streaming, "_active_generations", active_generations)
+    monkeypatch.setattr(ui_state, "_active_generations", active_generations)
+    if target.developer_workspace_id:
+        storage = importlib.import_module("row_bot.developer.storage")
+        from row_bot.developer.state import DeveloperWorkspace
+        root = tmp_path / "developer"
+        monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(storage, "DEVELOPER_DIR", root)
+        monkeypatch.setattr(storage, "WORKSPACES_PATH", root / "workspaces.json")
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        storage.save_workspace(DeveloperWorkspace(id=target.developer_workspace_id, name="Captured workspace", path=str(workspace)))
+    if target.designer_project_id:
+        storage = importlib.import_module("row_bot.designer.storage")
+        from row_bot.designer.state import DesignerProject
+        root = tmp_path / "designer"
+        monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(storage, "DESIGNER_DIR", root)
+        for name, folder in (("PROJECTS_DIR", "projects"), ("ASSETS_DIR", "assets"), ("REFERENCES_DIR", "references")):
+            monkeypatch.setattr(storage, name, root / folder)
+        storage.save_project(DesignerProject(id=target.designer_project_id, name="Captured artifact"))
+    threads.create_thread(target.thread_name, thread_id=target.thread_id,
+                          developer_workspace_id=target.developer_workspace_id,
+                          project_id=target.designer_project_id, seed_default_skills=False)
+    from langchain_core.messages import AIMessage
+    from tests.helpers.client_platform_fakes import CheckpointCommit, ScriptedAgentStream
+    output_id = f"buddy-{target.runtime_surface.value}-output"
+    fake = ScriptedAgentStream((CheckpointCommit((AIMessage(content="Fixture reply", id=output_id),), output_id),
+                                ("done", "Fixture reply")))
+    calls = []
+
+    def fake_stream(text, enabled_tools, config, **kwargs):
+        from row_bot.conversation_resources import current_execution_context
+        context = current_execution_context()
+        calls.append((text, config["configurable"].copy(), context))
+        return fake.stream(text, enabled_tools, config, **kwargs)
 
     async def ready(*_args, **_kwargs):
         return True
@@ -520,7 +567,7 @@ def test_overlay_send_uses_captured_surface_and_never_adds_implicit_images(monke
     async def consume_noop(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(agent, "stream_agent", lambda *_args, **_kwargs: iter(()))
+    monkeypatch.setattr(agent, "stream_agent", fake_stream)
     monkeypatch.setattr(streaming, "_context_capacity_ready_for_send", ready)
     monkeypatch.setattr(streaming, "_agent_ready_forced_surface", ready)
     monkeypatch.setattr(streaming, "_subscription_auth_block_message", lambda *_args: None)
@@ -565,14 +612,32 @@ def test_overlay_send_uses_captured_surface_and_never_adds_implicit_images(monke
 
     try:
         asyncio.run(streaming.send_message("raw input", state=state, p=p, cb=cb, turn_target=target))
-        generation = _active_generations["thread-1"]
+        generation = active_generations[target.thread_id]
+        handle = generation.q.handle
+        assert platform.registry.get(handle.execution_id) is handle
+        assert handle.producer_done.wait(10)
+        assert handle.status == "completed" and handle.cleanup_complete
+        assert handle.output_message_id == output_id and fake.quiesced.is_set()
+        assert len(calls) == 1 and calls[0][2].conversation_id == target.thread_id
         configurable = generation.config["configurable"]
         for key, value in expected.items():
             assert configurable[key] == value
+            assert calls[0][1][key] == value
         assert generation.captured_images == []
-        assert state.messages == [{"role": "user", "content": "raw input"}]
+        submission_id = configurable["platform_submission_id"]
+        assert state.messages == [{"role": "user", "content": "raw input", "message_id": submission_id}]
+        from langchain_core.messages import HumanMessage
+        admitted = [message for message in threads.get_latest_checkpoint_messages(target.thread_id)
+                    if isinstance(message, HumanMessage)]
+        assert len(admitted) == 1 and admitted[0].id == submission_id
+        assert not platform.registry.active(target.thread_id)
     finally:
-        _active_generations.pop("thread-1", None)
+        generation = active_generations.pop(target.thread_id, None)
+        if generation is not None:
+            generation.q.close_consumer()
+            if not generation.q.handle.producer_done.is_set():
+                platform.registry.stop(target.thread_id)
+                assert generation.q.handle.producer_done.wait(10)
 
 
 def test_no_thread_raw_slash_command_creates_normal_thread_and_forwards_text(monkeypatch):

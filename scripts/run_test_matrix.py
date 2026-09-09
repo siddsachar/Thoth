@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import json
 import os
 import subprocess
@@ -72,8 +73,39 @@ MIGRATED_COVERAGE_MODULES = (
     "row_bot.plugins.marketplace",
 )
 
+COVERAGE_SOURCE_DIR = Path("src/row_bot")
+COVERAGE_CONFIG_PATH = Path(".tmp/coverage/migrated-subsystems.coveragerc")
+
+
+def _write_migrated_coverage_config() -> Path:
+    # Package-name discovery can import then evict dependency modules while
+    # retaining their parent attributes. Directory discovery avoids that split;
+    # the report still includes exactly the migrated inventory, including files
+    # with no executed lines.
+    config = configparser.ConfigParser()
+    config["run"] = {"source": COVERAGE_SOURCE_DIR.as_posix()}
+    config["report"] = {
+        "include": "\n" + "\n".join(
+            (Path("src") / Path(*module.split("."))).with_suffix(".py").as_posix()
+            for module in MIGRATED_COVERAGE_MODULES
+        ),
+    }
+    path = REPO_ROOT / COVERAGE_CONFIG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        config.write(handle)
+    return path
+
 
 COMMANDS: dict[str, CommandSpec] = {
+    "client-platform-boundaries": _cmd(
+        "client-platform-boundaries", "uv", "run", "python", "scripts/check_client_platform_boundaries.py",
+        env=TEST_ENV,
+    ),
+    "client-platform-contracts": _cmd(
+        "client-platform-contracts", "uv", "run", "python", "scripts/generate_client_platform_contracts.py", "--check",
+        env=TEST_ENV,
+    ),
     "lock-check": _cmd("lock-check", "uv", "lock", "--check"),
     "requirements-check": _cmd("requirements-check", "python", "scripts/export_locked_requirements.py", "--check"),
     "sync-test": _cmd("sync-test", "uv", "sync", "--locked", "--all-extras", "--group", "test"),
@@ -154,7 +186,8 @@ COMMANDS: dict[str, CommandSpec] = {
         "tests/subsystem",
         "-m",
         "not live_provider and not e2e",
-        *(f"--cov={module}" for module in MIGRATED_COVERAGE_MODULES),
+        f"--cov={COVERAGE_SOURCE_DIR.as_posix()}",
+        f"--cov-config={COVERAGE_CONFIG_PATH.as_posix()}",
         "--cov-report=term-missing:skip-covered",
         "--cov-report=xml:.tmp/coverage/migrated-subsystems.xml",
         "--cov-fail-under=55",
@@ -184,7 +217,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "8090",
         "--timeout",
         "120",
-        env=TEST_ENV,
+        env={**TEST_ENV, "ROW_BOT_AUTO_START_OLLAMA": "0"},
     ),
     "installer-contracts": _cmd(
         "installer-contracts",
@@ -225,7 +258,7 @@ TIER_COMMANDS: dict[str, tuple[str, ...]] = {
     "app-smoke": ("app-smoke",),
     "installer-contracts": ("installer-contracts",),
     "legacy-inventory": ("legacy-inventory",),
-    "fast": ("ruff-safety", "contracts", "subsystem", "legacy-inventory"),
+    "fast": ("ruff-safety", "client-platform-boundaries", "client-platform-contracts", "contracts", "subsystem", "legacy-inventory"),
     "pr": (
         "lock-check",
         "requirements-check",
@@ -233,6 +266,8 @@ TIER_COMMANDS: dict[str, tuple[str, ...]] = {
         "runtime-deps",
         "compileall",
         "ruff-safety",
+        "client-platform-boundaries",
+        "client-platform-contracts",
         "contracts",
         "subsystem",
         "coverage-migrated",
@@ -248,6 +283,8 @@ TIER_COMMANDS: dict[str, tuple[str, ...]] = {
         "runtime-deps",
         "compileall",
         "ruff-safety",
+        "client-platform-boundaries",
+        "client-platform-contracts",
         "contracts",
         "subsystem",
         "coverage-migrated",
@@ -263,6 +300,8 @@ TIER_COMMANDS: dict[str, tuple[str, ...]] = {
         "runtime-deps",
         "compileall",
         "ruff-safety",
+        "client-platform-boundaries",
+        "client-platform-contracts",
         "contracts",
         "subsystem",
         "coverage-migrated",
@@ -348,6 +387,8 @@ def run_commands(commands: list[CommandSpec], *, continue_on_failure: bool) -> i
     exit_code = 0
     for spec in commands:
         print(f":: {spec.name}: {spec.display()}", flush=True)
+        if spec.name == "coverage-migrated":
+            _write_migrated_coverage_config()
         env = {**os.environ, **spec.env}
         result = subprocess.run(spec.argv, cwd=REPO_ROOT, env=env, check=False)
         if result.returncode != 0:

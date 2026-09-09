@@ -19,11 +19,7 @@ def get_row_bot_target_data_dir(*, create: bool = True) -> Path:
 
 def get_row_bot_data_dir(*, create: bool = True) -> Path:
     """Return the currently active Row-Bot data directory."""
-    path = Path(os.environ.get(APP_DATA_DIR_ENV) or default_data_dir())
-    path = path.expanduser()
-    if create:
-        path.mkdir(parents=True, exist_ok=True)
-    return path
+    return get_row_bot_target_data_dir(create=create)
 
 
 def get_tasks_db_path(*, create_parent: bool = True) -> Path:
@@ -61,7 +57,7 @@ def get_mobile_db_path(*, create_parent: bool = True) -> Path:
 
 def describe_data_paths() -> dict[str, str]:
     """Return support-friendly local data paths."""
-    data_dir = get_row_bot_data_dir()
+    data_dir = get_row_bot_data_dir(create=False)
     return {
         "data_dir": str(data_dir),
         "tasks_db": str(data_dir / "tasks.db"),

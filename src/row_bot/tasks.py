@@ -2431,6 +2431,22 @@ _active_runs: dict[str, dict] = {}  # thread_id -> {task_id, run_id, step, total
 _active_lock = threading.Lock()
 
 
+def _workflow_entry_failed(run_id: str, thread_id: str, exc: BaseException) -> None:
+    """Retain a truthful workflow terminal fact when its worker cannot enter."""
+    from row_bot.cancellation import current_cancellation_scope
+    scope = current_cancellation_scope()
+    stopped = isinstance(exc, InterruptedError) or bool(scope and scope.is_cancelled())
+    status = "stopped" if stopped else "failed"
+    try:
+        _update_pipeline_status(run_id, status)
+        _finish_run(run_id, status, status_message=("Stop requested before dispatch" if stopped else "Execution resources are unavailable"))
+    finally:
+        with _active_lock:
+            entry = _active_runs.get(thread_id)
+            if entry and entry.get("run_id") == run_id:
+                _active_runs.pop(thread_id, None)
+
+
 def get_running_tasks() -> dict[str, dict]:
     """Return ``{thread_id: {task_id, run_id, step, total, name, icon,
     started_at, step_label, log}}`` for all in-flight task executions."""
@@ -2449,6 +2465,9 @@ def get_task_logs(thread_id: str, last_n: int = 15) -> list[str]:
 
 def stop_task(thread_id: str) -> bool:
     """Signal a running task to stop.  Returns True if found & signalled."""
+    from row_bot.runtime.executions import generation_registry
+
+    registered = generation_registry.stop(thread_id)
     with _active_lock:
         info = _active_runs.get(thread_id)
         if info and "stop_event" in info:
@@ -2462,7 +2481,7 @@ def stop_task(thread_id: str) -> bool:
                 label=f"Stopping {info.get('name') or 'workflow'}",
             )
             return True
-    return False
+    return registered
 
 
 @_schema_retry
@@ -3346,7 +3365,9 @@ def run_task_background(
         def _thread_exists(tid):
             return any(t[0] == tid for t in _list_threads())
 
-        _stop_event = threading.Event()
+        from row_bot.cancellation import current_cancellation_scope
+        scope = current_cancellation_scope()
+        _stop_event = scope.stop_event if scope else threading.Event()
 
         def _task_log(msg: str) -> None:
             """Append a log line visible to the Command Center UI."""
@@ -4377,7 +4398,11 @@ def run_task_background(
             except Exception:
                 pass
 
-    t = threading.Thread(target=_run, daemon=True, name=f"task-{task_id}")
+    from row_bot.runtime.executions import generation_registry
+    t = generation_registry.thread(target=_run, conversation_id=thread_id,
+                                   stop_event=threading.Event(), domain="workflow",
+                                   domain_id=str(uuid.uuid4()), name=f"task-{task_id}", resource_context=True,
+                                   on_entry_failure=lambda exc: _workflow_entry_failed(run_id, thread_id, exc))
     t.start()
 
 
@@ -5590,6 +5615,14 @@ def respond_to_approval(resume_token: str, approved: bool,
         return False
 
     r = dict(row)
+    if str(r.get("resume_kind") or "") == "conversation":
+        conn.close()
+        from row_bot.application.client_platform import client_platform_service, ClientPlatformError
+        try:
+            client_platform_service._resolve_approval(str(r["id"]), {"decision": "approve" if approved else "reject"})
+            return True
+        except ClientPlatformError:
+            return False
     # Check if the approval has expired
     timeout_at = r.get("timeout_at")
     if timeout_at and timeout_at < datetime.now().isoformat():
@@ -5669,6 +5702,30 @@ def respond_to_approval(resume_token: str, approved: bool,
     return True
 
 
+def claim_conversation_approval(approval_id: str, approved: bool, *, expected_payload: str,
+                                expected_timeout: str | None) -> dict | None:
+    """CAS the existing approval owner without dispatching a second worker."""
+    conn = _get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM approval_requests WHERE id=? AND resume_kind='conversation' AND status='pending'",
+                           (approval_id,)).fetchone()
+        if not row or row["approval_payload_json"] != expected_payload or row["timeout_at"] != expected_timeout:
+            conn.rollback()
+            return None
+        if row["timeout_at"] and row["timeout_at"] < datetime.now().isoformat():
+            conn.execute("UPDATE approval_requests SET status='timed_out',responded_at=? WHERE id=? AND status='pending'",
+                         (datetime.now().isoformat(), approval_id))
+            conn.commit()
+            return None
+        changed = conn.execute("UPDATE approval_requests SET status=?,responded_at=? WHERE id=? AND status='pending'",
+                               ("approved" if approved else "denied", datetime.now().isoformat(), approval_id)).rowcount
+        conn.commit()
+        return dict(row) if changed else None
+    finally:
+        conn.close()
+
+
 def _check_approval_timeouts() -> None:
     """Check for expired approval requests and apply timeout action."""
     conn = _get_conn()
@@ -5717,7 +5774,7 @@ def _check_approval_timeouts() -> None:
                 resume_token=str(r.get("resume_token") or ""),
                 approved=False,
             )
-        else:
+        elif str(r.get("resume_kind") or "") != "conversation":
             _resume_pipeline(r["resume_token"], approved=False)
         logger.info("Approval request %s timed out for task %s",
                      r["id"], r["task_id"])
@@ -5779,7 +5836,9 @@ def _resume_graph_interrupted(
         _approval_mode_var.set(approval_mode)
         _persistent_thread_var.set(bool(task.get("persistent_thread_id")))
 
-        _stop_event = threading.Event()
+        from row_bot.cancellation import current_cancellation_scope
+        scope = current_cancellation_scope()
+        _stop_event = scope.stop_event if scope else threading.Event()
         try:
             result = resume_invoke_agent(
                 effective_tool_names, config, approved=approved,
@@ -5981,8 +6040,11 @@ def _resume_graph_interrupted(
             resume_run_id=run_id,
         )
 
-    t = threading.Thread(target=_run, daemon=True,
-                         name=f"graph-resume-{task['name']}")
+    from row_bot.runtime.executions import generation_registry
+    t = generation_registry.thread(target=_run, conversation_id=thread_id,
+                                   stop_event=threading.Event(), domain="workflow",
+                                   domain_id=str(uuid.uuid4()), name=f"graph-resume-{task['name']}", resource_context=True,
+                                   on_entry_failure=lambda exc: _workflow_entry_failed(run_id, thread_id, exc))
     t.start()
 
 

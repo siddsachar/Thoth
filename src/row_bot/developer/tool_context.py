@@ -26,6 +26,16 @@ def reset_context(tokens: tuple[contextvars.Token, contextvars.Token]) -> None:
 
 
 def get_workspace_id() -> str:
+    from row_bot.conversation_resources import current_execution_context
+
+    resources = current_execution_context()
+    if resources is not None:
+        binding = resources.resolve("workspace")
+        if binding is None:
+            return ""
+        # Child allocation persists its actual worktree as a relationship.
+        # A context inherited from a renderer is not an allocation proof.
+        return binding.resource_id
     return _workspace_id_var.get()
 
 

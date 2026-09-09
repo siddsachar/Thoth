@@ -640,7 +640,7 @@ def test_required_group_join_stays_in_one_streamed_parent_generation(
         parent_thread_id="stream-parent",
         parent_generation_id="stream-generation",
         root_objective="Delegate and keep working",
-        model_ref="provider:model",
+        model_ref="model:fixture:model",
         approval_mode="block",
         runtime_surface="normal_chat",
         orchestration_version=2,
@@ -706,7 +706,7 @@ def test_required_group_join_stays_in_one_streamed_parent_generation(
             "root_objective": "Delegate and keep working",
             "runtime_mode": "agent",
             "runtime_surface": "normal_chat",
-            "model_override": "provider:model",
+            "model_override": "model:fixture:model",
         }
     }
 

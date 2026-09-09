@@ -786,6 +786,10 @@ async def _run_startup_sequence():
     with _startup_phase("file_logging"):
         setup_file_logging()
 
+    from row_bot.application.lifecycle import application_lifecycle
+    with _startup_phase("client_platform_recovery"):
+        await application_lifecycle.startup()
+
     if docs_capture_disable_autostart():
         import row_bot.ui.state as _st
 
@@ -1183,14 +1187,20 @@ async def _client_error_handler(request: Request) -> JSONResponse:
 _shutdown_cleanup_started = False
 
 
-async def _cleanup_runtime(reason: str = "shutdown") -> None:
+async def _cleanup_runtime(reason: str = "shutdown") -> bool:
     """Stop long-lived helpers before the process exits."""
     global _shutdown_cleanup_started
     if _shutdown_cleanup_started:
-        return
+        return False
     _shutdown_cleanup_started = True
 
     cleanup_started = time.perf_counter()
+    from row_bot.application.lifecycle import application_lifecycle
+    runtime_shutdown = await application_lifecycle.shutdown()
+    if runtime_shutdown["status"] != "quiesced":
+        logger.warning("Execution cancellation is pending; owned tool resources remain available")
+        _shutdown_cleanup_started = False
+        return False
     stop_performance_monitor()
     mark_shutdown(reason)
     _safe_console_print(f"[shutdown] Cleaning up sessions ({reason})...")
@@ -1239,6 +1249,7 @@ async def _cleanup_runtime(reason: str = "shutdown") -> None:
     except Exception as exc:
         _safe_console_print(f"[shutdown] MCP cleanup error: {exc}")
     _safe_console_print(f"[shutdown] Done in {(time.perf_counter() - cleanup_started):.1f}s")
+    return True
 
 
 async def _launcher_shutdown_handler(request: Request) -> JSONResponse:
@@ -1314,6 +1325,10 @@ from row_bot.tunnel import tunnel_manager as _managed_tunnel_manager
 
 _managed_tunnel_manager.set_managed_origin_registrar(_runtime_access_policy)
 register_mobile_routes(app)
+from row_bot.api.v1.routes import install_client_platform
+from row_bot.application.client_platform import client_platform_service
+
+install_client_platform(app, client_platform_service, instance_id=client_platform_service.instance_id)
 app.add_middleware(
     AccessMiddleware,
     runtime_policy=_runtime_access_policy,
@@ -1323,13 +1338,14 @@ app.add_middleware(
 
 @app.on_shutdown
 async def on_shutdown():
+    if not await _cleanup_runtime():
+        return
     try:
         from row_bot.computer_use.service import shutdown_computer_use
 
         shutdown_computer_use()
     except Exception:
         logger.debug("Computer Use shutdown failed", exc_info=True)
-    await _cleanup_runtime()
 
 
 # MAIN PAGE
@@ -2172,6 +2188,13 @@ async def index():
         rendered_keys = list(p.transcript_rendered_keys or [])
         same_thread = p.transcript_thread_id == state.thread_id
         window_start = int(p.transcript_window_start or 0)
+        slot = getattr(p.chat_container, "default_slot", None)
+        children = list(getattr(slot, "children", []) or [])
+        prefix_control = (
+            children[0]
+            if children and getattr(children[0], "_props", {}).get("data-transcript-prefix-control")
+            else None
+        )
 
         def _scroll_bottom() -> None:
             if p.chat_scroll:
@@ -2251,9 +2274,10 @@ async def index():
         if same_thread and rendered_keys:
             desired_keys = all_keys[window_start:]
             prefix_count = common_key_prefix(rendered_keys, desired_keys)
-            slot = getattr(p.chat_container, "default_slot", None)
-            children = list(getattr(slot, "children", []) or [])
-            if prefix_count > 0 and len(children) >= len(rendered_keys):
+            # Live/approval rows can trail the tracked transcript. Their count
+            # cannot be interpreted as leading history controls: doing so leaves
+            # the old user row in place and appends its checkpoint replacement.
+            if prefix_count > 0 and len(children) == len(rendered_keys) + int(prefix_control is not None):
                 try:
                     child_start, child_end = transcript_message_child_bounds(
                         len(children),
@@ -2333,7 +2357,9 @@ async def index():
         # Keep this scoped to the transcript and bounded to the latest window.
         p.transcript_generation += 1
         sync_generation = p.transcript_generation
-        window = choose_transcript_window(len(state.messages))
+        window = choose_transcript_window(
+            len(state.messages), requested_start=window_start if same_thread else None,
+        )
         display_msgs = state.messages[window.start:window.end]
         display_keys = all_keys[window.start:window.end]
         p.transcript_thread_id = state.thread_id
@@ -2341,7 +2367,13 @@ async def index():
         p.transcript_window_size = window.visible_count
         p.transcript_total = window.total
         p.transcript_rendered_keys = []
-        p.chat_container.clear()
+        if same_thread and prefix_control is not None and window.start == window_start and window.start > 0:
+            # Keep the explicit history control and its existing callback when
+            # rebuilding the same window around an untracked trailing live row.
+            for child in reversed(children[1:]):
+                child.delete()
+        else:
+            p.chat_container.clear()
         if not display_msgs:
             with p.chat_container:
                 ui.label("Do anything…").classes("text-grey-5 text-sm q-pa-md")
@@ -2827,6 +2859,92 @@ async def index():
                 has_history=context_history_present(state),
             )
 
+    from row_bot.projection.conversation import conversation_projection
+    from row_bot.ui.legacy_adapter.view_subscription import LegacyViewSubscription
+    from row_bot.ui.state import _active_generations as _legacy_renderers
+
+    _projection_client = ui.context.client
+    _projection_reconnect = {"force_render": False, "epoch": 0}
+
+    def _apply_projected_checkpoint(tid: str, messages: list[dict]) -> None:
+        if tid != state.thread_id:
+            return
+        state.messages = messages
+        state.cache_active_messages()
+        with _projection_client:
+            if _projection_reconnect["force_render"]:
+                # Server-side render keys cannot prove which patches a disconnected
+                # browser actually received. Reconcile only this transcript.
+                p.transcript_thread_id = ""
+                p.transcript_rendered_keys = []
+                _projection_reconnect["force_render"] = False
+            _refresh_chat_messages()
+
+    def _projection_view_error(tid: str, code: str) -> None:
+        if tid == state.thread_id:
+            with _projection_client:
+                ui.notify("Conversation refresh unavailable. Reopen the conversation to retry.", type="warning")
+
+    _view_subscription = LegacyViewSubscription(
+        conversation_projection, load_thread_messages, _apply_projected_checkpoint,
+        ready=lambda tid: tid not in _legacy_renderers,
+        on_error=_projection_view_error,
+    )
+    _view_subscription.observe(state.thread_id)
+    _projection_timer = safe_timer(0.3, lambda: _view_subscription.observe(state.thread_id))
+
+    def _disconnect_projection_view() -> None:
+        _projection_reconnect["epoch"] += 1
+        _view_subscription.close()
+        _projection_timer.deactivate()
+
+    _projection_client.on_disconnect(_disconnect_projection_view)
+
+    async def _reconnect_projection_view() -> None:
+        _projection_reconnect["epoch"] += 1
+        epoch = _projection_reconnect["epoch"]
+        _view_subscription.close()
+        _projection_timer.deactivate()
+        composer = p.chat_input
+        tid = state.thread_id
+        # Keep the last unsent DOM value in this page only. A dropped socket can
+        # lose its final input event before the existing server draft writer sees it.
+        # NiceGUI emits new element updates before its replay message deque.
+        # A JS round trip queued after rewind is therefore a required barrier:
+        # otherwise an old replay can overwrite a newly reconstructed transcript.
+        try:
+            with _projection_client:
+                draft = await ui.run_javascript("""
+                const name = '__rowBotLegacyReconnect';
+                if (!window[name]) {
+                    window[name] = {draft: null};
+                    window.socket.on('disconnect', () => {
+                        const field = document.querySelector('.row-bot-desktop-composer textarea');
+                        const holder = field && Array.from(document.querySelectorAll('.row-bot-desktop-composer [id]'))
+                            .find(element => /^c\\d+$/.test(element.id) && element.contains(field));
+                        window[name].draft = holder ? {element_id: holder.id, value: field.value} : null;
+                    });
+                }
+                const draft = window[name].draft;
+                window[name].draft = null;
+                return draft;
+                """, timeout=5.0)
+        except Exception:
+            if epoch == _projection_reconnect["epoch"] and _projection_client.has_socket_connection:
+                _projection_view_error(str(tid or ""), "reconnect_unavailable")
+            return
+        if epoch != _projection_reconnect["epoch"] or not _projection_client.has_socket_connection:
+            return
+        if (composer is not None and isinstance(draft, dict) and draft.get("element_id") == f"c{composer.id}"
+                and composer is p.chat_input and tid == state.thread_id):
+            composer.value = str(draft.get("value") or "")
+            from row_bot.threads import save_thread_draft
+            save_thread_draft(str(tid or ""), composer.value, source="normal_chat")
+        _projection_reconnect["force_render"] = True
+        _view_subscription.reconnect(state.thread_id)
+        _projection_timer.activate()
+
+    _projection_client.on_connect(_reconnect_projection_view)
     _notification_timer = safe_timer(1.0, _poll_notifications)
     _voice_timer = safe_timer(0.3, _poll_voice)
     _agent_card_timer = safe_timer(1.0, _poll_agent_card_refresh)
@@ -2836,6 +2954,7 @@ async def index():
         _voice_timer,
         _agent_card_timer,
         _interrupt_timer,
+        _projection_timer,
     )
 
     # ── Build initial view ───────────────────────────────────────────────

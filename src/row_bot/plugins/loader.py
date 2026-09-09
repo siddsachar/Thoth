@@ -84,6 +84,8 @@ class LoadResult:
 
 # ── Module-level state ───────────────────────────────────────────────────────
 _load_results: list[LoadResult] = []
+_registration_lock = threading.RLock()
+_registrations: dict[str, PluginAPI] = {}
 
 
 def _install_plugin_api_compat_aliases() -> None:
@@ -251,15 +253,38 @@ def refresh_plugin_runtime(
 
 def _unregister_loaded_plugins() -> None:
     manifests = list(plugin_registry.get_loaded_manifests())
-    if not manifests:
-        return
-    for manifest in manifests:
-        plugin_id = str(getattr(manifest, "id", "") or "")
-        if plugin_id:
-            _cleanup_plugin_runtime(plugin_id)
+    with _registration_lock:
+        for api in _registrations.values():
+            api._revoke()
+        _registrations.clear()
+        for manifest in manifests:
+            plugin_id = str(getattr(manifest, "id", "") or "")
+            if plugin_id:
+                _cleanup_plugin_runtime(plugin_id)
 
 
-def _cleanup_plugin_runtime(plugin_id: str) -> None:
+def revoke_registration(plugin_id: str) -> None:
+    """Invalidate even a registration that has not published a manifest yet."""
+    with _registration_lock:
+        api = _registrations.get(plugin_id)
+        if api is not None:
+            api._revoke()
+
+
+def _cleanup_plugin_runtime(plugin_id: str, *, expected_api: PluginAPI | None = None) -> None:
+    with _registration_lock:
+        if expected_api is not None and _registrations.get(plugin_id) is not expected_api:
+            expected_api._revoke()
+            return
+        api = _registrations.pop(plugin_id, None)
+        if api is not None:
+            api._revoke()
+        _unregister_plugin_contributions(plugin_id)
+
+
+def _unregister_plugin_contributions(plugin_id: str) -> None:
+    # Caller holds the registration lock through contribution removal, so a
+    # replacement cannot publish between epoch revocation and stale cleanup.
     try:
         plugin_registry.unregister_plugin(plugin_id)
     except Exception:
@@ -493,21 +518,28 @@ def _load_single_plugin_impl(plugin_dir: pathlib.Path) -> LoadResult:
                           manifest=manifest, error=sec_err)
 
     # Step 5: Import and call register()
+    api = None
     try:
         api = PluginAPI(
             plugin_id=plugin_id,
             plugin_dir=plugin_dir,
             state_backend=plugin_state,
+            staged=True,
         )
+        with _registration_lock:
+            old_api = _registrations.get(plugin_id)
+            if old_api is not None:
+                old_api._revoke()
+            _registrations[plugin_id] = api
         _call_register_with_timeout(plugin_dir, api)
     except TimeoutError:
-        _cleanup_plugin_runtime(plugin_id)
+        _cleanup_plugin_runtime(plugin_id, expected_api=api)
         return LoadResult(
             plugin_id=plugin_id, success=False, manifest=manifest,
             error=f"Plugin register() timed out after {REGISTER_TIMEOUT}s"
         )
     except Exception as exc:
-        _cleanup_plugin_runtime(plugin_id)
+        _cleanup_plugin_runtime(plugin_id, expected_api=api)
         return LoadResult(
             plugin_id=plugin_id, success=False, manifest=manifest,
             error=f"Plugin register() crashed: {exc}"
@@ -520,14 +552,20 @@ def _load_single_plugin_impl(plugin_dir: pathlib.Path) -> LoadResult:
         for skill in skills:
             api.register_skill(skill)
 
-        warnings = plugin_registry.register_plugin(
-            manifest=manifest,
-            tools=api._registered_tools,
-            skills=api._registered_skills,
-        )
-        _register_plugin_channels(manifest, api._registered_channels)
+        with _registration_lock, api._registration_lock:
+            if _registrations.get(plugin_id) is not api:
+                raise RuntimeError("Plugin registration superseded")
+            api._check_active()
+            _validate_plugin_channels(manifest, api._registered_channels)
+            warnings = plugin_registry.register_plugin(
+                manifest=manifest,
+                tools=api._registered_tools,
+                skills=api._registered_skills,
+            )
+            _register_plugin_channels(manifest, api._registered_channels)
+            api._publish_webhooks()
     except Exception as exc:
-        _cleanup_plugin_runtime(plugin_id)
+        _cleanup_plugin_runtime(plugin_id, expected_api=api)
         return LoadResult(
             plugin_id=plugin_id, success=False, manifest=manifest,
             error=f"Skill discovery / registry failed: {exc}"
@@ -539,7 +577,7 @@ def _load_single_plugin_impl(plugin_dir: pathlib.Path) -> LoadResult:
     )
 
 
-def _register_plugin_channels(manifest: PluginManifest, channels: list[Any]) -> None:
+def _validate_plugin_channels(manifest: PluginManifest, channels: list[Any]) -> None:
     declared_channels = [
         str(item.get("id") or "").strip()
         for item in getattr(getattr(manifest, "provides", None), "channels", []) or []
@@ -559,6 +597,8 @@ def _register_plugin_channels(manifest: PluginManifest, channels: list[Any]) -> 
             "but declares no channels in plugin.json"
         )
     allowed = set(declared_channels) | {name.replace("-", "_") for name in declared_channels}
+    seen = set()
+    from row_bot.channels import registry as channel_registry
     for channel in channels:
         channel_name = str(getattr(channel, "name", "") or "").strip()
         if channel_name not in allowed:
@@ -566,6 +606,19 @@ def _register_plugin_channels(manifest: PluginManifest, channels: list[Any]) -> 
                 f"Plugin '{manifest.id}' registered undeclared channel "
                 f"'{channel_name}'. Declared channels: {declared_channels}"
             )
+        if channel_name in seen:
+            raise ValueError("Plugin registered a duplicate channel")
+        seen.add(channel_name)
+        existing = channel_registry.get(channel_name)
+        source = channel_registry.get_source(channel_name)
+        if existing is not None and (source.kind != "plugin" or source.plugin_id != manifest.id):
+            raise ValueError("Plugin channel conflicts with an existing channel")
+
+
+def _register_plugin_channels(manifest: PluginManifest, channels: list[Any]) -> None:
+    _validate_plugin_channels(manifest, channels)
+    if not channels:
+        return
 
     from row_bot.channels import registry as channel_registry
 
@@ -743,7 +796,8 @@ def _call_register_with_timeout(plugin_dir: pathlib.Path, api: PluginAPI) -> Non
 
     # Add plugin dir to sys.path temporarily for local imports
     plugin_dir_str = str(plugin_dir)
-    if plugin_dir_str not in sys.path:
+    added_path = plugin_dir_str not in sys.path
+    if added_path:
         sys.path.insert(0, plugin_dir_str)
     _install_plugin_api_compat_aliases()
 
@@ -772,13 +826,15 @@ def _call_register_with_timeout(plugin_dir: pathlib.Path, api: PluginAPI) -> Non
     thread.join(timeout=REGISTER_TIMEOUT)
 
     # Restore sys.path
-    if plugin_dir_str in sys.path:
+    if added_path and plugin_dir_str in sys.path:
         sys.path.remove(plugin_dir_str)
 
     if thread.is_alive():
+        api._revoke()
         raise TimeoutError(f"register() timed out after {REGISTER_TIMEOUT}s")
 
     if error_holder:
+        api._revoke()
         raise error_holder[0]
 
 
@@ -849,3 +905,7 @@ def _reset():
     """Reset load state. For testing only."""
     global _load_results
     _load_results = []
+    with _registration_lock:
+        for api in _registrations.values():
+            api._revoke()
+        _registrations.clear()

@@ -267,6 +267,20 @@ def save_project(project: DesignerProject) -> None:
             raise
 
 
+def get_project_metadata(project_id: str) -> dict[str, str] | None:
+    """Read identity/version without creating folders or normalizing assets."""
+    from row_bot.thread_cleanup import resolve_managed_path
+
+    path = resolve_managed_path(PROJECTS_DIR, f"{project_id}.json")
+    if not path.is_file():
+        return None
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict) or str(data.get("id", "")) != project_id:
+        raise ValueError("Artifact metadata does not match its registered identity")
+    return {key: str(data.get(key) or "") for key in ("id", "name", "updated_at")}
+
+
 def load_project(project_id: str) -> Optional[DesignerProject]:
     """Load a single project by ID. Returns None if not found."""
     _ensure_dirs()

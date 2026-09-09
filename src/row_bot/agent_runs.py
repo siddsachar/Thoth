@@ -31,6 +31,7 @@ AGENT_RUN_STATUSES = {
     "completed_delivery_failed",
     "failed",
     "stopped",
+    "stopping",
     "blocked",
     "timed_out",
     "cancelled",
@@ -316,6 +317,7 @@ _COLUMN_DEFINITIONS: dict[str, dict[str, str]] = {
         "metadata_json": "TEXT DEFAULT '{}'",
     },
     "thread_goals": {
+        "revision": "INTEGER NOT NULL DEFAULT 0",
         "id": "TEXT PRIMARY KEY",
         "thread_id": "TEXT NOT NULL",
         "objective": "TEXT NOT NULL",
@@ -902,7 +904,7 @@ def append_agent_event(
     visibility = _normalize_visibility(visibility)
     conn = _get_conn()
     try:
-        conn.execute(
+        inserted = conn.execute(
             "INSERT INTO agent_run_events "
             "(id, run_id, ts, type, visibility, payload_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -920,8 +922,14 @@ def append_agent_event(
             (ts, ts, str(run_id)),
         )
         conn.commit()
+        event_revision = int(inserted.lastrowid)
     finally:
         conn.close()
+    run = get_agent_run(run_id)
+    if run:
+        from row_bot.projection.conversation import conversation_projection
+        conversation_projection.publish(str(run.get("parent_thread_id") or run.get("thread_id") or ""),
+            "agent.activity", {"run_id": str(run_id), "status": str(run["status"]), "revision": str(event_revision)})
     return {
         "id": event_id,
         "run_id": str(run_id),
@@ -1231,7 +1239,7 @@ def get_agent_events(run_id: str, limit: int = 100) -> list[dict[str, Any]]:
     return [_event_from_row(row) for row in rows]
 
 
-def append_agent_parent_message(run_id: str, message: str) -> dict[str, Any] | None:
+def append_agent_parent_message(run_id: str, message: str, *, message_id: str = "") -> dict[str, Any] | None:
     """Record a parent steering/follow-up message for a child Agent Run."""
     ensure_agent_run_schema()
     run = get_agent_run(run_id)
@@ -1243,7 +1251,7 @@ def append_agent_parent_message(run_id: str, message: str) -> dict[str, Any] | N
     append_agent_event(
         run_id,
         "parent.message",
-        {"message": text},
+        {"message": text, "message_id": message_id or str(uuid.uuid4())},
         visibility="user_visible",
     )
     if str(run.get("status") or "") == "queued":
@@ -1273,6 +1281,41 @@ def get_agent_parent_messages(run_id: str, limit: int = 20) -> list[str]:
             if text:
                 messages.append(text)
     return messages
+
+
+def pending_parent_message_records(run_id: str, limit: int = 5) -> list[dict[str, str]]:
+    """Read exact oldest unconsumed steering identities, including equal text."""
+    ensure_agent_run_schema()
+    conn = _get_conn()
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS agent_parent_message_receipts (run_id TEXT NOT NULL,message_id TEXT NOT NULL,PRIMARY KEY(run_id,message_id))")
+        consumed = {str(row[0]) for row in conn.execute("SELECT message_id FROM agent_parent_message_receipts WHERE run_id=?", (run_id,))}
+        rows = conn.execute("SELECT id,payload_json FROM agent_run_events WHERE run_id=? AND type='parent.message' ORDER BY rowid", (run_id,)).fetchall()
+        result = []
+        for row in rows:
+            payload = _parse_json(row["payload_json"])
+            message_id = str(payload.get("message_id") or row["id"])
+            if message_id not in consumed:
+                result.append({"id": message_id, "content": str(payload.get("message") or "")})
+            if len(result) >= limit:
+                break
+        conn.commit()
+        return result
+    finally:
+        conn.close()
+
+
+def acknowledge_parent_messages(run_id: str, message_ids: Sequence[str]) -> None:
+    """Acknowledge only the exact batch passed to a successful child invocation."""
+    conn = _get_conn()
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS agent_parent_message_receipts (run_id TEXT NOT NULL,message_id TEXT NOT NULL,PRIMARY KEY(run_id,message_id))")
+        conn.executemany("INSERT OR IGNORE INTO agent_parent_message_receipts VALUES(?,?)", [(run_id, message_id) for message_id in message_ids])
+        conn.commit()
+    finally:
+        conn.close()
+    from row_bot.agent_orchestrator import mark_steering_delivered
+    mark_steering_delivered(run_id, message_ids)
 
 
 def _status_filter(statuses: str | Iterable[str] | None) -> list[str]:
@@ -1358,13 +1401,18 @@ def list_child_runs(
 
 
 def stop_agent_run(run_id: str) -> dict[str, Any] | None:
-    """Request stop and mark the run stopped until a live runner can exit."""
+    """Request Stop; a live producer retains ownership until acknowledged exit."""
     ensure_agent_run_schema()
     run = get_agent_run(run_id)
     if not run:
         return None
     now = _now()
     terminal = str(run.get("status") or "") in TERMINAL_STATUSES
+    from row_bot.runtime.executions import generation_registry
+    handles = [h for h in generation_registry.active() if h.domain_id == str(run_id)]
+    for handle in handles:
+        generation_registry.cancel(handle)
+    stopping = bool(handles)
     conn = _get_conn()
     try:
         if terminal:
@@ -1374,17 +1422,17 @@ def stop_agent_run(run_id: str) -> dict[str, Any] | None:
             )
         else:
             conn.execute(
-                "UPDATE agent_runs SET stop_requested = 1, status = 'stopped', "
+                "UPDATE agent_runs SET stop_requested = 1, status = ?, "
                 "status_message = 'Stop requested', finished_at = ?, updated_at = ? "
                 "WHERE id = ?",
-                (now, now, str(run_id)),
+                ("stopping" if stopping else "stopped", "" if stopping else now, now, str(run_id)),
             )
         conn.commit()
     finally:
         conn.close()
     append_agent_event(run_id, "run.stopped", {"requested": True}, visibility="log")
     stopped_run = get_agent_run(run_id)
-    if not terminal:
+    if not terminal and not stopping:
         try:
             from row_bot.agent_orchestrator import handle_run_terminal
 

@@ -8,8 +8,6 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any
 
-from nicegui import background_tasks, run
-
 from row_bot.developer.change_ledger import ChangeSet
 from row_bot.developer.devcontainer import DevcontainerInfo
 from row_bot.developer.review import ChangedFile, DiffStats
@@ -96,31 +94,48 @@ def request_snapshot_refresh(
         return
 
     async def _runner() -> None:
-        while True:
-            state.pending = False
-            await asyncio.sleep(max(0.0, debounce))
-            started = time.perf_counter()
-            snapshot = await run.io_bound(_collect_snapshot_sync, workspace_id, thread_id)
-            _store_snapshot(snapshot)
-            elapsed = time.perf_counter() - started
-            if elapsed > 0.75:
-                logger.info(
-                    "perf: developer inspector snapshot refreshed in %.3fs workspace=%s reason=%s",
-                    elapsed,
-                    workspace_id,
-                    reason,
-                )
-            if not state.pending:
-                break
+        try:
+            while _states.get(key) is state:
+                await asyncio.sleep(max(0.0, debounce))
+                state.pending = False
+                started = time.perf_counter()
+                snapshot = await asyncio.to_thread(_collect_snapshot_sync, workspace_id, thread_id)
+                # Clearing a conversation invalidates an in-flight collection even
+                # when its thread cannot be interrupted during a filesystem read.
+                if _states.get(key) is not state:
+                    return
+                _store_snapshot(snapshot)
+                elapsed = time.perf_counter() - started
+                if elapsed > 0.75:
+                    logger.info("perf: developer inspector snapshot refreshed in %.3fs", elapsed)
+                if not state.pending:
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Keep the last confirmed snapshot. The next request can retry.
+            logger.warning("Developer inspector snapshot refresh failed", exc_info=True)
+        finally:
+            if _states.get(key) is state:
+                state.task = None
 
     try:
-        state.task = background_tasks.create(
-            _runner(),
-            name=f"developer inspector snapshot {workspace_id}",
-        )
-    except AssertionError:
-        # Tests or early startup paths may call this before NiceGUI owns a loop.
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Supported synchronous callers during startup have no event loop.
         _store_snapshot(_collect_snapshot_sync(workspace_id, thread_id))
+    else:
+        state.task = loop.create_task(_runner(), name="developer inspector snapshot")
+
+
+async def shutdown_snapshot_refreshes() -> None:
+    """Invalidate pending collections and release owned scheduler tasks."""
+
+    tasks = [state.task for state in _states.values() if state.task is not None]
+    _states.clear()
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def update_snapshot_approval_mode(

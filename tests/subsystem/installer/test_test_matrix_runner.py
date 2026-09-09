@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import configparser
+from pathlib import Path
 import subprocess
+import sys
+import textwrap
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -16,6 +21,8 @@ def test_pr_tier_contains_required_deterministic_lanes() -> None:
     assert "lock-check" in names
     assert "runtime-deps" in names
     assert "contracts" in names
+    assert "client-platform-boundaries" in names
+    assert "client-platform-contracts" in names
     assert "subsystem" in names
     assert "coverage-migrated" in names
     assert "deterministic" in names
@@ -25,15 +32,17 @@ def test_pr_tier_contains_required_deterministic_lanes() -> None:
     assert "legacy-test-suite" not in names
 
 
-def test_coverage_tier_enforces_migrated_subsystem_baseline() -> None:
+def test_coverage_tier_enforces_migrated_subsystem_baseline(tmp_path, monkeypatch) -> None:
     coverage = matrix.COMMANDS["coverage-migrated"]
     threshold_arg = next(arg for arg in coverage.argv if arg.startswith("--cov-fail-under="))
-    selected_modules = {arg.removeprefix("--cov=") for arg in coverage.argv if arg.startswith("--cov=")}
+    selected_modules = set(matrix.MIGRATED_COVERAGE_MODULES)
 
     assert int(threshold_arg.split("=", 1)[1]) >= 45
     assert "--cov-fail-under=55" in coverage.argv
     assert "--cov-report=xml:.tmp/coverage/migrated-subsystems.xml" in coverage.argv
-    assert "--cov=row_bot.knowledge_graph" in coverage.argv
+    assert "--cov=src/row_bot" in coverage.argv
+    assert "--cov-config=.tmp/coverage/migrated-subsystems.coveragerc" in coverage.argv
+    assert "row_bot.knowledge_graph" in selected_modules
     assert {
         "row_bot.providers.runtime",
         "row_bot.providers.selection",
@@ -50,6 +59,57 @@ def test_coverage_tier_enforces_migrated_subsystem_baseline() -> None:
     } <= selected_modules
     assert not any(module.startswith("row_bot.skills_hub") for module in selected_modules)
     assert coverage.env["COVERAGE_FILE"].endswith(".coverage.migrated-subsystems")
+    monkeypatch.setattr(matrix, "REPO_ROOT", tmp_path)
+    config = configparser.ConfigParser()
+    config.read(matrix._write_migrated_coverage_config(), encoding="utf-8")
+    assert config["run"]["source"] == "src/row_bot"
+    assert set(config["report"]["include"].split()) == {
+        "src/" + module.replace(".", "/") + ".py" for module in selected_modules
+    }
+    assert len(selected_modules) == 21
+
+
+def test_coverage_discovery_preserves_imports_and_counts_unexecuted_files(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(matrix, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(matrix, "MIGRATED_COVERAGE_MODULES", ("row_bot.covered", "row_bot.uncovered"))
+    package = tmp_path / "src" / "row_bot"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        "from pathlib import Path\nPath('discovery-imported').write_text('unexpected')\n", encoding="utf-8"
+    )
+    for name in ("covered", "uncovered", "excluded"):
+        (package / f"{name}.py").write_text("value = 1\n", encoding="utf-8")
+    config = matrix._write_migrated_coverage_config()
+    script = textwrap.dedent("""
+        import coverage
+        import runpy
+        import sys
+        cov = coverage.Coverage(config_file=sys.argv[1], data_file=sys.argv[2])
+        cov.start()
+        try:
+            runpy.run_path('src/row_bot/covered.py')
+            runpy.run_path('src/row_bot/excluded.py')
+        finally:
+            cov.stop()
+        cov.xml_report(outfile='coverage.xml')
+    """)
+    subprocess.run(
+        [sys.executable, "-c", script, str(config), str(tmp_path / ".coverage")],
+        cwd=tmp_path, check=True, capture_output=True, text=True, timeout=30,
+    )
+    assert not (tmp_path / "discovery-imported").exists()
+    classes = {Path(node.attrib["filename"]).name: node for node in ET.parse(tmp_path / "coverage.xml").findall(".//class")}
+    assert set(classes) == {"covered.py", "uncovered.py"}
+    assert float(classes["covered.py"].attrib["line-rate"]) == 1
+    assert float(classes["uncovered.py"].attrib["line-rate"]) == 0
+
+
+def test_coverage_dry_run_does_not_write_generated_configuration(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(matrix, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: pytest.fail("dry-run should not execute commands"))
+    assert matrix.main(["coverage", "--dry-run"]) == 0
+    assert "--cov=src/row_bot" in capsys.readouterr().out
+    assert not (tmp_path / matrix.COVERAGE_CONFIG_PATH).exists()
 
 
 def test_release_tier_matches_pr_preflight_lanes() -> None:

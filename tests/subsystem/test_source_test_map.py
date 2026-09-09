@@ -8,6 +8,25 @@ from tests.helpers.source_test_map import SOURCE_TEST_RULES, select_tests_for_ch
 pytestmark = pytest.mark.subsystem
 
 
+def test_headless_platform_changes_select_cross_boundary_behavior_and_quality():
+    selection = select_tests_for_changes([
+        "src/row_bot/runtime/executions.py", "src/row_bot/api/v1/routes.py",
+        "src/row_bot/conversation_resources.py", "scripts/ui_performance_harness.py",
+    ])
+    assert "unified_client_platform" in selection.matched_rules
+    assert "client_platform_quality" in selection.matched_rules
+    assert "tests/contracts/client_platform" in selection.test_paths
+    assert "tests/subsystem/developer/test_conversation_resources.py" in selection.test_paths
+    assert not selection.unmatched_files
+
+
+def test_shared_execution_changes_select_legacy_overlay_and_workflow_adapters() -> None:
+    for path in ("src/row_bot/ui/streaming.py", "src/row_bot/tasks.py"):
+        selection = select_tests_for_changes([path])
+        assert "tests/test_buddy_overlay.py" in selection.test_paths
+        assert "tests/test_channel_workflow_model_routing.py" in selection.test_paths
+
+
 def test_source_test_rules_have_unique_names_and_actionable_tests() -> None:
     names = [rule.name for rule in SOURCE_TEST_RULES]
     assert len(names) == len(set(names))
@@ -15,6 +34,12 @@ def test_source_test_rules_have_unique_names_and_actionable_tests() -> None:
         assert rule.patterns
         assert rule.test_paths
         assert rule.reason.strip()
+
+
+def test_history_control_change_selects_actual_page_reconciliation_regression() -> None:
+    selection = select_tests_for_changes(["src/row_bot/ui/chat.py"])
+    assert "unified_client_platform" in selection.matched_rules
+    assert "tests/subsystem/test_client_platform_view_subscription.py" in selection.test_paths
 
 
 def test_thread_cleanup_change_selects_cross_subsystem_deletion_contracts() -> None:
@@ -316,3 +341,13 @@ def test_unknown_change_is_reported_for_followup() -> None:
 
     assert selection.test_paths == ()
     assert selection.unmatched_files == ("docs/random-note.md",)
+
+
+def test_isolation_change_selects_notification_producing_runtime_paths() -> None:
+    selection = select_tests_for_changes(["tests/conftest.py"])
+
+    assert "test_isolation" in selection.matched_rules
+    assert "tests/test_chat_only_runtime.py" in selection.test_paths
+    assert "tests/subsystem/workflows/test_delegate_agent_step.py" in selection.test_paths
+    assert "tests/test_buddy_core.py" in selection.test_paths
+    assert not selection.unmatched_files

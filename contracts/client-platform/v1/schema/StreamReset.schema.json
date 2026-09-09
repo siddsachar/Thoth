@@ -1,0 +1,19 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "recovery": {
+      "const": "resubscribe",
+      "default": "resubscribe",
+      "title": "Recovery",
+      "type": "string"
+    },
+    "snapshot_required": {
+      "const": true,
+      "default": true,
+      "title": "Snapshot Required",
+      "type": "boolean"
+    }
+  },
+  "title": "StreamReset",
+  "type": "object"
+}

@@ -67,15 +67,9 @@ EXAMPLE_PROMPTS = [
 # FILE / UPLOAD EXTENSIONS
 # ═════════════════════════════════════════════════════════════════════════════
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
-DATA_EXTENSIONS = {".csv", ".tsv", ".xlsx", ".xls", ".json", ".jsonl"}
-TEXT_EXTENSIONS = {
-    ".txt", ".md", ".py", ".js", ".ts", ".html", ".css", ".xml", ".yaml",
-    ".yml", ".toml", ".ini", ".cfg", ".log", ".sh", ".bat", ".ps1", ".sql",
-    ".r", ".java", ".c", ".cpp", ".h", ".cs", ".go", ".rs", ".rb", ".php",
-    ".swift", ".kt", ".lua", ".pl",
-}
-CHARS_PER_TOKEN_APPROX = 3  # used only for file-size char budgets
+from row_bot.file_context import (
+    IMAGE_EXTENSIONS, DATA_EXTENSIONS, TEXT_EXTENSIONS, CHARS_PER_TOKEN_APPROX,
+)
 
 ALLOWED_UPLOAD_SUFFIXES = sorted(
     ext.lstrip(".") for ext in IMAGE_EXTENSIONS | TEXT_EXTENSIONS | DATA_EXTENSIONS | {".pdf"}

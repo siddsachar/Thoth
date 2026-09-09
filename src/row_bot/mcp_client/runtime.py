@@ -156,14 +156,21 @@ class PrivateMcpSession:
     def open(self) -> None:
         _schedule(self._open_async()).result(timeout=min(self.timeout, 35.0))
 
-    async def _call_raw_async(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+    async def _call_raw_async(self, tool_name: str, arguments: dict[str, Any], *,
+                              deadline: float | None = None) -> Any:
         if self._session is None or self._session_lock is None:
             raise RuntimeError("Private MCP session is not connected")
-        async with self._session_lock:
-            return await asyncio.wait_for(
-                self._session.call_tool(str(tool_name), dict(arguments or {})),
-                timeout=self.timeout,
-            )
+        deadline = deadline if deadline is not None else time.monotonic() + self.timeout
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("MCP deadline expired")
+        async with asyncio.timeout(remaining):
+            async with self._session_lock:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("MCP deadline expired")
+                if self._session is None:
+                    raise RuntimeError("Private MCP session is not connected")
+                return await self._session.call_tool(str(tool_name), dict(arguments or {}))
 
     def call_raw(self, tool_name: str, arguments: dict[str, Any] | None = None) -> Any:
         """Return the SDK CallToolResult without generic text normalization."""
@@ -171,10 +178,10 @@ class PrivateMcpSession:
         scope = current_cancellation_scope()
         if scope is not None and scope.is_cancelled():
             raise concurrent.futures.CancelledError()
-        future = _schedule(self._call_raw_async(tool_name, dict(arguments or {})))
+        deadline = time.monotonic() + self.timeout
+        future = _schedule(self._call_raw_async(tool_name, dict(arguments or {}), deadline=deadline))
         unregister = scope.register(self.close, "private_mcp.close") if scope is not None else None
         try:
-            deadline = time.monotonic() + self.timeout + 5.0
             while True:
                 if scope is not None and scope.is_cancelled():
                     future.cancel()
@@ -276,7 +283,11 @@ def _future_result_with_generation_cancellation(
 ) -> str:
     scope = current_cancellation_scope()
     if scope is None:
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise
     if scope.is_cancelled():
         future.cancel()
         return stopped_message
@@ -289,6 +300,7 @@ def _future_result_with_generation_cancellation(
                 return stopped_message
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                future.cancel()
                 raise concurrent.futures.TimeoutError()
             try:
                 return future.result(timeout=min(0.1, remaining))
@@ -500,10 +512,14 @@ class McpServerRuntime:
     async def _discover_tools(self) -> None:
         if not self.session:
             return
-        result = await asyncio.wait_for(self.session.list_tools(), timeout=float(self.cfg.get("connect_timeout", 30)))
+        session = self.session
+        result = await asyncio.wait_for(session.list_tools(), timeout=float(self.cfg.get("connect_timeout", 30)))
         tools = list(getattr(result, "tools", result if isinstance(result, list) else []))
         normalized = _normalize_tools(self.name, self.cfg, tools)
         with _runtime_lock:
+            if (self.session is not session or (self.stop_event is not None and self.stop_event.is_set())
+                    or _servers.get(self.name, self) is not self):
+                return  # An old discovery callback cannot revive a replaced runtime.
             _catalog[self.name] = normalized
         _update_status(
             self.name,
@@ -517,15 +533,25 @@ class McpServerRuntime:
         log_event("mcp.tools.discovered", server=self.name, tools=len(normalized))
         mcp_config.clear_agent_cache_if_loaded()
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        async with self._session_lock:
-            if not self.session:
-                raise RuntimeError(f"MCP server '{self.name}' is not connected")
-            timeout = float(self.cfg.get("tool_timeout", 120))
-            output_limit = int(self.cfg.get("output_limit", 24000))
-            log_event("mcp.tool.call", server=self.name, tool=tool_name)
-            result = await asyncio.wait_for(self.session.call_tool(tool_name, arguments or {}), timeout=timeout)
-            return normalize_call_result(result, output_limit=output_limit)
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any], *,
+                        deadline: float | None = None,
+                        validate: Callable[[], None] | None = None) -> str:
+        deadline = deadline if deadline is not None else time.monotonic() + float(self.cfg.get("tool_timeout", 120))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("MCP deadline expired")
+        async with asyncio.timeout(remaining):
+            async with self._session_lock:
+                if validate is not None:
+                    validate()
+                if deadline <= time.monotonic():
+                    raise TimeoutError("MCP deadline expired")
+                if not self.session:
+                    raise RuntimeError(f"MCP server '{self.name}' is not connected")
+                output_limit = int(self.cfg.get("output_limit", 24000))
+                log_event("mcp.tool.call", server=self.name, tool=tool_name)
+                result = await self.session.call_tool(tool_name, arguments or {})
+                return normalize_call_result(result, output_limit=output_limit)
 
     async def list_resources(self) -> str:
         if not self.session:
@@ -733,85 +759,136 @@ def probe_server(name: str, server_cfg: dict[str, Any], timeout: float | None = 
         }
 
 
-def _call_tool_sync(server_name: str, tool_name: str, kwargs: dict[str, Any]) -> str:
+def _validate_bound_runtime(server_name: str, expected: Any, *, tool_name: str = "",
+                            feature: str = "") -> None:
+    cfg = _get_effective_config()
+    server_cfg = cfg.get("servers", {}).get(server_name, {})
+    if not cfg.get("enabled") or not server_cfg.get("enabled"):
+        raise RuntimeError("MCP capability was revoked")
+    with _runtime_lock:
+        if _servers.get(server_name) is not expected:
+            raise RuntimeError("MCP registration was replaced")
+        if tool_name:
+            info = _catalog.get(server_name, {}).get(tool_name)
+            options = server_cfg.get("tools", {})
+            if (info is None or tool_name in options.get("exclude", [])
+                    or (options.get("include") and tool_name not in options["include"])
+                    or not options.get("enabled", {}).get(tool_name, tool_enabled_by_default(info.destructive))):
+                raise RuntimeError("MCP capability was revoked")
+        if feature and not server_cfg.get("tools", {}).get(feature):
+            raise RuntimeError("MCP capability was revoked")
+
+
+def _call_tool_sync(server_name: str, tool_name: str, kwargs: dict[str, Any], *, expected: Any = None) -> str:
     with _runtime_lock:
         runtime = _servers.get(server_name)
     if not runtime:
         raise RuntimeError(f"MCP server '{server_name}' is not running")
-    future = _schedule(runtime.call_tool(tool_name, kwargs))
+    timeout = float(runtime.cfg.get("tool_timeout", 120))
+    deadline = time.monotonic() + timeout
+    validate = None
+    if expected is not None:
+        validate = lambda: _validate_bound_runtime(server_name, expected, tool_name=tool_name)
+        validate()
+    future = _schedule(runtime.call_tool(tool_name, kwargs, deadline=deadline, validate=validate))
     return _future_result_with_generation_cancellation(
         future,
-        timeout=float(runtime.cfg.get("tool_timeout", 120)) + 5,
+        timeout=max(0, deadline - time.monotonic()),
         stopped_message="MCP tool call stopped by user.",
         label=f"mcp_tool.{server_name}.{tool_name}.cancel",
     )
 
 
-def _make_tool_func(server_name: str, tool_name: str) -> Callable[..., str]:
+def _make_tool_func(server_name: str, tool_name: str, *, enforce_policy: bool = False) -> Callable[..., str]:
+    with _runtime_lock:
+        expected = _servers.get(server_name, object()) if enforce_policy else None
     def _run(**kwargs: Any) -> str:
-        return _call_tool_sync(server_name, tool_name, kwargs)
+        return _call_tool_sync(server_name, tool_name, kwargs, expected=expected)
 
     return _run
 
 
-def _make_resource_list_func(server_name: str) -> Callable[[], str]:
+async def _authorized_operation(server_name: str, expected: Any, feature: str,
+                                operation: Callable[[], Any], deadline: float) -> str:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("MCP deadline expired")
+    async with asyncio.timeout(remaining):
+        if expected is not None:
+            _validate_bound_runtime(server_name, expected, feature=feature)
+        return await operation()
+
+
+def _make_resource_list_func(server_name: str, *, enforce_policy: bool = False) -> Callable[[], str]:
+    with _runtime_lock:
+        expected = _servers.get(server_name, object()) if enforce_policy else None
     def _run() -> str:
         with _runtime_lock:
             runtime = _servers.get(server_name)
         if not runtime:
             raise RuntimeError(f"MCP server '{server_name}' is not running")
-        future = _schedule(runtime.list_resources())
+        deadline = time.monotonic() + float(runtime.cfg.get("tool_timeout", 120))
+        future = _schedule(_authorized_operation(server_name, expected, "resources_enabled", runtime.list_resources, deadline))
         return _future_result_with_generation_cancellation(
             future,
-            timeout=float(runtime.cfg.get("tool_timeout", 120)) + 5,
+            timeout=max(0, deadline - time.monotonic()),
             stopped_message="MCP resource listing stopped by user.",
             label=f"mcp_resources.{server_name}.cancel",
         )
     return _run
 
 
-def _make_resource_read_func(server_name: str) -> Callable[..., str]:
+def _make_resource_read_func(server_name: str, *, enforce_policy: bool = False) -> Callable[..., str]:
+    with _runtime_lock:
+        expected = _servers.get(server_name, object()) if enforce_policy else None
     def _run(uri: str) -> str:
         with _runtime_lock:
             runtime = _servers.get(server_name)
         if not runtime:
             raise RuntimeError(f"MCP server '{server_name}' is not running")
-        future = _schedule(runtime.read_resource(uri))
+        deadline = time.monotonic() + float(runtime.cfg.get("tool_timeout", 120))
+        future = _schedule(_authorized_operation(server_name, expected, "resources_enabled", lambda: runtime.read_resource(uri), deadline))
         return _future_result_with_generation_cancellation(
             future,
-            timeout=float(runtime.cfg.get("tool_timeout", 120)) + 5,
+            timeout=max(0, deadline - time.monotonic()),
             stopped_message="MCP resource read stopped by user.",
             label=f"mcp_resource.{server_name}.cancel",
         )
     return _run
 
 
-def _make_prompt_list_func(server_name: str) -> Callable[[], str]:
+def _make_prompt_list_func(server_name: str, *, enforce_policy: bool = False) -> Callable[[], str]:
+    with _runtime_lock:
+        expected = _servers.get(server_name, object()) if enforce_policy else None
     def _run() -> str:
         with _runtime_lock:
             runtime = _servers.get(server_name)
         if not runtime:
             raise RuntimeError(f"MCP server '{server_name}' is not running")
-        future = _schedule(runtime.list_prompts())
+        deadline = time.monotonic() + float(runtime.cfg.get("tool_timeout", 120))
+        future = _schedule(_authorized_operation(server_name, expected, "prompts_enabled", runtime.list_prompts, deadline))
         return _future_result_with_generation_cancellation(
             future,
-            timeout=float(runtime.cfg.get("tool_timeout", 120)) + 5,
+            timeout=max(0, deadline - time.monotonic()),
             stopped_message="MCP prompt listing stopped by user.",
             label=f"mcp_prompts.{server_name}.cancel",
         )
     return _run
 
 
-def _make_prompt_get_func(server_name: str) -> Callable[..., str]:
+def _make_prompt_get_func(server_name: str, *, enforce_policy: bool = False) -> Callable[..., str]:
+    with _runtime_lock:
+        expected = _servers.get(server_name, object()) if enforce_policy else None
     def _run(name: str, arguments: dict[str, Any] | None = None) -> str:
         with _runtime_lock:
             runtime = _servers.get(server_name)
         if not runtime:
             raise RuntimeError(f"MCP server '{server_name}' is not running")
-        future = _schedule(runtime.get_prompt(name, arguments))
+        deadline = time.monotonic() + float(runtime.cfg.get("tool_timeout", 120))
+        future = _schedule(_authorized_operation(server_name, expected, "prompts_enabled", lambda: runtime.get_prompt(name, arguments), deadline))
         return _future_result_with_generation_cancellation(
             future,
-            timeout=float(runtime.cfg.get("tool_timeout", 120)) + 5,
+            timeout=max(0, deadline - time.monotonic()),
             stopped_message="MCP prompt read stopped by user.",
             label=f"mcp_prompt.{server_name}.cancel",
         )
@@ -866,7 +943,7 @@ def get_langchain_tools(
             continue
         try:
             wrappers.append(StructuredTool.from_function(
-                func=_make_tool_func(info.server_name, info.name),
+                func=_make_tool_func(info.server_name, info.name, enforce_policy=True),
                 name=info.prefixed_name,
                 description=f"External MCP tool from server '{info.server_name}'. {info.description}",
                 args_schema=_schema_to_model(info),
@@ -885,13 +962,13 @@ def get_langchain_tools(
             read_name = f"mcp_{safe_server}_read_resource"
             if _mcp_runtime_name_allowed(list_name, allow):
                 wrappers.append(StructuredTool.from_function(
-                    func=_make_resource_list_func(server_name),
+                    func=_make_resource_list_func(server_name, enforce_policy=True),
                     name=list_name,
                     description=f"List resources exposed by MCP server '{server_name}'.",
                 ))
             if _mcp_runtime_name_allowed(read_name, allow):
                 wrappers.append(StructuredTool.from_function(
-                    func=_make_resource_read_func(server_name),
+                    func=_make_resource_read_func(server_name, enforce_policy=True),
                     name=read_name,
                     description=f"Read a resource URI from MCP server '{server_name}'.",
                     args_schema=_ResourceReadArgs,
@@ -901,13 +978,13 @@ def get_langchain_tools(
             get_name = f"mcp_{safe_server}_get_prompt"
             if _mcp_runtime_name_allowed(list_name, allow):
                 wrappers.append(StructuredTool.from_function(
-                    func=_make_prompt_list_func(server_name),
+                    func=_make_prompt_list_func(server_name, enforce_policy=True),
                     name=list_name,
                     description=f"List prompts exposed by MCP server '{server_name}'.",
                 ))
             if _mcp_runtime_name_allowed(get_name, allow):
                 wrappers.append(StructuredTool.from_function(
-                    func=_make_prompt_get_func(server_name),
+                    func=_make_prompt_get_func(server_name, enforce_policy=True),
                     name=get_name,
                     description=f"Get a prompt from MCP server '{server_name}'.",
                     args_schema=_PromptGetArgs,

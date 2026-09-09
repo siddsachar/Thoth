@@ -210,6 +210,8 @@ class GenerationState:
     enabled_tools: list
     cancel_scope: Any = None
     generation_id: str = ""
+    checkpoint_message_id: str = ""
+    checkpoint_revision: str = ""
     deletion_token: str = ""
     orchestration_id: str = ""
     orchestration_required: bool = False

@@ -141,9 +141,30 @@ _image_cache: dict[str, bytes] = {}  # filename → raw bytes
 _image_cache_thread_id: str | None = None  # thread that owns __last_generated__
 
 
+def _execution_image_cache() -> dict[str, bytes]:
+    from row_bot.application.attachment_context import tool_cache
+    return tool_cache("images", _image_cache)
+
+
+def _set_pending_image(value: str) -> None:
+    from row_bot.application.attachment_context import current_caches
+    global _last_generated_image
+    caches = current_caches()
+    if caches is None:
+        _last_generated_image = value
+    else:
+        caches.pending_image = value
+
+
 def get_and_clear_last_image() -> str | None:
     """Return and clear the pending generated image, if any."""
     global _last_generated_image
+    from row_bot.application.attachment_context import current_caches
+    caches = current_caches()
+    if caches is not None:
+        img = caches.pending_image
+        caches.pending_image = None
+        return img
     img = _last_generated_image
     _last_generated_image = None
     return img
@@ -158,6 +179,12 @@ def _save_image_to_disk(b64_str: str, prefix: str = "gen") -> str | None:
     referenced by tools like ``send_telegram_photo``.
     """
     try:
+        from row_bot.application.attachment_context import current_caches
+        caches = current_caches()
+        if caches is not None:
+            from row_bot.application.generated_media import save_generated_output
+            return save_generated_output(caches.conversation_id, base64.b64decode(b64_str),
+                                         prefix=prefix, extension="png")
         from row_bot.agent import _current_thread_id_var
         from row_bot.threads import save_media_file, _next_media_filename
 
@@ -396,7 +423,7 @@ def _resolve_image_source(image_source: str) -> bytes:
     """
     # "last" — use the last generated image
     if image_source.strip().lower() == "last":
-        last_b64 = _image_cache.get("__last_generated__")
+        last_b64 = _execution_image_cache().get("__last_generated__")
         if last_b64:
             return last_b64
         raise ValueError(
@@ -405,11 +432,11 @@ def _resolve_image_source(image_source: str) -> bytes:
         )
 
     # Check attachment cache (pasted images)
-    if image_source in _image_cache:
-        return _image_cache[image_source]
+    if image_source in _execution_image_cache():
+        return _execution_image_cache()[image_source]
 
     # Partial filename match in cache
-    for cached_name, cached_data in _image_cache.items():
+    for cached_name, cached_data in _execution_image_cache().items():
         if cached_name != "__last_generated__" and image_source.lower() in cached_name.lower():
             return cached_data
 
@@ -498,8 +525,8 @@ def _generate_image(
             return f"Image generation failed: {e}"
 
         b64_str = base64.b64encode(img_bytes).decode("ascii")
-        _last_generated_image = b64_str
-        _image_cache["__last_generated__"] = img_bytes
+        _set_pending_image(b64_str)
+        _execution_image_cache()["__last_generated__"] = img_bytes
         saved = _save_image_to_disk(b64_str, "gen")
         result = (
             f"Image generated successfully. Model: {model} | "
@@ -568,8 +595,8 @@ def _generate_image(
         else:
             return "Image generation returned no image data."
 
-        _last_generated_image = b64_str
-        _image_cache["__last_generated__"] = base64.b64decode(b64_str)
+        _set_pending_image(b64_str)
+        _execution_image_cache()["__last_generated__"] = base64.b64decode(b64_str)
         saved = _save_image_to_disk(b64_str, "gen")
         disp_aspect = aspect if aspect != "auto" else "auto"
         result = (
@@ -611,9 +638,9 @@ def _generate_image(
         return "Image generation returned no image data."
 
     # Store in side-channel for UI rendering
-    _last_generated_image = b64_str
+    _set_pending_image(b64_str)
     # Also store in cache for edit_image "last" reference
-    _image_cache["__last_generated__"] = base64.b64decode(b64_str)
+    _execution_image_cache()["__last_generated__"] = base64.b64decode(b64_str)
 
     saved = _save_image_to_disk(b64_str, "gen")
     revised_prompt = getattr(image_data, "revised_prompt", None)
@@ -684,8 +711,8 @@ def _edit_image(
             return f"Image edit failed: {e}"
 
         b64_str = base64.b64encode(img_out).decode("ascii")
-        _last_generated_image = b64_str
-        _image_cache["__last_generated__"] = img_out
+        _set_pending_image(b64_str)
+        _execution_image_cache()["__last_generated__"] = img_out
         saved = _save_image_to_disk(b64_str, "edit")
         result = (
             f"Image edited successfully. Model: {model} | "
@@ -756,8 +783,8 @@ def _edit_image(
         if not b64_str:
             return "Image edit returned no image data."
 
-        _last_generated_image = b64_str
-        _image_cache["__last_generated__"] = base64.b64decode(b64_str)
+        _set_pending_image(b64_str)
+        _execution_image_cache()["__last_generated__"] = base64.b64decode(b64_str)
         saved = _save_image_to_disk(b64_str, "edit")
         result = (
             f"Image edited successfully. Model: {model} | "
@@ -799,8 +826,8 @@ def _edit_image(
         return "Image edit returned no image data."
 
     # Store in side-channel for UI rendering
-    _last_generated_image = b64_str
-    _image_cache["__last_generated__"] = base64.b64decode(b64_str)
+    _set_pending_image(b64_str)
+    _execution_image_cache()["__last_generated__"] = base64.b64decode(b64_str)
 
     saved = _save_image_to_disk(b64_str, "edit")
     revised_prompt = getattr(image_data, "revised_prompt", None)
