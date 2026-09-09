@@ -152,6 +152,7 @@ all = [
   "tokenizers>=0.22,<1.0",
   "einops>=0.8,<1.0",
   "torch==2.11.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+  "torch>=2.7,<3.0",
   "langchain-huggingface>=1.0,<2.0",
   "opencv-python>=4.10,<5.0",
   "mss>=9.0,<11.0",
@@ -180,13 +181,22 @@ dev = [
 ]
 
 [tool.setuptools]
-package-dir = { "" = "src" }
+package-dir = { "" = "src", "scripts" = "scripts" }
+
+[tool.setuptools.cmdclass]
+build_py = "scripts.client_build.ClientBuildPy"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 "row_bot.computer_use" = ["*.json"]
+"row_bot" = [
+  "static/client-v2/index.html",
+  "static/client-v2/asset-manifest.json",
+  "static/client-v2/.vite/manifest.json",
+  "static/client-v2/assets/*",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "row_bot.version.__version__" }

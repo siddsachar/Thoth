@@ -23,6 +23,27 @@ class SourceTestRule:
 
 SOURCE_TEST_RULES: tuple[SourceTestRule, ...] = (
     SourceTestRule(
+        "client_foundation",
+        ("frontend/**", "src/row_bot/client_assets.py", "src/row_bot/native_client.py",
+         "src/row_bot/app.py", "scripts/verify_client_assets.py", "scripts/run_client_checks.py",
+         "scripts/client_build.py"),
+        ("tests/subsystem/client_host", "tests/subsystem/client_protocol", "tests/subsystem/installer/test_test_matrix_runner.py"),
+        "The opt-in SPA shares backend access, asset integrity and native authority; changed frontend paths also select the explicit Node lane.",
+    ),
+    SourceTestRule(
+        "public_docs_inventory",
+        ("scripts/docs/**", "docs-content/metadata/**", "docs-site/docs/reference/generated/**",
+         "src/row_bot/client_assets.py", "src/row_bot/native_client.py"),
+        ("tests/docs",),
+        "Host source identifiers feed public environment attribution; inventory and generated references must retain canonical metadata without matching unrelated identifiers.",
+    ),
+    SourceTestRule(
+        "normalized_dependency_requirements",
+        ("scripts/dependency_requirements.py", "pyproject.toml", "uv.lock", "requirements.txt"),
+        ("tests/subsystem/test_dependency_requirement_consistency.py", "tests/test_dependency_metadata.py"),
+        "Feature and aggregate extras retain normalized names, extras, specifiers and markers across supported platforms.",
+    ),
+    SourceTestRule(
         "unified_client_platform",
         (
             "src/row_bot/application/**", "src/row_bot/runtime/**",

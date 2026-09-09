@@ -26,6 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Build local client assets
+        uses: ./.github/actions/build-client
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -48,6 +51,9 @@ jobs:
 
       - name: Verify required runtime dependencies
         run: uv run python scripts/verify_runtime_dependencies.py all
+
+      - name: Verify packaged client assets
+        run: uv run python scripts/verify_client_assets.py --root src/row_bot/static/client-v2 --compare frontend/dist --strict
 
       - name: Compile Python files
         run: uv run python -m compileall -q -x "(\\.git|\\.venv|dist|build|__pycache__)" src tests scripts app.py debug_tools.py launcher.py
@@ -85,6 +91,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Build local client assets
+        uses: ./.github/actions/build-client
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -105,6 +114,9 @@ jobs:
 
       - name: Verify required runtime dependencies
         run: uv run python scripts/verify_runtime_dependencies.py all
+
+      - name: Verify packaged client assets
+        run: uv run python scripts/verify_client_assets.py --root src/row_bot/static/client-v2 --compare frontend/dist --strict
 
       - name: Run full PR verification matrix
         run: uv run python scripts/run_test_matrix.py pr

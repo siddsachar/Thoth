@@ -23,6 +23,8 @@ def test_pr_tier_contains_required_deterministic_lanes() -> None:
     assert "contracts" in names
     assert "client-platform-boundaries" in names
     assert "client-platform-contracts" in names
+    assert "client-foundation" in names
+    assert "dependency-requirements" in names
     assert "subsystem" in names
     assert "coverage-migrated" in names
     assert "deterministic" in names
@@ -125,6 +127,40 @@ def test_changed_tier_expands_source_test_map() -> None:
     assert "tests/contracts/test_provider_contract.py" in changed.argv
     assert "tests/subsystem/providers" in changed.argv
     assert changed.env["ROW_BOT_TEST_MODE"] == "1"
+
+
+def test_changed_frontend_selects_node_checks_and_backend_contracts() -> None:
+    specs = matrix.commands_for_tier("changed", changed_files=["frontend/src/api/http.ts"])
+    assert "client-foundation" in [spec.name for spec in specs]
+    changed = next(spec for spec in specs if spec.name == "changed-tests")
+    assert "tests/subsystem/client_host" in changed.argv
+    assert "tests/subsystem/client_protocol" in changed.argv
+
+
+def test_client_checks_never_install_and_fail_fast(tmp_path, monkeypatch) -> None:
+    import scripts.run_client_checks as client
+
+    frontend = tmp_path / "frontend"
+    compiler = frontend / "node_modules/typescript/bin/tsc"
+    compiler.parent.mkdir(parents=True)
+    compiler.touch()
+    monkeypatch.setattr(client, "FRONTEND", frontend)
+    monkeypatch.setattr(client.shutil, "which", lambda _name: "fixture-node")
+    monkeypatch.setenv("VITE_ENABLE_FIXTURES", "1")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://invalid.example")
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 7)
+
+    monkeypatch.setattr(client.subprocess, "run", run)
+    assert client.main([]) == 7
+    assert len(calls) == 1
+    assert "VITE_ENABLE_FIXTURES" not in calls[0][1]["env"]
+    assert not any(key.startswith("OTEL_") for key in calls[0][1]["env"])
+    assert not any("install" in argument or "npm" in argument for command in client.check_commands() for argument in command)
+    assert len(client.check_commands(True)) < len(client.check_commands())
 
 
 def test_changed_files_include_committed_worktree_and_untracked_changes(monkeypatch) -> None:

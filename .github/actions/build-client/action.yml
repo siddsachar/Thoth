@@ -1,0 +1,22 @@
+name: Build local client assets
+description: Build the locked frontend and preserve its private manifests for packaging.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: "24.15.0"
+        package-manager-cache: false
+    - name: Install locked client build dependencies
+      shell: bash
+      working-directory: frontend
+      env:
+        npm_config_audit: "false"
+        npm_config_fund: "false"
+      run: npm ci --ignore-scripts --no-audit --no-fund
+    - name: Build and preserve client payload
+      shell: bash
+      working-directory: frontend
+      run: |
+        npm run build
+        node scripts/asset-manifest.mjs dist --package

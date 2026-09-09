@@ -23,6 +23,16 @@ $ErrorActionPreference = "Stop"
 $BuildDir = Join-Path $PSScriptRoot "build"
 $ProjectRoot = Split-Path $PSScriptRoot
 $VersionFile = Join-Path $ProjectRoot "src\row_bot\version.py"
+$ClientBuild = Join-Path $ProjectRoot "frontend\dist"
+$ClientNode = (Get-Command node -ErrorAction Stop).Source
+if ((& $ClientNode --version) -ne "v24.15.0") {
+    throw "Client packaging requires Node 24.15.0. Build frontend assets before running the installer builder."
+}
+foreach ($clientFile in @("index.html", "asset-manifest.json", ".vite\manifest.json")) {
+    if (!(Test-Path -LiteralPath (Join-Path $ClientBuild $clientFile) -PathType Leaf)) {
+        throw "Client build missing. Run the locked frontend build and package step before building an installer."
+    }
+}
 $RowBotVersion = if (Test-Path $VersionFile) {
     $versionLine = Select-String -Path $VersionFile -Pattern '__version__\s*=\s*"([^"]+)"' | Select-Object -First 1
     if ($versionLine -and $versionLine.Matches.Count -gt 0) { $versionLine.Matches[0].Groups[1].Value } else { "unknown" }
@@ -287,6 +297,16 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "      Required runtime packages verified" -ForegroundColor Green
 
+# Validate the current build, then stage only its inventory into a new directory.
+$ClientVerifier = Join-Path $ProjectRoot "scripts\verify_client_assets.py"
+& $PythonExe $ClientVerifier --root $ClientBuild
+if ($LASTEXITCODE -ne 0) { throw "Client build validation failed." }
+$ClientAssetStage = Join-Path $BuildDir ("client-v2-" + [guid]::NewGuid().ToString("N"))
+& $ClientNode (Join-Path $ProjectRoot "frontend\scripts\asset-manifest.mjs") $ClientBuild --package-dir $ClientAssetStage
+if ($LASTEXITCODE -ne 0) { throw "Client asset staging failed." }
+& $PythonExe $ClientVerifier --root $ClientAssetStage --compare $ClientBuild --strict
+if ($LASTEXITCODE -ne 0) { throw "Staged client asset validation failed." }
+
 # Install Playwright Chromium into the embedded Python's cache
 Write-Host "      Installing Playwright Chromium browser..." -ForegroundColor Yellow
 $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $PythonDir "playwright-browsers"
@@ -327,14 +347,14 @@ if ($IsccPaths.Count -eq 0) {
     Write-Host ""
     Write-Host "Build directory is ready at: $BuildDir" -ForegroundColor Yellow
     Write-Host "After installing Inno Setup, run:" -ForegroundColor Yellow
-    Write-Host "  iscc `"$IssFile`"" -ForegroundColor White
+    Write-Host "  iscc /DClientAssetDir=`"$ClientAssetStage`" `"$IssFile`"" -ForegroundColor White
     exit 1
 }
 
 $Iscc = $IsccPaths[0]
 Write-Host "Using ISCC: $Iscc" -ForegroundColor DarkGray
 
-& $Iscc $IssFile
+& $Iscc "/DClientAssetDir=$ClientAssetStage" $IssFile
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""

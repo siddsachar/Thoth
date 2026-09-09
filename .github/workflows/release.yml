@@ -78,6 +78,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Build local client assets
+        uses: ./.github/actions/build-client
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -98,6 +101,9 @@ jobs:
 
       - name: Verify required runtime dependencies
         run: uv run python scripts/verify_runtime_dependencies.py all
+
+      - name: Verify packaged client assets
+        run: uv run python scripts/verify_client_assets.py --root src/row_bot/static/client-v2 --compare frontend/dist --strict
 
       - name: Verify release version consistency
         run: |
@@ -139,6 +145,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Build local client assets
+        uses: ./.github/actions/build-client
+
       # System Python (used by build script to find tkinter for bundling)
       - uses: actions/setup-python@v6
         with:
@@ -175,6 +184,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Build local client assets
+        uses: ./.github/actions/build-client
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -207,6 +219,10 @@ jobs:
           export XDG_DATA_HOME="$RUNNER_TEMP/row-bot-linux-xdg"
           mkdir -p "$HOME" "$XDG_DATA_HOME"
           bash "$PACKAGE_ROOT/install.sh"
+          PYTHONNOUSERSITE=1 "$XDG_DATA_HOME/row-bot/current/python/bin/python3" \
+            "$GITHUB_WORKSPACE/scripts/verify_client_assets.py" \
+            --root "$XDG_DATA_HOME/row-bot/current/app/src/row_bot/static/client-v2" \
+            --compare "$GITHUB_WORKSPACE/frontend/dist" --strict
           python scripts/smoke_app.py \
             --port 8080 \
             --timeout 180 \
@@ -242,6 +258,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: Build local client assets
+        uses: ./.github/actions/build-client
 
       # Import Apple certificates into a temporary keychain.
       - name: Import Apple certificates

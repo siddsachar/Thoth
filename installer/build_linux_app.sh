@@ -60,6 +60,14 @@ echo ""
 info "Architecture: $ARCH ($PACKAGE_ARCH)"
 info "Python:       $PYTHON_VERSION (PBS $PBS_RELEASE)"
 
+# Node is a pinned build tool; none of its runtime is copied into the application.
+CLIENT_BUILD="$PROJECT_DIR/frontend/dist"
+CLIENT_NODE="$(command -v node)" || fail "Node 24.15.0 is required to stage the client"
+[ "$("$CLIENT_NODE" --version)" = "v24.15.0" ] || fail "Client packaging requires Node 24.15.0"
+for client_file in index.html asset-manifest.json .vite/manifest.json; do
+    [ -f "$CLIENT_BUILD/$client_file" ] || fail "Client build missing; build and package the locked frontend first"
+done
+
 rm -rf "$PACKAGE_ROOT"
 mkdir -p "$BUILD_DIR" "$DIST_DIR" "$APP_SRC" "$PACKAGE_ROOT/bin" \
          "$PACKAGE_ROOT/share/applications" "$PACKAGE_ROOT/share/icons/hicolor/256x256/apps"
@@ -88,6 +96,7 @@ info "[2/6] Installing locked Python packages from requirements.txt..."
 "$PYTHON_PREFIX/bin/python3" -m pip install --upgrade pip setuptools wheel --quiet 2>&1 | tail -1 || true
 "$PYTHON_PREFIX/bin/python3" -m pip install -r "$PROJECT_DIR/requirements.txt" --quiet 2>&1 | tail -5
 "$PYTHON_PREFIX/bin/python3" "$PROJECT_DIR/scripts/verify_runtime_dependencies.py" all
+"$PYTHON_PREFIX/bin/python3" "$PROJECT_DIR/scripts/verify_client_assets.py" --root "$CLIENT_BUILD"
 ok "Python packages installed"
 
 if [ "$PACKAGE_ARCH" = "x86_64" ]; then
@@ -146,6 +155,7 @@ while IFS= read -r pkg; do
         rsync -a \
               --exclude='__pycache__' --exclude='*.pyc' \
               --exclude='node_modules' --exclude='.pytest_cache' \
+              --exclude='/static/client-v2/***' \
               --exclude='tests' --exclude='test' --exclude='test-results' \
               --exclude='*.test.js' --exclude='*.spec.js' \
               --filter='- *.bak' --filter='- *.bak[0-9]*' \
@@ -154,6 +164,12 @@ while IFS= read -r pkg; do
         fail "Manifest directory is missing: $pkg"
     fi
 done < <(python3 "$MANIFEST_PY" --project-root "$PROJECT_DIR" --category payload_dirs)
+
+# The source copy excludes old generated assets; this destination must be fresh.
+CLIENT_STAGE="$APP_SRC/src/row_bot/static/client-v2"
+"$CLIENT_NODE" "$PROJECT_DIR/frontend/scripts/asset-manifest.mjs" "$CLIENT_BUILD" --package-dir "$CLIENT_STAGE"
+"$PYTHON_PREFIX/bin/python3" "$PROJECT_DIR/scripts/verify_client_assets.py" \
+    --root "$CLIENT_STAGE" --compare "$CLIENT_BUILD" --strict
 
 # Historical contract now owned by scripts/app_payload_manifest.py:
 # for dir in static sounds bundled_skills tool_guides;
@@ -348,6 +364,8 @@ info "Verifying assembled Linux runtime dependencies..."
 ROW_BOT_INSTALL_ROOT="$PACKAGE_ROOT" PYTHONNOUSERSITE=1 \
     "$PYTHON_PREFIX/bin/python3" "$APP_SRC/scripts/verify_runtime_dependencies.py" all
 ok "Assembled Linux runtime dependencies verified"
+"$PYTHON_PREFIX/bin/python3" "$PROJECT_DIR/scripts/verify_client_assets.py" \
+    --root "$CLIENT_STAGE" --compare "$CLIENT_BUILD" --strict
 
 info "[6/6] Creating tarball..."
 rm -f "$TARBALL"

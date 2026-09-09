@@ -7,6 +7,11 @@ __pycache__/
 src/*.egg-info/
 
 # Node.js (WhatsApp bridge)
+frontend/node_modules/
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+src/row_bot/static/client-v2/
 channels/whatsapp_bridge/node_modules/
 src/row_bot/channels/whatsapp_bridge/node_modules/
 
@@ -15,6 +20,7 @@ api_keys.json
 .env
 
 # Installer build artifacts
+build/client-wheel-*/
 installer/build/
 installer/build_mac_release.ps1
 dist/

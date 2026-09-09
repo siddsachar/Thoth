@@ -66,13 +66,34 @@ assert(sdk.isCommand(command));
 assert(!sdk.isCommand({...command,payload:{hidden_secret:'sentinel'}}));
 assert.throws(() => sdk.validateWire('ConversationPage',{items:[],has_more:false,private_path:'sentinel'}));
 const proof={client_session_id:id,csrf_token:'x'.repeat(43)};
+const controller = new AbortController();
 globalThis.fetch = async (url,options) => {
   assert.equal(options.credentials,'same-origin'); assert.equal(options.cache,'no-store');
   assert.equal(options.headers['X-CSRF-Token'],proof.csrf_token);
+  assert.equal(options.signal,controller.signal);
   assert(url.endsWith('/api/v1/conversations?limit=50'));
   return {ok:true,json:async()=>({items:[],has_more:false,next_cursor:null})};
 };
-assert.deepEqual(await sdk.listConversations('http://fixture.invalid',proof),{items:[],has_more:false,next_cursor:null});
+assert.deepEqual(await sdk.listConversations('http://fixture.invalid',proof,50,undefined,controller.signal),{items:[],has_more:false,next_cursor:null});
+for (const terminal of [false,true]) {
+  globalThis.fetch = async (url,options) => {
+    assert.equal(options.method,'DELETE'); assert.equal(options.credentials,'same-origin');
+    assert.equal(options.headers['X-Client-Session'],proof.client_session_id);
+    assert.equal(options.headers['X-CSRF-Token'],proof.csrf_token);
+    assert.equal(options.body,undefined);
+    assert.equal(options.keepalive,terminal ? true : undefined);
+    assert.equal(options.signal,terminal ? undefined : controller.signal);
+    assert(url.endsWith(`/api/v1/subscriptions/${id}`));
+    return {ok:true,json:async()=>({unsubscribed:true})};
+  };
+  assert.deepEqual(await sdk.unsubscribe('http://fixture.invalid',proof,id,terminal ? undefined : controller.signal,terminal),{unsubscribed:true});
+}
+controller.abort();
+globalThis.fetch = async (_url,options) => {
+  options.signal.throwIfAborted();
+  assert.fail('an aborted request must not proceed');
+};
+await assert.rejects(sdk.getConversation('http://fixture.invalid',proof,'fixture',controller.signal),{name:'AbortError'});
 globalThis.fetch = async () => ({ok:true,json:async()=>({items:[],has_more:false,secret:'sentinel'})});
 await assert.rejects(sdk.listConversations('http://fixture.invalid',proof),/protocol_incompatible/);
 '''

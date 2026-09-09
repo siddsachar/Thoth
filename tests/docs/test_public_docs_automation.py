@@ -152,6 +152,31 @@ def test_generated_mdx_pages_are_current() -> None:
     assert errors == []
 
 
+def test_environment_inventory_requires_exact_names_or_env_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.docs.collect_inventory as collector
+
+    source = tmp_path / "src" / "row_bot"
+    source.mkdir(parents=True)
+    (source / "literal.py").write_text(
+        'value = getenv("ROW_BOT_NATIVE")\n# ROW_BOT_PORT=8081\n', encoding="utf-8",
+    )
+    (source / "aliases.py").write_text(
+        'host = getenv(ROW_BOT_HOST_ENV)\nport = getenv(ROW_BOT_PORT_ENV)\n', encoding="utf-8",
+    )
+    (source / "unrelated.py").write_text(
+        '__ROW_BOT_NATIVE_CLIENT__\nPRE_ROW_BOT_NATIVE\nROW_BOT_NATIVE_EXTRA\n'
+        'ROW_BOT_NATIVELY\nROW_BOT_PORT_ENV_EXTRA\n', encoding="utf-8",
+    )
+    monkeypatch.setattr(collector, "ROOT", tmp_path)
+
+    rows = {row["variable"]: row["source"] for row in collector.collect_environment()}
+    assert rows["ROW_BOT_NATIVE"] == "src/row_bot/literal.py"
+    assert rows["ROW_BOT_HOST"] == "src/row_bot/aliases.py"
+    assert rows["ROW_BOT_PORT"] == "src/row_bot/aliases.py, src/row_bot/literal.py"
+
+
 def test_generated_mdx_is_stable_after_inventory_json_round_trip() -> None:
     inventory = build_inventory()
     serialized = json.loads(json.dumps(inventory, sort_keys=True))
