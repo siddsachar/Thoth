@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Scan committed lockfiles
-        uses: google/osv-scanner-action/osv-scanner-action@v2.3.8
+        uses: google/osv-scanner-action/osv-scanner-action@v2.5.0
         with:
           scan-args: |-
             --config=osv-scanner.toml
