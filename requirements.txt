@@ -214,7 +214,7 @@ python-telegram-bot==22.8
 python-xlib==0.33 ; sys_platform == 'linux'
 pythonnet==3.1.0 ; sys_platform == 'win32'
 pytz==2026.2
-pywebview==5.4
+pywebview==6.2.1
 pywin32==312 ; sys_platform == 'win32'
 pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
 pywinpty==2.0.15 ; sys_platform == 'win32'
