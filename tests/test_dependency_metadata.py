@@ -218,8 +218,21 @@ def test_ci_security_and_installer_dependency_hooks_are_wired():
     assert "uv lock --check" in lock_check.read_text(encoding="utf-8")
     assert "export_locked_requirements.py --check" in lock_check.read_text(encoding="utf-8")
     assert osv.is_file()
-    assert "uv.lock" in osv.read_text(encoding="utf-8")
     assert "OSV" in osv.read_text(encoding="utf-8")
+    security_workflow = yaml.load(osv.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    lockfiles = {
+        "uv.lock",
+        "frontend/package-lock.json",
+        "docs-site/package-lock.json",
+        "src/row_bot/channels/whatsapp_bridge/package-lock.json",
+    }
+    assert lockfiles <= set(security_workflow["on"]["pull_request"]["paths"])
+    scan = next(
+        step for step in security_workflow["jobs"]["scan"]["steps"]
+        if "osv-scanner-action" in step.get("uses", "")
+    )
+    arguments = scan["with"]["scan-args"].splitlines()
+    assert {f"--lockfile={path}" for path in lockfiles} <= set(arguments)
 
     for source in (windows_build, mac_build, linux_build, legacy_deps):
         assert "locked Python packages from requirements.txt" in source

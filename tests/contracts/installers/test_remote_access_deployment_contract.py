@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import tomllib
 
 import pytest
 import yaml
@@ -101,6 +102,56 @@ def test_dockerfile_has_release_identity_labels_and_build_arguments() -> None:
     assert 'org.opencontainers.image.revision="${ROW_BOT_SOURCE_REVISION}"' in source
     assert 'org.opencontainers.image.title="Row-Bot authenticated server"' in source
     assert "authenticated long-running server mode" in source
+
+
+def test_dockerfile_builds_shipping_client_with_its_pinned_toolchain() -> None:
+    source = _read(DOCKERFILE)
+    version = _read(REPO_ROOT / "frontend" / ".node-version").strip()
+    client = source.split("FROM ${CLIENT_NODE_IMAGE} AS client-build\n", 1)[1]
+    client = client.split("FROM ${PYTHON_IMAGE} AS builder", 1)[0]
+
+    assert f"ARG CLIENT_NODE_IMAGE=node:{version}-bookworm-slim" in source
+    assert "ENV VITE_ENABLE_FIXTURES=0" in client
+    locked_inputs = "COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./"
+    install = "npm ci --ignore-scripts --no-audit --no-fund"
+    source_inputs = "COPY frontend ./"
+    wire_inputs = (
+        "COPY contracts/client-platform/v1/typescript "
+        "/build/contracts/client-platform/v1/typescript"
+    )
+    build = "npm run build"
+    stage = "node scripts/asset-manifest.mjs dist --package-dir /client-payload"
+    assert client.index(locked_inputs) < client.index(install) < client.index(source_inputs)
+    assert client.index(source_inputs) < client.index(build) < client.index(stage)
+    assert client.index(wire_inputs) < client.index(build)
+    assert "npm install" not in client
+    assert "--package\n" not in client
+    runtime = source.split("FROM ${PYTHON_IMAGE} AS runtime", 1)[1]
+    assert "COPY --from=node /usr/local /usr/local" in runtime
+    assert "--from=client-build" not in runtime
+    assert "node_modules" not in runtime
+
+
+def test_dockerfile_supplies_package_hook_and_validates_installed_client() -> None:
+    source = _read(DOCKERFILE)
+    builder = source.split("FROM ${PYTHON_IMAGE} AS builder", 1)[1]
+    builder = builder.split("FROM ${PYTHON_IMAGE} AS runtime", 1)[0]
+    project = tomllib.loads(_read(REPO_ROOT / "pyproject.toml"))
+    hook = project["tool"]["setuptools"]["cmdclass"]["build_py"]
+    module = hook.rsplit(".", 1)[0].replace(".", "/") + ".py"
+    assert (REPO_ROOT / module).is_file()
+    hook_copy = f"COPY {module} ./{module}"
+    dependency_sync = "uv sync --frozen --no-dev --no-editable --extra all --no-install-project"
+    project_sync = "uv sync --frozen --no-dev --no-editable --extra all\n"
+    payload_copy = "COPY --from=client-build /client-payload ./src/row_bot/static/client-v2"
+    installed_check = "load_client_assets(Path(row_bot.__file__).parent / 'static/client-v2')"
+
+    assert builder.index(hook_copy) < builder.index(dependency_sync)
+    assert builder.index(dependency_sync) < builder.index("COPY src ./src")
+    assert builder.index("COPY src ./src") < builder.index(payload_copy)
+    assert builder.index(payload_copy) < builder.index(project_sync)
+    assert builder.index(project_sync) < builder.index(installed_check)
+    assert "/opt/row-bot/.venv/bin/python -c" in builder
 
 
 def test_dockerfile_bundles_complete_server_runtimes_and_verifies_them() -> None:
@@ -341,6 +392,25 @@ def test_dockerignore_excludes_local_state_and_secret_file_patterns() -> None:
     assert {".git", ".venv", ".local", ".tmp", ".testtmp", "tests"} <= patterns
     assert {"*.db", "*.db-*", ".env", ".env.*", "*.pem", "*.key"} <= patterns
     assert "**/.row-bot" in patterns
+
+
+def test_dockerignore_excludes_host_client_outputs_but_keeps_build_inputs() -> None:
+    patterns = set(_read(DOCKERIGNORE).splitlines())
+
+    assert {
+        "frontend/node_modules",
+        "frontend/dist",
+        "frontend/.vite",
+        "frontend/test-results",
+        "frontend/playwright-report",
+        "frontend/.env",
+        "frontend/.env.*",
+        "src/row_bot/static/client-v2",
+    } <= patterns
+    # A dirty checkout must not inject old assets, host native dependencies or
+    # fixture environment overrides into the fresh shipping build.
+    assert not {"frontend", "contracts", "scripts"} & patterns
+    assert not any(line.startswith("!") for line in patterns)
 
 
 def test_docker_guide_documents_bootstrap_isolation_and_recovery() -> None:

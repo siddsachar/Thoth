@@ -7,7 +7,10 @@
 ; Prerequisites (placed in installer\build\ by build_installer.ps1):
 ;   build\python\          â€“ Embedded Python with all packages pre-installed
 ;
-; Compile with:  iscc installer\row_bot_setup.iss
+; Compile through build_installer.ps1, which validates a fresh client asset stage.
+#ifndef ClientAssetDir
+  #error ClientAssetDir is required. Run installer\build_installer.ps1 to validate and stage the client before compiling.
+#endif
 
 #ifnexist "build\python\Lib\site-packages\sentence_transformers\__init__.py"
   #error Embedded Python is missing sentence_transformers. Run installer\build_installer.ps1 before compiling row_bot_setup.iss.
@@ -123,7 +126,8 @@ Source: "..\uv.lock";                 DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\requirements.txt";       DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\row-bot.ico";            DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\scripts\verify_runtime_dependencies.py"; DestDir: "{app}\app\scripts"; Flags: ignoreversion
-Source: "..\src\row_bot\*";        DestDir: "{app}\app\src\row_bot"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc,node_modules\*,.pytest_cache\*,tests\*,test\*,test-results\*,*.test.js,*.spec.js,*.bak,*.bak[0-9]*"
+Source: "..\src\row_bot\*";        DestDir: "{app}\app\src\row_bot"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc,node_modules\*,.pytest_cache\*,tests\*,test\*,test-results\*,*.test.js,*.spec.js,*.bak,*.bak[0-9]*,static\client-v2\*"
+Source: "{#ClientAssetDir}\*"; DestDir: "{app}\app\src\row_bot\static\client-v2"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Source-layout coverage: recursive src\row_bot include covers stability.py, embedding_config.py, embedding_providers.py, shared Browser runtime ownership, the Computer Use package and JSON manifest, the native Buddy overlay, coordinated conversation cleanup, provider transports and live media catalogs, Agent budgets/settings, cache-only embedding fallback, mobile access/PWA, cancellation, Developer, Skills Hub, self-evolution, and shared/native/plugin channel streaming.
 Source: "..\static\*";              DestDir: "{app}\app\static"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\sounds\*";              DestDir: "{app}\app\sounds"; Flags: ignoreversion recursesubdirs createallsubdirs

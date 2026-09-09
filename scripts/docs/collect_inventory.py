@@ -602,7 +602,9 @@ def collect_environment() -> list[dict[str, Any]]:
         for path in sorted(source_root.rglob("*.py")):
             text = _read_text(path)
             for name in variables:
-                if name in text:
+                # Keep canonical *_ENV aliases, but not longer identifiers such
+                # as the native bridge global __ROW_BOT_NATIVE_CLIENT__.
+                if name in text and re.search(rf"\b{re.escape(name)}(?:_ENV)?\b", text):
                     source_by_variable[name].append(repo_path(ROOT, path))
     return [
         {

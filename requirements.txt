@@ -201,7 +201,7 @@ pyobjc-framework-quartz==12.2.1 ; sys_platform == 'darwin'
 pyobjc-framework-security==12.2.1 ; sys_platform == 'darwin'
 pyobjc-framework-webkit==12.2.1 ; sys_platform == 'darwin'
 pyparsing==3.3.2
-pypdf==6.16.0
+pypdf==6.16.1
 pystray==0.19.5
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
@@ -269,8 +269,8 @@ threadpoolctl==3.6.0
 tiktoken==0.13.0
 tinycss2==1.5.1
 tokenizers==0.22.2
-torch==2.11.0 ; sys_platform == 'darwin'
-torch==2.11.0+cpu ; sys_platform != 'darwin'
+torch==2.11.0 ; platform_machine != 'x86_64' and sys_platform == 'darwin'
+torch==2.11.0+cpu ; platform_machine == 'x86_64' or sys_platform != 'darwin'
 torch-complex==0.4.4 ; platform_machine != 'x86_64' or sys_platform != 'darwin'
 torchaudio==2.11.0 ; platform_machine != 'x86_64' and sys_platform == 'darwin'
 torchaudio==2.11.0+cpu ; sys_platform != 'darwin'

@@ -54,6 +54,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Build local client assets
+        uses: ./.github/actions/build-client
+
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.WINDOWS_PYTHON_VERSION }}
@@ -122,6 +125,11 @@ jobs:
             throw "Installed runtime verifier failed with code $LASTEXITCODE"
           }
 
+          & $pythonExe (Join-Path $env:GITHUB_WORKSPACE "scripts\verify_client_assets.py") `
+            --root (Join-Path $appDir "src\row_bot\static\client-v2") `
+            --compare (Join-Path $env:GITHUB_WORKSPACE "frontend\dist") --strict
+          if ($LASTEXITCODE -ne 0) { throw "Installed client asset validation failed." }
+
           python scripts/smoke_app.py `
             --port 8094 `
             --timeout 180 `
@@ -152,6 +160,9 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
+
+      - name: Build local client assets
+        uses: ./.github/actions/build-client
 
       - uses: actions/setup-python@v6
         with:
@@ -185,6 +196,10 @@ jobs:
           export XDG_DATA_HOME="$RUNNER_TEMP/row-bot-linux-xdg"
           mkdir -p "$HOME" "$XDG_DATA_HOME"
           bash "$PACKAGE_ROOT/install.sh"
+          PYTHONNOUSERSITE=1 "$XDG_DATA_HOME/row-bot/current/python/bin/python3" \
+            "$GITHUB_WORKSPACE/scripts/verify_client_assets.py" \
+            --root "$XDG_DATA_HOME/row-bot/current/app/src/row_bot/static/client-v2" \
+            --compare "$GITHUB_WORKSPACE/frontend/dist" --strict
           python scripts/smoke_app.py \
             --port 8095 \
             --timeout 180 \
@@ -211,6 +226,9 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
+
+      - name: Build local client assets
+        uses: ./.github/actions/build-client
 
       - uses: actions/setup-python@v6
         with:
@@ -254,6 +272,9 @@ jobs:
             find "$APP_PATH" -maxdepth 5 -path '*/python/bin/*' -print || true
             exit 1
           fi
+          PYTHONNOUSERSITE=1 "$PYTHON" "$GITHUB_WORKSPACE/scripts/verify_client_assets.py" \
+            --root "$APP_DIR/src/row_bot/static/client-v2" \
+            --compare "$GITHUB_WORKSPACE/frontend/dist" --strict
           ROW_BOT_INSTALL_ROOT="$RESOURCES" \
           PYTHONNOUSERSITE=1 \
           PYTHONIOENCODING=utf-8 \
@@ -308,6 +329,9 @@ jobs:
             echo "::error::Installed bundled Python not found under $RESOURCES/python/bin"
             exit 1
           fi
+          PYTHONNOUSERSITE=1 "$PYTHON" "$GITHUB_WORKSPACE/scripts/verify_client_assets.py" \
+            --root "$APP_DIR/src/row_bot/static/client-v2" \
+            --compare "$GITHUB_WORKSPACE/frontend/dist" --strict
           ROW_BOT_INSTALL_ROOT="$RESOURCES" \
           PYTHONNOUSERSITE=1 \
           PYTHONIOENCODING=utf-8 \

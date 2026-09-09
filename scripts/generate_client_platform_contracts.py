@@ -153,9 +153,9 @@ function proofHeaders(proof?: SessionProof): Record<string, string> {
   return proof ? {'X-Client-Session': proof.client_session_id, 'X-CSRF-Token': proof.csrf_token} : {};
 }
 async function jsonRequest<T>(baseUrl: string, path: string, schema: string,
-  proof?: SessionProof, method = 'GET', body?: unknown, key?: string): Promise<T> {
+  proof?: SessionProof, method = 'GET', body?: unknown, key?: string, signal?: AbortSignal, keepalive = false): Promise<T> {
   const response = await fetch(`${baseUrl}/api/v1${path}`, {
-    method, credentials: 'same-origin', cache: 'no-store',
+    method, credentials: 'same-origin', cache: 'no-store', signal, ...(keepalive ? {keepalive: true} : {}),
     headers: {...proofHeaders(proof), ...(body === undefined ? {} : {'Content-Type': 'application/json'}),
       ...(key ? {'Idempotency-Key': key} : {})},
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -168,59 +168,59 @@ const id = encodeURIComponent;
 const query = (values: Record<string, string | number | undefined>) => '?' + new URLSearchParams(
   Object.entries(values).filter(([,v]) => v !== undefined).map(([k,v]) => [k, String(v)]));
 
-export async function handshake(baseUrl: string, body: Handshake): Promise<HandshakeView> {
+export async function handshake(baseUrl: string, body: Handshake, signal?: AbortSignal): Promise<HandshakeView> {
   validateWire<Handshake>('Handshake', body);
-  return jsonRequest(baseUrl, '/handshake', 'HandshakeView', undefined, 'POST', body);
+  return jsonRequest(baseUrl, '/handshake', 'HandshakeView', undefined, 'POST', body, undefined, signal);
 }
-export const listConversations = (base: string, proof: SessionProof, limit = 50, cursor?: string): Promise<ConversationPage> =>
-  jsonRequest(base, '/conversations' + query({limit,cursor}), 'ConversationPage', proof);
-export const getConversation = (base: string, proof: SessionProof, conversation: string): Promise<ConversationView> =>
-  jsonRequest(base, `/conversations/${id(conversation)}`, 'ConversationView', proof);
-export const getTranscript = (base: string, proof: SessionProof, conversation: string, limit = 100, cursor?: string): Promise<TranscriptPage> =>
-  jsonRequest(base, `/conversations/${id(conversation)}/transcript` + query({limit,cursor}), 'TranscriptPage', proof);
-export const getChoices = (base: string, proof: SessionProof): Promise<Choices> =>
-  jsonRequest(base, '/choices', 'Choices', proof);
+export const listConversations = (base: string, proof: SessionProof, limit = 50, cursor?: string, signal?: AbortSignal): Promise<ConversationPage> =>
+  jsonRequest(base, '/conversations' + query({limit,cursor}), 'ConversationPage', proof, 'GET', undefined, undefined, signal);
+export const getConversation = (base: string, proof: SessionProof, conversation: string, signal?: AbortSignal): Promise<ConversationView> =>
+  jsonRequest(base, `/conversations/${id(conversation)}`, 'ConversationView', proof, 'GET', undefined, undefined, signal);
+export const getTranscript = (base: string, proof: SessionProof, conversation: string, limit = 100, cursor?: string, signal?: AbortSignal): Promise<TranscriptPage> =>
+  jsonRequest(base, `/conversations/${id(conversation)}/transcript` + query({limit,cursor}), 'TranscriptPage', proof, 'GET', undefined, undefined, signal);
+export const getChoices = (base: string, proof: SessionProof, signal?: AbortSignal): Promise<Choices> =>
+  jsonRequest(base, '/choices', 'Choices', proof, 'GET', undefined, undefined, signal);
 export const getLazyContent = (base: string, proof: SessionProof, conversation: string, message: string,
-  limit_bytes = 65536, cursor?: string): Promise<LazyContent> =>
-  jsonRequest(base, `/conversations/${id(conversation)}/content/${id(message)}` + query({limit_bytes,cursor}), 'LazyContent', proof);
-export const getReceipt = (base: string, proof: SessionProof, command: string): Promise<CommandReceipt> =>
-  jsonRequest(base, `/commands/${id(command)}`, 'CommandReceipt', proof);
-export const getApproval = (base: string, proof: SessionProof, approval: string): Promise<ApprovalView> =>
-  jsonRequest(base, `/approvals/${id(approval)}`, 'ApprovalView', proof);
-export const getResource = (base: string, proof: SessionProof, reference: string): Promise<ResourceView> =>
-  jsonRequest(base, `/resources/${id(reference)}`, 'ResourceView', proof);
-export const subscribe = (base: string, proof: SessionProof, conversation: string): Promise<SubscriptionView> =>
-  jsonRequest(base, `/conversations/${id(conversation)}/subscriptions`, 'SubscriptionView', proof, 'POST');
-export const poll = (base: string, proof: SessionProof, subscription_id: string, cursor: string): Promise<EventPage> =>
-  jsonRequest(base, '/events/poll' + query({subscription_id,cursor}), 'EventPage', proof);
-export const acknowledge = (base: string, proof: SessionProof, subscription: string, cursor: string): Promise<Acknowledged> =>
-  jsonRequest(base, `/subscriptions/${id(subscription)}/ack`, 'Acknowledged', proof, 'PUT', {cursor});
-export const unsubscribe = (base: string, proof: SessionProof, subscription: string): Promise<Unsubscribed> =>
-  jsonRequest(base, `/subscriptions/${id(subscription)}`, 'Unsubscribed', proof, 'DELETE');
-export const beginUpload = (base: string, proof: SessionProof, body: UploadRequest): Promise<UploadView> => {
+  limit_bytes = 65536, cursor?: string, signal?: AbortSignal): Promise<LazyContent> =>
+  jsonRequest(base, `/conversations/${id(conversation)}/content/${id(message)}` + query({limit_bytes,cursor}), 'LazyContent', proof, 'GET', undefined, undefined, signal);
+export const getReceipt = (base: string, proof: SessionProof, command: string, signal?: AbortSignal): Promise<CommandReceipt> =>
+  jsonRequest(base, `/commands/${id(command)}`, 'CommandReceipt', proof, 'GET', undefined, undefined, signal);
+export const getApproval = (base: string, proof: SessionProof, approval: string, signal?: AbortSignal): Promise<ApprovalView> =>
+  jsonRequest(base, `/approvals/${id(approval)}`, 'ApprovalView', proof, 'GET', undefined, undefined, signal);
+export const getResource = (base: string, proof: SessionProof, reference: string, signal?: AbortSignal): Promise<ResourceView> =>
+  jsonRequest(base, `/resources/${id(reference)}`, 'ResourceView', proof, 'GET', undefined, undefined, signal);
+export const subscribe = (base: string, proof: SessionProof, conversation: string, signal?: AbortSignal): Promise<SubscriptionView> =>
+  jsonRequest(base, `/conversations/${id(conversation)}/subscriptions`, 'SubscriptionView', proof, 'POST', undefined, undefined, signal);
+export const poll = (base: string, proof: SessionProof, subscription_id: string, cursor: string, signal?: AbortSignal): Promise<EventPage> =>
+  jsonRequest(base, '/events/poll' + query({subscription_id,cursor}), 'EventPage', proof, 'GET', undefined, undefined, signal);
+export const acknowledge = (base: string, proof: SessionProof, subscription: string, cursor: string, signal?: AbortSignal): Promise<Acknowledged> =>
+  jsonRequest(base, `/subscriptions/${id(subscription)}/ack`, 'Acknowledged', proof, 'PUT', {cursor}, undefined, signal);
+export const unsubscribe = (base: string, proof: SessionProof, subscription: string, signal?: AbortSignal, keepalive = false): Promise<Unsubscribed> =>
+  jsonRequest(base, `/subscriptions/${id(subscription)}`, 'Unsubscribed', proof, 'DELETE', undefined, undefined, signal, keepalive);
+export const beginUpload = (base: string, proof: SessionProof, body: UploadRequest, signal?: AbortSignal): Promise<UploadView> => {
   validateWire<UploadRequest>('UploadRequest', body);
-  return jsonRequest(base, '/uploads/sessions', 'UploadView', proof, 'POST', body);
+  return jsonRequest(base, '/uploads/sessions', 'UploadView', proof, 'POST', body, undefined, signal);
 };
-export const uploadStatus = (base: string, proof: SessionProof, upload: string): Promise<UploadView> =>
-  jsonRequest(base, `/uploads/${id(upload)}`, 'UploadView', proof);
-export const cancelUpload = (base: string, proof: SessionProof, upload: string): Promise<UploadCancelled> =>
-  jsonRequest(base, `/uploads/${id(upload)}`, 'UploadCancelled', proof, 'DELETE');
-export const completeUpload = (base: string, proof: SessionProof, upload: string, body: UploadCompletion, key: string): Promise<AttachmentView> => {
+export const uploadStatus = (base: string, proof: SessionProof, upload: string, signal?: AbortSignal): Promise<UploadView> =>
+  jsonRequest(base, `/uploads/${id(upload)}`, 'UploadView', proof, 'GET', undefined, undefined, signal);
+export const cancelUpload = (base: string, proof: SessionProof, upload: string, signal?: AbortSignal): Promise<UploadCancelled> =>
+  jsonRequest(base, `/uploads/${id(upload)}`, 'UploadCancelled', proof, 'DELETE', undefined, undefined, signal);
+export const completeUpload = (base: string, proof: SessionProof, upload: string, body: UploadCompletion, key: string, signal?: AbortSignal): Promise<AttachmentView> => {
   validateWire<UploadCompletion>('UploadCompletion', body);
-  return jsonRequest(base, `/uploads/${id(upload)}/complete`, 'AttachmentView', proof, 'POST', body, key);
+  return jsonRequest(base, `/uploads/${id(upload)}/complete`, 'AttachmentView', proof, 'POST', body, key, signal);
 };
-export async function uploadChunk(base: string, proof: SessionProof, upload: string, offset: number, data: Blob): Promise<UploadView> {
+export async function uploadChunk(base: string, proof: SessionProof, upload: string, offset: number, data: Blob, signal?: AbortSignal): Promise<UploadView> {
   if (data.size > 1048576) throw new Error('payload_too_large');
   const response = await fetch(`${base}/api/v1/uploads/${id(upload)}/chunks` + query({offset}), {
-    method: 'PUT', credentials: 'same-origin', cache: 'no-store', headers: proofHeaders(proof), body: data,
+    method: 'PUT', credentials: 'same-origin', cache: 'no-store', headers: proofHeaders(proof), body: data, signal,
   });
   const value = await response.json();
   if (!response.ok) throw validateWire<Problem>('Problem', value);
   return validateWire<UploadView>('UploadView', value);
 }
-export async function readAttachment(base: string, proof: SessionProof, reference: string): Promise<Blob> {
+export async function readAttachment(base: string, proof: SessionProof, reference: string, signal?: AbortSignal): Promise<Blob> {
   const response = await fetch(`${base}/api/v1/attachments/${id(reference)}`, {
-    credentials: 'same-origin', cache: 'no-store', headers: proofHeaders(proof),
+    credentials: 'same-origin', cache: 'no-store', headers: proofHeaders(proof), signal,
   });
   if (!response.ok) throw validateWire<Problem>('Problem', await response.json());
   const data = await response.blob();
@@ -263,16 +263,16 @@ export async function* observeEvents(base: string, proof: SessionProof, subscrip
   } finally { await reader.cancel(); reader.releaseLock(); }
 }
 export async function sendConversationCommand(baseUrl: string, conversationId: string | null,
-  command: Command, proof: SessionProof, idempotencyKey: string): Promise<CommandReceipt> {
+  command: Command, proof: SessionProof, idempotencyKey: string, signal?: AbortSignal): Promise<CommandReceipt> {
   if (!isCommand(command)) throw new Error('invalid_command');
   const suffix = conversationId === null ? '/conversations/commands'
     : `/conversations/${encodeURIComponent(conversationId)}/commands`;
-  return jsonRequest(baseUrl, suffix, 'CommandReceipt', proof, 'POST', command, idempotencyKey);
+  return jsonRequest(baseUrl, suffix, 'CommandReceipt', proof, 'POST', command, idempotencyKey, signal);
 }
 export async function sendApprovalCommand(base: string, approval: string, command: Command,
-  proof: SessionProof, key: string): Promise<CommandReceipt> {
+  proof: SessionProof, key: string, signal?: AbortSignal): Promise<CommandReceipt> {
   if (!isCommand(command) || command.type !== 'approval.resolve') throw new Error('invalid_command');
-  return jsonRequest(base, `/approvals/${id(approval)}/commands`, 'CommandReceipt', proof, 'POST', command, key);
+  return jsonRequest(base, `/approvals/${id(approval)}/commands`, 'CommandReceipt', proof, 'POST', command, key, signal);
 }
 '''.strip())
     return "\n".join(lines) + "\n"
@@ -353,7 +353,9 @@ def main() -> int:
                 changed.append(path.relative_to(ROOT).as_posix())
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8", newline="\n")
+            # Preserve clean checkout line endings and timestamps on unchanged files.
+            if not path.exists() or path.read_text(encoding="utf-8") != content:
+                path.write_text(content, encoding="utf-8", newline="\n")
     if changed:
         print("Generated contract mismatch: " + ", ".join(changed))
         return 1

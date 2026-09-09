@@ -40,8 +40,13 @@ def test_container_workflow_has_only_review_and_release_triggers() -> None:
         "bundled_skills/**",
         "tool_guides/**",
         "src/**",
+        "frontend/**",
+        "contracts/client-platform/**",
+        "scripts/client_build.py",
         "scripts/verify_runtime_dependencies.py",
         "scripts/smoke_docker_server.py",
+        "tests/contracts/installers/test_container_workflow_contract.py",
+        "tests/contracts/installers/test_remote_access_deployment_contract.py",
     } <= paths
 
 

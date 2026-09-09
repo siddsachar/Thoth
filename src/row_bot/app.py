@@ -1329,6 +1329,11 @@ from row_bot.api.v1.routes import install_client_platform
 from row_bot.application.client_platform import client_platform_service
 
 install_client_platform(app, client_platform_service, instance_id=client_platform_service.instance_id)
+
+# The established NiceGUI shell remains the default. The new client is opt-in.
+from row_bot.client_assets import install_client_assets
+
+install_client_assets(app)
 app.add_middleware(
     AccessMiddleware,
     runtime_policy=_runtime_access_policy,

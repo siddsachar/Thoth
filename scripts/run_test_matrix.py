@@ -98,6 +98,8 @@ def _write_migrated_coverage_config() -> Path:
 
 
 COMMANDS: dict[str, CommandSpec] = {
+    "client-foundation": _cmd("client-foundation", "python", "scripts/run_client_checks.py", env=TEST_ENV),
+    "dependency-requirements": _cmd("dependency-requirements", "uv", "run", "python", "scripts/dependency_requirements.py", env=TEST_ENV),
     "client-platform-boundaries": _cmd(
         "client-platform-boundaries", "uv", "run", "python", "scripts/check_client_platform_boundaries.py",
         env=TEST_ENV,
@@ -249,7 +251,8 @@ COMMANDS: dict[str, CommandSpec] = {
 
 
 TIER_COMMANDS: dict[str, tuple[str, ...]] = {
-    "dependency-integrity": ("lock-check", "requirements-check", "sync-test", "runtime-deps"),
+    "dependency-integrity": ("lock-check", "requirements-check", "sync-test", "dependency-requirements", "runtime-deps"),
+    "client-foundation": ("client-foundation",),
     "contract-subsystem": ("contracts", "subsystem"),
     "contracts": ("contracts",),
     "subsystem": ("subsystem",),
@@ -264,6 +267,8 @@ TIER_COMMANDS: dict[str, tuple[str, ...]] = {
         "requirements-check",
         "sync-test",
         "runtime-deps",
+        "dependency-requirements",
+        "client-foundation",
         "compileall",
         "ruff-safety",
         "client-platform-boundaries",
@@ -281,6 +286,8 @@ TIER_COMMANDS: dict[str, tuple[str, ...]] = {
         "requirements-check",
         "sync-test",
         "runtime-deps",
+        "dependency-requirements",
+        "client-foundation",
         "compileall",
         "ruff-safety",
         "client-platform-boundaries",
@@ -298,6 +305,8 @@ TIER_COMMANDS: dict[str, tuple[str, ...]] = {
         "requirements-check",
         "sync-test",
         "runtime-deps",
+        "dependency-requirements",
+        "client-foundation",
         "compileall",
         "ruff-safety",
         "client-platform-boundaries",
@@ -355,6 +364,12 @@ def changed_commands(changed_files: list[str]) -> list[CommandSpec]:
 
     selection = select_tests_for_changes(changed_files)
     commands: list[CommandSpec] = []
+    if any(path.replace("\\", "/").startswith(("frontend/", "contracts/client-platform/"))
+           or path == "scripts/run_client_checks.py" for path in changed_files):
+        commands.append(COMMANDS["client-foundation"])
+    if any(path in {"pyproject.toml", "uv.lock", "requirements.txt", "scripts/dependency_requirements.py"}
+           for path in changed_files):
+        commands.append(COMMANDS["dependency-requirements"])
     if selection.test_paths:
         commands.append(
             _cmd(

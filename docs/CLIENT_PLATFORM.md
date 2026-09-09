@@ -3,7 +3,11 @@
 NiceGUI remains the default application. Its compatibility adapter and the
 authenticated `/api/v1` transport use the same application services, execution
 registry, checkpoint store and resource bindings. This boundary does not start
-a separate daemon, copy transcripts into a new database, or add a frontend.
+a separate daemon or copy transcripts into a new database. The opt-in React
+foundation at `/app-v2/` uses that same service boundary; NiceGUI stays at `/`.
+See [frontend development](../frontend/README.md),
+[dual hosting](CLIENT_PLATFORM_HOSTING.md), and
+[the shared product system](CLIENT_PLATFORM_PRODUCT_SYSTEM.md).
 
 ## Ownership
 

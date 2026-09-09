@@ -8,6 +8,15 @@ from tests.helpers.source_test_map import SOURCE_TEST_RULES, select_tests_for_ch
 pytestmark = pytest.mark.subsystem
 
 
+def test_client_foundation_paths_have_routing_and_dependency_owners() -> None:
+    selection = select_tests_for_changes(["frontend/src/main.tsx", "src/row_bot/client_assets.py", "scripts/dependency_requirements.py", "scripts/client_build.py", "scripts/docs/collect_inventory.py", "docs-site/docs/reference/generated/environment-and-config.mdx"])
+    assert {"client_foundation", "normalized_dependency_requirements", "public_docs_inventory"} <= set(selection.matched_rules)
+    assert "tests/subsystem/client_host" in selection.test_paths
+    assert "tests/subsystem/test_dependency_requirement_consistency.py" in selection.test_paths
+    assert "tests/docs" in selection.test_paths
+    assert not selection.unmatched_files
+
+
 def test_headless_platform_changes_select_cross_boundary_behavior_and_quality():
     selection = select_tests_for_changes([
         "src/row_bot/runtime/executions.py", "src/row_bot/api/v1/routes.py",

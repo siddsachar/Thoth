@@ -5,6 +5,7 @@ on:
     paths:
       - "uv.lock"
       - "docs-site/package-lock.json"
+      - "frontend/package-lock.json"
       - "src/row_bot/channels/whatsapp_bridge/package-lock.json"
       - ".github/workflows/osv-scanner.yml"
       - "osv-scanner.toml"
@@ -30,4 +31,5 @@ jobs:
             --config=osv-scanner.toml
             --lockfile=uv.lock
             --lockfile=docs-site/package-lock.json
+            --lockfile=frontend/package-lock.json
             --lockfile=src/row_bot/channels/whatsapp_bridge/package-lock.json

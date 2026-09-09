@@ -3,9 +3,26 @@
 ARG PYTHON_IMAGE=python:3.13.5-slim-bookworm
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.7.22
 ARG NODE_IMAGE=node:24.4.1-bookworm-slim
+ARG CLIENT_NODE_IMAGE=node:24.15.0-bookworm-slim
 
 FROM ${UV_IMAGE} AS uv
 FROM ${NODE_IMAGE} AS node
+
+# The opt-in client has a separate build toolchain; preserve the existing Node
+# runtime used by server capabilities. Only generated assets leave this stage.
+FROM ${CLIENT_NODE_IMAGE} AS client-build
+
+WORKDIR /build/frontend
+ENV VITE_ENABLE_FIXTURES=0
+
+COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts --no-audit --no-fund
+
+COPY frontend ./
+COPY contracts/client-platform/v1/typescript /build/contracts/client-platform/v1/typescript
+RUN npm run build \
+    && node scripts/asset-manifest.mjs dist --package-dir /client-payload
 
 FROM ${PYTHON_IMAGE} AS builder
 
@@ -21,12 +38,17 @@ WORKDIR /build
 # Resolve the canonical aggregate feature set before copying application
 # sources so ordinary source changes do not invalidate the dependency layer.
 COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY scripts/client_build.py ./scripts/client_build.py
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable --extra all --no-install-project
 
 COPY src ./src
+COPY --from=client-build /client-payload ./src/row_bot/static/client-v2
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable --extra all
+
+# Verify the installed wheel's payload, not just the source staging directory.
+RUN /opt/row-bot/.venv/bin/python -c "from pathlib import Path; import row_bot; from row_bot.client_assets import load_client_assets; load_client_assets(Path(row_bot.__file__).parent / 'static/client-v2')"
 
 # The Playwright package in uv.lock selects the exact compatible Chromium and
 # ffmpeg revisions. Browser payloads are immutable image dependencies; models
