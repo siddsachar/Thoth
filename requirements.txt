@@ -201,7 +201,7 @@ pyobjc-framework-quartz==12.2.1 ; sys_platform == 'darwin'
 pyobjc-framework-security==12.2.1 ; sys_platform == 'darwin'
 pyobjc-framework-webkit==12.2.1 ; sys_platform == 'darwin'
 pyparsing==3.3.2
-pypdf==6.16.0
+pypdf==6.16.1
 pystray==0.19.5
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
